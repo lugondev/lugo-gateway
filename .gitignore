@@ -1,0 +1,99 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+develop-eggs/
+sdist/
+wheels/
+share/python-wheels/
+MANIFEST
+
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ---- Package managers / lockfiles ----
+# uv keeps uv.lock tracked; pip caches are not
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ---- Testing / coverage ----
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+
+# ---- Type checkers / linters ----
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pyre/
+.pytype/
+
+# ---- Jupyter ----
+.ipynb_checkpoints/
+
+# ---- Environment / secrets ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---- Logs / runtime ----
+*.log
+logs/
+*.pid
+
+# ---- ML models & audio artifacts (STT/TTS) ----
+models/
+*.bin
+*.pt
+*.onnx
+*.gguf
+*.zip
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.webm
+data/
+tmp/
+.cache/
+
+# ---- Docker ----
+*.local.yml
+
+# ---- IDE / editors ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---- OS ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

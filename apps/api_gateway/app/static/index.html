@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Speech Text Transformer UI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+
+    <main class="app-shell">
+      <header class="hero">
+        <p class="kicker">speech-text-transformer</p>
+        <h1>Gateway Playground</h1>
+        <p class="subtitle">Manage models, transcribe files or the live mic, synthesize speech, and watch SSE audio chunks play back progressively.</p>
+      </header>
+
+      <nav class="tabs" id="tabs">
+        <button class="tab-btn active" data-tab="system">System &amp; Models</button>
+        <button class="tab-btn" data-tab="stt">Speech → Text</button>
+        <button class="tab-btn" data-tab="tts">Text → Speech</button>
+      </nav>
+
+      <!-- ============================== SYSTEM ============================== -->
+      <div class="tab-panel active" id="tab-system">
+        <section class="card">
+          <div class="card-head">
+            <h2>System status</h2>
+            <button id="status-refresh" class="ghost mini">Refresh</button>
+          </div>
+          <div id="system-status" class="status-grid"></div>
+
+          <h3 class="sub">Vosk models</h3>
+          <div id="model-suggestions" class="model-list"></div>
+
+          <div class="row tight">
+            <label>
+              Download by name
+              <input id="model-name" type="text" placeholder="vosk-model-small-de-0.15" />
+            </label>
+            <div class="actions end">
+              <button id="model-download">Download</button>
+            </div>
+          </div>
+          <p class="hint">Browse the full catalog at alphacephei.com/vosk/models — paste any model name.</p>
+
+          <h3 class="sub">Whisper models</h3>
+          <div id="whisper-models" class="model-list"></div>
+          <p class="hint">Downloading warms the faster-whisper weights (Hugging Face cache). "Use" switches the active model for local Whisper.</p>
+
+          <h3 class="sub">OmniVoice models (TTS)</h3>
+          <div id="omnivoice-models" class="model-list"></div>
+          <div class="row tight">
+            <label>
+              Download by HF repo id
+              <input id="omni-name" type="text" placeholder="k2-fsa/OmniVoice" />
+            </label>
+            <div class="actions end">
+              <button id="omni-download">Download</button>
+            </div>
+          </div>
+
+          <h3 class="sub">VieNeu models (TTS)</h3>
+          <div id="vieneu-models" class="model-list"></div>
+          <p class="hint">v3turbo runs on CPU (torch-free). Other modes need <code>pip install vieneu[gpu]</code>.</p>
+
+          <h3 class="sub">TTS engines (ported from OmniVoice-Studio)</h3>
+          <div id="tts-engines-status" class="model-list"></div>
+          <p class="hint">Ready engines appear in the Text → Speech tab. Install the package shown to enable the rest.</p>
+
+          <p id="model-msg" class="meta"></p>
+        </section>
+      </div>
+
+      <!-- ============================== STT ============================== -->
+      <div class="tab-panel" id="tab-stt">
+        <section class="card">
+          <h2>STT Batch</h2>
+          <div class="row">
+            <label>
+              Engine
+              <select id="stt-engine"></select>
+              <small class="engine-detail" id="stt-engine-detail"></small>
+            </label>
+            <label>
+              Language (optional)
+              <input id="stt-language" type="text" placeholder="en, vi, ja..." />
+            </label>
+          </div>
+          <div class="seg" id="stt-mode">
+            <button type="button" class="seg-btn active" data-mode="upload">Upload file</button>
+            <button type="button" class="seg-btn" data-mode="record">Record mic</button>
+          </div>
+
+          <div id="stt-upload-pane">
+            <label>
+              Audio file (prefer WAV PCM16 mono for local Vosk)
+              <input id="stt-audio" type="file" accept="audio/*" />
+            </label>
+          </div>
+
+          <div id="stt-record-pane" class="hidden">
+            <div class="actions">
+              <button id="stt-record" class="ghost">● Record</button>
+              <span id="stt-record-status" class="status-idle">no recording</span>
+            </div>
+            <audio id="stt-record-preview" class="player hidden" controls></audio>
+          </div>
+
+          <div class="checks">
+            <label class="check"><input type="checkbox" id="stt-denoise" /> Noise reduce</label>
+            <label class="check"><input type="checkbox" id="stt-vad" /> VAD</label>
+            <label class="check">backend
+              <select id="stt-vad-backend" class="inline-select"></select>
+            </label>
+          </div>
+          <div class="actions">
+            <button id="stt-submit">Transcribe</button>
+          </div>
+          <pre id="stt-result" class="output"></pre>
+        </section>
+
+        <section class="card" id="stt-stream-card">
+          <h2>STT Streaming <span class="tag">WebSocket</span></h2>
+          <p class="hint">Streams microphone audio as PCM16 mono @ 16&nbsp;kHz. Vosk returns live partials; other engines return one final transcript on stop.</p>
+          <div class="row">
+            <label>
+              Engine
+              <select id="stt-stream-engine"></select>
+              <small class="engine-detail" id="stt-stream-engine-detail"></small>
+            </label>
+            <label>
+              Language (optional)
+              <input id="stt-stream-language" type="text" placeholder="en, vi, ja..." />
+            </label>
+          </div>
+          <div class="checks">
+            <label class="check"><input type="checkbox" id="stt-stream-denoise" /> Noise reduce</label>
+            <label class="check"><input type="checkbox" id="stt-stream-vad" /> VAD</label>
+          </div>
+          <div class="actions">
+            <button id="stt-stream-record">Start Mic</button>
+            <button id="stt-stream-end" class="ghost" disabled>Stop &amp; Finalize</button>
+            <span id="stt-stream-status" class="status-idle">idle</span>
+          </div>
+          <div class="transcript-wrap">
+            <p class="field-label">Partial</p>
+            <p id="stt-stream-partial" class="partial">—</p>
+            <p class="field-label">Transcript</p>
+            <p id="stt-stream-transcript" class="transcript"></p>
+          </div>
+          <pre id="stt-stream-log" class="output small"></pre>
+        </section>
+      </div>
+
+      <!-- ============================== TTS ============================== -->
+      <div class="tab-panel" id="tab-tts">
+        <section class="card">
+          <h2>TTS Batch</h2>
+          <div class="row">
+            <label>
+              Engine
+              <select id="tts-engine"></select>
+              <small class="engine-detail" id="tts-engine-detail"></small>
+            </label>
+            <label id="tts-voice-wrap" class="hidden">
+              Voice (VieNeu)
+              <select id="tts-voice"></select>
+            </label>
+          </div>
+          <label>
+            Text
+            <textarea id="tts-text" rows="4" placeholder="Type text for TTS..."></textarea>
+          </label>
+          <div class="actions">
+            <button id="tts-submit">Synthesize</button>
+          </div>
+          <audio id="tts-audio" class="player hidden" controls></audio>
+          <p id="tts-meta" class="meta"></p>
+          <pre id="tts-result" class="output"></pre>
+        </section>
+
+        <section class="card">
+          <h2>TTS Stream <span class="tag">SSE</span></h2>
+          <p class="hint">Text is split into sentences; each chunk is synthesized and played back in order as it arrives.</p>
+          <div class="row">
+            <label>
+              Engine
+              <select id="tts-stream-engine"></select>
+              <small class="engine-detail" id="tts-stream-engine-detail"></small>
+            </label>
+          </div>
+          <label>
+            Stream text
+            <textarea id="tts-stream-text" rows="4" placeholder="Type longer text to stream chunk events..."></textarea>
+          </label>
+          <div class="actions">
+            <button id="tts-stream-start">Start Stream Job</button>
+            <button id="tts-stream-stop" class="ghost">Stop Listening</button>
+          </div>
+          <p id="tts-job" class="meta"></p>
+          <audio id="tts-stream-audio" class="player hidden" controls></audio>
+          <ol id="tts-stream-chunks" class="chunk-list"></ol>
+          <pre id="tts-stream-events" class="output small"></pre>
+        </section>
+      </div>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
