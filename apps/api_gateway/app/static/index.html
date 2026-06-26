@@ -74,6 +74,19 @@
           <div id="tts-engines-status" class="model-list"></div>
           <p class="hint">Ready engines appear in the Text → Speech tab. Install the package shown to enable the rest.</p>
 
+          <h3 class="sub">Conversation LLM (Ollama)</h3>
+          <p class="hint" id="llm-hint"></p>
+          <div id="llm-models" class="model-list"></div>
+          <div class="row tight">
+            <label>
+              Download by name
+              <input id="llm-name" type="text" placeholder="gemma2:9b" />
+            </label>
+            <div class="actions end">
+              <button id="llm-download">Download</button>
+            </div>
+          </div>
+
           <p id="model-msg" class="meta"></p>
         </section>
       </div>

@@ -1,0 +1,131 @@
+"""Conversation LLM (Ollama) model management.
+
+Talks to a local Ollama daemon's native API (derived from
+CONVERSATION_LLM_BASE_URL by stripping the trailing ``/v1``):
+- list installed models      GET  /api/tags
+- pull (download) a model     POST /api/pull   (streams progress)
+- delete a model              DELETE /api/delete
+Active selection is a runtime override on the conversation responder.
+"""
+
+import logging
+import re
+
+import httpx
+
+from app.core.errors import AppError
+from app.core.settings import settings
+from app.services.conversation.responder import get_active_llm_model, set_active_llm_model
+
+logger = logging.getLogger(__name__)
+
+_MODEL_RE = re.compile(r"^[A-Za-z0-9._:\-/]+$")
+
+LLM_SUGGESTIONS = [
+    {"model": "gemma2:2b", "label": "Gemma 2 2B (~1.6 GB, fast)"},
+    {"model": "gemma2:9b", "label": "Gemma 2 9B (~5.4 GB, balanced)"},
+    {"model": "gemma2:27b", "label": "Gemma 2 27B (~16 GB, best quality)"},
+]
+
+
+def _ollama_base() -> str:
+    base = settings.conversation_llm_base_url.rstrip("/")
+    return base[:-3].rstrip("/") if base.endswith("/v1") else base
+
+
+class LlmManager:
+    def __init__(self) -> None:
+        self._jobs: dict[str, dict] = {}
+
+    def validate(self, model: str) -> None:
+        if not _MODEL_RE.match(model):
+            raise AppError(f"Invalid model name: {model!r}")
+
+    def available(self) -> bool:
+        base = _ollama_base()
+        if not base:
+            return False
+        try:
+            return httpx.get(f"{base}/api/version", timeout=2.0).status_code == 200
+        except httpx.HTTPError:
+            return False
+
+    def _installed(self) -> list[dict]:
+        base = _ollama_base()
+        try:
+            resp = httpx.get(f"{base}/api/tags", timeout=3.0)
+            resp.raise_for_status()
+            models = resp.json().get("models", [])
+        except httpx.HTTPError:
+            return []
+        return [{"model": m.get("name", ""), "size_bytes": m.get("size", 0)} for m in models]
+
+    def snapshot(self) -> dict:
+        available = self.available()
+        installed = self._installed() if available else []
+        names = {m["model"] for m in installed}
+        active = get_active_llm_model()
+        return {
+            "available": available,
+            "base_url": settings.conversation_llm_base_url,
+            "active": active,
+            "installed": [{**m, "active": m["model"] == active} for m in installed],
+            "suggestions": [
+                {**s, "installed": s["model"] in names, "active": s["model"] == active}
+                for s in LLM_SUGGESTIONS
+            ],
+            "jobs": self._jobs,
+        }
+
+    async def download(self, model: str) -> None:
+        self.validate(model)
+        if self._jobs.get(model, {}).get("state") == "downloading":
+            return
+        self._jobs[model] = {"state": "downloading", "progress": 0.0, "status": "starting", "error": None}
+        base = _ollama_base()
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream("POST", f"{base}/api/pull", json={"name": model}) as resp:
+                    if resp.status_code != 200:
+                        raise AppError(f"Ollama pull failed (HTTP {resp.status_code})")
+                    async for line in resp.aiter_lines():
+                        if not line.strip():
+                            continue
+                        self._update_job(model, line)
+            self._jobs[model] = {"state": "installed", "progress": 1.0, "status": "success", "error": None}
+        except Exception as exc:  # noqa: BLE001 - report to UI
+            self._jobs[model] = {"state": "error", "progress": 0.0, "status": "error", "error": str(exc)}
+
+    def _update_job(self, model: str, line: str) -> None:
+        import json
+
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            return
+        job = self._jobs.get(model)
+        if not job:
+            return
+        job["status"] = data.get("status", job["status"])
+        total, completed = data.get("total"), data.get("completed")
+        if total:
+            job["progress"] = round(completed / total, 4) if completed else 0.0
+
+    def select(self, model: str) -> None:
+        self.validate(model)
+        set_active_llm_model(model)
+
+    async def delete(self, model: str) -> None:
+        self.validate(model)
+        base = _ollama_base()
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.request("DELETE", f"{base}/api/delete", json={"name": model})
+            if resp.status_code not in (200, 404):
+                raise AppError(f"Ollama delete failed (HTTP {resp.status_code})")
+        except httpx.HTTPError as exc:
+            raise AppError(f"Ollama delete failed: {exc}") from exc
+        self._jobs.pop(model, None)
+
+
+llm_manager = LlmManager()

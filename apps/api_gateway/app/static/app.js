@@ -215,13 +215,28 @@ async function loadModels() {
     const vieneu = body.data.vieneu;
     el("vieneu-models").innerHTML = vieneu.modes.map(renderVieneuRow).join("");
 
+    // ---- Conversation LLM (Ollama) ----
+    const llm = body.data.llm;
+    if (el("llm-hint")) {
+      el("llm-hint").textContent = llm.available
+        ? `Ollama at ${llm.base_url} — active: ${llm.active}`
+        : "Ollama not reachable. Install & run Ollama, then set CONVERSATION_LLM_BASE_URL=http://localhost:11434/v1.";
+    }
+    const llmNames = new Set(llm.suggestions.map((s) => s.model));
+    const llmRows = llm.suggestions.map((s) => renderLlmRow(s, llm.jobs));
+    llm.installed
+      .filter((m) => !llmNames.has(m.model))
+      .forEach((m) => llmRows.push(renderLlmRow({ ...m, installed: true }, llm.jobs)));
+    el("llm-models").innerHTML = llmRows.join("");
+
     bindModelButtons();
 
     const busy =
       Object.values(jobs).some((j) => j.state === "downloading") ||
       w.models.some((m) => m.job && m.job.state === "downloading") ||
       omni.models.some((m) => m.job && m.job.state === "downloading") ||
-      vieneu.modes.some((m) => m.job && m.job.state === "downloading");
+      vieneu.modes.some((m) => m.job && m.job.state === "downloading") ||
+      Object.values(llm.jobs || {}).some((j) => j.state === "downloading");
     if (busy) {
       clearTimeout(modelPollTimer);
       modelPollTimer = setTimeout(loadModels, 1000);
@@ -304,6 +319,7 @@ const MODEL_ENGINES = {
   whisper: { keyName: "size", deleteVerb: "DELETE", refresh: () => loadSttEngines() },
   omnivoice: { keyName: "id", deleteVerb: "POST", refresh: () => loadTtsEngines() },
   vieneu: { keyName: "mode", deleteVerb: "POST", refresh: () => loadTtsEngines() },
+  llm: { keyName: "model", deleteVerb: "POST", refresh: () => {} },
 };
 
 const MODEL_ATTRS = [
@@ -311,6 +327,7 @@ const MODEL_ATTRS = [
   ["data-w-download", "whisper", "download"], ["data-w-delete", "whisper", "delete"], ["data-w-select", "whisper", "select"],
   ["data-o-download", "omnivoice", "download"], ["data-o-delete", "omnivoice", "delete"], ["data-o-select", "omnivoice", "select"],
   ["data-vn-download", "vieneu", "download"], ["data-vn-delete", "vieneu", "delete"], ["data-vn-select", "vieneu", "select"],
+  ["data-llm-download", "llm", "download"], ["data-llm-delete", "llm", "delete"], ["data-llm-select", "llm", "select"],
 ];
 
 function bindModelButtons() {
@@ -364,6 +381,22 @@ function bindDownloadByName(btnId, inputId, engine) {
 }
 bindDownloadByName("omni-download", "omni-name", "omnivoice");
 bindDownloadByName("model-download", "model-name", "vosk");
+bindDownloadByName("llm-download", "llm-name", "llm");
+
+function renderLlmRow(m, jobs) {
+  const job = jobs[m.model];
+  let action;
+  if (job && job.state === "downloading") {
+    const pct = Math.round((job.progress || 0) * 100);
+    action = `<div class="progress"><div class="bar" style="width:${pct}%"></div></div><span class="pct">${pct}%</span>`;
+  } else if (m.installed) {
+    action = `${useOrActive(m.active, "llm-select", m.model)}<button class="mini danger" data-llm-delete="${m.model}">Delete</button>`;
+  } else {
+    action = dlBtn("llm-download", m.model, job);
+  }
+  const size = m.size_bytes ? fmtBytes(m.size_bytes) : "";
+  return modelRow({ title: m.label || m.model, code: m.model, size, err: jobErr(job), action });
+}
 el("status-refresh").addEventListener("click", () => {
   loadSystemStatus();
   loadModels();

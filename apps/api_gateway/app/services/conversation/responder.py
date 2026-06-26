@@ -17,6 +17,18 @@ from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
 
+# Runtime-selected conversation LLM model; falls back to settings. Reset on restart.
+_active_model: str | None = None
+
+
+def get_active_llm_model() -> str:
+    return _active_model or settings.conversation_llm_model
+
+
+def set_active_llm_model(model: str) -> None:
+    global _active_model
+    _active_model = model
+
 
 class Responder(ABC):
     name: str
@@ -75,7 +87,7 @@ def build_responder() -> Responder:
         return OpenAICompatResponder(
             base_url=settings.conversation_llm_base_url,
             api_key=settings.conversation_llm_api_key,
-            model=settings.conversation_llm_model,
+            model=get_active_llm_model(),
             system_prompt=settings.conversation_system_prompt,
             timeout=settings.conversation_llm_timeout_seconds,
         )

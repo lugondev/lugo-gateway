@@ -7,6 +7,7 @@ from app.core.settings import settings
 from app.services.artifacts import artifact_store
 from app.services.models import model_manager
 from app.services.stt.service import stt_service
+from app.services.llm_models import llm_manager
 from app.services.tts.service import tts_service
 from app.services.tts_models import tts_model_manager
 from app.services.vad import available_backends
@@ -29,6 +30,10 @@ class OmniModelRequest(BaseModel):
 
 class VieneuModeRequest(BaseModel):
     mode: str
+
+
+class LlmModelRequest(BaseModel):
+    model: str
 
 
 def _artifacts_stats() -> dict:
@@ -86,6 +91,7 @@ async def list_models() -> dict:
             "whisper": whisper_manager.snapshot(),
             "omnivoice": tts["omnivoice"],
             "vieneu": tts["vieneu"],
+            "llm": llm_manager.snapshot(),
         },
     }
 
@@ -168,3 +174,23 @@ async def select_vieneu(payload: VieneuModeRequest) -> dict:
 async def delete_vieneu(payload: VieneuModeRequest) -> dict:
     tts_model_manager.delete_vieneu(payload.mode)
     return {"success": True, "data": {"mode": payload.mode, "state": "deleted"}}
+
+
+# ---- Conversation LLM (Ollama) ----
+@router.post("/models/llm/download")
+async def download_llm(payload: LlmModelRequest, background: BackgroundTasks) -> dict:
+    llm_manager.validate(payload.model)
+    background.add_task(llm_manager.download, payload.model)
+    return {"success": True, "data": {"model": payload.model, "state": "queued"}}
+
+
+@router.post("/models/llm/select")
+async def select_llm(payload: LlmModelRequest) -> dict:
+    llm_manager.select(payload.model)
+    return {"success": True, "data": {"active": payload.model}}
+
+
+@router.post("/models/llm/delete")
+async def delete_llm(payload: LlmModelRequest) -> dict:
+    await llm_manager.delete(payload.model)
+    return {"success": True, "data": {"model": payload.model, "state": "deleted"}}
