@@ -14,3 +14,9 @@ class ProviderError(AppError):
     """Raised when a provider fails to process a request (config/runtime)."""
 
     status_code = 502
+
+
+class LLMUnavailableError(AppError):
+    """Raised when a configured conversation LLM is unreachable/offline."""
+
+    status_code = 503

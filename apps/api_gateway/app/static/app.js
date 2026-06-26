@@ -20,6 +20,46 @@ function wsUrl(path) {
   return `${scheme}://${location.host}${path}`;
 }
 
+// ---- persisted UI preferences (localStorage) ----
+const PREFS_KEY = "stt-ui-prefs";
+function loadPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+function savePref(id, value) {
+  const p = loadPrefs();
+  p[id] = value;
+  localStorage.setItem(PREFS_KEY, JSON.stringify(p));
+}
+function controlValue(e) {
+  return e.type === "checkbox" ? e.checked : e.value;
+}
+// Restore a control's saved value (selects: only if the option exists), then
+// persist future changes. Safe to call after options are populated.
+function restoreAndBind(id) {
+  const e = el(id);
+  if (!e) return;
+  const prefs = loadPrefs();
+  if (id in prefs) {
+    const v = prefs[id];
+    if (e.tagName === "SELECT") {
+      if ([...e.options].some((o) => o.value === v)) e.value = v;
+    } else if (e.type === "checkbox") {
+      e.checked = !!v;
+    } else {
+      e.value = v;
+    }
+  }
+  if (!e.dataset.prefBound) {
+    e.dataset.prefBound = "1";
+    const evt = e.tagName === "SELECT" || e.type === "checkbox" ? "change" : "input";
+    e.addEventListener(evt, () => savePref(id, controlValue(e)));
+  }
+}
+
 // ============================================================ audio capture
 const STREAM_SAMPLE_RATE = 16000;
 
@@ -146,7 +186,7 @@ async function loadSystemStatus() {
     tile("TTS mode", d.tts.mock_enabled ? "mock" : "live", !d.tts.mock_enabled);
     tile("OmniVoice", d.tts.omnivoice_present ? "found" : "missing", d.tts.omnivoice_present);
     tile("Vosk model", d.vosk.active_model_present ? "ready" : "missing", d.vosk.active_model_present);
-    tile("Whisper cache", d.whisper_local.cached ? `${d.whisper_local.model} ✓` : `${d.whisper_local.model} (on demand)`, d.whisper_local.cached);
+    tile("Whisper cache", d.whisper_local.cached ? `${d.whisper_local.active_model} ✓` : `${d.whisper_local.active_model} (on demand)`, d.whisper_local.cached);
     const remote = d.stt_engines.filter((e) => e.mode === "remote");
     const remoteOk = remote.filter((e) => e.configured).length;
     tile("Remote STT", `${remoteOk}/${remote.length} configured`, remoteOk > 0);
@@ -177,6 +217,8 @@ async function loadSystemStatus() {
         const want = d.stt_preprocess.vad_backend;
         sel.value = want && avail[want] ? want : "energy";
       }
+      // Saved user prefs override server defaults.
+      ["stt-denoise", "stt-stream-denoise", "stt-vad", "stt-stream-vad", "stt-vad-backend"].forEach(restoreAndBind);
     }
   } catch (error) {
     host.innerHTML = `<div class="stat warn"><span>status</span><strong>error</strong></div>`;
@@ -219,8 +261,13 @@ async function loadModels() {
     const llm = body.data.llm;
     if (el("llm-hint")) {
       el("llm-hint").textContent = llm.available
-        ? `Ollama at ${llm.base_url} — active: ${llm.active}`
+        ? `Ollama at ${llm.base_url} — active: ${llm.active} ${llm.running ? "(running)" : "(idle)"}`
         : "Ollama not reachable. Install & run Ollama, then set CONVERSATION_LLM_BASE_URL=http://localhost:11434/v1.";
+    }
+    const llmBtn = el("llm-start");
+    if (llmBtn) {
+      llmBtn.dataset.mode = llm.available ? "stop" : "start";
+      llmBtn.textContent = llm.available ? "Stop service" : "Start service";
     }
     const llmNames = new Set(llm.suggestions.map((s) => s.model));
     const llmRows = llm.suggestions.map((s) => renderLlmRow(s, llm.jobs));
@@ -383,6 +430,28 @@ bindDownloadByName("omni-download", "omni-name", "omnivoice");
 bindDownloadByName("model-download", "model-name", "vosk");
 bindDownloadByName("llm-download", "llm-name", "llm");
 
+el("llm-start").addEventListener("click", async () => {
+  const hint = el("llm-hint");
+  const stopping = el("llm-start").dataset.mode === "stop";
+  hint.textContent = stopping ? "Stopping Ollama service…" : "Starting Ollama service…";
+  hint.classList.remove("error");
+  try {
+    const resp = await fetch(`/v1/models/llm/${stopping ? "stop" : "start"}`, { method: "POST" });
+    const body = await resp.json();
+    if (!resp.ok) {
+      print(hint, body.error || body, true);
+      return;
+    }
+    const d = body.data;
+    hint.textContent = stopping
+      ? "Ollama service stopped — conversation/chat offline until you Start"
+      : `Ollama ready — active: ${d.active}${d.started ? " (started)" : ""}${d.warmed ? " · warmed" : ""}`;
+    loadModels();
+  } catch (error) {
+    print(hint, String(error), true);
+  }
+});
+
 function renderLlmRow(m, jobs) {
   const job = jobs[m.model];
   let action;
@@ -395,7 +464,8 @@ function renderLlmRow(m, jobs) {
     action = dlBtn("llm-download", m.model, job);
   }
   const size = m.size_bytes ? fmtBytes(m.size_bytes) : "";
-  return modelRow({ title: m.label || m.model, code: m.model, size, err: jobErr(job), action });
+  const badges = m.running ? `<span class="badge">running</span>` : "";
+  return modelRow({ title: m.label || m.model, code: m.model, badges, size, err: jobErr(job), action });
 }
 el("status-refresh").addEventListener("click", () => {
   loadSystemStatus();
@@ -443,6 +513,7 @@ async function loadSttEngines() {
         select.appendChild(option);
       });
       if (items.some((e) => e.engine === prev)) select.value = prev;
+      restoreAndBind(selId);
       updateEngineDetail(selId, detId);
       if (!select.dataset.bound) {
         select.addEventListener("change", () => updateEngineDetail(selId, detId));
@@ -699,6 +770,7 @@ async function loadTtsEngines() {
           select.appendChild(opt);
         });
         if (def) select.value = def;
+        restoreAndBind(selId);
         updateTtsEngine(selId, detId);
         if (!select.dataset.bound) {
           select.addEventListener("change", () => updateTtsEngine(selId, detId));
@@ -750,6 +822,7 @@ async function loadTtsVoices() {
       sel.appendChild(opt);
     });
     sel.dataset.loaded = "1";
+    restoreAndBind("tts-voice");
   } catch (error) {
     /* voices optional */
   }
@@ -961,6 +1034,8 @@ async function loadConversationEngines() {
     };
     fill("conv-stt-engine", stt.data.filter((e) => e.available), (e) => `${e.engine}`);
     fill("conv-tts-engine", tts.data.filter((e) => e.available), (e) => `${e.engine}`);
+    restoreAndBind("conv-stt-engine");
+    restoreAndBind("conv-tts-engine");
     el("conv-tts-engine").addEventListener("change", convVoiceToggle);
     convVoiceToggle();
   } catch (error) {
@@ -984,6 +1059,7 @@ function convVoiceToggle() {
           sel.appendChild(opt);
         });
         sel.dataset.loaded = "1";
+        restoreAndBind("conv-voice");
       })
       .catch(() => {});
   }
@@ -1103,6 +1179,67 @@ el("conv-reset").addEventListener("click", () => {
   if (conv.ws && conv.ws.readyState === WebSocket.OPEN) conv.ws.send(JSON.stringify({ type: "reset" }));
 });
 
+// ============================================================ LLM text chat
+const chat = { history: [], busy: false };
+
+function chatBubble(role, text) {
+  const div = document.createElement("div");
+  div.className = `bubble ${role}`;
+  div.textContent = text;
+  el("chat-dialogue").appendChild(div);
+  el("chat-dialogue").scrollTop = el("chat-dialogue").scrollHeight;
+  return div;
+}
+
+async function sendChat() {
+  const input = el("chat-input");
+  const text = input.value.trim();
+  if (!text || chat.busy) return;
+  chat.busy = true;
+  el("chat-send").disabled = true;
+  input.value = "";
+
+  chat.history.push({ role: "user", content: text });
+  chatBubble("user", text);
+  const pending = chatBubble("assistant", "…");
+
+  try {
+    const resp = await fetch("/v1/conversation/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: chat.history }),
+    });
+    const body = await resp.json();
+    if (!resp.ok) {
+      pending.textContent = `error: ${body.error || JSON.stringify(body)}`;
+      pending.classList.add("error");
+    } else {
+      pending.textContent = body.data.reply;
+      chat.history.push({ role: "assistant", content: body.data.reply });
+      el("chat-hint").textContent = `Responder: ${body.data.responder}${body.data.responder === "llm" ? " · " + body.data.model : " (no LLM configured — set CONVERSATION_LLM_BASE_URL)"}`;
+    }
+  } catch (error) {
+    pending.textContent = `error: ${error}`;
+    pending.classList.add("error");
+  } finally {
+    chat.busy = false;
+    el("chat-send").disabled = false;
+    input.focus();
+  }
+}
+
+el("chat-send").addEventListener("click", sendChat);
+el("chat-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendChat();
+  }
+});
+el("chat-reset").addEventListener("click", () => {
+  chat.history = [];
+  el("chat-dialogue").innerHTML = "";
+});
+
 // ============================================================ tabs
 function initTabs() {
   const buttons = document.querySelectorAll(".tab-btn");
@@ -1122,6 +1259,8 @@ initTabs();
 initSttMode();
 setStreamUI("idle");
 setConvUI("idle");
+// Persist + restore free-text controls (selects/checkboxes are bound after they populate).
+["stt-language", "stt-stream-language"].forEach(restoreAndBind);
 loadSttEngines();
 loadTtsEngines();
 loadConversationEngines();

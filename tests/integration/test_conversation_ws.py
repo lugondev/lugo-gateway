@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.settings import settings
 from app.main import app
 from app.schemas.stt import STTResult
 from app.services.stt.base import STTProvider
@@ -18,7 +19,11 @@ class _StubSTT(STTProvider):
 
 
 @pytest.fixture(autouse=True)
-def _register_stub():
+def _register_stub(monkeypatch):
+    # Keep the test hermetic regardless of .env: mock TTS + built-in echo responder
+    # (no external Ollama / real model calls).
+    monkeypatch.setattr(settings, "enable_mock_engines", True)
+    monkeypatch.setattr(settings, "conversation_llm_base_url", "")
     stt_service.providers["stub-conv"] = _StubSTT()
     yield
     stt_service.providers.pop("stub-conv", None)

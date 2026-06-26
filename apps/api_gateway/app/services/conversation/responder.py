@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 
 import httpx
 
+from app.core.errors import LLMUnavailableError
 from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -77,9 +78,12 @@ class OpenAICompatResponder(Responder):
                 resp.raise_for_status()
                 data = resp.json()
             return str(data["choices"][0]["message"]["content"]).strip()
-        except Exception as exc:  # noqa: BLE001 - never break the turn loop
-            logger.warning("LLM responder failed (%s); falling back to echo", exc)
-            return await EchoResponder().reply(history)
+        except Exception as exc:  # noqa: BLE001 - surface a clear offline error
+            logger.warning("LLM responder failed: %s", exc)
+            raise LLMUnavailableError(
+                f"LLM offline ({self.model}) — start the Ollama service (System tab) "
+                "or check CONVERSATION_LLM_BASE_URL."
+            ) from exc
 
 
 def build_responder() -> Responder:

@@ -184,6 +184,16 @@ async def download_llm(payload: LlmModelRequest, background: BackgroundTasks) ->
     return {"success": True, "data": {"model": payload.model, "state": "queued"}}
 
 
+@router.post("/models/llm/start")
+async def start_llm() -> dict:
+    return {"success": True, "data": await llm_manager.start_service()}
+
+
+@router.post("/models/llm/stop")
+async def stop_llm() -> dict:
+    return {"success": True, "data": await llm_manager.stop()}
+
+
 @router.post("/models/llm/select")
 async def select_llm(payload: LlmModelRequest) -> dict:
     llm_manager.select(payload.model)

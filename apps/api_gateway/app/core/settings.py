@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     conversation_llm_base_url: str = ""
     conversation_llm_api_key: str = ""
     conversation_llm_model: str = "gpt-3.5-turbo"
+    ollama_bin: str = ""  # path to the ollama binary; empty = auto-detect
     conversation_llm_timeout_seconds: float = 60.0
     conversation_system_prompt: str = (
         "You are a helpful, concise voice assistant. Reply in the user's language, "

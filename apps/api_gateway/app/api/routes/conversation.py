@@ -3,19 +3,41 @@ import logging
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
 
 from app.core.audio import pcm16_to_wav_bytes
 from app.core.errors import AppError
 from app.core.settings import settings
 from app.schemas.tts import TTSRequest
 from app.services.conversation.endpointer import VadEndpointer
-from app.services.conversation.responder import build_responder
+from app.services.conversation.responder import build_responder, get_active_llm_model
 from app.services.stt.service import stt_service
 from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/conversation", tags=["conversation"])
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage] = Field(default_factory=list)
+
+
+@router.post("/chat")
+async def chat(payload: ChatRequest) -> dict:
+    """Text chat with the configured conversation responder (LLM or echo)."""
+    responder = build_responder()
+    history = [{"role": m.role, "content": m.content} for m in payload.messages]
+    reply = await responder.reply(history)
+    return {
+        "success": True,
+        "data": {"reply": reply, "responder": responder.name, "model": get_active_llm_model()},
+    }
 
 
 @router.websocket("/stream")

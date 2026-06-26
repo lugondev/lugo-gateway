@@ -21,24 +21,38 @@
       </header>
 
       <nav class="tabs" id="tabs">
-        <button class="tab-btn active" data-tab="system">System &amp; Models</button>
+        <button class="tab-btn active" data-tab="system">System</button>
+        <button class="tab-btn" data-tab="models">Models</button>
         <button class="tab-btn" data-tab="conversation">Conversation</button>
+        <button class="tab-btn" data-tab="chat">LLM Chat</button>
         <button class="tab-btn" data-tab="stt">Speech → Text</button>
         <button class="tab-btn" data-tab="tts">Text → Speech</button>
       </nav>
 
-      <!-- ============================== SYSTEM ============================== -->
+      <!-- ============================== SYSTEM (service/config) ============================== -->
       <div class="tab-panel active" id="tab-system">
         <section class="card">
           <div class="card-head">
-            <h2>System status</h2>
+            <h2>System status &amp; config</h2>
             <button id="status-refresh" class="ghost mini">Refresh</button>
           </div>
           <div id="system-status" class="status-grid"></div>
+          <p class="hint">Engines, devices and preprocessing come from environment config (see <code>.env</code> / docs/runbook.md). Manage downloadable models in the <strong>Models</strong> tab.</p>
 
-          <h3 class="sub">Vosk models</h3>
+          <div class="card-head">
+            <h3 class="sub" style="margin:18px 0 0">Conversation LLM service (Ollama)</h3>
+            <button id="llm-start" class="ghost mini">Start service</button>
+          </div>
+          <p class="hint" id="llm-hint"></p>
+        </section>
+      </div>
+
+      <!-- ============================== MODELS ============================== -->
+      <div class="tab-panel" id="tab-models">
+        <section class="card">
+          <h2>STT models</h2>
+          <h3 class="sub">Vosk</h3>
           <div id="model-suggestions" class="model-list"></div>
-
           <div class="row tight">
             <label>
               Download by name
@@ -50,11 +64,14 @@
           </div>
           <p class="hint">Browse the full catalog at alphacephei.com/vosk/models — paste any model name.</p>
 
-          <h3 class="sub">Whisper models</h3>
+          <h3 class="sub">Whisper</h3>
           <div id="whisper-models" class="model-list"></div>
           <p class="hint">Downloading warms the faster-whisper weights (Hugging Face cache). "Use" switches the active model for local Whisper.</p>
+        </section>
 
-          <h3 class="sub">OmniVoice models (TTS)</h3>
+        <section class="card">
+          <h2>TTS models</h2>
+          <h3 class="sub">OmniVoice</h3>
           <div id="omnivoice-models" class="model-list"></div>
           <div class="row tight">
             <label>
@@ -66,16 +83,17 @@
             </div>
           </div>
 
-          <h3 class="sub">VieNeu models (TTS)</h3>
+          <h3 class="sub">VieNeu</h3>
           <div id="vieneu-models" class="model-list"></div>
           <p class="hint">v3turbo runs on CPU (torch-free). Other modes need <code>pip install vieneu[gpu]</code>.</p>
 
-          <h3 class="sub">TTS engines (ported from OmniVoice-Studio)</h3>
+          <h3 class="sub">Engines (ported from OmniVoice-Studio)</h3>
           <div id="tts-engines-status" class="model-list"></div>
           <p class="hint">Ready engines appear in the Text → Speech tab. Install the package shown to enable the rest.</p>
+        </section>
 
-          <h3 class="sub">Conversation LLM (Ollama)</h3>
-          <p class="hint" id="llm-hint"></p>
+        <section class="card">
+          <h2>Conversation LLM (Ollama)</h2>
           <div id="llm-models" class="model-list"></div>
           <div class="row tight">
             <label>
@@ -86,7 +104,6 @@
               <button id="llm-download">Download</button>
             </div>
           </div>
-
           <p id="model-msg" class="meta"></p>
         </section>
       </div>
@@ -119,6 +136,27 @@
           <audio id="conv-audio" class="player hidden" controls></audio>
           <div id="conv-dialogue" class="dialogue"></div>
           <pre id="conv-log" class="output small"></pre>
+        </section>
+      </div>
+
+      <!-- ============================== LLM CHAT ============================== -->
+      <div class="tab-panel" id="tab-chat">
+        <section class="card">
+          <div class="card-head">
+            <h2>LLM Chat</h2>
+            <button id="chat-reset" class="ghost mini">Reset</button>
+          </div>
+          <p class="hint" id="chat-hint">Text chat with the enabled conversation model.</p>
+          <div id="chat-dialogue" class="dialogue"></div>
+          <div class="row tight">
+            <label>
+              Message
+              <textarea id="chat-input" rows="2" placeholder="Type a message and press Enter (Shift+Enter for newline)…"></textarea>
+            </label>
+            <div class="actions end">
+              <button id="chat-send">Send</button>
+            </div>
+          </div>
         </section>
       </div>
 

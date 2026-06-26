@@ -8,8 +8,12 @@ CONVERSATION_LLM_BASE_URL by stripping the trailing ``/v1``):
 Active selection is a runtime override on the conversation responder.
 """
 
+import asyncio
 import logging
+import os
 import re
+import shutil
+import subprocess
 
 import httpx
 
@@ -18,6 +22,14 @@ from app.core.settings import settings
 from app.services.conversation.responder import get_active_llm_model, set_active_llm_model
 
 logger = logging.getLogger(__name__)
+
+
+def _ollama_bin() -> str | None:
+    candidates = [settings.ollama_bin, shutil.which("ollama"), "/opt/homebrew/opt/ollama/bin/ollama"]
+    for c in candidates:
+        if c and (shutil.which(c) or os.path.isfile(c)):
+            return c
+    return None
 
 _MODEL_RE = re.compile(r"^[A-Za-z0-9._:\-/]+$")
 
@@ -60,18 +72,38 @@ class LlmManager:
             return []
         return [{"model": m.get("name", ""), "size_bytes": m.get("size", 0)} for m in models]
 
+    def _running_models(self) -> set[str]:
+        """Models currently loaded in memory (Ollama /api/ps)."""
+        base = _ollama_base()
+        try:
+            resp = httpx.get(f"{base}/api/ps", timeout=2.0)
+            resp.raise_for_status()
+            return {m.get("name", "") for m in resp.json().get("models", [])}
+        except httpx.HTTPError:
+            return set()
+
     def snapshot(self) -> dict:
         available = self.available()
         installed = self._installed() if available else []
+        running = self._running_models() if available else set()
         names = {m["model"] for m in installed}
         active = get_active_llm_model()
         return {
             "available": available,
             "base_url": settings.conversation_llm_base_url,
             "active": active,
-            "installed": [{**m, "active": m["model"] == active} for m in installed],
+            "running": active in running,
+            "installed": [
+                {**m, "active": m["model"] == active, "running": m["model"] in running}
+                for m in installed
+            ],
             "suggestions": [
-                {**s, "installed": s["model"] in names, "active": s["model"] == active}
+                {
+                    **s,
+                    "installed": s["model"] in names,
+                    "active": s["model"] == active,
+                    "running": s["model"] in running,
+                }
                 for s in LLM_SUGGESTIONS
             ],
             "jobs": self._jobs,
@@ -114,6 +146,81 @@ class LlmManager:
     def select(self, model: str) -> None:
         self.validate(model)
         set_active_llm_model(model)
+
+    async def _is_up(self) -> bool:
+        base = _ollama_base()
+        if not base:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                return (await client.get(f"{base}/api/version")).status_code == 200
+        except httpx.HTTPError:
+            return False
+
+    async def _warm(self, model: str) -> bool:
+        """Load the model into memory so the first conversation reply isn't slow."""
+        base = _ollama_base()
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                resp = await client.post(
+                    f"{base}/api/generate",
+                    json={"model": model, "prompt": "hi", "stream": False, "options": {"num_predict": 1}},
+                )
+                return resp.status_code == 200
+        except httpx.HTTPError as exc:
+            logger.warning("Ollama warm failed: %s", exc)
+            return False
+
+    async def start_service(self, warm: bool = True) -> dict:
+        """Ensure the Ollama (OpenAI-compatible) service is running; optionally warm
+        the active model. Spawns `ollama serve` detached when not reachable."""
+        if not settings.conversation_llm_base_url:
+            raise AppError("CONVERSATION_LLM_BASE_URL is not set")
+
+        started = False
+        if not await self._is_up():
+            binary = _ollama_bin()
+            if not binary:
+                raise AppError("ollama binary not found — install Ollama (brew install ollama)")
+            subprocess.Popen(  # noqa: S603 - launching the local ollama daemon
+                [binary, "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            started = True
+            for _ in range(40):
+                await asyncio.sleep(0.5)
+                if await self._is_up():
+                    break
+            if not await self._is_up():
+                raise AppError("Ollama did not become ready in time")
+
+        active = get_active_llm_model()
+        warmed = await self._warm(active) if warm else False
+        return {
+            "available": True,
+            "started": started,
+            "warmed": warmed,
+            "active": active,
+            "base_url": settings.conversation_llm_base_url,
+        }
+
+    async def stop(self) -> dict:
+        """Stop the Ollama daemon so the LLM is truly offline until restarted.
+
+        (Unlike unloading a model, this terminates `ollama serve`, so chat/
+        conversation requests fail until Start brings it back.)
+        """
+        try:
+            subprocess.run(["pkill", "-f", "ollama serve"], capture_output=True, check=False)
+        except OSError as exc:
+            raise AppError(f"Stop failed: {exc}") from exc
+        for _ in range(20):
+            await asyncio.sleep(0.3)
+            if not await self._is_up():
+                break
+        return {"stopped": True, "available": await self._is_up()}
 
     async def delete(self, model: str) -> None:
         self.validate(model)
