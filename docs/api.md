@@ -104,6 +104,40 @@ Events are also mirrored to the SSE channel `GET /v1/events/sessions/{session_id
 
 ---
 
+## Conversation (voice turn-taking)
+
+### `WS /v1/conversation/stream`
+Full-duplex voice loop: stream mic audio, the server endpoints each turn with VAD,
+transcribes it, generates a reply, and streams TTS audio back.
+
+```
+ws://localhost:8000/v1/conversation/stream?stt_engine=vosk&tts_engine=vieneu&voice=Ngọc Lan&sample_rate=16000
+```
+
+Client → server: binary PCM16 mono frames; text control `{"type":"reset"}` (clear
+history) / `{"type":"end"}` (finalize + close).
+
+Server → client events (`{"event": ...}`):
+
+| `event` | when | key fields |
+|---------|------|-----------|
+| `session_started` | on connect | `stt_engine`, `tts_engine`, `responder` |
+| `speech_start` | user starts speaking | — |
+| `speech_end` | VAD detects end of turn | `speech_ms` |
+| `processing` | transcribing + generating | `turn` |
+| `user_transcript` | STT result for the turn | `text` |
+| `response_text` | assistant reply text | `text`, `responder` |
+| `audio_chunk` | reply TTS, one per sentence | `chunk_index`, `text`, `audio_url` |
+| `turn_done` | turn complete | `turn` |
+| `error` / `done` / `reset` | — | — |
+
+Turn-taking uses an energy VAD endpointer (`CONVERSATION_*` settings). Replies come
+from a built-in echo responder, or an OpenAI-compatible chat endpoint when
+`CONVERSATION_LLM_BASE_URL` is set. Long replies are sentence-split and synthesized
+chunk-by-chunk so playback starts early.
+
+---
+
 ## TTS — Text to Speech
 
 ### `GET /v1/tts/engines`

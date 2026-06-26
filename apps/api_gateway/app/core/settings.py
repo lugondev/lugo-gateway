@@ -45,6 +45,24 @@ class Settings(BaseSettings):
     pyannote_vad_model: str = "pyannote/voice-activity-detection"
     pyannote_auth_token: str = ""
 
+    # Conversation (voice turn-taking) defaults
+    conversation_silence_ms: int = 700       # trailing silence that ends a turn
+    conversation_min_speech_ms: int = 300    # ignore utterances shorter than this
+    conversation_rms_threshold: float = 0.015  # speech vs silence (float RMS)
+    conversation_max_utterance_ms: int = 30000
+    conversation_stt_engine: str = ""        # empty -> default_stt_engine
+    conversation_tts_engine: str = ""        # empty -> default_tts_engine
+    # Optional OpenAI-compatible chat endpoint (Ollama/LM Studio/vLLM/OpenAI).
+    # Empty base url -> built-in echo responder (no external service).
+    conversation_llm_base_url: str = ""
+    conversation_llm_api_key: str = ""
+    conversation_llm_model: str = "gpt-3.5-turbo"
+    conversation_llm_timeout_seconds: float = 60.0
+    conversation_system_prompt: str = (
+        "You are a helpful, concise voice assistant. Reply in the user's language, "
+        "in 2-4 short sentences suitable for being spoken aloud."
+    )
+
     whisper_service_base_url: str = ""
     whisper_service_api_key: str = ""
     whisper_service_model: str = "whisper-1"

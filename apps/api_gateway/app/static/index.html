@@ -22,6 +22,7 @@
 
       <nav class="tabs" id="tabs">
         <button class="tab-btn active" data-tab="system">System &amp; Models</button>
+        <button class="tab-btn" data-tab="conversation">Conversation</button>
         <button class="tab-btn" data-tab="stt">Speech → Text</button>
         <button class="tab-btn" data-tab="tts">Text → Speech</button>
       </nav>
@@ -74,6 +75,37 @@
           <p class="hint">Ready engines appear in the Text → Speech tab. Install the package shown to enable the rest.</p>
 
           <p id="model-msg" class="meta"></p>
+        </section>
+      </div>
+
+      <!-- ============================== CONVERSATION ============================== -->
+      <div class="tab-panel" id="tab-conversation">
+        <section class="card">
+          <h2>Conversation <span class="tag">voice</span></h2>
+          <p class="hint">Speak naturally — VAD detects when you pause to end your turn, transcribes it, generates a reply, and speaks it back. Configure an OpenAI-compatible LLM (<code>CONVERSATION_LLM_BASE_URL</code>) for real replies; otherwise a built-in echo responds.</p>
+          <div class="row">
+            <label>
+              STT engine
+              <select id="conv-stt-engine"></select>
+            </label>
+            <label>
+              TTS engine
+              <select id="conv-tts-engine"></select>
+            </label>
+          </div>
+          <label id="conv-voice-wrap" class="hidden">
+            Voice (VieNeu)
+            <select id="conv-voice"></select>
+          </label>
+          <div class="actions">
+            <button id="conv-start">Start talking</button>
+            <button id="conv-stop" class="ghost" disabled>Stop</button>
+            <button id="conv-reset" class="ghost">Reset</button>
+            <span id="conv-status" class="status-idle">idle</span>
+          </div>
+          <audio id="conv-audio" class="player hidden" controls></audio>
+          <div id="conv-dialogue" class="dialogue"></div>
+          <pre id="conv-log" class="output small"></pre>
         </section>
       </div>
 

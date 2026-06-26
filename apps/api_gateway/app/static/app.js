@@ -876,6 +876,200 @@ function renderChunkItem(payload) {
   el("tts-stream-chunks").appendChild(li);
 }
 
+// ============================================================ conversation
+const conv = { ws: null, capture: null, queue: [], playing: false, log: [] };
+
+function setConvStatus(text, state) {
+  const node = el("conv-status");
+  node.textContent = text;
+  node.className = state;
+}
+function convLog(line) {
+  conv.log.push(line);
+  if (conv.log.length > 60) conv.log.shift();
+  el("conv-log").textContent = conv.log.join("\n");
+}
+function addBubble(role, text) {
+  const div = document.createElement("div");
+  div.className = `bubble ${role}`;
+  div.textContent = text;
+  el("conv-dialogue").appendChild(div);
+  el("conv-dialogue").scrollTop = el("conv-dialogue").scrollHeight;
+}
+function convPlayNext() {
+  const audio = el("conv-audio");
+  if (conv.playing) return;
+  const next = conv.queue.shift();
+  if (!next) return;
+  conv.playing = true;
+  audio.src = next;
+  audio.classList.remove("hidden");
+  audio.play().catch(() => {
+    conv.playing = false;
+  });
+}
+
+async function loadConversationEngines() {
+  try {
+    const [stt, tts] = await Promise.all([
+      (await fetch("/v1/stt/engines")).json(),
+      (await fetch("/v1/tts/engines")).json(),
+    ]);
+    const fill = (id, items, label) => {
+      const sel = el(id);
+      if (!sel) return;
+      sel.innerHTML = "";
+      items.forEach((e) => {
+        const opt = document.createElement("option");
+        opt.value = e.engine;
+        opt.textContent = label(e);
+        sel.appendChild(opt);
+      });
+    };
+    fill("conv-stt-engine", stt.data.filter((e) => e.available), (e) => `${e.engine}`);
+    fill("conv-tts-engine", tts.data.filter((e) => e.available), (e) => `${e.engine}`);
+    el("conv-tts-engine").addEventListener("change", convVoiceToggle);
+    convVoiceToggle();
+  } catch (error) {
+    convLog(`engines error: ${error}`);
+  }
+}
+
+function convVoiceToggle() {
+  const isVieneu = el("conv-tts-engine").value === "vieneu";
+  el("conv-voice-wrap").classList.toggle("hidden", !isVieneu);
+  if (isVieneu && !el("conv-voice").dataset.loaded) {
+    fetch("/v1/tts/voices?engine=vieneu")
+      .then((r) => r.json())
+      .then((b) => {
+        const sel = el("conv-voice");
+        sel.innerHTML = '<option value="">(auto)</option>';
+        b.data.forEach((v) => {
+          const opt = document.createElement("option");
+          opt.value = v.voice;
+          opt.textContent = v.label;
+          sel.appendChild(opt);
+        });
+        sel.dataset.loaded = "1";
+      })
+      .catch(() => {});
+  }
+}
+
+function setConvUI(state) {
+  el("conv-start").disabled = state !== "idle";
+  el("conv-stop").disabled = state === "idle";
+}
+
+async function startConversation() {
+  setConvUI("starting");
+  conv.queue = [];
+  conv.playing = false;
+  el("conv-dialogue").innerHTML = "";
+  conv.log = [];
+  el("conv-log").textContent = "";
+
+  let params = `stt_engine=${encodeURIComponent(el("conv-stt-engine").value)}`;
+  params += `&tts_engine=${encodeURIComponent(el("conv-tts-engine").value)}&sample_rate=${STREAM_SAMPLE_RATE}`;
+  if (el("conv-voice").value) params += `&voice=${encodeURIComponent(el("conv-voice").value)}`;
+
+  let capture;
+  try {
+    capture = createMicCapture({
+      onframe: (pcm) => {
+        if (conv.ws && conv.ws.readyState === WebSocket.OPEN) conv.ws.send(pcm.buffer);
+      },
+    });
+  } catch (error) {
+    setConvStatus("mic error", "status-error");
+    setConvUI("idle");
+    return;
+  }
+
+  const ws = new WebSocket(wsUrl(`/v1/conversation/stream?${params}`));
+  conv.ws = ws;
+
+  ws.onopen = async () => {
+    try {
+      await capture.start();
+      conv.capture = capture;
+      setConvStatus("● listening", "status-rec");
+      setConvUI("recording");
+    } catch (error) {
+      setConvStatus("mic denied", "status-error");
+      ws.close();
+    }
+  };
+
+  ws.onmessage = (event) => {
+    let d;
+    try {
+      d = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    convLog(`${d.event}: ${d.text ? d.text.slice(0, 60) : JSON.stringify({ ...d, event: undefined })}`);
+    switch (d.event) {
+      case "speech_start":
+        setConvStatus("● you're speaking", "status-rec");
+        break;
+      case "speech_end":
+        setConvStatus("… thinking", "status-idle");
+        break;
+      case "user_transcript":
+        if (d.text) addBubble("user", d.text);
+        break;
+      case "response_text":
+        addBubble("assistant", d.text);
+        break;
+      case "audio_chunk":
+        if (d.audio_url) {
+          conv.queue.push(d.audio_url);
+          convPlayNext();
+        }
+        break;
+      case "turn_done":
+        setConvStatus("● listening", "status-rec");
+        break;
+      case "error":
+        setConvStatus(`error: ${d.message || ""}`, "status-error");
+        break;
+    }
+  };
+
+  ws.onerror = () => setConvStatus("ws error", "status-error");
+  ws.onclose = () => {
+    setConvUI("idle");
+    if (el("conv-status").className !== "status-error") setConvStatus("idle", "status-idle");
+  };
+}
+
+function stopConversation() {
+  if (conv.capture) {
+    conv.capture.stop();
+    conv.capture = null;
+  }
+  if (conv.ws) {
+    if (conv.ws.readyState === WebSocket.OPEN) conv.ws.send(JSON.stringify({ type: "end" }));
+    try {
+      conv.ws.close();
+    } catch {}
+    conv.ws = null;
+  }
+  setConvUI("idle");
+}
+
+el("conv-audio").addEventListener("ended", () => {
+  conv.playing = false;
+  convPlayNext();
+});
+el("conv-start").addEventListener("click", startConversation);
+el("conv-stop").addEventListener("click", stopConversation);
+el("conv-reset").addEventListener("click", () => {
+  el("conv-dialogue").innerHTML = "";
+  if (conv.ws && conv.ws.readyState === WebSocket.OPEN) conv.ws.send(JSON.stringify({ type: "reset" }));
+});
+
 // ============================================================ tabs
 function initTabs() {
   const buttons = document.querySelectorAll(".tab-btn");
@@ -894,7 +1088,9 @@ function initTabs() {
 initTabs();
 initSttMode();
 setStreamUI("idle");
+setConvUI("idle");
 loadSttEngines();
 loadTtsEngines();
+loadConversationEngines();
 loadSystemStatus();
 loadModels();

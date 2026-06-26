@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.routes.conversation import router as conversation_router
 from app.api.routes.events import router as events_router
 from app.api.routes.health import router as health_router
 from app.api.routes.stt import router as stt_router
@@ -39,6 +40,7 @@ app.include_router(health_router)
 app.include_router(stt_router)
 app.include_router(tts_router)
 app.include_router(events_router)
+app.include_router(conversation_router)
 app.include_router(system_router)
 app.include_router(ui_router)
 

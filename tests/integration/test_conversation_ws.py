@@ -1,0 +1,71 @@
+import numpy as np
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import app
+from app.schemas.stt import STTResult
+from app.services.stt.base import STTProvider
+from app.services.stt.service import stt_service
+
+SR = 16000
+
+
+class _StubSTT(STTProvider):
+    name = "stub-conv"
+
+    async def transcribe_bytes(self, audio_bytes, language=None) -> STTResult:
+        return STTResult(engine=self.name, text="xin chào trợ lý", is_final=True)
+
+
+@pytest.fixture(autouse=True)
+def _register_stub():
+    stt_service.providers["stub-conv"] = _StubSTT()
+    yield
+    stt_service.providers.pop("stub-conv", None)
+
+
+def _loud(ms: int) -> bytes:
+    n = int(SR * ms / 1000)
+    return (np.full(n, 0.2, dtype=np.float32) * 32767).astype("<i2").tobytes()
+
+
+def _silence(ms: int) -> bytes:
+    return (b"\x00\x00") * int(SR * ms / 1000)
+
+
+def test_conversation_turn_end_to_end():
+    client = TestClient(app)
+    url = "/v1/conversation/stream?stt_engine=stub-conv&tts_engine=omnivoice&sample_rate=16000"
+    with client.websocket_connect(url) as ws:
+        assert ws.receive_json()["event"] == "session_started"
+
+        ws.send_bytes(_loud(500))
+        assert ws.receive_json()["event"] == "speech_start"
+        ws.send_bytes(_loud(400))
+        ws.send_bytes(_silence(500))
+        ws.send_bytes(_silence(500))  # crosses 700ms silence -> endpoint
+
+        events = []
+        for _ in range(8):
+            ev = ws.receive_json()
+            events.append(ev)
+            if ev["event"] == "turn_done":
+                break
+
+        types = [e["event"] for e in events]
+        assert "speech_end" in types
+        assert "user_transcript" in types
+        assert "response_text" in types
+        assert "audio_chunk" in types
+        assert types[-1] == "turn_done"
+
+        transcript = next(e for e in events if e["event"] == "user_transcript")
+        assert transcript["text"] == "xin chào trợ lý"
+        chunk = next(e for e in events if e["event"] == "audio_chunk")
+        assert chunk["audio_url"].startswith("/artifacts/")
+
+
+def test_conversation_unknown_engine_errors():
+    client = TestClient(app)
+    with client.websocket_connect("/v1/conversation/stream?stt_engine=nope") as ws:
+        assert ws.receive_json()["event"] == "error"

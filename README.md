@@ -45,6 +45,7 @@ docker compose up --build
 - WS /v1/stt/stream
 - POST /v1/tts/synthesize
 - POST /v1/tts/stream
+- WS /v1/conversation/stream (voice turn-taking)
 - GET /v1/events/jobs/{job_id} (SSE)
 - GET /v1/events/sessions/{session_id} (SSE)
 - GET /v1/system/status
