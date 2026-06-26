@@ -17,6 +17,7 @@ from pathlib import Path
 import httpx
 
 from app.core.errors import AppError
+from app.core.hf_cache import dir_size_bytes
 from app.core.settings import settings
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -49,10 +50,6 @@ class ModelManager:
             raise AppError("Path traversal rejected")
         return target
 
-    @staticmethod
-    def _dir_size_bytes(path: Path) -> int:
-        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
-
     # ---- queries ----
     def list_installed(self) -> list[dict]:
         installed = []
@@ -61,7 +58,7 @@ class ModelManager:
                 installed.append(
                     {
                         "name": child.name,
-                        "size_bytes": self._dir_size_bytes(child),
+                        "size_bytes": dir_size_bytes(child),
                         "path": str(child),
                     }
                 )

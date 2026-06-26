@@ -3,11 +3,9 @@ import logging
 import os
 import tempfile
 
-from app.core.audio import silent_wav_bytes, wav_duration_seconds
 from app.core.settings import settings
-from app.schemas.tts import TTSRequest, TTSResult
-from app.services.artifacts import artifact_store
-from app.services.tts.base import TTSProvider
+from app.schemas.tts import TTSRequest
+from app.services.tts.base import MockFallbackTTSProvider
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +24,9 @@ def set_active_omnivoice_model(model_id: str) -> None:
     _active_model = model_id
 
 
-class OmniVoiceProvider(TTSProvider):
+class OmniVoiceProvider(MockFallbackTTSProvider):
     name = "omnivoice"
+    sample_rate = _SAMPLE_RATE
 
     def available(self) -> bool:
         return os.path.isfile(settings.omnivoice_python_path)
@@ -61,7 +60,7 @@ class OmniVoiceProvider(TTSProvider):
             cmd += ["--speed", str(payload.speed)]
         return cmd
 
-    async def _generate_wav(self, payload: TTSRequest) -> bytes:
+    async def _render_wav(self, payload: TTSRequest) -> bytes:
         """Run OmniVoice inference in its own venv via the CLI; return WAV bytes."""
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             output_path = tmp.name
@@ -89,29 +88,3 @@ class OmniVoiceProvider(TTSProvider):
         finally:
             if os.path.isfile(output_path):
                 os.unlink(output_path)
-
-    def _mock_wav(self, payload: TTSRequest) -> bytes:
-        word_count = max(1, len(payload.text.split()))
-        return silent_wav_bytes(word_count / 2.5, sample_rate=_SAMPLE_RATE)
-
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:
-        mock = settings.enable_mock_engines
-        if not mock:
-            try:
-                wav = await self._generate_wav(payload)
-            except Exception as exc:  # noqa: BLE001 - degrade gracefully, log cause
-                logger.warning("OmniVoice unavailable, using mock audio: %s", exc)
-                mock = True
-                wav = self._mock_wav(payload)
-        else:
-            wav = self._mock_wav(payload)
-
-        _, audio_url = artifact_store.save_wav(wav)
-        return TTSResult(
-            engine=self.name,
-            sample_rate=_SAMPLE_RATE,
-            audio_url=audio_url,
-            duration_seconds=round(wav_duration_seconds(wav), 3),
-            text=payload.text,
-            mock=mock,
-        )

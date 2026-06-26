@@ -236,145 +236,106 @@ async function loadModels() {
   }
 }
 
+// Shared row builder + small action fragments for every model list.
+function modelRow({ title, code, badges = "", size = "", err = "", action = "" }) {
+  return `<div class="model-row"><div class="model-info"><strong>${title}</strong><code>${code}</code>${badges}<span class="model-size">${size}</span>${err}</div><div class="model-action">${action}</div></div>`;
+}
+const ACTIVE_BADGE = `<span class="badge mock">active</span>`;
+const SPINNER_ACTION = `<div class="progress indeterminate"><div class="bar"></div></div><span class="pct">…</span>`;
+const jobErr = (job) => (job && job.state === "error" ? `<span class="model-err">${job.error}</span>` : "");
+const isErr = (job) => job && job.state === "error";
+const useOrActive = (active, attr, key) =>
+  active ? ACTIVE_BADGE : `<button class="mini" data-${attr}="${key}">Use</button>`;
+const dlBtn = (attr, key, job) =>
+  `<button class="mini" data-${attr}="${key}">${isErr(job) ? "Retry" : "Download"}</button>`;
+
 function renderOmniRow(m) {
   let action;
-  if (m.job && m.job.state === "downloading") {
-    action = `<div class="progress indeterminate"><div class="bar"></div></div><span class="pct">…</span>`;
-  } else if (m.cached) {
-    const useBtn = m.active ? `<span class="badge mock">active</span>` : `<button class="mini" data-o-select="${m.id}">Use</button>`;
-    action = `${useBtn}<button class="mini danger" data-o-delete="${m.id}">Delete</button>`;
-  } else if (m.job && m.job.state === "error") {
-    action = `<button class="mini" data-o-download="${m.id}">Retry</button>`;
-  } else {
-    action = `<button class="mini" data-o-download="${m.id}">Download</button>`;
-  }
-  const size = m.cached ? fmtBytes(m.size_bytes) : "";
-  const err = m.job && m.job.state === "error" ? `<span class="model-err">${m.job.error}</span>` : "";
-  return `<div class="model-row"><div class="model-info"><strong>${m.label}</strong><code>${m.id}</code><span class="model-size">${size}</span>${err}</div><div class="model-action">${action}</div></div>`;
+  if (m.job && m.job.state === "downloading") action = SPINNER_ACTION;
+  else if (m.cached) action = `${useOrActive(m.active, "o-select", m.id)}<button class="mini danger" data-o-delete="${m.id}">Delete</button>`;
+  else action = dlBtn("o-download", m.id, m.job);
+  return modelRow({ title: m.label, code: m.id, size: m.cached ? fmtBytes(m.size_bytes) : "", err: jobErr(m.job), action });
 }
 
 function renderVieneuRow(m) {
   let action;
-  if (m.job && m.job.state === "downloading") {
-    action = `<div class="progress indeterminate"><div class="bar"></div></div><span class="pct">…</span>`;
-  } else if (m.active) {
-    action = `<span class="badge mock">active</span>`;
-  } else if (m.cpu || m.cached) {
-    const useBtn = `<button class="mini" data-vn-select="${m.mode}">Use</button>`;
-    const dlBtn = m.cached ? "" : `<button class="mini" data-vn-download="${m.mode}">Download</button>`;
-    const delBtn = m.cached ? `<button class="mini danger" data-vn-delete="${m.mode}">Delete</button>` : "";
-    action = `${useBtn}${dlBtn}${delBtn}`;
-  } else {
-    action = `<button class="mini" data-vn-download="${m.mode}">Download</button>`;
-  }
-  const badge = m.cpu ? `<span class="badge">cpu</span>` : `<span class="badge mock">gpu</span>`;
-  const size = m.cached ? fmtBytes(m.size_bytes) : "";
-  const err = m.job && m.job.state === "error" ? `<span class="model-err">${m.job.error}</span>` : "";
-  return `<div class="model-row"><div class="model-info"><strong>${m.label}</strong><code>${m.mode}</code>${badge}<span class="model-size">${size}</span>${err}</div><div class="model-action">${action}</div></div>`;
+  if (m.job && m.job.state === "downloading") action = SPINNER_ACTION;
+  else if (m.active) action = ACTIVE_BADGE;
+  else if (m.cpu || m.cached) {
+    const del = m.cached ? `<button class="mini danger" data-vn-delete="${m.mode}">Delete</button>` : "";
+    const dl = m.cached ? "" : `<button class="mini" data-vn-download="${m.mode}">Download</button>`;
+    action = `<button class="mini" data-vn-select="${m.mode}">Use</button>${dl}${del}`;
+  } else action = `<button class="mini" data-vn-download="${m.mode}">Download</button>`;
+  const badges = m.cpu ? `<span class="badge">cpu</span>` : `<span class="badge mock">gpu</span>`;
+  return modelRow({ title: m.label, code: m.mode, badges, size: m.cached ? fmtBytes(m.size_bytes) : "", err: jobErr(m.job), action });
 }
 
 function renderWhisperRow(m) {
   let action;
-  if (m.job && m.job.state === "downloading") {
-    action = `<div class="progress indeterminate"><div class="bar"></div></div><span class="pct">…</span>`;
-  } else if (m.cached) {
-    const useBtn = m.active
-      ? `<span class="badge mock">active</span>`
-      : `<button class="mini" data-w-select="${m.size}">Use</button>`;
-    action = `${useBtn}<button class="mini danger" data-w-delete="${m.size}">Delete</button>`;
-  } else if (m.job && m.job.state === "error") {
-    action = `<button class="mini" data-w-download="${m.size}">Retry</button>`;
-  } else {
-    action = `<button class="mini" data-w-download="${m.size}">Download</button>`;
-  }
-  const sizeText = m.cached ? fmtBytes(m.size_bytes) : "";
-  const err = m.job && m.job.state === "error" ? `<span class="model-err">${m.job.error}</span>` : "";
-  return `
-    <div class="model-row">
-      <div class="model-info">
-        <strong>${m.label}</strong>
-        <code>${m.size}</code>
-        <span class="model-size">${sizeText}</span>${err}
-      </div>
-      <div class="model-action">${action}</div>
-    </div>`;
+  if (m.job && m.job.state === "downloading") action = SPINNER_ACTION;
+  else if (m.cached) action = `${useOrActive(m.active, "w-select", m.size)}<button class="mini danger" data-w-delete="${m.size}">Delete</button>`;
+  else action = dlBtn("w-download", m.size, m.job);
+  return modelRow({ title: m.label, code: m.size, size: m.cached ? fmtBytes(m.size_bytes) : "", err: jobErr(m.job), action });
 }
 
 function renderModelRow(name, label, size, installedNames, jobs, installed, activeName) {
   const job = jobs[name];
   const installedEntry = installed.find((m) => m.name === name);
-  const isInstalled = installedNames.has(name);
-
   let action;
   if (job && job.state === "downloading") {
     const pct = Math.round((job.progress || 0) * 100);
     action = `<div class="progress"><div class="bar" style="width:${pct}%"></div></div><span class="pct">${pct}%</span>`;
-  } else if (isInstalled) {
-    const useBtn = name === activeName
-      ? `<span class="badge mock">active</span>`
-      : `<button class="mini" data-v-select="${name}">Use</button>`;
-    action = `${useBtn}<button class="mini danger" data-delete="${name}">Delete</button>`;
-  } else if (job && job.state === "error") {
-    action = `<button class="mini" data-download="${name}">Retry</button>`;
-  } else {
-    action = `<button class="mini" data-download="${name}">Download</button>`;
-  }
-
-  const sizeText = installedEntry ? fmtBytes(installedEntry.size_bytes) : size;
-  const err = job && job.state === "error" ? `<span class="model-err">${job.error}</span>` : "";
-  return `
-    <div class="model-row">
-      <div class="model-info">
-        <strong>${label}</strong>
-        <code>${name}</code>
-        <span class="model-size">${sizeText}</span>${err}
-      </div>
-      <div class="model-action">${action}</div>
-    </div>`;
+  } else if (installedNames.has(name)) {
+    action = `${useOrActive(name === activeName, "v-select", name)}<button class="mini danger" data-delete="${name}">Delete</button>`;
+  } else action = dlBtn("download", name, job);
+  return modelRow({
+    title: label,
+    code: name,
+    size: installedEntry ? fmtBytes(installedEntry.size_bytes) : size,
+    err: jobErr(job),
+    action,
+  });
 }
+
+// engine -> request shape. STT engines refresh the STT selector; TTS the TTS one.
+// vosk/whisper expose DELETE by path param; omnivoice/vieneu use POST /delete.
+const MODEL_ENGINES = {
+  vosk: { keyName: "name", deleteVerb: "DELETE", refresh: () => loadSttEngines() },
+  whisper: { keyName: "size", deleteVerb: "DELETE", refresh: () => loadSttEngines() },
+  omnivoice: { keyName: "id", deleteVerb: "POST", refresh: () => loadTtsEngines() },
+  vieneu: { keyName: "mode", deleteVerb: "POST", refresh: () => loadTtsEngines() },
+};
+
+const MODEL_ATTRS = [
+  ["data-download", "vosk", "download"], ["data-delete", "vosk", "delete"], ["data-v-select", "vosk", "select"],
+  ["data-w-download", "whisper", "download"], ["data-w-delete", "whisper", "delete"], ["data-w-select", "whisper", "select"],
+  ["data-o-download", "omnivoice", "download"], ["data-o-delete", "omnivoice", "delete"], ["data-o-select", "omnivoice", "select"],
+  ["data-vn-download", "vieneu", "download"], ["data-vn-delete", "vieneu", "delete"], ["data-vn-select", "vieneu", "select"],
+];
 
 function bindModelButtons() {
-  document.querySelectorAll("[data-download]").forEach((btn) => {
-    btn.addEventListener("click", () => downloadModel(btn.getAttribute("data-download")));
-  });
-  document.querySelectorAll("[data-delete]").forEach((btn) => {
-    btn.addEventListener("click", () => deleteModel(btn.getAttribute("data-delete")));
-  });
-  document.querySelectorAll("[data-v-select]").forEach((btn) => {
-    btn.addEventListener("click", () => selectVosk(btn.getAttribute("data-v-select")));
-  });
-  document.querySelectorAll("[data-w-download]").forEach((btn) => {
-    btn.addEventListener("click", () => whisperAction("download", btn.getAttribute("data-w-download")));
-  });
-  document.querySelectorAll("[data-w-delete]").forEach((btn) => {
-    btn.addEventListener("click", () => whisperAction("delete", btn.getAttribute("data-w-delete")));
-  });
-  document.querySelectorAll("[data-w-select]").forEach((btn) => {
-    btn.addEventListener("click", () => whisperAction("select", btn.getAttribute("data-w-select")));
-  });
-  // OmniVoice (HF repo id)
-  [["data-o-download", "download"], ["data-o-select", "select"], ["data-o-delete", "delete"]].forEach(([attr, action]) => {
+  MODEL_ATTRS.forEach(([attr, engine, action]) => {
     document.querySelectorAll(`[${attr}]`).forEach((btn) => {
-      btn.addEventListener("click", () => omniAction(action, btn.getAttribute(attr)));
-    });
-  });
-  // VieNeu (mode)
-  [["data-vn-download", "download"], ["data-vn-select", "select"], ["data-vn-delete", "delete"]].forEach(([attr, action]) => {
-    document.querySelectorAll(`[${attr}]`).forEach((btn) => {
-      btn.addEventListener("click", () => vieneuAction(action, btn.getAttribute(attr)));
+      btn.addEventListener("click", () => runModelAction(engine, action, btn.getAttribute(attr)));
     });
   });
 }
 
-async function ttsModelAction(engine, action, key, keyName) {
-  if (action === "delete" && !confirm(`Delete ${engine} ${key}?`)) return;
+async function runModelAction(engine, action, key) {
+  const cfg = MODEL_ENGINES[engine];
+  if (action === "delete" && !confirm(`Delete ${engine} "${key}"?`)) return;
   print(el("model-msg"), `${engine} ${key}: ${action}...`);
   try {
-    const resp = await fetch(`/v1/models/${engine}/${action}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ [keyName]: key }),
-    });
+    let resp;
+    if (action === "delete" && cfg.deleteVerb === "DELETE") {
+      resp = await fetch(`/v1/models/${engine}/${encodeURIComponent(key)}`, { method: "DELETE" });
+    } else {
+      resp = await fetch(`/v1/models/${engine}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [cfg.keyName]: key }),
+      });
+    }
     const body = await resp.json();
     if (!resp.ok) {
       print(el("model-msg"), body.error || body, true);
@@ -384,128 +345,25 @@ async function ttsModelAction(engine, action, key, keyName) {
     loadModels();
     if (action !== "download") {
       loadSystemStatus();
-      loadTtsEngines();
+      cfg.refresh();
     }
   } catch (error) {
     print(el("model-msg"), String(error), true);
   }
 }
 
-function omniAction(action, id) {
-  ttsModelAction("omnivoice", action, id, "id");
-}
-function vieneuAction(action, mode) {
-  ttsModelAction("vieneu", action, mode, "mode");
-}
-
-el("omni-download").addEventListener("click", () => {
-  const id = el("omni-name").value.trim();
-  if (!id) {
-    print(el("model-msg"), "Enter a HF repo id", true);
-    return;
-  }
-  omniAction("download", id);
-});
-
-async function whisperAction(action, size) {
-  if (action === "delete" && !confirm(`Delete whisper model "${size}"?`)) return;
-  const msgs = { download: `Downloading whisper ${size}...`, delete: `Deleting whisper ${size}...`, select: `Switching to whisper ${size}...` };
-  print(el("model-msg"), msgs[action]);
-  try {
-    let resp;
-    if (action === "delete") {
-      resp = await fetch(`/v1/models/whisper/${encodeURIComponent(size)}`, { method: "DELETE" });
-    } else {
-      resp = await fetch(`/v1/models/whisper/${action}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ size }),
-      });
-    }
-    const body = await resp.json();
-    if (!resp.ok) {
-      print(el("model-msg"), body.error || body, true);
+function bindDownloadByName(btnId, inputId, engine) {
+  el(btnId).addEventListener("click", () => {
+    const key = el(inputId).value.trim();
+    if (!key) {
+      print(el("model-msg"), "Enter a model name / repo id", true);
       return;
     }
-    el("model-msg").textContent = `whisper ${size}: ${action} ok`;
-    loadModels();
-    if (action !== "download") {
-      loadSystemStatus();
-      loadSttEngines();
-    }
-  } catch (error) {
-    print(el("model-msg"), String(error), true);
-  }
+    runModelAction(engine, "download", key);
+  });
 }
-
-async function downloadModel(name) {
-  print(el("model-msg"), `Downloading ${name}...`);
-  try {
-    const resp = await fetch("/v1/models/vosk/download", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    const body = await resp.json();
-    if (!resp.ok) {
-      print(el("model-msg"), body.error || body, true);
-      return;
-    }
-    el("model-msg").textContent = `Queued ${name}`;
-    loadModels();
-  } catch (error) {
-    print(el("model-msg"), String(error), true);
-  }
-}
-
-async function selectVosk(name) {
-  print(el("model-msg"), `Switching to ${name}...`);
-  try {
-    const resp = await fetch("/v1/models/vosk/select", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    const body = await resp.json();
-    if (!resp.ok) {
-      print(el("model-msg"), body.error || body, true);
-      return;
-    }
-    el("model-msg").textContent = `Active Vosk model: ${name}`;
-    loadModels();
-    loadSystemStatus();
-    loadSttEngines();
-  } catch (error) {
-    print(el("model-msg"), String(error), true);
-  }
-}
-
-async function deleteModel(name) {
-  if (!confirm(`Delete model "${name}"?`)) return;
-  print(el("model-msg"), `Deleting ${name}...`);
-  try {
-    const resp = await fetch(`/v1/models/vosk/${encodeURIComponent(name)}`, { method: "DELETE" });
-    const body = await resp.json();
-    if (!resp.ok) {
-      print(el("model-msg"), body.error || body, true);
-      return;
-    }
-    el("model-msg").textContent = `Deleted ${name}`;
-    loadModels();
-    loadSystemStatus();
-  } catch (error) {
-    print(el("model-msg"), String(error), true);
-  }
-}
-
-el("model-download").addEventListener("click", () => {
-  const name = el("model-name").value.trim();
-  if (!name) {
-    print(el("model-msg"), "Enter a model name", true);
-    return;
-  }
-  downloadModel(name);
-});
+bindDownloadByName("omni-download", "omni-name", "omnivoice");
+bindDownloadByName("model-download", "model-name", "vosk");
 el("status-refresh").addEventListener("click", () => {
   loadSystemStatus();
   loadModels();
@@ -824,13 +682,14 @@ function renderTtsEnginesStatus(engines) {
   const host = el("tts-engines-status");
   if (!host) return;
   host.innerHTML = engines
-    .map((e) => {
-      const badge = e.available
-        ? `<span class="badge mock">ready</span>`
-        : `<span class="badge">not installed</span>`;
-      const hint = !e.available && e.install_hint ? `<span class="model-err">${e.install_hint}</span>` : "";
-      return `<div class="model-row"><div class="model-info"><strong>${e.engine}</strong><code>${e.detail}</code>${badge}${hint}</div></div>`;
-    })
+    .map((e) =>
+      modelRow({
+        title: e.engine,
+        code: e.detail,
+        badges: e.available ? `<span class="badge mock">ready</span>` : `<span class="badge">not installed</span>`,
+        err: !e.available && e.install_hint ? `<span class="model-err">${e.install_hint}</span>` : "",
+      })
+    )
     .join("");
 }
 

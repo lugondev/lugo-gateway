@@ -9,9 +9,9 @@ runtime. Download progress is indeterminate (the hub fetch is not instrumented h
 import asyncio
 import re
 import shutil
-from pathlib import Path
 
 from app.core.errors import AppError
+from app.core.hf_cache import dir_size_bytes, hub_dir
 from app.core.settings import settings
 from app.services.stt.providers.whisper_provider import (
     get_active_whisper_model,
@@ -34,11 +34,8 @@ class WhisperManager:
     def __init__(self) -> None:
         self._jobs: dict[str, dict] = {}
 
-    def _hub_dir(self) -> Path:
-        return Path.home() / ".cache" / "huggingface" / "hub"
-
-    def _cache_dirs(self, size: str) -> list[Path]:
-        hub = self._hub_dir()
+    def _cache_dirs(self, size: str) -> list:
+        hub = hub_dir()
         if not hub.is_dir():
             return []
         # Match e.g. models--Systran--faster-whisper-large-v3 (exact suffix, no extra chars).
@@ -48,10 +45,7 @@ class WhisperManager:
         return bool(self._cache_dirs(size))
 
     def _size_bytes(self, size: str) -> int:
-        total = 0
-        for d in self._cache_dirs(size):
-            total += sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
-        return total
+        return sum(dir_size_bytes(d) for d in self._cache_dirs(size))
 
     def validate(self, size: str) -> None:
         if not _SIZE_RE.match(size):
@@ -99,7 +93,7 @@ class WhisperManager:
         dirs = self._cache_dirs(size)
         if not dirs:
             raise AppError(f"Whisper model '{size}' is not cached")
-        hub = self._hub_dir().resolve()
+        hub = hub_dir().resolve()
         for d in dirs:
             if hub not in d.resolve().parents:
                 raise AppError("Refusing to delete outside the hub cache")

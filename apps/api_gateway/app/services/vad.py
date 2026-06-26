@@ -11,12 +11,12 @@ downstream decoders stay time-aligned. If a selected backend is unavailable (its
 library isn't installed) the call falls back to the energy gate.
 """
 
-import importlib.util
 import logging
 
 import numpy as np
 
 from app.core.audio import vad_gate
+from app.core.deps import module_available
 from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -27,19 +27,12 @@ _silero_cache: dict[str, object] = {}
 _pyannote_cache: dict[str, object] = {}
 
 
-def _installed(module: str) -> bool:
-    try:
-        return importlib.util.find_spec(module) is not None
-    except ModuleNotFoundError:
-        return False
-
-
 def available_backends() -> dict[str, bool]:
-    torch_ok = _installed("torch")
+    torch_ok = module_available("torch")
     return {
         "energy": True,
-        "silero": torch_ok and _installed("silero_vad"),
-        "pyannote": torch_ok and _installed("pyannote.audio"),
+        "silero": torch_ok and module_available("silero_vad"),
+        "pyannote": torch_ok and module_available("pyannote.audio"),
     }
 
 

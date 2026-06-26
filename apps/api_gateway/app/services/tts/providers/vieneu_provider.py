@@ -1,12 +1,11 @@
 import asyncio
-import importlib.util
 import logging
 
-from app.core.audio import float_array_to_wav_bytes, silent_wav_bytes, wav_duration_seconds
+from app.core.audio import float_array_to_wav_bytes
+from app.core.deps import module_available
 from app.core.settings import settings
-from app.schemas.tts import TTSRequest, TTSResult
-from app.services.artifacts import artifact_store
-from app.services.tts.base import TTSProvider
+from app.schemas.tts import TTSRequest
+from app.services.tts.base import MockFallbackTTSProvider
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +25,12 @@ def set_active_vieneu_mode(mode: str) -> None:
     _active_mode = mode
 
 
-class VieNeuProvider(TTSProvider):
+class VieNeuProvider(MockFallbackTTSProvider):
     name = "vieneu"
+    sample_rate = _SAMPLE_RATE
 
     def available(self) -> bool:
-        return importlib.util.find_spec("vieneu") is not None
+        return module_available("vieneu")
 
     def detail(self) -> str:
         return f"{get_active_vieneu_mode()} · 48kHz · Vietnamese"
@@ -63,28 +63,5 @@ class VieNeuProvider(TTSProvider):
         )
         return float_array_to_wav_bytes(audio, sample_rate=_SAMPLE_RATE)
 
-    def _mock_wav(self, payload: TTSRequest) -> bytes:
-        word_count = max(1, len(payload.text.split()))
-        return silent_wav_bytes(word_count / 2.5, sample_rate=_SAMPLE_RATE)
-
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:
-        mock = settings.enable_mock_engines
-        if not mock:
-            try:
-                wav = await asyncio.to_thread(self._generate_wav, payload)
-            except Exception as exc:  # noqa: BLE001 - degrade gracefully
-                logger.warning("VieNeu unavailable, using mock audio: %s", exc)
-                mock = True
-                wav = self._mock_wav(payload)
-        else:
-            wav = self._mock_wav(payload)
-
-        _, audio_url = artifact_store.save_wav(wav)
-        return TTSResult(
-            engine=self.name,
-            sample_rate=_SAMPLE_RATE,
-            audio_url=audio_url,
-            duration_seconds=round(wav_duration_seconds(wav), 3),
-            text=payload.text,
-            mock=mock,
-        )
+    async def _render_wav(self, payload: TTSRequest) -> bytes:
+        return await asyncio.to_thread(self._generate_wav, payload)

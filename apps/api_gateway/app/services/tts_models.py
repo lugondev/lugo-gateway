@@ -13,9 +13,9 @@ import asyncio
 import logging
 import re
 import shutil
-from pathlib import Path
 
 from app.core.errors import AppError
+from app.core.hf_cache import dir_size_bytes, hub_dir, repo_cached, repo_dir
 from app.services.tts.providers.omnivoice_provider import (
     get_active_omnivoice_model,
     set_active_omnivoice_model,
@@ -42,22 +42,12 @@ VIENEU_MODES = [
 ]
 
 
-def _hub_dir() -> Path:
-    return Path.home() / ".cache" / "huggingface" / "hub"
-
-
-def _repo_dir(repo: str) -> Path:
-    return _hub_dir() / f"models--{repo.replace('/', '--')}"
-
-
 def _cached(repo: str | None) -> bool:
-    return bool(repo) and _repo_dir(repo).is_dir()
+    return repo_cached(repo)
 
 
 def _size_bytes(repo: str | None) -> int:
-    if not _cached(repo):
-        return 0
-    return sum(f.stat().st_size for f in _repo_dir(repo).rglob("*") if f.is_file())
+    return dir_size_bytes(repo_dir(repo)) if repo_cached(repo) else 0
 
 
 class TtsModelManager:
@@ -159,11 +149,10 @@ class TtsModelManager:
         Vieneu(mode=mode)
 
     def _delete_repo(self, repo: str) -> None:
-        target = _repo_dir(repo)
+        target = repo_dir(repo)
         if not target.is_dir():
             raise AppError(f"Model '{repo}' is not cached")
-        hub = _hub_dir().resolve()
-        if hub not in target.resolve().parents:
+        if hub_dir().resolve() not in target.resolve().parents:
             raise AppError("Refusing to delete outside the hub cache")
         shutil.rmtree(target)
         self._jobs.pop(repo, None)

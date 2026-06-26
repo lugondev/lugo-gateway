@@ -12,7 +12,6 @@ mock audio and reports an install hint. Engines:
 """
 
 import asyncio
-import importlib.util
 import logging
 import os
 import platform
@@ -20,22 +19,14 @@ import sys
 
 import numpy as np
 
-from app.core.audio import float_array_to_wav_bytes, silent_wav_bytes, wav_duration_seconds
-from app.core.settings import settings
-from app.schemas.tts import TTSRequest, TTSResult
-from app.services.artifacts import artifact_store
-from app.services.tts.base import TTSProvider
+from app.core.audio import float_array_to_wav_bytes
+from app.core.deps import module_available
+from app.schemas.tts import TTSRequest
+from app.services.tts.base import MockFallbackTTSProvider
 
 logger = logging.getLogger(__name__)
 
 _CACHE: dict[str, object] = {}
-
-
-def _installed(module: str) -> bool:
-    try:
-        return importlib.util.find_spec(module) is not None
-    except ModuleNotFoundError:
-        return False
 
 
 def _to_mono_f32(audio) -> np.ndarray:
@@ -49,15 +40,14 @@ def _to_mono_f32(audio) -> np.ndarray:
     return arr.reshape(-1)
 
 
-class _ExtraTTSProvider(TTSProvider):
-    """Shared mock-fallback wrapper; subclasses implement _generate_f32 + metadata."""
+class _ExtraTTSProvider(MockFallbackTTSProvider):
+    """Shared base for ported engines; subclasses implement _generate_f32 + metadata."""
 
-    sample_rate: int = 24000
     _modules: tuple[str, ...] = ()
     _hint: str = ""
 
     def available(self) -> bool:
-        return all(_installed(m) for m in self._modules)
+        return all(module_available(m) for m in self._modules)
 
     def install_hint(self) -> str:
         return self._hint
@@ -65,32 +55,9 @@ class _ExtraTTSProvider(TTSProvider):
     def _generate_f32(self, payload: TTSRequest) -> np.ndarray:
         raise NotImplementedError
 
-    def _mock(self, payload: TTSRequest) -> bytes:
-        words = max(1, len(payload.text.split()))
-        return silent_wav_bytes(words / 2.5, sample_rate=self.sample_rate)
-
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:
-        mock = settings.enable_mock_engines
-        if not mock:
-            try:
-                audio = await asyncio.to_thread(self._generate_f32, payload)
-                wav = float_array_to_wav_bytes(audio, sample_rate=self.sample_rate)
-            except Exception as exc:  # noqa: BLE001 - degrade gracefully
-                logger.warning("%s unavailable, using mock audio: %s", self.name, exc)
-                mock = True
-                wav = self._mock(payload)
-        else:
-            wav = self._mock(payload)
-
-        _, audio_url = artifact_store.save_wav(wav)
-        return TTSResult(
-            engine=self.name,
-            sample_rate=self.sample_rate,
-            audio_url=audio_url,
-            duration_seconds=round(wav_duration_seconds(wav), 3),
-            text=payload.text,
-            mock=mock,
-        )
+    async def _render_wav(self, payload: TTSRequest) -> bytes:
+        audio = await asyncio.to_thread(self._generate_f32, payload)
+        return float_array_to_wav_bytes(audio, sample_rate=self.sample_rate)
 
 
 class KittenTTSProvider(_ExtraTTSProvider):

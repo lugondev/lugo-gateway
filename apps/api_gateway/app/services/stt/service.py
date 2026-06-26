@@ -1,17 +1,13 @@
-import importlib.util
 import os
 from pathlib import Path
 
+from app.core.deps import module_available
 from app.core.errors import EngineNotFoundError
 from app.core.settings import settings
 from app.services.stt.base import STTProvider
 from app.services.stt.providers.remote_whisper_provider import RemoteWhisperProvider
 from app.services.stt.providers.vosk_provider import VoskProvider
 from app.services.stt.providers.whisper_provider import WhisperProvider
-
-
-def _installed(module: str) -> bool:
-    return importlib.util.find_spec(module) is not None
 
 
 class STTService:
@@ -49,10 +45,10 @@ class STTService:
         from app.services.whisper_models import whisper_manager
 
         active_vosk_path = get_active_vosk_path()
-        vosk_present = _installed("vosk") and os.path.isdir(active_vosk_path)
+        vosk_present = module_available("vosk") and os.path.isdir(active_vosk_path)
         vosk_detail = Path(active_vosk_path).name if vosk_present else None
 
-        fw_available = _installed("faster_whisper")
+        fw_available = module_available("faster_whisper")
         active_whisper = whisper_manager.snapshot()["active"]
         whisper_cached = whisper_manager._cached(active_whisper)
         whisper_detail = active_whisper + (" · cached" if whisper_cached else " · downloads on first use")
