@@ -1030,26 +1030,23 @@ function convStopAudio() {
 }
 // Gapless playback: decode each chunk and schedule it back-to-back on the audio
 // timeline (no <audio> src-swap gaps, no queue underrun between sentences).
-function convSchedule(buf) {
-  const ctx = conv.ctx;
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  src.connect(ctx.destination);
-  const start = Math.max(ctx.currentTime + 0.05, conv.nextTime || 0);
-  src.start(start);
-  conv.nextTime = start + buf.duration;
-  conv.sources.push(src);
-  src.onended = () => {
-    conv.sources = conv.sources.filter((s) => s !== src);
-  };
-}
-// Audio arrives as raw WAV bytes over the WS (no per-chunk HTTP fetch).
-function convEnqueueAudioBytes(arrayBuffer) {
+function convEnqueueAudio(url) {
   conv.chain = (conv.chain || Promise.resolve())
     .then(async () => {
       const ctx = convAudioCtx();
       if (ctx.state === "suspended") await ctx.resume();
-      convSchedule(await ctx.decodeAudioData(arrayBuffer));
+      const data = await (await fetch(url)).arrayBuffer();
+      const buf = await ctx.decodeAudioData(data);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      const start = Math.max(ctx.currentTime + 0.05, conv.nextTime || 0);
+      src.start(start);
+      conv.nextTime = start + buf.duration;
+      conv.sources.push(src);
+      src.onended = () => {
+        conv.sources = conv.sources.filter((s) => s !== src);
+      };
     })
     .catch((e) => convLog("audio error: " + e));
 }
@@ -1144,7 +1141,6 @@ async function startConversation() {
   }
 
   const ws = new WebSocket(wsUrl(`/v1/conversation/stream?${params}`));
-  ws.binaryType = "arraybuffer";
   conv.ws = ws;
 
   ws.onopen = async () => {
@@ -1160,10 +1156,6 @@ async function startConversation() {
   };
 
   ws.onmessage = (event) => {
-    if (typeof event.data !== "string") {
-      convEnqueueAudioBytes(event.data); // raw WAV frame -> play gaplessly
-      return;
-    }
     let d;
     try {
       d = JSON.parse(event.data);
@@ -1191,7 +1183,7 @@ async function startConversation() {
         }
         break;
       case "audio_chunk":
-        // Audio for this chunk arrives as the next binary WS frame.
+        if (d.audio_url) convEnqueueAudio(d.audio_url);
         break;
       case "turn_done":
         setConvStatus("● listening", "status-rec");

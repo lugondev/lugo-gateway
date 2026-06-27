@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     )
 
     # Conversation (voice turn-taking) defaults
-    conversation_silence_ms: int = 500       # trailing silence that ends a turn (snappier turn-taking)
+    conversation_silence_ms: int = 700       # trailing silence that ends a turn
     conversation_min_speech_ms: int = 300    # ignore utterances shorter than this
     conversation_rms_threshold: float = 0.015  # speech vs silence (float RMS)
     conversation_max_utterance_ms: int = 30000
