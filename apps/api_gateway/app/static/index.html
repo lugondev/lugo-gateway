@@ -120,6 +120,12 @@
         </section>
 
         <section class="card">
+          <h2>Audio-native STT — Qwen3-Omni (MLX, Apple GPU)</h2>
+          <p class="hint" id="qwen-omni-hint">Audio → Vietnamese text in one step (no Whisper). Heavy (30B MoE); pick a quant to download, then select engine <code>qwen_omni</code>.</p>
+          <div id="qwen-omni-models" class="model-list"></div>
+        </section>
+
+        <section class="card">
           <h2>Conversation LLM — Online (OpenAI-compatible)</h2>
           <p class="hint">Use a hosted OpenAI-compatible provider instead of local Ollama. For local models, just activate one in the “Conversation LLM (Ollama)” list above — no setup here. The API key is sent to the gateway and held in memory only (not persisted, not saved to the browser).</p>
           <div class="row tight">

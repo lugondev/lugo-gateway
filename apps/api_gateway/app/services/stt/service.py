@@ -7,6 +7,7 @@ from app.core.settings import settings
 from app.services.stt.base import STTProvider
 from app.services.stt.providers.remote_whisper_provider import RemoteWhisperProvider
 from app.services.stt.providers.vosk_provider import VoskProvider
+from app.services.stt.providers.qwen_omni_provider import QwenOmniProvider
 from app.services.stt.providers.whisper_gemma_provider import WhisperGemmaProvider
 from app.services.stt.providers.whisper_mlx_provider import WhisperMlxProvider
 from app.services.stt.providers.whisper_provider import WhisperProvider
@@ -20,6 +21,7 @@ class STTService:
             "whisper": whisper_local,
             "whisper_local": whisper_local,
             "whisper_mlx": WhisperMlxProvider(),
+            "qwen_omni": QwenOmniProvider(),
             "whisper_gemma": WhisperGemmaProvider(),
             "whisper_service": RemoteWhisperProvider(
                 name="whisper_service",
@@ -84,6 +86,13 @@ class STTService:
                     "mode": "local",
                     "available": mlx_ok,
                     "detail": provider.detail() if mlx_ok else "needs mlx-whisper + converted model",
+                }
+            elif engine == "qwen_omni":
+                q_ok = provider.available()
+                entry = {
+                    "mode": "local",
+                    "available": q_ok,
+                    "detail": provider.detail() if q_ok else "needs mlx-vlm + downloaded model (System tab)",
                 }
             elif engine == "whisper_gemma":
                 entry = {"mode": "local", "available": fw_available, "detail": provider.detail()}

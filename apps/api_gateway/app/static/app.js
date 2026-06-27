@@ -285,6 +285,17 @@ async function loadModels() {
       .forEach((m) => llmRows.push(renderLlmRow({ ...m, installed: true }, llm.jobs)));
     el("llm-models").innerHTML = llmRows.join("");
 
+    // ---- Qwen-Omni (audio-native STT, MLX) ----
+    const qo = body.data.qwen_omni;
+    if (qo && el("qwen-omni-models")) {
+      if (el("qwen-omni-hint")) {
+        el("qwen-omni-hint").textContent = qo.available
+          ? `mlx-vlm ready — active: ${qo.active.split("/").pop()}`
+          : "Needs mlx-vlm (pip install -e '.[mlx]', Apple Silicon). Audio → Vietnamese text, no Whisper.";
+      }
+      el("qwen-omni-models").innerHTML = qo.models.map(renderQwenOmniRow).join("");
+    }
+
     bindModelButtons();
 
     const busy =
@@ -349,6 +360,14 @@ function renderWhisperRow(m) {
   return modelRow({ title: m.label, code: m.size, size: m.cached ? fmtBytes(m.size_bytes) : "", err: jobErr(m.job), action });
 }
 
+function renderQwenOmniRow(m) {
+  let action;
+  if (m.job && m.job.state === "downloading") action = SPINNER_ACTION;
+  else if (m.cached) action = `${useOrActive(m.active, "qo-select", m.model)}<button class="mini danger" data-qo-delete="${m.model}">Delete</button>`;
+  else action = dlBtn("qo-download", m.model, m.job);
+  return modelRow({ title: m.label, code: m.model, size: m.cached ? fmtBytes(m.size_bytes) : "", err: jobErr(m.job), action });
+}
+
 function renderModelRow(name, label, size, installedNames, jobs, installed, activeName) {
   const job = jobs[name];
   const installedEntry = installed.find((m) => m.name === name);
@@ -376,6 +395,7 @@ const MODEL_ENGINES = {
   omnivoice: { keyName: "id", deleteVerb: "POST", refresh: () => loadTtsEngines() },
   vieneu: { keyName: "mode", deleteVerb: "POST", refresh: () => loadTtsEngines() },
   llm: { keyName: "model", deleteVerb: "POST", refresh: () => {} },
+  "qwen-omni": { keyName: "model", deleteVerb: "POST", refresh: () => loadSttEngines() },
 };
 
 const MODEL_ATTRS = [
@@ -384,6 +404,7 @@ const MODEL_ATTRS = [
   ["data-o-download", "omnivoice", "download"], ["data-o-delete", "omnivoice", "delete"], ["data-o-select", "omnivoice", "select"],
   ["data-vn-download", "vieneu", "download"], ["data-vn-delete", "vieneu", "delete"], ["data-vn-select", "vieneu", "select"],
   ["data-llm-download", "llm", "download"], ["data-llm-delete", "llm", "delete"], ["data-llm-select", "llm", "select"],
+  ["data-qo-download", "qwen-omni", "download"], ["data-qo-delete", "qwen-omni", "delete"], ["data-qo-select", "qwen-omni", "select"],
 ];
 
 function bindModelButtons() {

@@ -13,12 +13,14 @@ from app.schemas.stt import STTResult
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
 
-opuslib = pytest.importorskip("opuslib")
-
 try:
+    # opuslib raises a bare Exception (not ImportError) when libopus can't be
+    # found, so importorskip isn't enough — guard the whole load.
+    import opuslib
+
     _ENC = opuslib.Encoder(16000, 1, opuslib.APPLICATION_VOIP)
-except Exception:  # noqa: BLE001 - libopus missing on this host
-    pytest.skip("libopus not loadable", allow_module_level=True)
+except Exception:  # noqa: BLE001 - opuslib/libopus unavailable on this host
+    pytest.skip("opuslib/libopus not loadable", allow_module_level=True)
 
 SR = 16000
 FRAME = 960  # 60 ms @ 16 kHz
