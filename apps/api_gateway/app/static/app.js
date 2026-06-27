@@ -127,7 +127,11 @@ function createMicCapture({ onframe } = {}) {
     chunks: [],
     async start() {
       this.chunks = [];
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Browser-side AEC + noise suppression + AGC: stops TTS playback bleeding
+      // back into the mic (enables clean barge-in) and reduces room noise.
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AudioCtx();
       this.source = this.ctx.createMediaStreamSource(this.stream);
@@ -193,17 +197,13 @@ async function loadSystemStatus() {
     tile("Artifacts", `${d.artifacts.count} · ${fmtBytes(d.artifacts.total_bytes)}`);
     host.innerHTML = tiles.join("");
 
-    // Initialize preprocessing toggles from server defaults (once).
+    // Initialize the shared preprocessing config from server defaults (once).
     if (!preprocessInit && d.stt_preprocess) {
       preprocessInit = true;
-      ["stt-denoise", "stt-stream-denoise"].forEach((id) => {
-        if (el(id)) el(id).checked = d.stt_preprocess.noise_reduce;
-      });
-      ["stt-vad", "stt-stream-vad"].forEach((id) => {
-        if (el(id)) el(id).checked = d.stt_preprocess.vad;
-      });
+      if (el("pp-denoise")) el("pp-denoise").checked = d.stt_preprocess.noise_reduce;
+      if (el("pp-vad")) el("pp-vad").checked = d.stt_preprocess.vad;
 
-      const sel = el("stt-vad-backend");
+      const sel = el("pp-vad-backend");
       const avail = d.stt_preprocess.vad_backends_available || { energy: true };
       if (sel) {
         sel.innerHTML = "";
@@ -218,13 +218,22 @@ async function loadSystemStatus() {
         sel.value = want && avail[want] ? want : "energy";
       }
       // Saved user prefs override server defaults.
-      ["stt-denoise", "stt-stream-denoise", "stt-vad", "stt-stream-vad", "stt-vad-backend"].forEach(restoreAndBind);
+      ["pp-denoise", "pp-vad", "pp-vad-backend"].forEach(restoreAndBind);
     }
   } catch (error) {
     host.innerHTML = `<div class="stat warn"><span>status</span><strong>error</strong></div>`;
   }
 }
 let preprocessInit = false;
+
+// Shared STT preprocessing config (System tab) used by batch / streaming / conversation.
+function getPreproc() {
+  return {
+    denoise: el("pp-denoise") ? el("pp-denoise").checked : false,
+    vad: el("pp-vad") ? el("pp-vad").checked : false,
+    backend: el("pp-vad-backend") ? el("pp-vad-backend").value || "energy" : "energy",
+  };
+}
 
 // ============================================================ model manager
 let modelPollTimer = null;
@@ -601,9 +610,10 @@ el("stt-submit").addEventListener("click", async () => {
   }
   form.append("engine", el("stt-engine").value || "vosk");
   if (el("stt-language").value.trim()) form.append("language", el("stt-language").value.trim());
-  form.append("denoise", el("stt-denoise").checked ? "true" : "false");
-  form.append("vad", el("stt-vad").checked ? "true" : "false");
-  form.append("vad_backend", el("stt-vad-backend").value || "energy");
+  const pp = getPreproc();
+  form.append("denoise", pp.denoise ? "true" : "false");
+  form.append("vad", pp.vad ? "true" : "false");
+  form.append("vad_backend", pp.backend);
 
   print(sttResult, `Transcribing ${file ? "file" : "recording"}...`);
   try {
@@ -653,9 +663,10 @@ async function startStreaming() {
   el("stt-stream-partial").textContent = "—";
   el("stt-stream-log").textContent = "";
 
+  const pp = getPreproc();
   let params = `engine=${encodeURIComponent(engine)}&sample_rate=${STREAM_SAMPLE_RATE}`;
   if (language) params += `&language=${encodeURIComponent(language)}`;
-  params += `&denoise=${el("stt-stream-denoise").checked}&vad=${el("stt-stream-vad").checked}`;
+  params += `&denoise=${pp.denoise}&vad=${pp.vad}&vad_backend=${encodeURIComponent(pp.backend)}`;
 
   let capture;
   try {
@@ -1036,6 +1047,7 @@ async function loadConversationEngines() {
     fill("conv-tts-engine", tts.data.filter((e) => e.available), (e) => `${e.engine}`);
     restoreAndBind("conv-stt-engine");
     restoreAndBind("conv-tts-engine");
+    restoreAndBind("conv-language");
     el("conv-tts-engine").addEventListener("change", convVoiceToggle);
     convVoiceToggle();
   } catch (error) {
@@ -1081,6 +1093,9 @@ async function startConversation() {
   let params = `stt_engine=${encodeURIComponent(el("conv-stt-engine").value)}`;
   params += `&tts_engine=${encodeURIComponent(el("conv-tts-engine").value)}&sample_rate=${STREAM_SAMPLE_RATE}`;
   if (el("conv-voice").value) params += `&voice=${encodeURIComponent(el("conv-voice").value)}`;
+  if (el("conv-language").value.trim()) params += `&language=${encodeURIComponent(el("conv-language").value.trim())}`;
+  const cpp = getPreproc();
+  params += `&denoise=${cpp.denoise}&vad=${cpp.vad}&vad_backend=${encodeURIComponent(cpp.backend)}`;
 
   let capture;
   try {
@@ -1140,6 +1155,15 @@ async function startConversation() {
       case "turn_done":
         setConvStatus("● listening", "status-rec");
         break;
+      case "aborted": {
+        // Stop assistant playback immediately (barge-in / interrupt).
+        conv.queue = [];
+        conv.playing = false;
+        const a = el("conv-audio");
+        a.pause();
+        a.currentTime = 0;
+        break;
+      }
       case "error":
         setConvStatus(`error: ${d.message || ""}`, "status-error");
         break;

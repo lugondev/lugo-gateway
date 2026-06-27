@@ -42,8 +42,16 @@ class Settings(BaseSettings):
     stt_noise_reduce_amount: float = 0.85
 
     # Pyannote VAD model + optional Hugging Face token (gated models)
-    pyannote_vad_model: str = "pyannote/voice-activity-detection"
+    pyannote_vad_model: str = "pyannote/segmentation-3.0"
     pyannote_auth_token: str = ""
+
+    # whisper_gemma: faster-whisper transcript refined by the conversation LLM
+    stt_enhance_timeout_seconds: float = 30.0
+    stt_enhance_prompt: str = (
+        "You are an ASR post-editor. Fix spelling, casing, punctuation and obvious "
+        "speech-recognition errors in the transcript. Do NOT translate, do NOT answer it, "
+        "do NOT add or remove meaning. Return ONLY the corrected transcript text."
+    )
 
     # Conversation (voice turn-taking) defaults
     conversation_silence_ms: int = 700       # trailing silence that ends a turn
@@ -52,6 +60,7 @@ class Settings(BaseSettings):
     conversation_max_utterance_ms: int = 30000
     conversation_stt_engine: str = ""        # empty -> default_stt_engine
     conversation_tts_engine: str = ""        # empty -> default_tts_engine
+    conversation_language: str = "vi"        # STT language hint; "" = auto-detect
     # Optional OpenAI-compatible chat endpoint (Ollama/LM Studio/vLLM/OpenAI).
     # Empty base url -> built-in echo responder (no external service).
     conversation_llm_base_url: str = ""

@@ -85,6 +85,9 @@ full pipeline runs without loading OmniVoice. Set it `false` for real OmniVoice 
 
 - vosk: Local Vosk model.
 - whisper or whisper_local: Local faster-whisper model.
+- whisper_gemma: faster-whisper transcript refined by the conversation LLM (Gemma) —
+  fixes spelling/diacritics/punctuation (great for Vietnamese). Falls back to raw
+  Whisper text if no LLM is configured.
 - whisper_service: Remote OpenAI-compatible Whisper endpoint.
 - eventlab: Remote provider using the same OpenAI-compatible transcription API.
 

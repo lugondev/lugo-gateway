@@ -79,6 +79,37 @@ All settings are environment variables (or `.env`). See `.env.example` for the f
 If the model fails to load, the provider logs a warning and falls back to mock audio so
 the pipeline stays up.
 
+## VAD backends (STT preprocessing)
+
+`STT_VAD_BACKEND` selects how voice activity is detected for batch transcription
+(`/v1/stt/transcribe`, also overridable per request via the `vad_backend` form field).
+All backends run **locally** — none call an external service at inference time.
+
+| Backend | Install | Token | Notes |
+|---------|---------|:-----:|-------|
+| `energy` | built-in (numpy) | — | Always available; simple RMS gate. |
+| `silero` | `pip install silero-vad` (pulls `torch`) | no | Neural VAD; weights auto-download (ungated). |
+| `pyannote` | `pip install pyannote.audio` | **yes** | Neural VAD; weights are **gated** on Hugging Face. |
+
+### Why pyannote needs a token (it is not a remote service)
+
+pyannote.audio runs entirely on your machine. The token is **only used once to download
+the model weights** from the Hugging Face Hub, because `pyannote/segmentation-3.0`
+(`PYANNOTE_VAD_MODEL`) is a **gated repository** (HF requires you to accept the model
+license before downloading). After the weights are cached locally, inference is fully
+offline — no per-request API call. The VAD pipeline is built from this segmentation
+model (`VoiceActivityDetection`), not the legacy `pyannote/voice-activity-detection`
+pipeline (incompatible with pyannote.audio 4.x).
+
+To enable pyannote:
+1. `pip install pyannote.audio` (pulls `torch`).
+2. Create a token at <https://huggingface.co/settings/tokens>.
+3. Click **Agree** on `pyannote/segmentation-3.0`.
+4. Set `PYANNOTE_AUTH_TOKEN=hf_...`.
+
+`silero` needs no token and is the recommended neural VAD when you don't want to deal with
+HF gating. If a selected backend is unavailable it falls back to `energy`.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |

@@ -53,10 +53,11 @@ Batch transcription. `multipart/form-data`:
 | field | type | notes |
 |-------|------|-------|
 | `audio` | file | WAV PCM16 mono required for `vosk`; whisper accepts common formats |
-| `engine` | string | `vosk` \| `whisper` \| `whisper_local` \| `whisper_service` \| `eventlab` |
+| `engine` | string | `vosk` \| `whisper` \| `whisper_local` \| `whisper_gemma` \| `whisper_service` \| `eventlab` |
 | `language` | string? | optional hint, e.g. `en`, `vi` |
 | `denoise` | bool? | spectral noise reduction (default `STT_NOISE_REDUCE_ENABLED`) |
-| `vad` | bool? | energy VAD gate (default `STT_VAD_ENABLED`) |
+| `vad` | bool? | VAD gate (default `STT_VAD_ENABLED`) |
+| `vad_backend` | string? | `energy` \| `silero` \| `pyannote` (default `STT_VAD_BACKEND`) — see runbook "VAD backends" |
 
 Preprocessing (`denoise`/`vad`) applies to mono PCM16 WAV input; other formats pass
 through. `vad` also drives faster-whisper's internal `vad_filter`.

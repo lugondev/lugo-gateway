@@ -45,6 +45,18 @@
           </div>
           <p class="hint" id="llm-hint"></p>
         </section>
+
+        <section class="card">
+          <h2>STT preprocessing</h2>
+          <p class="hint">Shared defaults for noise reduction &amp; VAD, applied across STT (file / streaming) and Conversation.</p>
+          <div class="checks">
+            <label class="check"><input type="checkbox" id="pp-denoise" /> Noise reduce</label>
+            <label class="check"><input type="checkbox" id="pp-vad" /> VAD</label>
+            <label class="check">backend
+              <select id="pp-vad-backend" class="inline-select"></select>
+            </label>
+          </div>
+        </section>
       </div>
 
       <!-- ============================== MODELS ============================== -->
@@ -123,10 +135,16 @@
               <select id="conv-tts-engine"></select>
             </label>
           </div>
-          <label id="conv-voice-wrap" class="hidden">
-            Voice (VieNeu)
-            <select id="conv-voice"></select>
-          </label>
+          <div class="row">
+            <label>
+              Language (STT hint)
+              <input id="conv-language" type="text" value="vi" placeholder="vi, en, ja… (vi recommended)" />
+            </label>
+            <label id="conv-voice-wrap" class="hidden">
+              Voice (VieNeu)
+              <select id="conv-voice"></select>
+            </label>
+          </div>
           <div class="actions">
             <button id="conv-start">Start talking</button>
             <button id="conv-stop" class="ghost" disabled>Stop</button>
@@ -195,13 +213,7 @@
             <audio id="stt-record-preview" class="player hidden" controls></audio>
           </div>
 
-          <div class="checks">
-            <label class="check"><input type="checkbox" id="stt-denoise" /> Noise reduce</label>
-            <label class="check"><input type="checkbox" id="stt-vad" /> VAD</label>
-            <label class="check">backend
-              <select id="stt-vad-backend" class="inline-select"></select>
-            </label>
-          </div>
+          <p class="hint">Noise reduce / VAD use the shared defaults in the <strong>System</strong> tab.</p>
           <div class="actions">
             <button id="stt-submit">Transcribe</button>
           </div>
@@ -221,10 +233,6 @@
               Language (optional)
               <input id="stt-stream-language" type="text" placeholder="en, vi, ja..." />
             </label>
-          </div>
-          <div class="checks">
-            <label class="check"><input type="checkbox" id="stt-stream-denoise" /> Noise reduce</label>
-            <label class="check"><input type="checkbox" id="stt-stream-vad" /> VAD</label>
           </div>
           <div class="actions">
             <button id="stt-stream-record">Start Mic</button>

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import uuid
@@ -5,18 +6,25 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from app.core.audio import pcm16_to_wav_bytes
+from app.core.audio import pcm16_to_wav_bytes, preprocess_pcm16
 from app.core.errors import AppError
 from app.core.settings import settings
-from app.schemas.tts import TTSRequest
 from app.services.conversation.endpointer import VadEndpointer
 from app.services.conversation.responder import build_responder, get_active_llm_model
 from app.services.stt.service import stt_service
 from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
+from app.services.vad import apply_vad
+from app.schemas.tts import TTSRequest
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/conversation", tags=["conversation"])
+
+
+def _truthy(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class ChatMessage(BaseModel):
@@ -49,7 +57,11 @@ async def conversation_stream(websocket: WebSocket) -> None:
     stt_engine = q.get("stt_engine") or settings.conversation_stt_engine or settings.default_stt_engine
     tts_engine = q.get("tts_engine") or settings.conversation_tts_engine or settings.default_tts_engine
     voice = q.get("voice") or None
+    language = q.get("language") or settings.conversation_language or None
     sample_rate = int(q.get("sample_rate", settings.stt_stream_sample_rate))
+    denoise = _truthy(q.get("denoise"), settings.stt_noise_reduce_enabled)
+    vad_pp = _truthy(q.get("vad"), settings.stt_vad_enabled)
+    vad_backend = q.get("vad_backend") or settings.stt_vad_backend
 
     try:
         stt_provider = stt_service.get_provider(stt_engine)
@@ -97,9 +109,16 @@ async def conversation_stream(websocket: WebSocket) -> None:
         turn += 1
         await send("processing", turn=turn)
 
-        wav = pcm16_to_wav_bytes(audio_pcm, sample_rate=sample_rate)
+        pcm = audio_pcm
+        if denoise or vad_pp:
+            pcm = preprocess_pcm16(
+                audio_pcm, sample_rate, denoise=denoise, vad=vad_pp,
+                amount=settings.stt_noise_reduce_amount,
+                vad_fn=lambda s, sr: apply_vad(s, sr, vad_backend),
+            )
+        wav = pcm16_to_wav_bytes(pcm, sample_rate=sample_rate)
         try:
-            stt_result = await stt_provider.transcribe_bytes(wav)
+            stt_result = await stt_provider.transcribe_bytes(wav, language)
         except RuntimeError as exc:
             await send("error", message=f"STT failed: {exc}")
             return
@@ -132,6 +151,19 @@ async def conversation_stream(websocket: WebSocket) -> None:
             )
         await send("turn_done", turn=turn)
 
+    current_turn: asyncio.Task | None = None
+
+    async def abort_turn(reason: str) -> None:
+        nonlocal current_turn
+        if current_turn and not current_turn.done():
+            current_turn.cancel()
+            try:
+                await current_turn
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+            await send("aborted", reason=reason)
+        current_turn = None
+
     try:
         while True:
             message = await websocket.receive()
@@ -143,10 +175,13 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 if not event:
                     continue
                 if event["event"] == "speech_start":
+                    # Barge-in: user starts talking -> cancel the assistant's turn.
+                    await abort_turn("barge-in")
                     await send("speech_start")
                 elif event["event"] == "endpoint":
+                    await abort_turn("superseded")
                     await send("speech_end", speech_ms=round(event["speech_ms"]))
-                    await handle_turn(event["audio"])
+                    current_turn = asyncio.create_task(handle_turn(event["audio"]))
 
             if message.get("text") is not None:
                 try:
@@ -154,21 +189,28 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 except json.JSONDecodeError:
                     control = {}
                 ctype = control.get("type")
-                if ctype == "reset":
+                if ctype == "abort":
+                    await abort_turn("user")
+                elif ctype == "reset":
+                    await abort_turn("reset")
                     history.clear()
                     endpointer.reset()
                     await send("reset")
                 elif ctype in {"flush", "end"}:
                     audio = endpointer.flush()
                     if audio:
+                        await abort_turn("superseded")
                         await send("speech_end", speech_ms=0)
-                        await handle_turn(audio)
+                        current_turn = asyncio.create_task(handle_turn(audio))
                     if ctype == "end":
+                        await abort_turn("end")
                         await send("done")
                         break
     except WebSocketDisconnect:
         pass
     finally:
+        if current_turn and not current_turn.done():
+            current_turn.cancel()
         try:
             await websocket.close()
         except RuntimeError:

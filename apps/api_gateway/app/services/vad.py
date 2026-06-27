@@ -29,10 +29,12 @@ _pyannote_cache: dict[str, object] = {}
 
 def available_backends() -> dict[str, bool]:
     torch_ok = module_available("torch")
+    # pyannote's default VAD pipeline is gated on HF -> needs an auth token.
+    pyannote_ok = torch_ok and module_available("pyannote.audio") and bool(settings.pyannote_auth_token)
     return {
         "energy": True,
         "silero": torch_ok and module_available("silero_vad"),
-        "pyannote": torch_ok and module_available("pyannote.audio"),
+        "pyannote": pyannote_ok,
     }
 
 
@@ -62,13 +64,16 @@ def _silero_regions(samples: np.ndarray, sample_rate: int) -> list[tuple[int, in
 
 def _pyannote_regions(samples: np.ndarray, sample_rate: int) -> list[tuple[int, int]]:
     import torch
-    from pyannote.audio import Pipeline
+    from pyannote.audio import Model
+    from pyannote.audio.pipelines import VoiceActivityDetection
 
     if "pipeline" not in _pyannote_cache:
         token = settings.pyannote_auth_token or True
-        _pyannote_cache["pipeline"] = Pipeline.from_pretrained(
-            settings.pyannote_vad_model, use_auth_token=token
-        )
+        # segmentation-3.0 is a Model; wrap it in the VAD pipeline (pyannote 3.1/4.x way).
+        model = Model.from_pretrained(settings.pyannote_vad_model, token=token)
+        pipeline = VoiceActivityDetection(segmentation=model)
+        pipeline.instantiate({"min_duration_on": 0.0, "min_duration_off": 0.0})
+        _pyannote_cache["pipeline"] = pipeline
     waveform = torch.from_numpy(np.asarray(samples, dtype=np.float32)).unsqueeze(0)
     annotation = _pyannote_cache["pipeline"]({"waveform": waveform, "sample_rate": sample_rate})
     return [
