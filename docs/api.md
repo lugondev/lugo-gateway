@@ -112,17 +112,24 @@ Full-duplex voice loop: stream mic audio, the server endpoints each turn with VA
 transcribes it, generates a reply, and streams TTS audio back.
 
 ```
-ws://localhost:8000/v1/conversation/stream?stt_engine=vosk&tts_engine=vieneu&voice=Ngọc Lan&sample_rate=16000
+ws://localhost:8000/v1/conversation/stream?stt_engine=vosk&tts_engine=vieneu&voice=Ngọc Lan&sample_rate=16000&audio_codec=pcm16
 ```
 
-Client → server: binary PCM16 mono frames; text control `{"type":"reset"}` (clear
-history) / `{"type":"end"}` (finalize + close).
+Client → server: binary audio frames; text control `{"type":"reset"}` (clear
+history) / `{"type":"end"}` (finalize + close) / `{"type":"abort"}`.
+
+**Audio transport** (`audio_codec` query param):
+- `pcm16` (default) — raw little-endian 16-bit mono frames at `sample_rate`.
+- `opus` — raw Opus packets, mono at `sample_rate` (e.g. 16 kHz, 20–60 ms frames).
+  ~10x less bandwidth; the native format for ESP32 / Raspberry Pi firmware and
+  browser WebCodecs. The server decodes to PCM16 (needs libopus — see runbook). If
+  the server lacks libopus it falls back to `pcm16` (reported in `session_started`).
 
 Server → client events (`{"event": ...}`):
 
 | `event` | when | key fields |
 |---------|------|-----------|
-| `session_started` | on connect | `stt_engine`, `tts_engine`, `responder` |
+| `session_started` | on connect | `stt_engine`, `stt_detail`, `tts_engine`, `tts_detail`, `responder`, `llm_model`, `audio_codec` |
 | `speech_start` | user starts speaking | — |
 | `speech_end` | VAD detects end of turn | `speech_ms` |
 | `processing` | transcribing + generating | `turn` |

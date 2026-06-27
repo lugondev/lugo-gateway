@@ -100,6 +100,9 @@ async def conversation_stream(websocket: WebSocket) -> None:
     voice = q.get("voice") or None
     language = q.get("language") or settings.conversation_language or None
     sample_rate = int(q.get("sample_rate", settings.stt_stream_sample_rate))
+    # Audio transport: pcm16 (default) or opus (embedded ESP32/RPi + browser WebCodecs;
+    # ~10x less bandwidth). Server decodes Opus packets -> PCM16 for the endpointer.
+    audio_codec = (q.get("audio_codec") or "pcm16").lower()
     # Only optional noise reduction here — the endpointer already does VAD
     # segmentation and Whisper has its own vad_filter, so an extra VAD gate on the
     # utterance would clip speech and hurt recognition.
@@ -112,6 +115,18 @@ async def conversation_stream(websocket: WebSocket) -> None:
         await websocket.send_json({"event": "error", "message": str(exc)})
         await websocket.close()
         return
+
+    # Set up Opus decoding if the client negotiated it; fall back to PCM16 with a
+    # warning if the server lacks libopus (so the connection still works).
+    opus_decoder = None
+    if audio_codec == "opus":
+        from app.core.opus import OpusFrameDecoder, opus_available
+
+        if opus_available():
+            opus_decoder = OpusFrameDecoder(sample_rate=sample_rate, channels=1)
+        else:
+            audio_codec = "pcm16"
+            logger.warning("client requested opus but server has no libopus; using pcm16")
 
     responder = build_responder()
 
@@ -146,6 +161,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
             "responder": responder.name,
             "llm_model": llm_model,
             "sample_rate": sample_rate,
+            "audio_codec": audio_codec,
         }
     )
 
@@ -265,7 +281,14 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 break
 
             if message.get("bytes") is not None:
-                event = endpointer.accept(message["bytes"])
+                frame = message["bytes"]
+                if opus_decoder is not None:
+                    try:
+                        frame = opus_decoder.decode(frame)
+                    except Exception as exc:  # noqa: BLE001 - skip a bad packet, keep going
+                        logger.warning("opus decode failed: %s", exc)
+                        continue
+                event = endpointer.accept(frame)
                 if not event:
                     continue
                 if event["event"] == "speech_start":

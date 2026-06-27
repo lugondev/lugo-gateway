@@ -26,6 +26,27 @@ Open the playground at `http://localhost:8000/ui`. Interactive API docs are at `
 Without a Vosk model, `vosk` requests return a clear error (the gateway does not crash).
 Set `VOSK_MODEL_PATH` to use a different model.
 
+### Apple-GPU STT (whisper_mlx, ~7x faster)
+
+```bash
+.venv/bin/pip install -e ".[mlx]"     # Apple Silicon only
+./scripts/convert_phowhisper_mlx.sh   # builds models/stt/phowhisper-medium-mlx
+```
+Then set `CONVERSATION_STT_ENGINE=whisper_mlx` (or pick it in the UI). The engine
+auto-hides on non-Mac hosts, so callers fall back to the CPU `whisper` engine.
+
+### Opus audio transport (ESP32 / Raspberry Pi / browser)
+
+`?audio_codec=opus` on the conversation WS streams Opus instead of PCM16 (~10x less
+bandwidth). Requires the system Opus library + binding:
+
+```bash
+brew install opus        # macOS   (then run via `make` so DYLD_FALLBACK_LIBRARY_PATH is set)
+sudo apt install libopus0  # Debian/Ubuntu
+.venv/bin/pip install -e ".[opus]"
+```
+If libopus is missing the server logs a warning and falls back to PCM16.
+
 ## Docker Compose
 
 ```bash

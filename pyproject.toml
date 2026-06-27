@@ -25,6 +25,11 @@ dev = [
 mlx = [
   "mlx-whisper>=0.4.0",
 ]
+# Opus audio transport (ESP32/RPi/browser). Needs system libopus
+# (apt-get install libopus0 / brew install opus).
+opus = [
+  "opuslib>=3.0.1",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

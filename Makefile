@@ -7,6 +7,10 @@ HOST        ?= 0.0.0.0
 PORT        ?= 8000
 APP         ?= app.main:app
 PYTHONPATH  := apps/api_gateway
+# macOS: let ctypes/opuslib find Homebrew's libopus (harmless on Linux, where
+# libopus0 is already on the default search path).
+DYLD_FALLBACK_LIBRARY_PATH ?= /opt/homebrew/lib:/usr/local/lib
+export DYLD_FALLBACK_LIBRARY_PATH
 RUN_DIR     ?= .run
 PID         := $(RUN_DIR)/gateway.pid
 LOG         ?= $(RUN_DIR)/gateway.log
