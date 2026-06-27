@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import numpy as np
 import pytest
@@ -69,8 +70,13 @@ def test_conversation_turn_end_to_end():
         ws.send_bytes(_silence(500))  # crosses 700ms silence -> endpoint
 
         events = []
-        for _ in range(30):
-            ev = ws.receive_json()
+        audio_frames = 0
+        for _ in range(40):
+            msg = ws.receive()
+            if msg.get("bytes") is not None:  # inline WAV audio frame
+                audio_frames += 1
+                continue
+            ev = json.loads(msg["text"])
             events.append(ev)
             if ev["event"] == "turn_done":
                 break
@@ -81,11 +87,10 @@ def test_conversation_turn_end_to_end():
         assert "response_text" in types
         assert "audio_chunk" in types
         assert types[-1] == "turn_done"
+        assert audio_frames >= 1  # audio delivered as binary frames
 
         transcript = next(e for e in events if e["event"] == "user_transcript")
         assert transcript["text"] == "xin chào trợ lý"
-        chunk = next(e for e in events if e["event"] == "audio_chunk")
-        assert chunk["audio_url"].startswith("/artifacts/")
 
 
 def test_conversation_barge_in_aborts_turn():

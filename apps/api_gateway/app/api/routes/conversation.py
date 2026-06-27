@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from app.core.audio import pcm16_to_wav_bytes, preprocess_pcm16
 from app.core.errors import AppError
 from app.core.settings import settings
+from app.services.artifacts import artifact_store
 from app.services.conversation.endpointer import VadEndpointer
 from app.services.conversation.responder import build_responder, get_active_llm_model
 from app.services.stt.service import stt_service
@@ -23,6 +24,13 @@ def _truthy(value: str | None, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _read_audio(audio_url: str | None) -> bytes:
+    if not audio_url:
+        return b""
+    path = artifact_store.base_dir / audio_url.rsplit("/", 1)[-1]
+    return path.read_bytes() if path.is_file() else b""
 
 
 class ChatMessage(BaseModel):
@@ -153,10 +161,14 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 turn=turn,
                 chunk_index=index,
                 text=sentence,
-                audio_url=result.audio_url,
                 sample_rate=result.sample_rate,
                 mock=result.mock,
             )
+            # Send the WAV inline as a binary frame so the client doesn't pay an
+            # HTTP fetch per sentence (lower latency, smoother for remote clients).
+            audio = _read_audio(result.audio_url)
+            if audio:
+                await websocket.send_bytes(audio)
             index += 1
 
         history.append({"role": "assistant", "content": " ".join(parts)})
