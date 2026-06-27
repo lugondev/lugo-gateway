@@ -28,6 +28,10 @@ class TTSProvider(ABC):
         """How to enable this engine when it isn't available; empty if built-in."""
         return ""
 
+    def warm(self) -> None:
+        """Preload the model so the first synthesis isn't slow. Default: no-op."""
+        return None
+
 
 class MockFallbackTTSProvider(TTSProvider):
     """Base that runs real synthesis and falls back to silent mock audio.

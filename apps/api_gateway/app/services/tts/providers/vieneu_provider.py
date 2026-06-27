@@ -63,5 +63,9 @@ class VieNeuProvider(MockFallbackTTSProvider):
         )
         return float_array_to_wav_bytes(audio, sample_rate=_SAMPLE_RATE)
 
+    def warm(self) -> None:
+        if self.available():
+            self._model()  # load + cache so the first synthesis is fast
+
     async def _render_wav(self, payload: TTSRequest) -> bytes:
         return await asyncio.to_thread(self._generate_wav, payload)

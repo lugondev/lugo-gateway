@@ -1045,9 +1045,11 @@ async function loadConversationEngines() {
     };
     fill("conv-stt-engine", stt.data.filter((e) => e.available), (e) => `${e.engine}`);
     fill("conv-tts-engine", tts.data.filter((e) => e.available), (e) => `${e.engine}`);
-    // Prefer whisper for conversation (vosk small is weak for Vietnamese).
+    // Prefer whisper for STT and VieNeu for TTS (OmniVoice CLI is too slow live).
     const sttSel = el("conv-stt-engine");
     if (sttSel && [...sttSel.options].some((o) => o.value === "whisper")) sttSel.value = "whisper";
+    const ttsSel = el("conv-tts-engine");
+    if (ttsSel && [...ttsSel.options].some((o) => o.value === "vieneu")) ttsSel.value = "vieneu";
     restoreAndBind("conv-stt-engine");
     restoreAndBind("conv-tts-engine");
     restoreAndBind("conv-language");

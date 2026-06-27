@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     # Python interpreter that can import omnivoice (its own venv). Empty = auto.
     omnivoice_python: str = ""
     omnivoice_timeout_seconds: float = 600.0
+    # Persistent inference server (loads the model once) -> real-time-ish TTS.
+    # Falsey -> fall back to the per-call CLI (reloads the model every call).
+    omnivoice_use_server: bool = True
+    omnivoice_server_host: str = "127.0.0.1"
+    omnivoice_server_port: int = 8762
+    omnivoice_server_startup_seconds: float = 60.0
     # Pin a consistent voice: auto mode picks a RANDOM voice per call (different
     # voice per sentence/chunk). A fixed instruct + greedy sampling keeps one voice.
     # Must use OmniVoice voice-design attributes (gender/age/pitch/accent/style),
@@ -69,7 +75,7 @@ class Settings(BaseSettings):
     conversation_rms_threshold: float = 0.015  # speech vs silence (float RMS)
     conversation_max_utterance_ms: int = 30000
     conversation_stt_engine: str = "whisper"  # better than vosk for Vietnamese
-    conversation_tts_engine: str = ""        # empty -> default_tts_engine
+    conversation_tts_engine: str = "vieneu"  # in-process & warm (~0.4s); OmniVoice CLI reloads per call (~7s)
     conversation_language: str = "vi"        # STT language hint; "" = auto-detect
     # Optional OpenAI-compatible chat endpoint (Ollama/LM Studio/vLLM/OpenAI).
     # Empty base url -> built-in echo responder (no external service).
