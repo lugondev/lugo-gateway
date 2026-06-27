@@ -59,9 +59,10 @@ All settings are environment variables (or `.env`). See `.env.example` for the f
 | `WHISPER_LOCAL_MODEL` | `phowhisper-medium` | size (`small`/`medium`/`large-v3`) or VinAI Vietnamese fine-tune `phowhisper-{tiny,base,small,medium,large}` |
 | `WHISPER_LOCAL_DEVICE` | `cpu` | `cpu` \| `cuda` |
 | `WHISPER_LOCAL_COMPUTE_TYPE` | `int8` | quantization |
-| `WHISPER_BEAM_SIZE` | `5` | beam search width |
+| `WHISPER_BEAM_SIZE` | `1` | beam search width (1 = greedy; ~17% faster, no measured accuracy loss) |
 | `WHISPER_CONDITION_ON_PREVIOUS_TEXT` | `false` | off avoids hallucination drift across silent gaps |
 | `WHISPER_INITIAL_PROMPT` | — | seed text to bias Vietnamese orthography (empty = off) |
+| `WHISPER_MLX_MODEL_PATH` | `models/stt/phowhisper-medium-mlx` | MLX model dir for the `whisper_mlx` engine (Apple-GPU, ~7x faster). Build with `scripts/convert_phowhisper_mlx.sh`; engine auto-hides if `mlx-whisper`/model absent |
 | `WHISPER_SERVICE_BASE_URL` / `_API_KEY` / `_MODEL` | — | remote OpenAI-compatible STT |
 | `EVENTLAB_BASE_URL` / `_API_KEY` / `_MODEL` | — | second remote STT provider |
 | `REMOTE_STT_TIMEOUT_SECONDS` | `60` | remote request timeout |

@@ -1195,9 +1195,10 @@ async function loadConversationEngines() {
     };
     fill("conv-stt-engine", stt.data.filter((e) => e.available), (e) => `${e.engine}`);
     fill("conv-tts-engine", tts.data.filter((e) => e.available), (e) => `${e.engine}`);
-    // Prefer whisper for STT and VieNeu for TTS (OmniVoice CLI is too slow live).
+    // Prefer the fast Apple-GPU engine when available, else whisper; VieNeu for TTS.
     const sttSel = el("conv-stt-engine");
-    if (sttSel && [...sttSel.options].some((o) => o.value === "whisper")) sttSel.value = "whisper";
+    const sttPref = ["whisper_mlx", "whisper"].find((v) => [...(sttSel?.options || [])].some((o) => o.value === v));
+    if (sttSel && sttPref) sttSel.value = sttPref;
     const ttsSel = el("conv-tts-engine");
     if (ttsSel && [...ttsSel.options].some((o) => o.value === "vieneu")) ttsSel.value = "vieneu";
     restoreAndBind("conv-stt-engine");

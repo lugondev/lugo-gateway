@@ -147,15 +147,20 @@ async def conversation_stream(websocket: WebSocket) -> None:
         }
     )
 
-    # Warm the TTS model in the background while the user speaks their first turn,
-    # so the first reply isn't delayed by a cold model load.
-    async def _warm_tts() -> None:
-        try:
-            await asyncio.to_thread(tts_provider.warm)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("TTS warm failed: %s", exc)
+    # Warm TTS (and STT if it supports it, e.g. MLX graph compile) in the background
+    # while the user speaks their first turn, so the first turn isn't delayed by a
+    # cold model load / compile.
+    async def _warm() -> None:
+        for provider in (tts_provider, stt_provider):
+            warm = getattr(provider, "warm", None)
+            if not callable(warm):
+                continue
+            try:
+                await asyncio.to_thread(warm)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("%s warm failed: %s", type(provider).__name__, exc)
 
-    asyncio.create_task(_warm_tts())
+    asyncio.create_task(_warm())
 
     async def send(event: str, **payload) -> None:
         await websocket.send_json({"event": event, **payload})

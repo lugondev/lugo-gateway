@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     whisper_condition_on_previous_text: bool = False
     whisper_initial_prompt: str = ""
 
+    # whisper_mlx: Apple Silicon GPU path (mlx-whisper). ~7x faster than CPU faster-
+    # whisper on M-series. Point at a locally converted MLX model dir (see
+    # scripts/convert_phowhisper_mlx.sh). Engine auto-hides when mlx_whisper is absent
+    # (non-Mac) or the dir is missing -> callers fall back to the faster-whisper engine.
+    whisper_mlx_model_path: str = "models/stt/phowhisper-medium-mlx"
+
     # Extra STT preprocessing (defaults OFF: our energy gate / spectral denoise can
     # clip or add artifacts and don't help Whisper, which has its own VAD).
     stt_vad_enabled: bool = False

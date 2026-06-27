@@ -8,6 +8,7 @@ from app.services.stt.base import STTProvider
 from app.services.stt.providers.remote_whisper_provider import RemoteWhisperProvider
 from app.services.stt.providers.vosk_provider import VoskProvider
 from app.services.stt.providers.whisper_gemma_provider import WhisperGemmaProvider
+from app.services.stt.providers.whisper_mlx_provider import WhisperMlxProvider
 from app.services.stt.providers.whisper_provider import WhisperProvider
 
 
@@ -18,6 +19,7 @@ class STTService:
             "vosk": VoskProvider(),
             "whisper": whisper_local,
             "whisper_local": whisper_local,
+            "whisper_mlx": WhisperMlxProvider(),
             "whisper_gemma": WhisperGemmaProvider(),
             "whisper_service": RemoteWhisperProvider(
                 name="whisper_service",
@@ -76,6 +78,13 @@ class STTService:
                 entry = {"mode": "local", "available": vosk_present, "detail": vosk_detail}
             elif engine in ("whisper", "whisper_local"):
                 entry = {"mode": "local", "available": fw_available, "detail": whisper_detail}
+            elif engine == "whisper_mlx":
+                mlx_ok = provider.available()
+                entry = {
+                    "mode": "local",
+                    "available": mlx_ok,
+                    "detail": provider.detail() if mlx_ok else "needs mlx-whisper + converted model",
+                }
             elif engine == "whisper_gemma":
                 entry = {"mode": "local", "available": fw_available, "detail": provider.detail()}
             else:
