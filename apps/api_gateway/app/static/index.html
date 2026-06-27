@@ -124,6 +124,18 @@
           <p class="hint">Point the voice/chat conversation at any OpenAI-compatible endpoint (OpenAI, Groq, Together, vLLM…) instead of local Ollama. The API key is sent to the gateway and held in memory only (not persisted, not saved to the browser).</p>
           <div class="row tight">
             <label>
+              Quick preset
+              <select id="llm-online-preset">
+                <option value="">— choose a provider —</option>
+                <option value="openai">OpenAI (paste API key)</option>
+                <option value="groq">Groq</option>
+                <option value="together">Together AI</option>
+                <option value="ollama">Ollama (local)</option>
+              </select>
+            </label>
+          </div>
+          <div class="row tight">
+            <label>
               Base URL
               <input id="llm-online-url" type="text" placeholder="https://api.openai.com/v1" />
             </label>

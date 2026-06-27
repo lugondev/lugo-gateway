@@ -472,6 +472,31 @@ function renderLlmOnlineStatus(d) {
   }
 }
 
+// Quick-switch presets: prefill URL + a sensible default model (editable). The
+// model is only a suggestion — change it to any model the provider exposes.
+const LLM_PRESETS = {
+  openai: { url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+  groq: { url: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
+  together: { url: "https://api.together.xyz/v1", model: "meta-llama/Llama-3.3-70B-Instruct-Turbo" },
+  ollama: { url: "http://localhost:11434/v1", model: "gemma2:9b" },
+};
+
+if (el("llm-online-preset")) {
+  el("llm-online-preset").addEventListener("change", (e) => {
+    const p = LLM_PRESETS[e.target.value];
+    if (!p) return;
+    el("llm-online-url").value = p.url;
+    el("llm-online-model").value = p.model;
+    // Ollama needs no key; hosted providers do — focus the key field for those.
+    if (e.target.value === "ollama") {
+      el("llm-online-key").value = "";
+    } else {
+      el("llm-online-key").focus();
+    }
+    print(el("llm-online-status"), `${e.target.value}: enter API key${e.target.value === "ollama" ? " (not required)" : ""} then “Use this LLM”`);
+  });
+}
+
 async function loadLlmOnlineConfig() {
   try {
     const body = await (await fetch("/v1/conversation/llm")).json();
