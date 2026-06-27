@@ -20,6 +20,16 @@ class Settings(BaseSettings):
     # Python interpreter that can import omnivoice (its own venv). Empty = auto.
     omnivoice_python: str = ""
     omnivoice_timeout_seconds: float = 600.0
+    # Pin a consistent voice: auto mode picks a RANDOM voice per call (different
+    # voice per sentence/chunk). A fixed instruct + greedy sampling keeps one voice.
+    # Must use OmniVoice voice-design attributes (gender/age/pitch/accent/style),
+    # comma+space separated, e.g. "female, young adult" or "male, low pitch".
+    omnivoice_default_instruct: str = "female, young adult"
+    omnivoice_class_temperature: float = 0.0  # 0 = deterministic (consistent voice)
+    # A fixed reference voice is generated once (from the instruct above) and then
+    # CLONED for every chunk, so all sentences use exactly the same voice.
+    omnivoice_pin_voice: bool = True
+    omnivoice_ref_text: str = "Xin chào, đây là giọng đọc tham chiếu để giữ giọng nhất quán."
 
     default_tts_engine_voice: str = ""  # optional VieNeu preset voice
     enable_mock_engines: bool = True
@@ -58,7 +68,7 @@ class Settings(BaseSettings):
     conversation_min_speech_ms: int = 300    # ignore utterances shorter than this
     conversation_rms_threshold: float = 0.015  # speech vs silence (float RMS)
     conversation_max_utterance_ms: int = 30000
-    conversation_stt_engine: str = ""        # empty -> default_stt_engine
+    conversation_stt_engine: str = "whisper"  # better than vosk for Vietnamese
     conversation_tts_engine: str = ""        # empty -> default_tts_engine
     conversation_language: str = "vi"        # STT language hint; "" = auto-detect
     # Optional OpenAI-compatible chat endpoint (Ollama/LM Studio/vLLM/OpenAI).

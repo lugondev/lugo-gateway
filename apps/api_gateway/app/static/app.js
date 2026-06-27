@@ -1045,6 +1045,9 @@ async function loadConversationEngines() {
     };
     fill("conv-stt-engine", stt.data.filter((e) => e.available), (e) => `${e.engine}`);
     fill("conv-tts-engine", tts.data.filter((e) => e.available), (e) => `${e.engine}`);
+    // Prefer whisper for conversation (vosk small is weak for Vietnamese).
+    const sttSel = el("conv-stt-engine");
+    if (sttSel && [...sttSel.options].some((o) => o.value === "whisper")) sttSel.value = "whisper";
     restoreAndBind("conv-stt-engine");
     restoreAndBind("conv-tts-engine");
     restoreAndBind("conv-language");

@@ -40,6 +40,19 @@ def test_idle_silence_ignored():
     assert ep.speaking is False
 
 
+def test_preroll_keeps_word_onset():
+    def run(preroll_ms):
+        ep = VadEndpointer(SR, silence_ms=200, min_speech_ms=50, rms_threshold=0.015, preroll_ms=preroll_ms)
+        for _ in range(4):
+            ep.accept(_silence(90))  # builds the rolling pre-roll
+        ep.accept(_loud(100))  # speech starts -> pre-roll prepended
+        ev = ep.accept(_silence(300))  # endpoint
+        return len(ev["audio"])
+
+    # A larger pre-roll keeps more lead-in audio before the detected speech.
+    assert run(300) > run(0)
+
+
 def test_flush_returns_buffered_utterance():
     ep = VadEndpointer(SR, silence_ms=5000, min_speech_ms=200, rms_threshold=0.015)
     ep.accept(_loud(400))

@@ -5,6 +5,8 @@ so the server knows when the user has finished speaking (turn-taking). Energy
 (RMS) based — cheap, streaming-friendly, no heavy model per frame.
 """
 
+from collections import deque
+
 import numpy as np
 
 from app.core.audio import pcm16_to_float_array
@@ -19,6 +21,7 @@ class VadEndpointer:
         rms_threshold: float = 0.015,
         max_utterance_ms: int = 30000,
         noise_factor: float = 2.5,
+        preroll_ms: int = 300,
     ) -> None:
         self.sample_rate = sample_rate
         self.silence_ms = silence_ms
@@ -26,6 +29,7 @@ class VadEndpointer:
         self.rms_threshold = rms_threshold  # absolute floor for "speech"
         self.max_utterance_ms = max_utterance_ms
         self.noise_factor = noise_factor
+        self.preroll_ms = preroll_ms  # lead-in kept before speech is detected
         self.reset()
 
     def reset(self) -> None:
@@ -34,6 +38,8 @@ class VadEndpointer:
         self._silence_acc_ms = 0.0
         self._speech_ms = 0.0
         self._noise = self.rms_threshold  # adaptive ambient-noise floor
+        self._preroll: deque[tuple[bytes, float]] = deque()  # recent pre-speech frames
+        self._preroll_ms = 0.0
 
     @property
     def speaking(self) -> bool:
@@ -63,6 +69,12 @@ class VadEndpointer:
 
         if is_speech:
             started = not self._speaking
+            if started:
+                # Prepend the buffered lead-in so the word onset isn't clipped.
+                for frame, _ in self._preroll:
+                    self._collected.extend(frame)
+                self._preroll.clear()
+                self._preroll_ms = 0.0
             self._speaking = True
             self._collected.extend(pcm)
             self._speech_ms += frame_ms
@@ -77,6 +89,13 @@ class VadEndpointer:
             self._silence_acc_ms += frame_ms
             if self._silence_acc_ms >= self.silence_ms and self._speech_ms >= self.min_speech_ms:
                 return self._emit_endpoint()
+        else:
+            # Idle: keep a rolling pre-roll buffer of the most recent audio.
+            self._preroll.append((pcm, frame_ms))
+            self._preroll_ms += frame_ms
+            while self._preroll_ms > self.preroll_ms and len(self._preroll) > 1:
+                _, dropped = self._preroll.popleft()
+                self._preroll_ms -= dropped
         return None
 
     def flush(self) -> bytes | None:

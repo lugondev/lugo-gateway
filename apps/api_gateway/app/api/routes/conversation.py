@@ -12,10 +12,9 @@ from app.core.settings import settings
 from app.services.conversation.endpointer import VadEndpointer
 from app.services.conversation.responder import build_responder, get_active_llm_model
 from app.services.stt.service import stt_service
+from app.schemas.tts import TTSRequest
 from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
-from app.services.vad import apply_vad
-from app.schemas.tts import TTSRequest
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/conversation", tags=["conversation"])
@@ -59,9 +58,10 @@ async def conversation_stream(websocket: WebSocket) -> None:
     voice = q.get("voice") or None
     language = q.get("language") or settings.conversation_language or None
     sample_rate = int(q.get("sample_rate", settings.stt_stream_sample_rate))
+    # Only optional noise reduction here — the endpointer already does VAD
+    # segmentation and Whisper has its own vad_filter, so an extra VAD gate on the
+    # utterance would clip speech and hurt recognition.
     denoise = _truthy(q.get("denoise"), settings.stt_noise_reduce_enabled)
-    vad_pp = _truthy(q.get("vad"), settings.stt_vad_enabled)
-    vad_backend = q.get("vad_backend") or settings.stt_vad_backend
 
     try:
         stt_provider = stt_service.get_provider(stt_engine)
@@ -110,11 +110,10 @@ async def conversation_stream(websocket: WebSocket) -> None:
         await send("processing", turn=turn)
 
         pcm = audio_pcm
-        if denoise or vad_pp:
+        if denoise:
             pcm = preprocess_pcm16(
-                audio_pcm, sample_rate, denoise=denoise, vad=vad_pp,
+                audio_pcm, sample_rate, denoise=True, vad=False,
                 amount=settings.stt_noise_reduce_amount,
-                vad_fn=lambda s, sr: apply_vad(s, sr, vad_backend),
             )
         wav = pcm16_to_wav_bytes(pcm, sample_rate=sample_rate)
         try:
