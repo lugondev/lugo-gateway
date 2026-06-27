@@ -118,6 +118,32 @@
           </div>
           <p id="model-msg" class="meta"></p>
         </section>
+
+        <section class="card">
+          <h2>Conversation LLM — Online (OpenAI-compatible)</h2>
+          <p class="hint">Point the voice/chat conversation at any OpenAI-compatible endpoint (OpenAI, Groq, Together, vLLM…) instead of local Ollama. The API key is sent to the gateway and held in memory only (not persisted, not saved to the browser).</p>
+          <div class="row tight">
+            <label>
+              Base URL
+              <input id="llm-online-url" type="text" placeholder="https://api.openai.com/v1" />
+            </label>
+            <label>
+              Model
+              <input id="llm-online-model" type="text" placeholder="gpt-4o-mini" />
+            </label>
+          </div>
+          <div class="row tight">
+            <label>
+              API key
+              <input id="llm-online-key" type="password" placeholder="sk-… (leave blank if not required)" autocomplete="off" />
+            </label>
+            <div class="actions end">
+              <button id="llm-online-apply">Use this LLM</button>
+              <button id="llm-online-reset" class="ghost">Revert to .env</button>
+            </div>
+          </div>
+          <p id="llm-online-status" class="meta"></p>
+        </section>
       </div>
 
       <!-- ============================== CONVERSATION ============================== -->

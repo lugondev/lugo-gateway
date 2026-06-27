@@ -113,3 +113,29 @@ def test_conversation_unknown_engine_errors():
     client = TestClient(app)
     with client.websocket_connect("/v1/conversation/stream?stt_engine=nope") as ws:
         assert ws.receive_json()["event"] == "error"
+
+
+def test_conversation_llm_config_set_and_reset():
+    from app.services.conversation.responder import reset_active_llm_config
+
+    client = TestClient(app)
+    try:
+        # Default (hermetic): no base url -> echo responder.
+        body = client.get("/v1/conversation/llm").json()["data"]
+        assert body["responder"] == "echo"
+
+        # Point at an online OpenAI-compatible endpoint.
+        body = client.post(
+            "/v1/conversation/llm",
+            json={"base_url": "https://api.example.com/v1", "api_key": "sk-x", "model": "gpt-test"},
+        ).json()["data"]
+        assert body["responder"] == "llm"
+        assert body["base_url"] == "https://api.example.com/v1"
+        assert body["model"] == "gpt-test"
+        assert body["api_key_set"] is True  # key is never echoed back, only a flag
+
+        # Revert.
+        body = client.post("/v1/conversation/llm/reset").json()["data"]
+        assert body["responder"] == "echo"
+    finally:
+        reset_active_llm_config()  # don't leak runtime state into other tests

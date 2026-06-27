@@ -461,6 +461,76 @@ el("llm-start").addEventListener("click", async () => {
   }
 });
 
+function renderLlmOnlineStatus(d) {
+  const s = el("llm-online-status");
+  if (!s) return;
+  if (d.responder === "llm") {
+    s.textContent = `Active: ${d.model || "(no model)"} @ ${d.base_url}${d.api_key_set ? " · key set" : " · no key"}`;
+    s.classList.remove("error");
+  } else {
+    s.textContent = "Active: echo (no LLM endpoint configured)";
+  }
+}
+
+async function loadLlmOnlineConfig() {
+  try {
+    const body = await (await fetch("/v1/conversation/llm")).json();
+    const d = body.data || {};
+    // Prefill URL + model so the user sees what's active; never the key.
+    if (el("llm-online-url") && !el("llm-online-url").value) el("llm-online-url").value = d.base_url || "";
+    if (el("llm-online-model") && !el("llm-online-model").value) el("llm-online-model").value = d.model || "";
+    renderLlmOnlineStatus(d);
+  } catch (error) {
+    /* status stays blank if offline */
+  }
+}
+
+if (el("llm-online-apply")) {
+  el("llm-online-apply").addEventListener("click", async () => {
+    const s = el("llm-online-status");
+    const payload = {
+      base_url: el("llm-online-url").value.trim(),
+      model: el("llm-online-model").value.trim(),
+      api_key: el("llm-online-key").value,
+    };
+    if (!payload.base_url) {
+      print(s, "Enter a base URL (e.g. https://api.openai.com/v1)", true);
+      return;
+    }
+    s.textContent = "Applying…";
+    try {
+      const resp = await fetch("/v1/conversation/llm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await resp.json();
+      if (!resp.ok) {
+        print(s, body.error || body, true);
+        return;
+      }
+      el("llm-online-key").value = ""; // clear the key field once sent
+      renderLlmOnlineStatus(body.data);
+    } catch (error) {
+      print(s, String(error), true);
+    }
+  });
+}
+
+if (el("llm-online-reset")) {
+  el("llm-online-reset").addEventListener("click", async () => {
+    try {
+      const body = await (await fetch("/v1/conversation/llm/reset", { method: "POST" })).json();
+      el("llm-online-url").value = body.data.base_url || "";
+      el("llm-online-model").value = body.data.model || "";
+      el("llm-online-key").value = "";
+      renderLlmOnlineStatus(body.data);
+    } catch (error) {
+      print(el("llm-online-status"), String(error), true);
+    }
+  });
+}
+
 function renderLlmRow(m, jobs) {
   const job = jobs[m.model];
   let action;
@@ -1362,3 +1432,4 @@ loadTtsEngines();
 loadConversationEngines();
 loadSystemStatus();
 loadModels();
+loadLlmOnlineConfig();

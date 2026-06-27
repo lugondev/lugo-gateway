@@ -21,8 +21,13 @@ from app.services.tts.segmenter import SentenceAggregator, segment_text
 
 logger = logging.getLogger(__name__)
 
-# Runtime-selected conversation LLM model; falls back to settings. Reset on restart.
+# Runtime conversation LLM config; each falls back to settings when None.
+# Reset on restart (not persisted). base_url/api_key let the UI point the
+# conversation at any OpenAI-compatible endpoint (local Ollama OR an online
+# provider like OpenAI/Groq/together); empty base_url -> built-in echo.
 _active_model: str | None = None
+_active_base_url: str | None = None
+_active_api_key: str | None = None
 
 
 def get_active_llm_model() -> str:
@@ -32,6 +37,28 @@ def get_active_llm_model() -> str:
 def set_active_llm_model(model: str) -> None:
     global _active_model
     _active_model = model
+
+
+def get_active_llm_base_url() -> str:
+    return settings.conversation_llm_base_url if _active_base_url is None else _active_base_url
+
+
+def get_active_llm_api_key() -> str:
+    return settings.conversation_llm_api_key if _active_api_key is None else _active_api_key
+
+
+def set_active_llm_config(base_url: str, api_key: str, model: str) -> None:
+    """Point the conversation responder at an OpenAI-compatible endpoint."""
+    global _active_base_url, _active_api_key, _active_model
+    _active_base_url = (base_url or "").strip()
+    _active_api_key = (api_key or "").strip()
+    _active_model = (model or "").strip() or None
+
+
+def reset_active_llm_config() -> None:
+    """Revert to the .env-configured conversation LLM."""
+    global _active_base_url, _active_api_key, _active_model
+    _active_base_url = _active_api_key = _active_model = None
 
 
 class Responder(ABC):
@@ -132,10 +159,11 @@ class OpenAICompatResponder(Responder):
 
 
 def build_responder() -> Responder:
-    if settings.conversation_llm_base_url:
+    base_url = get_active_llm_base_url()
+    if base_url:
         return OpenAICompatResponder(
-            base_url=settings.conversation_llm_base_url,
-            api_key=settings.conversation_llm_api_key,
+            base_url=base_url,
+            api_key=get_active_llm_api_key(),
             model=get_active_llm_model(),
             system_prompt=settings.conversation_system_prompt,
             timeout=settings.conversation_llm_timeout_seconds,

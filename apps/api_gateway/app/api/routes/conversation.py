@@ -10,7 +10,14 @@ from app.core.audio import pcm16_to_wav_bytes, preprocess_pcm16
 from app.core.errors import AppError
 from app.core.settings import settings
 from app.services.conversation.endpointer import VadEndpointer
-from app.services.conversation.responder import build_responder, get_active_llm_model
+from app.services.conversation.responder import (
+    build_responder,
+    get_active_llm_api_key,
+    get_active_llm_base_url,
+    get_active_llm_model,
+    reset_active_llm_config,
+    set_active_llm_config,
+)
 from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.stt.service import stt_service
 from app.schemas.tts import TTSRequest
@@ -33,6 +40,41 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
+
+
+class LlmConfig(BaseModel):
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+
+
+def _llm_config_view() -> dict:
+    """Current conversation LLM config (api key masked, never echoed back)."""
+    return {
+        "base_url": get_active_llm_base_url(),
+        "model": get_active_llm_model(),
+        "api_key_set": bool(get_active_llm_api_key()),
+        "responder": build_responder().name,
+    }
+
+
+@router.get("/llm")
+async def get_llm_config() -> dict:
+    return {"success": True, "data": _llm_config_view()}
+
+
+@router.post("/llm")
+async def set_llm_config(payload: LlmConfig) -> dict:
+    """Point the conversation LLM at any OpenAI-compatible endpoint (online or local)."""
+    set_active_llm_config(payload.base_url, payload.api_key, payload.model)
+    return {"success": True, "data": _llm_config_view()}
+
+
+@router.post("/llm/reset")
+async def reset_llm_config() -> dict:
+    """Revert to the .env-configured conversation LLM."""
+    reset_active_llm_config()
+    return {"success": True, "data": _llm_config_view()}
 
 
 @router.post("/chat")
@@ -151,26 +193,47 @@ async def conversation_stream(websocket: WebSocket) -> None:
 
         history.append({"role": "user", "content": user_text})
 
-        # Stream the reply sentence-by-sentence: synthesize + send each sentence the
-        # moment the LLM finishes it, so audio starts long before the full reply.
+        # Pipeline the reply: a producer pulls sentences off the LLM stream into a
+        # queue while a consumer synthesizes + sends them. This overlaps LLM token
+        # generation with TTS synthesis, so the next sentence's audio is usually ready
+        # before the current one finishes playing -> gapless playback (no stall while
+        # the LLM thinks up the next sentence).
         parts: list[str] = []
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def _produce() -> None:
+            try:
+                async for sentence in responder.reply_stream(history):
+                    await queue.put(sentence)
+            finally:
+                await queue.put(None)  # sentinel: stream finished (or errored)
+
+        producer = asyncio.create_task(_produce())
         index = 0
-        async for sentence in responder.reply_stream(history):
-            parts.append(sentence)
-            await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder.name)
-            result = await tts_provider.synthesize(
-                TTSRequest(text=sentence, engine=tts_engine, voice=voice)
-            )
-            await send(
-                "audio_chunk",
-                turn=turn,
-                chunk_index=index,
-                text=sentence,
-                audio_url=result.audio_url,
-                sample_rate=result.sample_rate,
-                mock=result.mock,
-            )
-            index += 1
+        try:
+            while True:
+                sentence = await queue.get()
+                if sentence is None:
+                    break
+                parts.append(sentence)
+                await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder.name)
+                result = await tts_provider.synthesize(
+                    TTSRequest(text=sentence, engine=tts_engine, voice=voice)
+                )
+                await send(
+                    "audio_chunk",
+                    turn=turn,
+                    chunk_index=index,
+                    text=sentence,
+                    audio_url=result.audio_url,
+                    sample_rate=result.sample_rate,
+                    mock=result.mock,
+                )
+                index += 1
+            await producer  # surface LLM errors (e.g. LLMUnavailableError)
+        finally:
+            if not producer.done():
+                producer.cancel()
 
         history.append({"role": "assistant", "content": " ".join(parts)})
         await send("turn_done", turn=turn)

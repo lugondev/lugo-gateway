@@ -56,8 +56,10 @@ class Settings(BaseSettings):
     whisper_local_compute_type: str = "int8"
     # Whisper's OWN (Silero) VAD — keep on; it removes silence well and speeds up.
     whisper_vad_filter: bool = True
-    # Decoding quality knobs (apply to all whisper-family engines).
-    whisper_beam_size: int = 5
+    # Decoding quality knobs (apply to all whisper-family engines). beam_size=1
+    # (greedy) is ~17% faster than 5 with no measured accuracy loss on PhoWhisper —
+    # favors conversation latency. Raise to 5 for best batch-transcription quality.
+    whisper_beam_size: int = 1
     # Off: avoids hallucination/repetition drift across silent gaps (important for
     # short conversation turns). Initial prompt seeds Vietnamese orthography; empty = off.
     whisper_condition_on_previous_text: bool = False
