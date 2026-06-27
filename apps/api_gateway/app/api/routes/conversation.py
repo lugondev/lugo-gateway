@@ -116,7 +116,9 @@ async def conversation_stream(websocket: WebSocket) -> None:
     responder = build_responder()
 
     # Detail strings so the UI can show exactly WHICH models are active this session.
-    if stt_engine in {"whisper", "whisper_local", "whisper_gemma"}:
+    if hasattr(stt_provider, "detail"):
+        stt_detail = stt_provider.detail()  # whisper_mlx / whisper_gemma expose this
+    elif stt_engine in {"whisper", "whisper_local"}:
         stt_detail = get_active_whisper_model()
     else:
         stt_detail = stt_engine
