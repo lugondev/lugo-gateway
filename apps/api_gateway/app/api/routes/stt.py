@@ -52,8 +52,13 @@ async def transcribe(
 
     try:
         result = await provider.transcribe_bytes(audio_bytes, payload.language)
+    except AppError:
+        raise  # handled globally -> clean JSON
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - never leak a plain-text 500 to the client
+        logger.exception("STT transcribe failed (%s)", payload.engine)
+        raise HTTPException(status_code=500, detail=f"STT failed ({payload.engine}): {exc}") from exc
     return {"success": True, "data": result.model_dump()}
 
 
