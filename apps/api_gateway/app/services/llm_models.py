@@ -19,7 +19,7 @@ import httpx
 
 from app.core.errors import AppError
 from app.core.settings import settings
-from app.services.conversation.responder import get_active_llm_model, set_active_llm_model
+from app.services.conversation.responder import get_active_llm_model, set_active_llm_config
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,11 @@ class LlmManager:
 
     def select(self, model: str) -> None:
         self.validate(model)
-        set_active_llm_model(model)
+        # Selecting a local model also pins the conversation to the Ollama endpoint,
+        # overriding any stale online (e.g. OpenAI) base_url so the model and endpoint
+        # can never mismatch (which surfaces as "model not found" errors).
+        base = settings.conversation_llm_base_url or "http://localhost:11434/v1"
+        set_active_llm_config(base, settings.conversation_llm_api_key, model)
 
     async def _is_up(self) -> bool:
         base = _ollama_base()
