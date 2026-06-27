@@ -461,14 +461,22 @@ el("llm-start").addEventListener("click", async () => {
   }
 });
 
+// A local Ollama endpoint is managed in the Ollama list above, not in this online
+// form — so we treat localhost endpoints as "local" and keep the form for hosted only.
+function isLocalLlm(url) {
+  return /\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)/.test(url || "");
+}
+
 function renderLlmOnlineStatus(d) {
   const s = el("llm-online-status");
   if (!s) return;
-  if (d.responder === "llm") {
-    s.textContent = `Active: ${d.model || "(no model)"} @ ${d.base_url}${d.api_key_set ? " · key set" : " · no key"}`;
-    s.classList.remove("error");
-  } else {
+  s.classList.remove("error");
+  if (d.responder !== "llm") {
     s.textContent = "Active: echo (no LLM endpoint configured)";
+  } else if (isLocalLlm(d.base_url)) {
+    s.textContent = `Currently using local Ollama (${d.model}) — change it in the list above. Pick a provider here to switch online.`;
+  } else {
+    s.textContent = `Active (online): ${d.model || "(no model)"} @ ${d.base_url}${d.api_key_set ? " · key set" : " · no key"}`;
   }
 }
 
@@ -495,9 +503,12 @@ async function loadLlmOnlineConfig() {
   try {
     const body = await (await fetch("/v1/conversation/llm")).json();
     const d = body.data || {};
-    // Prefill URL + model so the user sees what's active; never the key.
-    if (el("llm-online-url") && !el("llm-online-url").value) el("llm-online-url").value = d.base_url || "";
-    if (el("llm-online-model") && !el("llm-online-model").value) el("llm-online-model").value = d.model || "";
+    // Only prefill the form for a HOSTED endpoint. A local Ollama config must not
+    // leak into the online form (it's managed in the Ollama list above).
+    if (!isLocalLlm(d.base_url)) {
+      if (el("llm-online-url") && !el("llm-online-url").value) el("llm-online-url").value = d.base_url || "";
+      if (el("llm-online-model") && !el("llm-online-model").value) el("llm-online-model").value = d.model || "";
+    }
     renderLlmOnlineStatus(d);
   } catch (error) {
     /* status stays blank if offline */
