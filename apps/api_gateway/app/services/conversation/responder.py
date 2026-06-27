@@ -8,13 +8,16 @@ Two responders:
 The factory picks the LLM responder when a base URL is configured, else echo.
 """
 
+import json
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 
 import httpx
 
 from app.core.errors import LLMUnavailableError
 from app.core.settings import settings
+from app.services.tts.segmenter import SentenceAggregator, segment_text
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +41,16 @@ class Responder(ABC):
     async def reply(self, history: list[dict]) -> str:
         """Given chat history [{role, content}, ...] return the assistant reply."""
         raise NotImplementedError
+
+    async def reply_stream(self, history: list[dict]) -> AsyncIterator[str]:
+        """Yield the reply sentence-by-sentence for low-latency TTS.
+
+        Default: produce the full reply, then segment it. LLM backends override
+        this to stream tokens and emit sentences as they complete.
+        """
+        reply = await self.reply(history)
+        for sentence in segment_text(reply) or ([reply] if reply else []):
+            yield sentence
 
 
 class EchoResponder(Responder):
@@ -80,6 +93,38 @@ class OpenAICompatResponder(Responder):
             return str(data["choices"][0]["message"]["content"]).strip()
         except Exception as exc:  # noqa: BLE001 - surface a clear offline error
             logger.warning("LLM responder failed: %s", exc)
+            raise LLMUnavailableError(
+                f"LLM offline ({self.model}) — start the Ollama service (System tab) "
+                "or check CONVERSATION_LLM_BASE_URL."
+            ) from exc
+
+    async def reply_stream(self, history: list[dict]) -> AsyncIterator[str]:
+        messages = [{"role": "system", "content": self.system_prompt}, *history]
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        agg = SentenceAggregator()
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.base_url}/chat/completions",
+                    headers=headers,
+                    json={"model": self.model, "messages": messages, "stream": True},
+                ) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        delta = json.loads(data)["choices"][0].get("delta", {}).get("content", "")
+                        if delta:
+                            for sentence in agg.push(delta):
+                                yield sentence
+            for sentence in agg.flush():
+                yield sentence
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("LLM stream failed: %s", exc)
             raise LLMUnavailableError(
                 f"LLM offline ({self.model}) — start the Ollama service (System tab) "
                 "or check CONVERSATION_LLM_BASE_URL."

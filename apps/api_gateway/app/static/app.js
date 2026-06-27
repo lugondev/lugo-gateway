@@ -994,7 +994,7 @@ function renderChunkItem(payload) {
 }
 
 // ============================================================ conversation
-const conv = { ws: null, capture: null, queue: [], playing: false, log: [] };
+const conv = { ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null, assistantBubble: null };
 
 function setConvStatus(text, state) {
   const node = el("conv-status");
@@ -1012,18 +1012,43 @@ function addBubble(role, text) {
   div.textContent = text;
   el("conv-dialogue").appendChild(div);
   el("conv-dialogue").scrollTop = el("conv-dialogue").scrollHeight;
+  return div;
 }
-function convPlayNext() {
-  const audio = el("conv-audio");
-  if (conv.playing) return;
-  const next = conv.queue.shift();
-  if (!next) return;
-  conv.playing = true;
-  audio.src = next;
-  audio.classList.remove("hidden");
-  audio.play().catch(() => {
-    conv.playing = false;
+function convAudioCtx() {
+  if (!conv.ctx) conv.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  return conv.ctx;
+}
+function convStopAudio() {
+  (conv.sources || []).forEach((s) => {
+    try {
+      s.stop();
+    } catch {}
   });
+  conv.sources = [];
+  conv.nextTime = 0;
+  conv.chain = Promise.resolve();
+}
+// Gapless playback: decode each chunk and schedule it back-to-back on the audio
+// timeline (no <audio> src-swap gaps, no queue underrun between sentences).
+function convEnqueueAudio(url) {
+  conv.chain = (conv.chain || Promise.resolve())
+    .then(async () => {
+      const ctx = convAudioCtx();
+      if (ctx.state === "suspended") await ctx.resume();
+      const data = await (await fetch(url)).arrayBuffer();
+      const buf = await ctx.decodeAudioData(data);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      const start = Math.max(ctx.currentTime + 0.05, conv.nextTime || 0);
+      src.start(start);
+      conv.nextTime = start + buf.duration;
+      conv.sources.push(src);
+      src.onended = () => {
+        conv.sources = conv.sources.filter((s) => s !== src);
+      };
+    })
+    .catch((e) => convLog("audio error: " + e));
 }
 
 async function loadConversationEngines() {
@@ -1089,8 +1114,8 @@ function setConvUI(state) {
 
 async function startConversation() {
   setConvUI("starting");
-  conv.queue = [];
-  conv.playing = false;
+  convStopAudio();
+  conv.assistantBubble = null;
   el("conv-dialogue").innerHTML = "";
   conv.log = [];
   el("conv-log").textContent = "";
@@ -1149,26 +1174,23 @@ async function startConversation() {
         if (d.text) addBubble("user", d.text);
         break;
       case "response_text":
-        addBubble("assistant", d.text);
+        // Sentences stream in; build one assistant bubble per turn.
+        if (d.chunk_index === 0 || !conv.assistantBubble) {
+          conv.assistantBubble = addBubble("assistant", d.text);
+        } else {
+          conv.assistantBubble.textContent += " " + d.text;
+          el("conv-dialogue").scrollTop = el("conv-dialogue").scrollHeight;
+        }
         break;
       case "audio_chunk":
-        if (d.audio_url) {
-          conv.queue.push(d.audio_url);
-          convPlayNext();
-        }
+        if (d.audio_url) convEnqueueAudio(d.audio_url);
         break;
       case "turn_done":
         setConvStatus("● listening", "status-rec");
         break;
-      case "aborted": {
-        // Stop assistant playback immediately (barge-in / interrupt).
-        conv.queue = [];
-        conv.playing = false;
-        const a = el("conv-audio");
-        a.pause();
-        a.currentTime = 0;
+      case "aborted":
+        convStopAudio();  // barge-in / interrupt: stop playback immediately
         break;
-      }
       case "error":
         setConvStatus(`error: ${d.message || ""}`, "status-error");
         break;
@@ -1197,13 +1219,14 @@ function stopConversation() {
   setConvUI("idle");
 }
 
-el("conv-audio").addEventListener("ended", () => {
-  conv.playing = false;
-  convPlayNext();
-});
 el("conv-start").addEventListener("click", startConversation);
-el("conv-stop").addEventListener("click", stopConversation);
+el("conv-stop").addEventListener("click", () => {
+  convStopAudio();
+  stopConversation();
+});
 el("conv-reset").addEventListener("click", () => {
+  convStopAudio();
+  conv.assistantBubble = null;
   el("conv-dialogue").innerHTML = "";
   if (conv.ws && conv.ws.readyState === WebSocket.OPEN) conv.ws.send(JSON.stringify({ type: "reset" }));
 });

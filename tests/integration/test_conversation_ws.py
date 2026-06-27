@@ -69,7 +69,7 @@ def test_conversation_turn_end_to_end():
         ws.send_bytes(_silence(500))  # crosses 700ms silence -> endpoint
 
         events = []
-        for _ in range(8):
+        for _ in range(30):
             ev = ws.receive_json()
             events.append(ev)
             if ev["event"] == "turn_done":

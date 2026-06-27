@@ -13,7 +13,6 @@ from app.services.conversation.endpointer import VadEndpointer
 from app.services.conversation.responder import build_responder, get_active_llm_model
 from app.services.stt.service import stt_service
 from app.schemas.tts import TTSRequest
-from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
 
 logger = logging.getLogger(__name__)
@@ -138,26 +137,29 @@ async def conversation_stream(websocket: WebSocket) -> None:
             return
 
         history.append({"role": "user", "content": user_text})
-        reply = await responder.reply(history)
-        history.append({"role": "assistant", "content": reply})
-        await send("response_text", turn=turn, text=reply, responder=responder.name)
 
-        # Long replies are split into sentences and synthesized chunk-by-chunk
-        # so audio starts playing before the whole reply is rendered.
-        segments = segment_text(reply)
-        for index, seg in enumerate(segments):
-            req = TTSRequest(text=seg, engine=tts_engine, voice=voice)
-            result = await tts_provider.synthesize(req)
+        # Stream the reply sentence-by-sentence: synthesize + send each sentence the
+        # moment the LLM finishes it, so audio starts long before the full reply.
+        parts: list[str] = []
+        index = 0
+        async for sentence in responder.reply_stream(history):
+            parts.append(sentence)
+            await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder.name)
+            result = await tts_provider.synthesize(
+                TTSRequest(text=sentence, engine=tts_engine, voice=voice)
+            )
             await send(
                 "audio_chunk",
                 turn=turn,
                 chunk_index=index,
-                total_chunks=len(segments),
-                text=seg,
+                text=sentence,
                 audio_url=result.audio_url,
                 sample_rate=result.sample_rate,
                 mock=result.mock,
             )
+            index += 1
+
+        history.append({"role": "assistant", "content": " ".join(parts)})
         await send("turn_done", turn=turn)
 
     current_turn: asyncio.Task | None = None
