@@ -1018,6 +1018,10 @@ function convAudioCtx() {
   if (!conv.ctx) conv.ctx = new (window.AudioContext || window.webkitAudioContext)();
   return conv.ctx;
 }
+// True while assistant audio is still scheduled/playing (+small tail).
+function convIsSpeaking() {
+  return !!conv.ctx && (conv.nextTime || 0) > conv.ctx.currentTime + 0.15;
+}
 function convStopAudio() {
   (conv.sources || []).forEach((s) => {
     try {
@@ -1051,12 +1055,33 @@ function convEnqueueAudio(url) {
     .catch((e) => convLog("audio error: " + e));
 }
 
+const convDetails = { stt: {}, tts: {}, llm: "" };
+
+function updateConvEnginesInfo() {
+  const info = el("conv-engines-info");
+  if (!info) return;
+  const sttEng = el("conv-stt-engine")?.value || "";
+  const ttsEng = el("conv-tts-engine")?.value || "";
+  // Strip the " · cached" status suffix so the model name reads clearly.
+  const clean = (d) => (d || "").split(" · ")[0];
+  const sttDet = clean(convDetails.stt[sttEng]);
+  const ttsDet = clean(convDetails.tts[ttsEng]);
+  const llmPart = convDetails.llm ? `LLM: ${convDetails.llm}` : "LLM: echo (no LLM configured)";
+  const sttPart = `STT: ${sttEng}${sttDet ? ` → ${sttDet}` : ""}`;
+  const ttsPart = `TTS: ${ttsEng}${ttsDet ? ` → ${ttsDet}` : ""}`;
+  info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
+}
+
 async function loadConversationEngines() {
   try {
-    const [stt, tts] = await Promise.all([
+    const [stt, tts, models] = await Promise.all([
       (await fetch("/v1/stt/engines")).json(),
       (await fetch("/v1/tts/engines")).json(),
+      (await fetch("/v1/models")).json().catch(() => null),
     ]);
+    stt.data.forEach((e) => (convDetails.stt[e.engine] = e.detail));
+    tts.data.forEach((e) => (convDetails.tts[e.engine] = e.detail));
+    convDetails.llm = models?.data?.llm?.active || "";
     const fill = (id, items, label) => {
       const sel = el(id);
       if (!sel) return;
@@ -1079,7 +1104,10 @@ async function loadConversationEngines() {
     restoreAndBind("conv-tts-engine");
     restoreAndBind("conv-language");
     el("conv-tts-engine").addEventListener("change", convVoiceToggle);
+    el("conv-stt-engine").addEventListener("change", updateConvEnginesInfo);
+    el("conv-tts-engine").addEventListener("change", updateConvEnginesInfo);
     convVoiceToggle();
+    updateConvEnginesInfo();
   } catch (error) {
     convLog(`engines error: ${error}`);
   }
@@ -1131,7 +1159,12 @@ async function startConversation() {
   try {
     capture = createMicCapture({
       onframe: (pcm) => {
-        if (conv.ws && conv.ws.readyState === WebSocket.OPEN) conv.ws.send(pcm.buffer);
+        if (!conv.ws || conv.ws.readyState !== WebSocket.OPEN) return;
+        // Half-duplex: while the assistant is speaking, don't send mic audio —
+        // otherwise its own voice (speaker echo) is mistaken for the user
+        // barging in and the reply gets cut off after 1-2 words.
+        if (convIsSpeaking()) return;
+        conv.ws.send(pcm.buffer);
       },
     });
   } catch (error) {
@@ -1164,6 +1197,17 @@ async function startConversation() {
     }
     convLog(`${d.event}: ${d.text ? d.text.slice(0, 60) : JSON.stringify({ ...d, event: undefined })}`);
     switch (d.event) {
+      case "session_started": {
+        // Authoritative: show exactly which models this session is using.
+        const info = el("conv-engines-info");
+        if (info) {
+          const sttPart = `STT: ${d.stt_engine}${d.stt_detail ? ` → ${d.stt_detail}` : ""}`;
+          const llmPart = d.responder === "llm" ? `LLM: ${d.llm_model}` : "LLM: echo (no LLM configured)";
+          const ttsPart = `TTS: ${d.tts_engine}${d.tts_detail ? ` → ${d.tts_detail}` : ""}`;
+          info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
+        }
+        break;
+      }
       case "speech_start":
         setConvStatus("● you're speaking", "status-rec");
         break;

@@ -11,6 +11,7 @@ from app.core.errors import AppError
 from app.core.settings import settings
 from app.services.conversation.endpointer import VadEndpointer
 from app.services.conversation.responder import build_responder, get_active_llm_model
+from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.stt.service import stt_service
 from app.schemas.tts import TTSRequest
 from app.services.tts.service import tts_service
@@ -71,6 +72,15 @@ async def conversation_stream(websocket: WebSocket) -> None:
         return
 
     responder = build_responder()
+
+    # Detail strings so the UI can show exactly WHICH models are active this session.
+    if stt_engine in {"whisper", "whisper_local", "whisper_gemma"}:
+        stt_detail = get_active_whisper_model()
+    else:
+        stt_detail = stt_engine
+    tts_detail = tts_provider.detail() if hasattr(tts_provider, "detail") else tts_engine
+    llm_model = get_active_llm_model() if responder.name == "llm" else responder.name
+
     endpointer = VadEndpointer(
         sample_rate,
         silence_ms=settings.conversation_silence_ms,
@@ -86,8 +96,11 @@ async def conversation_stream(websocket: WebSocket) -> None:
             "event": "session_started",
             "session_id": session_id,
             "stt_engine": stt_engine,
+            "stt_detail": stt_detail,
             "tts_engine": tts_engine,
+            "tts_detail": tts_detail,
             "responder": responder.name,
+            "llm_model": llm_model,
             "sample_rate": sample_rate,
         }
     )

@@ -97,3 +97,6 @@ tmp/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Make: background service PID/log
+.run/

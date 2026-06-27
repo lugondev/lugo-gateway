@@ -14,19 +14,27 @@ from app.core.errors import AppError
 from app.core.hf_cache import dir_size_bytes, hub_dir
 from app.core.settings import settings
 from app.services.stt.providers.whisper_provider import (
+    PHOWHISPER_REPO,
+    PHOWHISPER_SUBFOLDERS,
     get_active_whisper_model,
+    is_phowhisper,
+    resolve_whisper_model,
     set_active_whisper_model,
 )
 
 _SIZE_RE = re.compile(r"^[A-Za-z0-9.\-]+$")
 
-# Common faster-whisper sizes (valid Systran/faster-whisper-* identifiers).
+# Selectable whisper models. Standard sizes resolve to Systran/faster-whisper-*;
+# the phowhisper-* ids are VinAI's Vietnamese fine-tune (CT2), best for Vietnamese.
 WHISPER_SIZES = [
-    {"size": "tiny", "label": "Tiny (fastest)"},
-    {"size": "base", "label": "Base"},
-    {"size": "small", "label": "Small (default)"},
-    {"size": "medium", "label": "Medium"},
-    {"size": "large-v3", "label": "Large v3 (best quality)"},
+    {"size": "phowhisper-medium", "label": "PhoWhisper Medium — Vietnamese ⭐ (recommended)"},
+    {"size": "phowhisper-large", "label": "PhoWhisper Large — Vietnamese (best, slower)"},
+    {"size": "phowhisper-small", "label": "PhoWhisper Small — Vietnamese (fastest)"},
+    {"size": "tiny", "label": "Tiny (fastest, multilingual)"},
+    {"size": "base", "label": "Base (multilingual)"},
+    {"size": "small", "label": "Small (multilingual)"},
+    {"size": "medium", "label": "Medium (multilingual)"},
+    {"size": "large-v3", "label": "Large v3 (multilingual, best)"},
 ]
 
 
@@ -38,6 +46,14 @@ class WhisperManager:
         hub = hub_dir()
         if not hub.is_dir():
             return []
+        if is_phowhisper(size):
+            # All PhoWhisper sizes share one repo dir; a size is "cached" when its
+            # subfolder snapshot has the model weights present.
+            sub = PHOWHISPER_SUBFOLDERS[size]
+            repo = hub / f"models--{PHOWHISPER_REPO.replace('/', '--')}"
+            if not repo.is_dir():
+                return []
+            return [p for p in repo.glob(f"snapshots/*/{sub}") if (p / "model.bin").exists()]
         # Match e.g. models--Systran--faster-whisper-large-v3 (exact suffix, no extra chars).
         return [p for p in hub.glob(f"models--*faster-whisper-{size}") if p.is_dir()]
 
@@ -82,22 +98,30 @@ class WhisperManager:
     def _warm(self, size: str) -> None:
         from faster_whisper import WhisperModel
 
+        # resolve_whisper_model downloads the PhoWhisper subfolder (or passes a
+        # standard size through) and returns a path faster-whisper can load.
         WhisperModel(
-            size,
+            resolve_whisper_model(size),
             device=settings.whisper_local_device,
             compute_type=settings.whisper_local_compute_type,
         )
 
     def delete(self, size: str) -> None:
         self.validate(size)
-        dirs = self._cache_dirs(size)
-        if not dirs:
+        if not self._cached(size):
             raise AppError(f"Whisper model '{size}' is not cached")
         hub = hub_dir().resolve()
-        for d in dirs:
-            if hub not in d.resolve().parents:
-                raise AppError("Refusing to delete outside the hub cache")
-            shutil.rmtree(d)
+        if is_phowhisper(size):
+            # Sizes share one repo (blobs are deduplicated), so removing the repo
+            # dir clears every cached PhoWhisper size at once.
+            repo = hub_dir() / f"models--{PHOWHISPER_REPO.replace('/', '--')}"
+            if repo.is_dir() and hub in repo.resolve().parents:
+                shutil.rmtree(repo)
+        else:
+            for d in self._cache_dirs(size):
+                if hub not in d.resolve().parents:
+                    raise AppError("Refusing to delete outside the hub cache")
+                shutil.rmtree(d)
         self._jobs.pop(size, None)
 
     def select(self, size: str) -> None:

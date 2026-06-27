@@ -47,12 +47,25 @@ class Settings(BaseSettings):
     vosk_model_base_url: str = "https://alphacephei.com/vosk/models"
     stt_stream_sample_rate: int = 16000
 
-    whisper_local_model: str = "small"
+    # PhoWhisper (VinAI) — Whisper fine-tuned on 844h Vietnamese. Far better tones/
+    # diacritics than vanilla Whisper. CT2 build runs in faster-whisper at the same
+    # speed class as the equivalent vanilla size. Standard sizes ("small"/"medium"/
+    # "large-v3") still work; PhoWhisper ids: "phowhisper-{tiny,base,small,medium,large}".
+    whisper_local_model: str = "phowhisper-medium"
     whisper_local_device: str = "cpu"
     whisper_local_compute_type: str = "int8"
+    # Whisper's OWN (Silero) VAD — keep on; it removes silence well and speeds up.
+    whisper_vad_filter: bool = True
+    # Decoding quality knobs (apply to all whisper-family engines).
+    whisper_beam_size: int = 5
+    # Off: avoids hallucination/repetition drift across silent gaps (important for
+    # short conversation turns). Initial prompt seeds Vietnamese orthography; empty = off.
+    whisper_condition_on_previous_text: bool = False
+    whisper_initial_prompt: str = ""
 
-    # Audio preprocessing for STT (defaults; overridable per request)
-    stt_vad_enabled: bool = True
+    # Extra STT preprocessing (defaults OFF: our energy gate / spectral denoise can
+    # clip or add artifacts and don't help Whisper, which has its own VAD).
+    stt_vad_enabled: bool = False
     stt_vad_backend: str = "energy"  # energy | silero | pyannote
     stt_noise_reduce_enabled: bool = False
     stt_noise_reduce_amount: float = 0.85

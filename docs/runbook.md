@@ -56,9 +56,12 @@ All settings are environment variables (or `.env`). See `.env.example` for the f
 | `DEFAULT_STT_ENGINE` | `vosk` | default for `/transcribe` and WS |
 | `STT_STREAM_SAMPLE_RATE` | `16000` | streaming audio contract rate (Hz) |
 | `VOSK_MODEL_PATH` | `models/stt/vosk-model-small-en-us-0.15` | local Vosk model dir |
-| `WHISPER_LOCAL_MODEL` | `small` | faster-whisper model size |
+| `WHISPER_LOCAL_MODEL` | `phowhisper-medium` | size (`small`/`medium`/`large-v3`) or VinAI Vietnamese fine-tune `phowhisper-{tiny,base,small,medium,large}` |
 | `WHISPER_LOCAL_DEVICE` | `cpu` | `cpu` \| `cuda` |
 | `WHISPER_LOCAL_COMPUTE_TYPE` | `int8` | quantization |
+| `WHISPER_BEAM_SIZE` | `5` | beam search width |
+| `WHISPER_CONDITION_ON_PREVIOUS_TEXT` | `false` | off avoids hallucination drift across silent gaps |
+| `WHISPER_INITIAL_PROMPT` | — | seed text to bias Vietnamese orthography (empty = off) |
 | `WHISPER_SERVICE_BASE_URL` / `_API_KEY` / `_MODEL` | — | remote OpenAI-compatible STT |
 | `EVENTLAB_BASE_URL` / `_API_KEY` / `_MODEL` | — | second remote STT provider |
 | `REMOTE_STT_TIMEOUT_SECONDS` | `60` | remote request timeout |
