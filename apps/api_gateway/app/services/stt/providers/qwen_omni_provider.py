@@ -32,6 +32,44 @@ def set_active_qwen_omni_model(model: str) -> None:
     _active_model = model
 
 
+def _mlx_vlm_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("mlx-vlm")
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+_patched = False
+
+
+def _patch_mlx_vlm_qwen_audio() -> None:
+    """Work around an mlx-vlm 0.6.3 bug for Qwen3-Omni audio.
+
+    prepare_inputs() computes audio `input_features` separately but still forwards
+    the raw audio *file paths* into the text processor, which throws
+    "could not convert string to float: '<path>.wav'". The audio placeholder tokens
+    are already in the prompt and the features are supplied via input_features, so we
+    drop the paths from the text-processing call for Qwen3-Omni processors.
+    """
+    global _patched
+    if _patched:
+        return
+    import mlx_vlm.utils as u
+
+    orig = u.process_inputs_with_fallback
+
+    def patched(processor, *args, **kw):
+        cls = processor.__class__.__name__.lower()
+        if "qwen3" in cls and "omni" in cls and kw.get("audio") is not None:
+            kw["audio"] = None
+        return orig(processor, *args, **kw)
+
+    u.process_inputs_with_fallback = patched
+    _patched = True
+
+
 def _is_cached(model_id: str) -> bool:
     from app.core.hf_cache import hub_dir
 
@@ -64,6 +102,7 @@ class QwenOmniProvider(STTProvider):
     def _load(self):
         from mlx_vlm import load
 
+        _patch_mlx_vlm_qwen_audio()
         model_id = get_active_qwen_omni_model()
         if model_id not in _MODEL_CACHE:
             model, processor = load(model_id)
@@ -81,14 +120,22 @@ class QwenOmniProvider(STTProvider):
 
         model, processor, config = self._load()
         prompt = apply_chat_template(processor, config, settings.qwen_omni_prompt, num_audios=1)
-        out = generate(
-            model,
-            processor,
-            prompt,
-            audio=[wav_path],
-            max_tokens=settings.qwen_omni_max_tokens,
-            verbose=False,
-        )
+        try:
+            out = generate(
+                model,
+                processor,
+                prompt,
+                audio=[wav_path],
+                max_tokens=settings.qwen_omni_max_tokens,
+                verbose=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - mlx-vlm 0.6.3 can't process Qwen3-Omni audio
+            raise RuntimeError(
+                "Qwen3-Omni audio inference is not supported by the installed mlx-vlm "
+                f"({_mlx_vlm_version()}) — its audio input handling for this model is "
+                "broken upstream (the official CLI fails the same way). Use whisper_mlx "
+                "for now; this engine will work once mlx-vlm fixes Qwen3-Omni audio."
+            ) from exc
         text = getattr(out, "text", out)
         return str(text).strip()
 
