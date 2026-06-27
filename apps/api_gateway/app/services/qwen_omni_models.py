@@ -50,7 +50,14 @@ class QwenOmniManager:
         return d if d.is_dir() else None
 
     def _cached(self, model: str) -> bool:
-        return self._cache_dir(model) is not None
+        d = self._cache_dir(model)
+        if not d:
+            return False
+        blobs = d / "blobs"
+        # A partial download leaves *.incomplete blobs — don't report it as ready.
+        if blobs.is_dir() and any(blobs.glob("*.incomplete")):
+            return False
+        return True
 
     def snapshot(self) -> dict:
         active = get_active_qwen_omni_model()

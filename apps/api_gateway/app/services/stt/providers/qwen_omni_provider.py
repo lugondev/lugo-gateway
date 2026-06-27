@@ -38,8 +38,14 @@ def _is_cached(model_id: str) -> bool:
     hub = hub_dir()
     if not hub.is_dir():
         return False
-    target = f"models--{model_id.replace('/', '--')}"
-    return (hub / target).is_dir()
+    d = hub / f"models--{model_id.replace('/', '--')}"
+    if not d.is_dir():
+        return False
+    blobs = d / "blobs"
+    # A partial download leaves *.incomplete blobs — not usable yet.
+    if blobs.is_dir() and any(blobs.glob("*.incomplete")):
+        return False
+    return True
 
 
 class QwenOmniProvider(STTProvider):
