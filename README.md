@@ -64,6 +64,7 @@ docker compose up --build
 
 - GET /health
 - GET /ui
+- GET /agents-docs (AGENTS.md + all docs bundled as markdown, for coding agents)
 - GET /v1/stt/engines
 - POST /v1/stt/transcribe
 - POST /v1/stt/warm (preload a heavy STT model, e.g. qwen_omni)

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.routes.agents_docs import router as agents_docs_router
 from app.api.routes.conversation import router as conversation_router
 from app.api.routes.events import router as events_router
 from app.api.routes.health import router as health_router
@@ -43,6 +44,7 @@ app.include_router(events_router)
 app.include_router(conversation_router)
 app.include_router(system_router)
 app.include_router(ui_router)
+app.include_router(agents_docs_router)
 
 app.mount("/static", StaticFiles(directory="apps/api_gateway/app/static"), name="static")
 # Serve generated audio artifacts (foundation; swap for object storage later).
