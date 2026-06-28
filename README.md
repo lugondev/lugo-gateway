@@ -55,6 +55,8 @@ docker compose up --build
 ## Documentation
 
 - [docs/api.md](docs/api.md) — full REST / WebSocket / SSE reference and schemas.
+- [docs/device-integration.md](docs/device-integration.md) — **Raspberry Pi / ESP32
+  voice device guide**: protocol, audio formats, and a runnable reference client.
 - [docs/architecture.md](docs/architecture.md) — components, data flows, upgrade paths.
 - [docs/runbook.md](docs/runbook.md) — run, configure, troubleshoot.
 
