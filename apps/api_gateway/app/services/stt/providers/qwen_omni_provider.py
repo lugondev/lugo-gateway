@@ -42,6 +42,22 @@ def _clean(text: str) -> str:
     return text.strip()
 
 
+def _split_listen_reply(raw: str) -> tuple[str, str]:
+    """Parse the 'NGHE: …\\nĐÁP: …' format into (transcript, reply).
+
+    Falls back to treating the whole output as the reply if the markers are missing.
+    """
+    transcript, reply = "", raw
+    m = re.search(r"\bĐÁP\s*:\s*(.+)", raw, re.IGNORECASE | re.DOTALL)
+    if m:
+        reply = m.group(1).strip()
+        head = raw[: m.start()]
+        n = re.search(r"\bNGHE\s*:\s*(.+)", head, re.IGNORECASE | re.DOTALL)
+        if n:
+            transcript = n.group(1).strip()
+    return transcript.strip(), reply.strip()
+
+
 def _mlx_vlm_version() -> str:
     try:
         from importlib.metadata import version
@@ -127,19 +143,19 @@ class QwenOmniProvider(STTProvider):
             _MODEL_CACHE[model_id] = (model, processor, config)
         return _MODEL_CACHE[model_id]
 
-    def _transcribe(self, wav_path: str) -> str:
+    def _generate(self, wav_path: str, prompt_text: str, max_tokens: int) -> str:
         from mlx_vlm import generate
         from mlx_vlm.prompt_utils import apply_chat_template
 
         model, processor, config = self._load()
-        prompt = apply_chat_template(processor, config, settings.qwen_omni_prompt, num_audios=1)
+        prompt = apply_chat_template(processor, config, prompt_text, num_audios=1)
         try:
             out = generate(
                 model,
                 processor,
                 prompt,
                 audio=[wav_path],
-                max_tokens=settings.qwen_omni_max_tokens,
+                max_tokens=max_tokens,
                 temperature=0.0,  # greedy: avoids degenerate special-token outputs
                 verbose=False,
             )
@@ -147,8 +163,29 @@ class QwenOmniProvider(STTProvider):
             raise RuntimeError(
                 f"Qwen3-Omni inference failed (mlx-vlm {_mlx_vlm_version()}): {exc}"
             ) from exc
-        text = str(getattr(out, "text", out))
-        return _clean(text)
+        return _clean(str(getattr(out, "text", out)))
+
+    def _transcribe(self, wav_path: str) -> str:
+        return self._generate(wav_path, settings.qwen_omni_prompt, settings.qwen_omni_max_tokens)
+
+    def _converse(self, wav_path: str, history: list[dict], system_prompt: str) -> tuple[str, str]:
+        """Audio-native: one pass that both transcribes the user turn and replies.
+
+        Qwen3-Omni IS an LLM, so in conversation it can answer the audio directly —
+        no separate text LLM. We ask for a 2-line format so we still get the user's
+        transcript (for the UI + history) alongside the reply.
+        """
+        convo = system_prompt.strip() + "\n\n"
+        for m in history[-6:]:
+            who = "Người dùng" if m.get("role") == "user" else "Trợ lý"
+            convo += f"{who}: {m.get('content', '')}\n"
+        convo += (
+            "\nNghe đoạn âm thanh của người dùng rồi trả lời. Xuất ĐÚNG hai phần:\n"
+            "NGHE: <chép lại lời người dùng>\n"
+            "ĐÁP: <câu trả lời ngắn gọn, tự nhiên bằng tiếng Việt để đọc thành tiếng>"
+        )
+        raw = self._generate(wav_path, convo, max_tokens=512)
+        return _split_listen_reply(raw)
 
     def warm(self) -> None:
         try:
@@ -164,6 +201,18 @@ class QwenOmniProvider(STTProvider):
                 tmp = f.name
             text = await asyncio.to_thread(self._transcribe, tmp)
             return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
+        finally:
+            if tmp and os.path.isfile(tmp):
+                os.unlink(tmp)
+
+    async def converse(self, audio_bytes: bytes, history: list[dict], system_prompt: str) -> tuple[str, str]:
+        """Return (user_transcript, assistant_reply) from the audio in one model pass."""
+        tmp = ""
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                f.write(audio_bytes)
+                tmp = f.name
+            return await asyncio.to_thread(self._converse, tmp, history, system_prompt)
         finally:
             if tmp and os.path.isfile(tmp):
                 os.unlink(tmp)

@@ -21,6 +21,7 @@ from app.services.conversation.responder import (
 from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.stt.service import stt_service
 from app.schemas.tts import TTSRequest
+from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
 
 logger = logging.getLogger(__name__)
@@ -138,7 +139,17 @@ async def conversation_stream(websocket: WebSocket) -> None:
     else:
         stt_detail = stt_engine
     tts_detail = tts_provider.detail() if hasattr(tts_provider, "detail") else tts_engine
-    llm_model = get_active_llm_model() if responder.name == "llm" else responder.name
+
+    # Audio-native: an STT engine that can answer the audio itself (Qwen-Omni) replies
+    # directly, skipping the separate text LLM.
+    audio_native = (
+        settings.conversation_audio_native
+        and stt_engine == "qwen_omni"
+        and hasattr(stt_provider, "converse")
+    )
+    llm_model = "qwen_omni (audio-native)" if audio_native else (
+        get_active_llm_model() if responder.name == "llm" else responder.name
+    )
 
     endpointer = VadEndpointer(
         sample_rate,
@@ -203,6 +214,77 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 amount=settings.stt_noise_reduce_amount,
             )
         wav = pcm16_to_wav_bytes(pcm, sample_rate=sample_rate)
+
+        # Stream a sentence iterator through TTS: a producer fills a queue while a
+        # consumer synthesizes + sends each sentence, so the next sentence's audio is
+        # usually ready before the current finishes -> gapless playback.
+        async def _stream_to_tts(sentence_aiter, responder_name: str) -> list[str]:
+            parts: list[str] = []
+            queue: asyncio.Queue = asyncio.Queue()
+
+            async def _produce() -> None:
+                try:
+                    async for sentence in sentence_aiter:
+                        await queue.put(sentence)
+                finally:
+                    await queue.put(None)
+
+            producer = asyncio.create_task(_produce())
+            index = 0
+            try:
+                while True:
+                    sentence = await queue.get()
+                    if sentence is None:
+                        break
+                    parts.append(sentence)
+                    await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
+                    result = await tts_provider.synthesize(
+                        TTSRequest(text=sentence, engine=tts_engine, voice=voice)
+                    )
+                    await send(
+                        "audio_chunk",
+                        turn=turn,
+                        chunk_index=index,
+                        text=sentence,
+                        audio_url=result.audio_url,
+                        sample_rate=result.sample_rate,
+                        mock=result.mock,
+                    )
+                    index += 1
+                await producer  # surface errors (e.g. LLMUnavailableError)
+            finally:
+                if not producer.done():
+                    producer.cancel()
+            return parts
+
+        # Audio-native: Qwen-Omni answers the audio directly (one pass), no separate
+        # text LLM. Otherwise: transcribe -> text responder (gemma/online/echo).
+        if audio_native:
+            try:
+                transcript, reply = await stt_provider.converse(
+                    wav, history, settings.conversation_system_prompt
+                )
+            except RuntimeError as exc:
+                await send("error", message=f"Qwen-Omni failed: {exc}")
+                return
+            reply = (reply or "").strip()
+            # The audio-native pass occasionally returns an empty reply on some clips
+            # — fall back to the transcribe -> text-LLM cascade so the turn still answers.
+            if reply:
+                await send("user_transcript", turn=turn, text=transcript or "🎤", engine=stt_engine)
+                if transcript:
+                    history.append({"role": "user", "content": transcript})
+
+                async def _reply_sentences():
+                    for sentence in segment_text(reply) or [reply]:
+                        yield sentence
+
+                parts = await _stream_to_tts(_reply_sentences(), stt_engine)
+                history.append({"role": "assistant", "content": " ".join(parts)})
+                await send("turn_done", turn=turn)
+                return
+            logger.info("qwen_omni audio-native reply empty; falling back to transcribe + LLM")
+
         try:
             stt_result = await stt_provider.transcribe_bytes(wav, language)
         except RuntimeError as exc:
@@ -215,49 +297,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
             return
 
         history.append({"role": "user", "content": user_text})
-
-        # Pipeline the reply: a producer pulls sentences off the LLM stream into a
-        # queue while a consumer synthesizes + sends them. This overlaps LLM token
-        # generation with TTS synthesis, so the next sentence's audio is usually ready
-        # before the current one finishes playing -> gapless playback (no stall while
-        # the LLM thinks up the next sentence).
-        parts: list[str] = []
-        queue: asyncio.Queue = asyncio.Queue()
-
-        async def _produce() -> None:
-            try:
-                async for sentence in responder.reply_stream(history):
-                    await queue.put(sentence)
-            finally:
-                await queue.put(None)  # sentinel: stream finished (or errored)
-
-        producer = asyncio.create_task(_produce())
-        index = 0
-        try:
-            while True:
-                sentence = await queue.get()
-                if sentence is None:
-                    break
-                parts.append(sentence)
-                await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder.name)
-                result = await tts_provider.synthesize(
-                    TTSRequest(text=sentence, engine=tts_engine, voice=voice)
-                )
-                await send(
-                    "audio_chunk",
-                    turn=turn,
-                    chunk_index=index,
-                    text=sentence,
-                    audio_url=result.audio_url,
-                    sample_rate=result.sample_rate,
-                    mock=result.mock,
-                )
-                index += 1
-            await producer  # surface LLM errors (e.g. LLMUnavailableError)
-        finally:
-            if not producer.done():
-                producer.cancel()
-
+        parts = await _stream_to_tts(responder.reply_stream(history), responder.name)
         history.append({"role": "assistant", "content": " ".join(parts)})
         await send("turn_done", turn=turn)
 

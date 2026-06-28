@@ -106,6 +106,9 @@ class Settings(BaseSettings):
     conversation_rms_threshold: float = 0.015  # speech vs silence (float RMS)
     conversation_max_utterance_ms: int = 30000
     conversation_stt_engine: str = "whisper"  # better than vosk for Vietnamese
+    # When the conversation STT engine is audio-native (qwen_omni), let it answer the
+    # audio directly in one pass instead of transcribe -> separate text LLM (gemma).
+    conversation_audio_native: bool = True
     conversation_tts_engine: str = "vieneu"  # in-process & warm (~0.4s); OmniVoice CLI reloads per call (~7s)
     conversation_language: str = "vi"        # STT language hint; "" = auto-detect
     # Optional OpenAI-compatible chat endpoint (Ollama/LM Studio/vLLM/OpenAI).
