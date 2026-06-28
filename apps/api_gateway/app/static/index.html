@@ -121,7 +121,7 @@
 
         <section class="card">
           <h2>Audio-native STT — Qwen3-Omni (MLX, Apple GPU) <span class="tag">experimental</span></h2>
-          <p class="hint" id="qwen-omni-hint">Audio → Vietnamese text in one step (no Whisper). Heavy (30B MoE). ⚠️ Audio inference is currently blocked by an mlx-vlm 0.6.3 upstream bug (the official CLI fails too) — download/select works; transcription will succeed once mlx-vlm fixes Qwen3-Omni audio. Use <code>whisper_mlx</code> meanwhile.</p>
+          <p class="hint" id="qwen-omni-hint">Audio → Vietnamese text in one step (no Whisper), with punctuation &amp; casing. Heavy (30B MoE, ~1s/utterance). Pick a quant to download, then select engine <code>qwen_omni</code>.</p>
           <div id="qwen-omni-models" class="model-list"></div>
         </section>
 

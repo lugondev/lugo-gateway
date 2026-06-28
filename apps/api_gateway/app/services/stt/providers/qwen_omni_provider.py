@@ -12,6 +12,7 @@ cached; otherwise the engine hides and callers fall back to whisper/whisper_mlx.
 
 import asyncio
 import os
+import re
 import tempfile
 
 from app.core.settings import settings
@@ -32,6 +33,15 @@ def set_active_qwen_omni_model(model: str) -> None:
     _active_model = model
 
 
+# Strip Qwen chat/reasoning control tokens that occasionally leak into the output.
+_SPECIAL_RE = re.compile(r"<\|[^|]*\|>|</?think>")
+
+
+def _clean(text: str) -> str:
+    text = _SPECIAL_RE.sub("", text)
+    return text.strip()
+
+
 def _mlx_vlm_version() -> str:
     try:
         from importlib.metadata import version
@@ -47,11 +57,10 @@ _patched = False
 def _patch_mlx_vlm_qwen_audio() -> None:
     """Work around an mlx-vlm 0.6.3 bug for Qwen3-Omni audio.
 
-    prepare_inputs() computes audio `input_features` separately but still forwards
-    the raw audio *file paths* into the text processor, which throws
-    "could not convert string to float: '<path>.wav'". The audio placeholder tokens
-    are already in the prompt and the features are supplied via input_features, so we
-    drop the paths from the text-processing call for Qwen3-Omni processors.
+    process_inputs() forwards the audio *file paths* straight to the HF Qwen3-Omni
+    processor, whose audio handler expects decoded waveform arrays — so it throws
+    "could not convert string to float: '<path>.wav'". We decode the paths to float32
+    arrays (at the processor's sampling rate) before they reach the processor.
     """
     global _patched
     if _patched:
@@ -62,8 +71,12 @@ def _patch_mlx_vlm_qwen_audio() -> None:
 
     def patched(processor, *args, **kw):
         cls = processor.__class__.__name__.lower()
-        if "qwen3" in cls and "omni" in cls and kw.get("audio") is not None:
-            kw["audio"] = None
+        audio = kw.get("audio")
+        if "qwen3" in cls and "omni" in cls and audio:
+            sr = getattr(getattr(processor, "feature_extractor", None), "sampling_rate", 16000)
+            kw["audio"] = [
+                u.load_audio(a, sr=sr) if isinstance(a, str) else a for a in audio
+            ]
         return orig(processor, *args, **kw)
 
     u.process_inputs_with_fallback = patched
@@ -127,17 +140,15 @@ class QwenOmniProvider(STTProvider):
                 prompt,
                 audio=[wav_path],
                 max_tokens=settings.qwen_omni_max_tokens,
+                temperature=0.0,  # greedy: avoids degenerate special-token outputs
                 verbose=False,
             )
-        except Exception as exc:  # noqa: BLE001 - mlx-vlm 0.6.3 can't process Qwen3-Omni audio
+        except Exception as exc:  # noqa: BLE001 - surface a clean error to the caller
             raise RuntimeError(
-                "Qwen3-Omni audio inference is not supported by the installed mlx-vlm "
-                f"({_mlx_vlm_version()}) — its audio input handling for this model is "
-                "broken upstream (the official CLI fails the same way). Use whisper_mlx "
-                "for now; this engine will work once mlx-vlm fixes Qwen3-Omni audio."
+                f"Qwen3-Omni inference failed (mlx-vlm {_mlx_vlm_version()}): {exc}"
             ) from exc
-        text = getattr(out, "text", out)
-        return str(text).strip()
+        text = str(getattr(out, "text", out))
+        return _clean(text)
 
     def warm(self) -> None:
         try:

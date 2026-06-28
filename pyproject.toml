@@ -21,9 +21,12 @@ dev = [
   "pytest-asyncio>=0.23.0",
   "ruff>=0.6.0",
 ]
-# Apple-Silicon GPU STT (engine "whisper_mlx", ~7x faster than CPU). Mac only.
+# Apple-Silicon GPU STT (whisper_mlx ~7x faster; qwen_omni audio-native). Mac only.
+# torchvision is needed by the Qwen3-Omni processor (mlx-vlm).
 mlx = [
   "mlx-whisper>=0.4.0",
+  "mlx-vlm>=0.6.3",
+  "torchvision",
 ]
 # Opus audio transport (ESP32/RPi/browser). Needs system libopus
 # (apt-get install libopus0 / brew install opus).

@@ -76,10 +76,10 @@ class Settings(BaseSettings):
     # auto-hides when mlx-vlm or the model is absent. Pick a quant via the model manager.
     qwen_omni_model: str = "mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit"
     qwen_omni_max_tokens: int = 256
-    qwen_omni_prompt: str = (
-        "Chép lại chính xác lời nói trong đoạn âm thanh thành văn bản tiếng Việt. "
-        "Chỉ trả về văn bản được nói, không thêm giải thích hay nội dung nào khác."
-    )
+    # NOTE: a restrictive "only return the text, nothing else" prompt makes Qwen3-Omni
+    # emit a degenerate empty turn on some clips. "Phiên âm … thành văn bản" is the
+    # reliable phrasing (6/6 clips transcribed correctly in testing).
+    qwen_omni_prompt: str = "Phiên âm đoạn âm thanh sau thành văn bản tiếng Việt."
 
     # Extra STT preprocessing (defaults OFF: our energy gate / spectral denoise can
     # clip or add artifacts and don't help Whisper, which has its own VAD).

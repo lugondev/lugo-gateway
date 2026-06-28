@@ -88,23 +88,12 @@ class STTService:
                     "detail": provider.detail() if mlx_ok else "needs mlx-whisper + converted model",
                 }
             elif engine == "qwen_omni":
-                # mlx-vlm 0.6.3 can't run Qwen3-Omni audio (upstream bug), so hide the
-                # engine from the STT/conversation selectors there — but keep the
-                # System-tab manager working. Auto-enables on a fixed mlx-vlm.
-                from importlib.metadata import version
-
-                try:
-                    blocked = version("mlx-vlm") == "0.6.3"
-                except Exception:  # noqa: BLE001
-                    blocked = False
-                q_ok = provider.available() and not blocked
-                if blocked:
-                    detail = "blocked by mlx-vlm 0.6.3 audio bug — download in System tab"
-                elif q_ok:
-                    detail = provider.detail()
-                else:
-                    detail = "needs mlx-vlm + downloaded model (System tab)"
-                entry = {"mode": "local", "available": q_ok, "detail": detail}
+                q_ok = provider.available()
+                entry = {
+                    "mode": "local",
+                    "available": q_ok,
+                    "detail": provider.detail() if q_ok else "needs mlx-vlm + downloaded model (System tab)",
+                }
             elif engine == "whisper_gemma":
                 entry = {"mode": "local", "available": fw_available, "detail": provider.detail()}
             else:
