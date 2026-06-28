@@ -1270,6 +1270,18 @@ async function startConversation() {
   conv.log = [];
   el("conv-log").textContent = "";
 
+  // Preload heavy models (Qwen3-Omni ~20s first time) before opening the socket, so
+  // the first turn isn't a silent cold wait. Cached after the first load.
+  const sttEngine = el("conv-stt-engine").value;
+  if (sttEngine === "qwen_omni") {
+    setConvStatus("⏳ đang tải model Qwen3-Omni (lần đầu ~20s)…", "status-idle");
+    try {
+      await fetch(`/v1/stt/warm?engine=${encodeURIComponent(sttEngine)}`, { method: "POST" });
+    } catch (error) {
+      /* proceed anyway; the turn will load it */
+    }
+  }
+
   let params = `stt_engine=${encodeURIComponent(el("conv-stt-engine").value)}`;
   params += `&tts_engine=${encodeURIComponent(el("conv-tts-engine").value)}&sample_rate=${STREAM_SAMPLE_RATE}`;
   if (el("conv-voice").value) params += `&voice=${encodeURIComponent(el("conv-voice").value)}`;

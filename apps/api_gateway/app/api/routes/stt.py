@@ -67,6 +67,21 @@ async def list_stt_engines() -> dict:
     return {"success": True, "data": stt_service.list_engines()}
 
 
+@router.post("/warm")
+async def warm_engine(engine: str) -> dict:
+    """Load a heavy STT model into memory ahead of use (e.g. Qwen3-Omni ~20s).
+
+    Lets the UI preload before the first conversation turn so it isn't a cold wait.
+    """
+    import asyncio
+
+    provider = stt_service.get_provider(engine)
+    warm = getattr(provider, "warm", None)
+    if callable(warm):
+        await asyncio.to_thread(warm)
+    return {"success": True, "data": {"engine": engine, "warmed": callable(warm)}}
+
+
 async def _emit(websocket: WebSocket, channel: str, event: StreamEvent) -> None:
     await websocket.send_json(event.model_dump(mode="json"))
     await event_bus.publish(channel, event)
