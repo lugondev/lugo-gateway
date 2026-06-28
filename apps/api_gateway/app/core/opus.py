@@ -40,6 +40,40 @@ def opus_available() -> bool:
     return _load() is not None
 
 
+class OpusFrameEncoder:
+    """Encode PCM16 mono to a list of Opus packets (for pushing to devices)."""
+
+    def __init__(self, sample_rate: int = 24000, channels: int = 1, frame_ms: int = 60) -> None:
+        cls = _load_encoder()
+        if not cls:
+            raise RuntimeError("opuslib/libopus not available")
+        import opuslib
+
+        self._enc = cls(sample_rate, channels, opuslib.APPLICATION_VOIP)
+        self.sample_rate = sample_rate
+        self.frame = sample_rate * frame_ms // 1000  # samples per frame
+
+    def encode_pcm16(self, pcm16: bytes) -> list[bytes]:
+        import numpy as np
+
+        arr = np.frombuffer(pcm16, dtype="<i2")
+        packets: list[bytes] = []
+        for i in range(0, len(arr), self.frame):
+            chunk = arr[i : i + self.frame]
+            if len(chunk) < self.frame:  # pad the last frame to a full Opus frame
+                chunk = np.concatenate([chunk, np.zeros(self.frame - len(chunk), dtype="<i2")])
+            packets.append(self._enc.encode(chunk.tobytes(), self.frame))
+        return packets
+
+
+def _load_encoder():
+    if _load() is None:
+        return None
+    import opuslib
+
+    return opuslib.Encoder
+
+
 class OpusFrameDecoder:
     """Stateful per-connection Opus decoder (mono). Feed it one packet at a time."""
 

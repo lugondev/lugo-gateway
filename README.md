@@ -136,8 +136,11 @@ streamed TTS, with barge-in. The reply comes from:
 - **Audio-native**: when STT is `qwen_omni`, Qwen3-Omni answers the audio itself
   (no separate text LLM), toggled by `CONVERSATION_AUDIO_NATIVE` (default on).
 
-Audio transport: PCM16 by default, or Opus (`?audio_codec=opus`) for ESP32 /
-Raspberry Pi / browser clients (~10× less bandwidth). See [docs/api.md](docs/api.md).
+It's a unified **text/audio → text/audio** gateway: input is audio frames or a
+`{"type":"text"}` message; `?output=audio,text` picks what comes back — covering
+audio→audio, text→audio, audio→text, text→text. Input audio is PCM16 or Opus
+(`?audio_codec=opus`); reply audio is an `audio_url` (browser) or pushed Opus binary
+frames (`?audio_out=opus`, for ESP32 / Raspberry Pi). See [docs/api.md](docs/api.md).
 
 Remote engine endpoints are configured in .env:
 

@@ -112,34 +112,50 @@ Events are also mirrored to the SSE channel `GET /v1/events/sessions/{session_id
 ## Conversation (voice turn-taking)
 
 ### `WS /v1/conversation/stream`
-Full-duplex voice loop: stream mic audio, the server endpoints each turn with VAD,
-transcribes it, generates a reply, and streams TTS audio back.
+A unified **text/audio → text/audio** gateway (browser + IoT). Input is either audio
+frames (VAD-endpointed) or a text message; output is text events and/or synthesized
+audio. Supports the full matrix: audio→audio, text→audio, audio→text, text→text.
 
 ```
-ws://localhost:8000/v1/conversation/stream?stt_engine=vosk&tts_engine=vieneu&voice=Ngọc Lan&sample_rate=16000&audio_codec=pcm16
+ws://localhost:8000/v1/conversation/stream?stt_engine=whisper_mlx&tts_engine=vieneu&sample_rate=16000&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=24000
 ```
 
-Client → server: binary audio frames; text control `{"type":"reset"}` (clear
-history) / `{"type":"end"}` (finalize + close) / `{"type":"abort"}`.
+| query param | default | meaning |
+|-------------|---------|---------|
+| `stt_engine` / `tts_engine` / `voice` / `language` | settings | per-session engines |
+| `sample_rate` | 16000 | input audio rate (Hz) |
+| `audio_codec` | `pcm16` | **input** codec: `pcm16` or `opus` |
+| `output` | `audio,text` | what to send back: any of `audio`, `text` |
+| `audio_out` | `url` | reply-audio delivery: `url` (browser fetches /artifacts) or `opus` (binary frames pushed — for devices) |
+| `output_sample_rate` | 24000 | output Opus frame rate when `audio_out=opus` |
 
-**Audio transport** (`audio_codec` query param):
-- `pcm16` (default) — raw little-endian 16-bit mono frames at `sample_rate`.
-- `opus` — raw Opus packets, mono at `sample_rate` (e.g. 16 kHz, 20–60 ms frames).
-  ~10x less bandwidth; the native format for ESP32 / Raspberry Pi firmware and
-  browser WebCodecs. The server decodes to PCM16 (needs libopus — see runbook). If
-  the server lacks libopus it falls back to `pcm16` (reported in `session_started`).
+Client → server:
+- binary frames — audio input (PCM16, or Opus packets when `audio_codec=opus`).
+- `{"type":"text","text":"…"}` — a text-input turn (no mic).
+- `{"type":"reset"}` clear history · `{"type":"abort"}` cancel turn · `{"type":"end"}` finalize+close.
+
+**Input audio** (`audio_codec`): `pcm16` (raw 16-bit mono) or `opus` (raw packets, ~10×
+less bandwidth — native for ESP32/RPi firmware + browser WebCodecs; server decodes via
+libopus, falls back to `pcm16` if absent).
+
+**Output audio** (`audio_out=opus`): each reply sentence is sent as JSON `audio_start`
+`{chunk_index, text, codec:"opus", sample_rate, frames}`, then `frames` binary Opus
+packets (mono @ `output_sample_rate`, 60 ms each), then `audio_end`. With `audio_out=url`
+(default) the server sends an `audio_chunk` with an `audio_url` instead.
 
 Server → client events (`{"event": ...}`):
 
 | `event` | when | key fields |
 |---------|------|-----------|
-| `session_started` | on connect | `stt_engine`, `stt_detail`, `tts_engine`, `tts_detail`, `responder`, `llm_model`, `audio_codec` |
+| `session_started` | on connect | `stt_engine`, `stt_detail`, `tts_engine`, `tts_detail`, `responder`, `llm_model`, `audio_codec`, `output`, `audio_out`, `output_sample_rate` |
 | `speech_start` | user starts speaking | — |
 | `speech_end` | VAD detects end of turn | `speech_ms` |
 | `processing` | transcribing + generating | `turn` |
-| `user_transcript` | STT result for the turn | `text` |
-| `response_text` | assistant reply text | `text`, `responder` |
-| `audio_chunk` | reply TTS, one per sentence | `chunk_index`, `text`, `audio_url` |
+| `user_transcript` | STT result (or echoed text input) for the turn | `text` |
+| `response_text` | assistant reply text (when `output` includes `text`) | `text`, `responder` |
+| `audio_chunk` | reply TTS sentence as a URL (when `audio_out=url`) | `chunk_index`, `text`, `audio_url` |
+| `audio_start` / `audio_end` | brackets binary Opus frames for a sentence (when `audio_out=opus`) | `chunk_index`, `codec`, `sample_rate`, `frames` |
+| `aborted` | turn cancelled (barge-in / superseded) | `reason` |
 | `turn_done` | turn complete | `turn` |
 | `error` / `done` / `reset` | — | — |
 

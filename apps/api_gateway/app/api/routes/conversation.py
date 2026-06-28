@@ -6,7 +6,7 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from app.core.audio import pcm16_to_wav_bytes, preprocess_pcm16
+from app.core.audio import pcm16_to_wav_bytes, preprocess_pcm16, wav_file_to_pcm16
 from app.core.errors import AppError
 from app.core.settings import settings
 from app.services.conversation.endpointer import VadEndpointer
@@ -104,6 +104,16 @@ async def conversation_stream(websocket: WebSocket) -> None:
     # Audio transport: pcm16 (default) or opus (embedded ESP32/RPi + browser WebCodecs;
     # ~10x less bandwidth). Server decodes Opus packets -> PCM16 for the endpointer.
     audio_codec = (q.get("audio_codec") or "pcm16").lower()
+    # Output modalities the client wants back (text/audio). Enables the full matrix:
+    # audio→audio, text→audio, audio→text, text→text. Input is audio frames OR a
+    # {"type":"text"} control message.
+    out_modalities = {m.strip() for m in (q.get("output") or "audio,text").lower().split(",") if m.strip()}
+    want_audio = "audio" in out_modalities
+    want_text = "text" in out_modalities
+    # How reply audio is delivered: "url" (browser fetches /artifacts) or "opus"/"pcm"
+    # binary frames pushed over the socket (for ESP32/RPi that can't fetch mid-stream).
+    audio_out = (q.get("audio_out") or "url").lower()
+    output_sample_rate = int(q.get("output_sample_rate", 24000))
     # Only optional noise reduction here — the endpointer already does VAD
     # segmentation and Whisper has its own vad_filter, so an extra VAD gate on the
     # utterance would clip speech and hurt recognition.
@@ -128,6 +138,17 @@ async def conversation_stream(websocket: WebSocket) -> None:
         else:
             audio_codec = "pcm16"
             logger.warning("client requested opus but server has no libopus; using pcm16")
+
+    # Set up Opus encoding for pushed audio output (devices). Fall back to url.
+    opus_encoder = None
+    if want_audio and audio_out == "opus":
+        from app.core.opus import OpusFrameEncoder, opus_available
+
+        if opus_available():
+            opus_encoder = OpusFrameEncoder(sample_rate=output_sample_rate, channels=1)
+        else:
+            audio_out = "url"
+            logger.warning("client requested opus output but server has no libopus; using url")
 
     responder = build_responder()
 
@@ -173,6 +194,9 @@ async def conversation_stream(websocket: WebSocket) -> None:
             "llm_model": llm_model,
             "sample_rate": sample_rate,
             "audio_codec": audio_codec,
+            "output": sorted(out_modalities),
+            "audio_out": audio_out,
+            "output_sample_rate": output_sample_rate if want_audio and audio_out != "url" else None,
         }
     )
 
@@ -194,26 +218,18 @@ async def conversation_stream(websocket: WebSocket) -> None:
     async def send(event: str, **payload) -> None:
         await websocket.send_json({"event": event, **payload})
 
-    async def handle_turn(audio_pcm: bytes) -> None:
+    async def handle_turn(audio_pcm: bytes | None = None, text_input: str | None = None) -> None:
         try:
-            await _run_turn(audio_pcm)
+            await _run_turn(audio_pcm=audio_pcm, text_input=text_input)
         except Exception as exc:  # noqa: BLE001 - keep the conversation alive
             logger.exception("conversation turn failed")
             await send("error", message=str(exc))
             await send("turn_done", turn=turn)
 
-    async def _run_turn(audio_pcm: bytes) -> None:
+    async def _run_turn(audio_pcm: bytes | None = None, text_input: str | None = None) -> None:
         nonlocal turn
         turn += 1
         await send("processing", turn=turn)
-
-        pcm = audio_pcm
-        if denoise:
-            pcm = preprocess_pcm16(
-                audio_pcm, sample_rate, denoise=True, vad=False,
-                amount=settings.stt_noise_reduce_amount,
-            )
-        wav = pcm16_to_wav_bytes(pcm, sample_rate=sample_rate)
 
         # Stream a sentence iterator through TTS: a producer fills a queue while a
         # consumer synthesizes + sends each sentence, so the next sentence's audio is
@@ -237,25 +253,59 @@ async def conversation_stream(websocket: WebSocket) -> None:
                     if sentence is None:
                         break
                     parts.append(sentence)
-                    await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
-                    result = await tts_provider.synthesize(
-                        TTSRequest(text=sentence, engine=tts_engine, voice=voice)
-                    )
-                    await send(
-                        "audio_chunk",
-                        turn=turn,
-                        chunk_index=index,
-                        text=sentence,
-                        audio_url=result.audio_url,
-                        sample_rate=result.sample_rate,
-                        mock=result.mock,
-                    )
+                    if want_text:
+                        await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
+                    if want_audio:
+                        result = await tts_provider.synthesize(
+                            TTSRequest(text=sentence, engine=tts_engine, voice=voice)
+                        )
+                        if opus_encoder is not None:
+                            # Decode the TTS wav -> PCM16 @ output_sr -> Opus packets, push as
+                            # binary frames bracketed by audio_start/audio_end (for devices).
+                            path = result.audio_url.lstrip("/")
+                            pcm = await asyncio.to_thread(wav_file_to_pcm16, path, output_sample_rate)
+                            packets = await asyncio.to_thread(opus_encoder.encode_pcm16, pcm)
+                            await send(
+                                "audio_start", turn=turn, chunk_index=index,
+                                text=sentence if want_text else None,
+                                codec="opus", sample_rate=output_sample_rate, frames=len(packets),
+                            )
+                            for pkt in packets:
+                                await websocket.send_bytes(pkt)
+                            await send("audio_end", turn=turn, chunk_index=index)
+                        else:
+                            await send(
+                                "audio_chunk", turn=turn, chunk_index=index, text=sentence,
+                                audio_url=result.audio_url, sample_rate=result.sample_rate, mock=result.mock,
+                            )
                     index += 1
                 await producer  # surface errors (e.g. LLMUnavailableError)
             finally:
                 if not producer.done():
                     producer.cancel()
             return parts
+
+        # Text input: skip STT, reply via the text responder (text→text / text→audio).
+        if text_input is not None:
+            user_text = (text_input or "").strip()
+            await send("user_transcript", turn=turn, text=user_text, engine="text")
+            if not user_text:
+                await send("turn_done", turn=turn, skipped="empty text")
+                return
+            history.append({"role": "user", "content": user_text})
+            parts = await _stream_to_tts(responder.reply_stream(history), responder.name)
+            history.append({"role": "assistant", "content": " ".join(parts)})
+            await send("turn_done", turn=turn)
+            return
+
+        # Audio input: build the wav for STT / audio-native.
+        pcm = audio_pcm
+        if denoise:
+            pcm = preprocess_pcm16(
+                audio_pcm, sample_rate, denoise=True, vad=False,
+                amount=settings.stt_noise_reduce_amount,
+            )
+        wav = pcm16_to_wav_bytes(pcm, sample_rate=sample_rate)
 
         # Audio-native: Qwen-Omni answers the audio directly (one pass), no separate
         # text LLM. Otherwise: transcribe -> text responder (gemma/online/echo).
@@ -346,7 +396,11 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 except json.JSONDecodeError:
                     control = {}
                 ctype = control.get("type")
-                if ctype == "abort":
+                if ctype == "text":
+                    # Text input turn (text→text / text→audio). Supersedes any current turn.
+                    await abort_turn("superseded")
+                    current_turn = asyncio.create_task(handle_turn(text_input=control.get("text") or ""))
+                elif ctype == "abort":
                     await abort_turn("user")
                 elif ctype == "reset":
                     await abort_turn("reset")

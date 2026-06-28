@@ -59,6 +59,28 @@ def read_wav(wav_bytes: bytes) -> tuple[bytes, int, int, int]:
         return frames, wav_file.getframerate(), wav_file.getnchannels(), wav_file.getsampwidth()
 
 
+def wav_file_to_pcm16(path: str, target_sr: int) -> bytes:
+    """Read a WAV file, downmix to mono, resample to target_sr, return PCM16 bytes."""
+    with wave.open(path, "rb") as wav_file:
+        sr = wav_file.getframerate()
+        ch = wav_file.getnchannels()
+        width = wav_file.getsampwidth()
+        raw = wav_file.readframes(wav_file.getnframes())
+    if width != 2:  # only PCM16 inputs expected from our TTS engines
+        raise ValueError(f"unsupported sample width: {width}")
+    samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    if ch > 1:
+        samples = samples.reshape(-1, ch).mean(axis=1)
+    if sr != target_sr:
+        from math import gcd
+
+        from scipy.signal import resample_poly
+
+        g = gcd(sr, target_sr)
+        samples = resample_poly(samples, target_sr // g, sr // g)
+    return (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2").tobytes()
+
+
 # ---------------------------------------------------------------- preprocessing
 
 def reduce_noise(
