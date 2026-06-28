@@ -38,8 +38,18 @@ errors. They never embed model logic.
   Unknown names raise `EngineNotFoundError` (→ HTTP 400 / WS `error` event).
 - **STT providers** implement `transcribe_bytes()` and optionally `open_stream()`.
   - `VoskProvider` — local, CPU-friendly, **native incremental** streaming.
-  - `WhisperProvider` — local faster-whisper (batch; streaming via buffering).
+  - `WhisperProvider` — local faster-whisper, defaults to PhoWhisper (Vietnamese).
+  - `WhisperMlxProvider` (`whisper_mlx`) — PhoWhisper on the Apple GPU via mlx-whisper.
+  - `QwenOmniProvider` (`qwen_omni`) — audio-native Qwen3-Omni via mlx-vlm; also exposes
+    `converse()` (audio → transcript + reply) for audio-native conversation.
+  - `WhisperGemmaProvider` — Whisper transcript refined by the conversation LLM.
   - `RemoteWhisperProvider` — OpenAI-compatible `/audio/transcriptions` endpoint.
+  - MLX engines auto-hide off Apple Silicon → callers fall back to `whisper`.
+- **Conversation** (`app/services/conversation`, `routes/conversation.py`) — VAD
+  endpointer + responder (echo / OpenAI-compatible LLM / audio-native Qwen-Omni),
+  streamed per-sentence to TTS with barge-in. Audio in as PCM16 or Opus (`core/opus.py`).
+- **Model managers** (`whisper_models`, `qwen_omni_models`, `llm_models`, `tts_models`,
+  `models`) — download / select / delete weights for the System-tab managers.
 - **TTS providers** implement `synthesize()`.
   - `OmniVoiceProvider` — lazy-loads OmniVoice from `OMNIVOICE_PATH`, runs inference
     in a worker thread, and degrades to silent placeholder audio on failure or when

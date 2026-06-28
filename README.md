@@ -1,8 +1,26 @@
 # speech-text-transformer
 
-Foundation project for Speech-to-Text (Vosk/Whisper) and Text-to-Speech (OmniVoice) with REST, WebSocket, and SSE.
+Local gateway unifying Speech-to-Text, Text-to-Speech, and a voice Conversation loop
+over REST / WebSocket / SSE, with a browser playground. STT: Vosk, faster-whisper
+(PhoWhisper for Vietnamese), Apple-GPU MLX (`whisper_mlx`, `qwen_omni`), remote
+Whisper. TTS: OmniVoice, VieNeu, and more. Conversation: VAD turn-taking + barge-in,
+local/online LLM or audio-native Qwen3-Omni, PCM or Opus transport.
 
 ## Quick start
+
+### With the Makefile (recommended)
+
+```bash
+make install     # venv + deps
+make dev         # run in foreground with --reload
+# or run/manage as a background service:
+make start       # start (logs -> .run/gateway.log)
+make status      # is it running?
+make stop        # stop
+make restart     # restart
+make test        # pytest
+make help        # all targets
+```
 
 ### Local Python
 
@@ -13,6 +31,10 @@ source .venv/bin/activate
 pip install -e .
 PYTHONPATH=apps/api_gateway uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+Optional extras: `pip install -e ".[mlx]"` (Apple-Silicon GPU STT: `whisper_mlx`,
+`qwen_omni`), `pip install -e ".[opus]"` (Opus audio transport — also needs system
+libopus: `brew install opus` / `apt install libopus0`).
 
 ### Setup local Vosk and Whisper
 
@@ -42,10 +64,14 @@ docker compose up --build
 - GET /ui
 - GET /v1/stt/engines
 - POST /v1/stt/transcribe
+- POST /v1/stt/warm (preload a heavy STT model, e.g. qwen_omni)
 - WS /v1/stt/stream
 - POST /v1/tts/synthesize
 - POST /v1/tts/stream
-- WS /v1/conversation/stream (voice turn-taking)
+- WS /v1/conversation/stream (voice turn-taking; `?audio_codec=pcm16|opus`)
+- GET/POST /v1/conversation/llm + POST /v1/conversation/llm/reset (online LLM config)
+- POST /v1/conversation/chat (text chat with the conversation responder)
+- POST /v1/models/{whisper,qwen-omni,llm,...}/download|select|delete
 - GET /v1/events/jobs/{job_id} (SSE)
 - GET /v1/events/sessions/{session_id} (SSE)
 - GET /v1/system/status
@@ -54,9 +80,10 @@ docker compose up --build
 - DELETE /v1/models/vosk/{name}
 - GET /artifacts/{file} (generated audio)
 
-UI playground is available at /ui and uses the same API host. It includes a system
-status panel, a Vosk model manager (download/delete with progress), microphone recording
-for batch STT, live WebSocket streaming, and progressive TTS playback.
+UI playground at `/ui` (same API host), tabbed: **System** (status, model managers for
+Vosk/Whisper/TTS/Qwen-Omni/LLM, VAD+denoise config, online-LLM provider), **Speech →
+Text** (mic record + streaming), **Text → Speech**, **Conversation** (live voice loop,
+shows the active STT/LLM/TTS), and **LLM Chat**.
 
 ## Streaming protocols
 
@@ -84,12 +111,33 @@ full pipeline runs without loading OmniVoice. Set it `false` for real OmniVoice 
 ## STT engine options
 
 - vosk: Local Vosk model.
-- whisper or whisper_local: Local faster-whisper model.
+- whisper or whisper_local: Local faster-whisper. Defaults to **PhoWhisper** (VinAI
+  Vietnamese fine-tune, `phowhisper-medium`) — far better Vietnamese tones/diacritics
+  than vanilla Whisper. CPU on macOS (~3.7s/utterance).
+- **whisper_mlx**: PhoWhisper on the Apple-Silicon **GPU** via MLX — ~0.5s/utterance
+  (~7× faster than CPU), same accuracy. Mac only; auto-falls back to `whisper`
+  elsewhere. Build the model with `scripts/convert_phowhisper_mlx.sh`.
+- **qwen_omni**: audio-native **Qwen3-Omni** (MLX, Apple GPU). Transcribes with
+  punctuation/casing and, in conversation, can answer the audio directly (see below).
+  Heavy 30B model (~1s/utterance); download a quant in the System tab.
 - whisper_gemma: faster-whisper transcript refined by the conversation LLM (Gemma) —
-  fixes spelling/diacritics/punctuation (great for Vietnamese). Falls back to raw
-  Whisper text if no LLM is configured.
+  fixes spelling/diacritics/punctuation. Falls back to raw Whisper text if no LLM.
 - whisper_service: Remote OpenAI-compatible Whisper endpoint.
 - eventlab: Remote provider using the same OpenAI-compatible transcription API.
+
+## Conversation (voice)
+
+`WS /v1/conversation/stream` runs a full voice loop: VAD endpointing → STT → reply →
+streamed TTS, with barge-in. The reply comes from:
+
+- **A text LLM** (cascade): local **Ollama** (default `gemma2:9b`), or any
+  OpenAI-compatible **online** provider (OpenAI/Groq/Together) configured at runtime
+  via the System tab or `POST /v1/conversation/llm` — held in memory only.
+- **Audio-native**: when STT is `qwen_omni`, Qwen3-Omni answers the audio itself
+  (no separate text LLM), toggled by `CONVERSATION_AUDIO_NATIVE` (default on).
+
+Audio transport: PCM16 by default, or Opus (`?audio_codec=opus`) for ESP32 /
+Raspberry Pi / browser clients (~10× less bandwidth). See [docs/api.md](docs/api.md).
 
 Remote engine endpoints are configured in .env:
 

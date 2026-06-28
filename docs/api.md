@@ -43,9 +43,13 @@ List configured engines.
 ```
 
 `available` reflects whether the engine is usable now: Vosk needs its model on disk,
-whisper needs faster-whisper installed, remote engines need a base URL. `detail` is the
-specific model/version (Vosk model dir, active whisper size, or remote model id). Clients
-should list only `available` engines.
+whisper needs faster-whisper installed, `whisper_mlx`/`qwen_omni` need mlx + a built/
+downloaded model (Apple Silicon), remote engines need a base URL. `detail` is the
+specific model/version. Clients should list only `available` engines.
+
+### `POST /v1/stt/warm?engine=<engine>`
+Preload a heavy model into memory (e.g. `qwen_omni`, ~10–20s the first time; cached
+after). The UI calls this before the first conversation turn so it isn't a cold wait.
 
 ### `POST /v1/stt/transcribe`
 Batch transcription. `multipart/form-data`:
@@ -53,7 +57,7 @@ Batch transcription. `multipart/form-data`:
 | field | type | notes |
 |-------|------|-------|
 | `audio` | file | WAV PCM16 mono required for `vosk`; whisper accepts common formats |
-| `engine` | string | `vosk` \| `whisper` \| `whisper_local` \| `whisper_gemma` \| `whisper_service` \| `eventlab` |
+| `engine` | string | `vosk` \| `whisper` \| `whisper_local` \| `whisper_mlx` \| `qwen_omni` \| `whisper_gemma` \| `whisper_service` \| `eventlab` |
 | `language` | string? | optional hint, e.g. `en`, `vi` |
 | `denoise` | bool? | spectral noise reduction (default `STT_NOISE_REDUCE_ENABLED`) |
 | `vad` | bool? | VAD gate (default `STT_VAD_ENABLED`) |
@@ -139,10 +143,27 @@ Server → client events (`{"event": ...}`):
 | `turn_done` | turn complete | `turn` |
 | `error` / `done` / `reset` | — | — |
 
-Turn-taking uses an energy VAD endpointer (`CONVERSATION_*` settings). Replies come
-from a built-in echo responder, or an OpenAI-compatible chat endpoint when
-`CONVERSATION_LLM_BASE_URL` is set. Long replies are sentence-split and synthesized
-chunk-by-chunk so playback starts early.
+Turn-taking uses an energy VAD endpointer (`CONVERSATION_*` settings). Long replies
+are sentence-split and synthesized chunk-by-chunk so playback starts early. A
+`speech_start` mid-reply is barge-in: the in-progress turn is cancelled (`aborted`).
+
+The reply comes from:
+- **Echo** — built-in, when no LLM is configured.
+- **Text LLM** (cascade) — any OpenAI-compatible chat endpoint (local Ollama or an
+  online provider). `responder` = `"llm"`, `llm_model` = the active model.
+- **Audio-native** — when `stt_engine=qwen_omni` and `CONVERSATION_AUDIO_NATIVE` is on,
+  Qwen3-Omni answers the audio directly (transcribe + reply, both via Qwen, no separate
+  text LLM). `llm_model` = `"qwen_omni (audio-native)"`. Falls back to the cascade if
+  the one-pass reply is empty.
+
+### Conversation LLM config
+
+| route | does |
+|-------|------|
+| `GET /v1/conversation/llm` | current config: `base_url`, `model`, `api_key_set`, `responder` |
+| `POST /v1/conversation/llm` | set `{base_url, api_key, model}` at runtime (any OpenAI-compatible endpoint). API key kept in memory only — never echoed or persisted |
+| `POST /v1/conversation/llm/reset` | revert to the `.env` config |
+| `POST /v1/conversation/chat` | `{messages:[…]}` → text reply from the active responder |
 
 ---
 

@@ -35,6 +35,28 @@ Set `VOSK_MODEL_PATH` to use a different model.
 Then set `CONVERSATION_STT_ENGINE=whisper_mlx` (or pick it in the UI). The engine
 auto-hides on non-Mac hosts, so callers fall back to the CPU `whisper` engine.
 
+### Audio-native STT/conversation (qwen_omni, Apple GPU)
+
+Qwen3-Omni (MLX) transcribes with punctuation/casing and can answer the audio
+directly in conversation (no separate text LLM).
+
+```bash
+.venv/bin/pip install -e ".[mlx]"     # mlx-vlm + torchvision, Apple Silicon only
+```
+Download a quant in the System tab ("Audio-native STT — Qwen3-Omni"), or
+`POST /v1/models/qwen-omni/download {"model":"mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit"}`.
+The first turn loads the 30B model (~10–20s) — the UI preloads via `POST /v1/stt/warm`.
+`CONVERSATION_AUDIO_NATIVE=true` (default) lets Qwen answer the audio directly; set it
+`false` to keep Qwen as STT-only and reply with the configured text LLM. Slower than
+`whisper_mlx` (~1s vs ~0.5s), so `whisper_mlx` stays the low-latency default.
+
+### Conversation LLM (local Ollama or online)
+
+Local: run Ollama, set `CONVERSATION_LLM_BASE_URL=http://localhost:11434/v1` +
+`CONVERSATION_LLM_MODEL=gemma2:9b`; manage/activate models in the System tab.
+Online: pick a provider (OpenAI/Groq/Together) in the System tab "Online" card (or
+`POST /v1/conversation/llm`) — the API key is kept in memory only, never persisted.
+
 ### Opus audio transport (ESP32 / Raspberry Pi / browser)
 
 `?audio_codec=opus` on the conversation WS streams Opus instead of PCM16 (~10x less
@@ -84,6 +106,7 @@ All settings are environment variables (or `.env`). See `.env.example` for the f
 | `WHISPER_CONDITION_ON_PREVIOUS_TEXT` | `false` | off avoids hallucination drift across silent gaps |
 | `WHISPER_INITIAL_PROMPT` | — | seed text to bias Vietnamese orthography (empty = off) |
 | `WHISPER_MLX_MODEL_PATH` | `models/stt/phowhisper-medium-mlx` | MLX model dir for the `whisper_mlx` engine (Apple-GPU, ~7x faster). Build with `scripts/convert_phowhisper_mlx.sh`; engine auto-hides if `mlx-whisper`/model absent |
+| `QWEN_OMNI_MODEL` | `mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit` | MLX model for the `qwen_omni` audio-native engine (needs `mlx-vlm`) |
 | `WHISPER_SERVICE_BASE_URL` / `_API_KEY` / `_MODEL` | — | remote OpenAI-compatible STT |
 | `EVENTLAB_BASE_URL` / `_API_KEY` / `_MODEL` | — | second remote STT provider |
 | `REMOTE_STT_TIMEOUT_SECONDS` | `60` | remote request timeout |
@@ -93,6 +116,10 @@ All settings are environment variables (or `.env`). See `.env.example` for the f
 | `OMNIVOICE_DTYPE` | `float16` | torch dtype |
 | `ENABLE_MOCK_ENGINES` | `true` | return silent placeholder TTS instead of real inference |
 | `ARTIFACTS_DIR` | `artifacts` | where generated WAVs are written |
+| `CONVERSATION_STT_ENGINE` | `whisper` | STT engine for the voice loop (`whisper_mlx`/`qwen_omni`/…) |
+| `CONVERSATION_TTS_ENGINE` | `vieneu` | TTS engine for the voice loop |
+| `CONVERSATION_AUDIO_NATIVE` | `true` | with `qwen_omni`, answer the audio directly (skip the text LLM) |
+| `CONVERSATION_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | — / — / `gpt-3.5-turbo` | OpenAI-compatible chat endpoint (Ollama / online); empty base url → echo responder |
 
 ## Enabling real TTS
 
