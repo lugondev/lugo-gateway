@@ -42,22 +42,6 @@ def _clean(text: str) -> str:
     return text.strip()
 
 
-def _split_listen_reply(raw: str) -> tuple[str, str]:
-    """Parse the 'NGHE: …\\nĐÁP: …' format into (transcript, reply).
-
-    Falls back to treating the whole output as the reply if the markers are missing.
-    """
-    transcript, reply = "", raw
-    m = re.search(r"\bĐÁP\s*:\s*(.+)", raw, re.IGNORECASE | re.DOTALL)
-    if m:
-        reply = m.group(1).strip()
-        head = raw[: m.start()]
-        n = re.search(r"\bNGHE\s*:\s*(.+)", head, re.IGNORECASE | re.DOTALL)
-        if n:
-            transcript = n.group(1).strip()
-    return transcript.strip(), reply.strip()
-
-
 def _mlx_vlm_version() -> str:
     try:
         from importlib.metadata import version
@@ -168,24 +152,36 @@ class QwenOmniProvider(STTProvider):
     def _transcribe(self, wav_path: str) -> str:
         return self._generate(wav_path, settings.qwen_omni_prompt, settings.qwen_omni_max_tokens)
 
-    def _converse(self, wav_path: str, history: list[dict], system_prompt: str) -> tuple[str, str]:
-        """Audio-native: one pass that both transcribes the user turn and replies.
+    def _reply_text(self, prompt_text: str) -> str:
+        """Text-only chat generation with Qwen-Omni (no audio) — used as the LLM."""
+        from mlx_vlm import generate
+        from mlx_vlm.prompt_utils import apply_chat_template
 
-        Qwen3-Omni IS an LLM, so in conversation it can answer the audio directly —
-        no separate text LLM. We ask for a 2-line format so we still get the user's
-        transcript (for the UI + history) alongside the reply.
+        model, processor, config = self._load()
+        prompt = apply_chat_template(processor, config, prompt_text, num_audios=0)
+        try:
+            out = generate(model, processor, prompt, max_tokens=256, temperature=0.0, verbose=False)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"Qwen3-Omni reply failed: {exc}") from exc
+        return _clean(str(getattr(out, "text", out)))
+
+    def _converse(self, wav_path: str, history: list[dict], system_prompt: str) -> tuple[str, str]:
+        """Audio-native conversation, two reliable Qwen-Omni passes (no separate gemma):
+        1) transcribe the audio, 2) generate the reply from the transcript + history.
+
+        (A single audio->reply pass with a forced format is unreliable on real mic
+        audio — it often degenerates — so we split it into the two robust prompts.)
         """
+        transcript = self._transcribe(wav_path)
+        if not transcript:
+            return "", ""
         convo = system_prompt.strip() + "\n\n"
         for m in history[-6:]:
             who = "Người dùng" if m.get("role") == "user" else "Trợ lý"
             convo += f"{who}: {m.get('content', '')}\n"
-        convo += (
-            "\nNghe đoạn âm thanh của người dùng rồi trả lời. Xuất ĐÚNG hai phần:\n"
-            "NGHE: <chép lại lời người dùng>\n"
-            "ĐÁP: <câu trả lời ngắn gọn, tự nhiên bằng tiếng Việt để đọc thành tiếng>"
-        )
-        raw = self._generate(wav_path, convo, max_tokens=512)
-        return _split_listen_reply(raw)
+        convo += f"Người dùng: {transcript}\nHãy trả lời ngắn gọn, tự nhiên bằng tiếng Việt."
+        reply = self._reply_text(convo)
+        return transcript, reply
 
     def warm(self) -> None:
         try:
