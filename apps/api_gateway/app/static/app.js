@@ -494,10 +494,15 @@ function recStatusBadge(it) {
 
 function recRow(it) {
   let action;
-  if (it.status === "installed") {
+  if (it.active) {
+    action = `<span class="badge ok">active</span>`;
+  } else if (it.status === "installed" && it.select) {
+    recommendActions.push({ type: "select", ...it.select });
+    action = `<button class="mini" data-rec-idx="${recommendActions.length - 1}">Use</button>`;
+  } else if (it.status === "installed") {
     action = `<span class="badge ok">installed</span>`;
   } else if (it.action.kind === "download" && !it.status.startsWith("incompatible")) {
-    recommendActions.push(it.action);
+    recommendActions.push({ type: "download", ...it.action });
     action = `<button class="mini" data-rec-idx="${recommendActions.length - 1}">Download</button>`;
   } else {
     action = `<span class="meta">${it.action.hint || ""}</span>`;
@@ -547,8 +552,9 @@ async function loadRecommend() {
   }
 }
 
-async function recDownload(action) {
-  print(el("model-msg"), `download ${JSON.stringify(action.payload)}...`);
+async function recAct(action) {
+  const isSelect = action.type === "select";
+  print(el("model-msg"), `${isSelect ? "use" : "download"} ${JSON.stringify(action.payload)}...`);
   try {
     const resp = await fetch(action.path, {
       method: action.method || "POST",
@@ -560,9 +566,17 @@ async function recDownload(action) {
       print(el("model-msg"), body.error || body, true);
       return;
     }
-    el("model-msg").textContent = "download started — see the lists below for progress";
+    el("model-msg").textContent = isSelect
+      ? "active model updated"
+      : "download started — see the lists below for progress";
     loadModels();
-    setTimeout(loadRecommend, 1500);
+    if (isSelect) {
+      loadSystemStatus();
+      if (typeof loadSttEngines === "function") loadSttEngines();
+      if (typeof loadTtsEngines === "function") loadTtsEngines();
+      if (typeof loadConversationEngines === "function") loadConversationEngines();
+    }
+    setTimeout(loadRecommend, isSelect ? 300 : 1500);
   } catch (error) {
     print(el("model-msg"), String(error), true);
   }
@@ -570,7 +584,7 @@ async function recDownload(action) {
 
 el("recommend-list").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-rec-idx]");
-  if (btn) recDownload(recommendActions[Number(btn.getAttribute("data-rec-idx"))]);
+  if (btn) recAct(recommendActions[Number(btn.getAttribute("data-rec-idx"))]);
 });
 el("recommend-only").addEventListener("change", renderRecommend);
 

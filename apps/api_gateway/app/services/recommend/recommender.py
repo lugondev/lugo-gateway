@@ -30,6 +30,7 @@ class Candidate:
     min_ram_gb: float | None
     requires: list         # capability/module flags resolved via caps.has()
     action: dict           # {kind, method?, path?, payload?, hint?}
+    select: dict | None = None  # /select action to activate this model, if supported
 
 
 def _score(c: Candidate, base: int, installed: bool) -> int:
@@ -68,8 +69,9 @@ def _reason(c: Candidate, status: str, caps: Capabilities) -> str:
     return f"{lang}runs on {_CHIP_LABEL.get(c.chip, c.chip)} ({c.size_estimate})"
 
 
-def evaluate(c: Candidate, caps: Capabilities, installed_ids: set) -> dict:
+def evaluate(c: Candidate, caps: Capabilities, installed_ids: set, active_ids: set = frozenset()) -> dict:
     installed = c.id in installed_ids
+    active = c.id in active_ids
 
     def out(status: str, fit: int, runnable: bool) -> dict:
         return {
@@ -86,6 +88,8 @@ def evaluate(c: Candidate, caps: Capabilities, installed_ids: set) -> dict:
             "recommended": runnable and fit >= RECOMMEND_THRESHOLD,
             "reason": _reason(c, status, caps),
             "action": c.action,
+            "select": c.select,
+            "active": active,
         }
 
     # 1. Hardware gate (chip class the host cannot satisfy → incompatible).
@@ -110,7 +114,7 @@ def evaluate(c: Candidate, caps: Capabilities, installed_ids: set) -> dict:
     return out(status, _score(c, 50, installed), True)
 
 
-def rank(candidates: list, caps: Capabilities, installed_ids: set) -> list:
-    evaluated = [evaluate(c, caps, installed_ids) for c in candidates]
+def rank(candidates: list, caps: Capabilities, installed_ids: set, active_ids: set = frozenset()) -> list:
+    evaluated = [evaluate(c, caps, installed_ids, active_ids) for c in candidates]
     evaluated.sort(key=lambda r: (-r["fit_score"], r["label"]))
     return evaluated

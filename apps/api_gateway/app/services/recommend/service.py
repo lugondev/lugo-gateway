@@ -18,56 +18,77 @@ def _safe(fn, default):
         return default
 
 
-def _installed_ids() -> set:
-    """Ids the managers report as cached/installed (matches catalog ids)."""
-    ids: set = set()
+def _collect_state() -> tuple[set, set]:
+    """Ids the managers report as installed and as active (matches catalog ids)."""
+    installed: set = set()
+    active: set = set()
 
     def whisper() -> None:
         from app.services.whisper_models import whisper_manager
 
         for m in whisper_manager.snapshot().get("models", []):
             if m.get("cached"):
-                ids.add(m.get("size"))
+                installed.add(m.get("size"))
+            if m.get("active"):
+                active.add(m.get("size"))
 
     def vosk() -> None:
         from app.services.models import model_manager
 
         for m in model_manager.snapshot().get("installed", []):
-            ids.add(m.get("name"))
+            installed.add(m.get("name"))
+            if m.get("active"):
+                active.add(m.get("name"))
 
     def tts() -> None:
         from app.services.tts_models import tts_model_manager
 
         snap = tts_model_manager.snapshot()
-        for m in snap.get("omnivoice", {}).get("models", []):
+        omni = snap.get("omnivoice", {})
+        for m in omni.get("models", []):
             if m.get("cached"):
-                ids.add(m.get("id"))
+                installed.add(m.get("id"))
+            if m.get("active"):
+                active.add(m.get("id"))
+        active.add(omni.get("active"))
         vieneu = snap.get("vieneu", {})
         for m in vieneu.get("modes", vieneu.get("models", [])):
+            mid = m.get("mode") or m.get("id")
             if m.get("cached") or m.get("installed"):
-                ids.add(m.get("mode") or m.get("id"))
+                installed.add(mid)
+            if m.get("active"):
+                active.add(mid)
+        active.add(vieneu.get("active"))
 
     def llm() -> None:
         from app.services.llm_models import llm_manager
 
         snap = llm_manager.snapshot()
         for m in snap.get("installed", []):
-            ids.add(m.get("model"))
+            installed.add(m.get("model"))
+            if m.get("active"):
+                active.add(m.get("model"))
+        active.add(snap.get("active"))
 
     def qwen() -> None:
         from app.services.qwen_omni_models import qwen_omni_manager
 
-        for m in qwen_omni_manager.snapshot().get("models", []):
+        snap = qwen_omni_manager.snapshot()
+        for m in snap.get("models", []):
             if m.get("cached"):
-                ids.add(m.get("model"))
+                installed.add(m.get("model"))
+            if m.get("active"):
+                active.add(m.get("model"))
+        active.add(snap.get("active"))
 
     for fn in (whisper, vosk, tts, llm, qwen):
         _safe(fn, None)
 
     # Built-in VAD is always available.
-    ids.add("energy")
-    ids.discard(None)
-    return ids
+    installed.add("energy")
+    installed.discard(None)
+    active.discard(None)
+    return installed, active
 
 
 def _augment_config_flags(caps: Capabilities) -> None:
@@ -80,11 +101,11 @@ def _augment_config_flags(caps: Capabilities) -> None:
 def recommend_all() -> dict:
     caps = detect_capabilities()
     _augment_config_flags(caps)
-    installed = _installed_ids()
+    installed, active = _collect_state()
 
     categories: dict = {"stt": [], "tts": [], "llm": [], "vad": []}
     for cat in categories:
         members = [c for c in CANDIDATES if c.category == cat]
-        categories[cat] = rank(members, caps, installed)
+        categories[cat] = rank(members, caps, installed, active)
 
     return {"capabilities": caps.as_dict(), "categories": categories}

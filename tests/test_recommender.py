@@ -38,6 +38,8 @@ def cand(**over) -> Candidate:
         requires=["faster_whisper"],
         action={"kind": "download", "method": "POST", "path": "/v1/models/whisper/download",
                 "payload": {"size": "phowhisper-medium"}},
+        select={"kind": "select", "method": "POST", "path": "/v1/models/whisper/select",
+                "payload": {"size": "phowhisper-medium"}},
     )
     base.update(over)
     return Candidate(**base)
@@ -119,6 +121,31 @@ def test_missing_engine_module_needs_it_not_incompatible():
     r = evaluate(c, caps(modules={"faster_whisper": False, "vosk": True}), installed_ids=set())
     assert r["status"] == "needs:faster_whisper"
     assert r["recommended"] is False
+
+
+def test_installed_not_active_exposes_use_select_action():
+    r = evaluate(cand(), caps(), installed_ids={"phowhisper-medium"}, active_ids=set())
+    assert r["status"] == "installed"
+    assert r["active"] is False
+    assert r["select"]["path"] == "/v1/models/whisper/select"
+
+
+def test_active_model_marked_active():
+    r = evaluate(cand(), caps(), installed_ids={"phowhisper-medium"},
+                 active_ids={"phowhisper-medium"})
+    assert r["active"] is True
+
+
+def test_not_installed_is_not_active():
+    r = evaluate(cand(), caps(), installed_ids=set())
+    assert r["active"] is False
+
+
+def test_engine_without_select_has_none():
+    c = cand(id="whisper_service", engine="whisper_service", requires=["whisper_service"], select=None)
+    r = evaluate(c, caps(modules={"whisper_service": True, "faster_whisper": True, "vosk": True}),
+                 installed_ids=set())
+    assert r["select"] is None
 
 
 def test_rank_sorts_by_fit_descending():

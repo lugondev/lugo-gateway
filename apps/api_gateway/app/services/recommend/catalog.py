@@ -135,3 +135,19 @@ CANDIDATES: list[Candidate] = [
               "cpu", "high", False, 0.05, "~50 MB", None, ["pyannote.audio"],
               _pip("pip install pyannote.audio + set PYANNOTE_AUTH_TOKEN (gated)")),
 ]
+
+# Engines whose active model can be switched via a /select endpoint. The select
+# payload mirrors the download payload (same key/value), so reuse it.
+_SELECT_PATHS = {
+    "whisper": "/v1/models/whisper/select",
+    "vosk": "/v1/models/vosk/select",
+    "omnivoice": "/v1/models/omnivoice/select",
+    "vieneu": "/v1/models/vieneu/select",
+    "ollama": "/v1/models/llm/select",
+    "qwen_omni": "/v1/models/qwen-omni/select",
+}
+
+for _c in CANDIDATES:
+    _path = _SELECT_PATHS.get(_c.engine)
+    if _path and _c.action.get("kind") == "download":
+        _c.select = {"kind": "select", "method": "POST", "path": _path, "payload": _c.action["payload"]}

@@ -71,6 +71,7 @@ catalog duplication).
   "chip": "apple_silicon|cpu|nvidia_gpu",  // hard-requirement partition
   "status": "installed|runnable|needs:<x>|incompatible:<why>",
   "recommended": true,                // runnable on current machine AND fit_score >= 60
+  "active": false,                    // currently the active model for its engine family
   "fit_score": 0-100,
   "reason": "Runs on CPU; Vietnamese fine-tune; already installed",
   "size_estimate": "~1.5 GB",
@@ -79,9 +80,16 @@ catalog duplication).
     "method": "POST", "path": "/v1/models/whisper/download",
     "payload": {"size": "phowhisper-medium"},
     "hint": "pip install silero-vad"  // for kind=pip/config
+  },
+  "select": {                         // activate an installed model (null if unsupported)
+    "kind": "select", "method": "POST", "path": "/v1/models/whisper/select",
+    "payload": {"size": "phowhisper-medium"}
   }
 }
 ```
+
+UI shows `active` → "active" badge; installed-but-not-active with a `select` → a
+"Use" button (POSTs `select`); not-installed → "Download" (POSTs `action`).
 
 ### `chip` partition (by hard requirement)
 - `apple_silicon`: `whisper_mlx`, `qwen_omni` (STT + LLM)
