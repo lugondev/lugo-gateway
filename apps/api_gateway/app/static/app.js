@@ -523,7 +523,7 @@ function renderRecommend() {
     if (only) {
       const rec = items.filter((i) => i.recommended);
       parts.push(
-        `<div class="model-list">${rec.length ? rec.map(recRow).join("") : '<p class="meta">Không có model khuyến nghị chạy được trên cấu hình này.</p>'}</div>`,
+        `<div class="model-list">${rec.length ? rec.map(recRow).join("") : '<p class="meta">No models recommended for this host.</p>'}</div>`,
       );
     } else {
       for (const [chip, label] of REC_CHIP_GROUPS) {
