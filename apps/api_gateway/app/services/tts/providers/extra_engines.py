@@ -6,7 +6,6 @@ mock audio and reports an install hint. Engines:
 
 - kokoro      — MLX-Audio / Kokoro 82M, Apple-Silicon, multilingual. pip install mlx-audio
 - voxcpm2     — 30 langs, CPU/MPS, 48 kHz, clone + voice design.   pip install voxcpm
-- sherpa-onnx — universal ONNX runtime (VITS/Piper/…).            pip install sherpa-onnx
 """
 
 import asyncio
@@ -128,43 +127,7 @@ class VoxCPM2Provider(_ExtraTTSProvider):
         return _to_mono_f32(wav)
 
 
-class SherpaOnnxProvider(_ExtraTTSProvider):
-    name = "sherpa-onnx"
-    sample_rate = 22050
-    _modules = ("sherpa_onnx",)
-    _hint = "pip install sherpa-onnx + set OMNIVOICE_SHERPA_MODEL to a model dir"
-
-    def detail(self) -> str:
-        model_dir = os.environ.get("OMNIVOICE_SHERPA_MODEL", "")
-        return f"sherpa-onnx ({model_dir or 'no model dir set'})"
-
-    def _model(self):
-        if self.name not in _CACHE:
-            import sherpa_onnx
-
-            model_dir = os.environ.get("OMNIVOICE_SHERPA_MODEL", "")
-            if not model_dir:
-                raise RuntimeError("OMNIVOICE_SHERPA_MODEL not set (sherpa-onnx model dir)")
-            config = sherpa_onnx.OfflineTtsConfig(
-                model=sherpa_onnx.OfflineTtsModelConfig(
-                    vits=sherpa_onnx.OfflineTtsVitsModelConfig(
-                        model=os.path.join(model_dir, "model.onnx"),
-                        tokens=os.path.join(model_dir, "tokens.txt"),
-                    ),
-                ),
-            )
-            tts = sherpa_onnx.OfflineTts(config)
-            _CACHE[self.name] = tts
-            self.sample_rate = tts.sample_rate
-        return _CACHE[self.name]
-
-    def _generate_f32(self, payload: TTSRequest) -> np.ndarray:
-        out = self._model().generate(payload.text, sid=0, speed=float(payload.speed or 1.0))
-        return _to_mono_f32(out.samples)
-
-
 EXTRA_TTS_PROVIDERS = [
     KokoroMLXProvider(),
     VoxCPM2Provider(),
-    SherpaOnnxProvider(),
 ]

@@ -39,11 +39,6 @@ opus = [
 tts = [
   "vieneu>=3.0.7",
 ]
-# sherpa-onnx — universal ONNX TTS runtime (VITS/Piper/…), torch-free CPU.
-# Engine auto-hides when sherpa-onnx is absent.
-sherpa = [
-  "sherpa-onnx>=1.10.0",
-]
 # Qwen3-ASR on Apple Silicon via MLX (multilingual incl. Vietnamese, torch-free,
 # Metal GPU). Mac-only — the engine auto-hides where mlx-qwen3-asr is absent.
 qwen3-asr = [

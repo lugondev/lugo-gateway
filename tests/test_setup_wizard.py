@@ -52,8 +52,7 @@ def test_omnivoice_is_a_pip_component():
 def test_extra_tts_engines_are_pip_components():
     by_id = {c["id"]: c for c in setup.COMPONENTS}
     assert by_id["voxcpm2"]["install"] == ("pip", "voxcpm") and by_id["voxcpm2"]["module"] == "voxcpm"
-    assert by_id["sherpa_onnx"]["install"] == ("pip", "sherpa-onnx")
-    assert "kittentts" not in by_id  # removed
+    assert "kittentts" not in by_id and "sherpa_onnx" not in by_id  # removed
     # Kokoro is MLX -> Apple only
     assert by_id["kokoro"]["hosts"] == {"apple"}
 

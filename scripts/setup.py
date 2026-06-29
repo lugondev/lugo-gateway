@@ -44,8 +44,6 @@ COMPONENTS = [
          install=("pip", "voxcpm"), hosts={"apple", "nvidia", "cpu"}, note=""),
     dict(id="kokoro", label="Kokoro — TTS (Apple MLX, multilingual)", module="mlx_audio",
          install=("pip", "mlx-audio"), hosts={"apple"}, note=""),
-    dict(id="sherpa_onnx", label="sherpa-onnx — TTS runtime (VITS/Piper, CPU)", module="sherpa_onnx",
-         install=("pip", "sherpa-onnx"), hosts={"apple", "nvidia", "cpu"}, note=""),
     dict(id="silero", label="Silero VAD (CPU)", module="silero_vad",
          install=("pip", "silero-vad"), hosts={"apple", "nvidia", "cpu"}, note=""),
     dict(id="pyannote", label="pyannote VAD (gated)", module="pyannote.audio",

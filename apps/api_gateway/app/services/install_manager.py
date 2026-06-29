@@ -1,7 +1,7 @@
 """Runtime pip-install of optional engine packages — gated + allowlist-only.
 
 Lets the Models-tab panel offer a one-click "Install" for engines that just need a
-Python package (vieneu, sherpa-onnx, qwen-asr, ...). Guarded two ways:
+Python package (vieneu, qwen-asr, ...). Guarded two ways:
   1. Disabled unless ``settings.allow_runtime_install`` is true (keep OFF on public
      deploys — this runs pip on the server).
   2. Only packages in the fixed allowlist below can be installed (no arbitrary input).
@@ -17,7 +17,6 @@ from app.core.settings import settings
 # requirement flag (as used in the recommend catalog) -> exact pip spec to install.
 ALLOWLIST: dict[str, str] = {
     "vieneu": "vieneu",
-    "sherpa_onnx": "sherpa-onnx",
     "qwen_asr": "qwen-asr",
     "mlx_qwen3_asr": "mlx-qwen3-asr",
     "silero_vad": "silero-vad",

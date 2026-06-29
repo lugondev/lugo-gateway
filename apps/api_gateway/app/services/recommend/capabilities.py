@@ -26,7 +26,6 @@ _PROBE_MODULES = [
     "mlx_whisper",
     "mlx_vlm",
     "opuslib",
-    "sherpa_onnx",
     "mlx_qwen3_asr",
     "qwen_asr",
 ]
