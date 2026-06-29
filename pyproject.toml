@@ -39,10 +39,9 @@ opus = [
 tts = [
   "vieneu>=3.0.7",
 ]
-# SenseVoice (FunAudioLLM) multilingual ASR via sherpa-onnx (zh/yue/en/ja/ko — NOT
-# Vietnamese). Lightweight int8 ONNX on onnxruntime CPU — torch-free, ~250 MB model.
+# sherpa-onnx — universal ONNX TTS runtime (VITS/Piper/…), torch-free CPU.
 # Engine auto-hides when sherpa-onnx is absent.
-sensevoice = [
+sherpa = [
   "sherpa-onnx>=1.10.0",
 ]
 # Qwen3-ASR on Apple Silicon via MLX (multilingual incl. Vietnamese, torch-free,

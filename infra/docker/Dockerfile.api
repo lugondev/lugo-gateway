@@ -9,7 +9,7 @@ COPY apps ./apps
 RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 && \
     rm -rf /var/lib/apt/lists/* && \
     pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir ".[tts,sensevoice]"
+    pip install --no-cache-dir ".[tts,sherpa]"
 
 ENV PYTHONPATH=/app/apps/api_gateway
 

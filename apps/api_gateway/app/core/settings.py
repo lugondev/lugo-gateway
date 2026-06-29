@@ -86,15 +86,6 @@ class Settings(BaseSettings):
     # reliable phrasing (6/6 clips transcribed correctly in testing).
     qwen_omni_prompt: str = "Phiên âm đoạn âm thanh sau thành văn bản tiếng Việt."
 
-    # SenseVoice (FunAudioLLM) multilingual ASR via sherpa-onnx (engine "sensevoice").
-    # zh/yue/en/ja/ko — NOT Vietnamese. Lightweight int8 ONNX (onnxruntime CPU, no
-    # torch); needs the optional `sensevoice` extra (sherpa-onnx). Engine auto-hides
-    # when sherpa-onnx is absent. Model files (model.int8.onnx + tokens.txt) download
-    # from the hub on first use.
-    sensevoice_onnx_repo: str = "csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
-    sensevoice_num_threads: int = 2
-    sensevoice_use_itn: bool = True
-
     # Qwen3-ASR (engine "qwen3_asr"), multilingual incl. Vietnamese. Two GPU backends,
     # auto-selected: mlx-qwen3-asr (Apple, `qwen3-asr` extra) or qwen-asr (NVIDIA/CUDA,
     # `qwen3-asr-cuda` extra). 0.6B (default, light, verified VN) or Qwen/Qwen3-ASR-1.7B

@@ -91,11 +91,6 @@ CANDIDATES: list[Candidate] = [
               "Qwen3-ASR — NVIDIA GPU (CUDA), multilingual incl. Vietnamese ⭐",
               "nvidia_gpu", "high", True, 1.2, "~1.2 GB", None, ["qwen_asr"],
               _pip("pip install qwen-asr  (optional `qwen3-asr-cuda` extra; needs an NVIDIA GPU)")),
-    # ---- STT: SenseVoice (FunAudioLLM) via sherpa-onnx — multilingual, CPU, no VN ----
-    Candidate("stt", "sense-voice-int8", "sensevoice",
-              "SenseVoice-Small — multilingual zh/yue/en/ja/ko (sherpa-onnx, int8, no VN)",
-              "cpu", "medium", False, 0.25, "~250 MB", 1.0, ["sherpa_onnx"],
-              _pip("pip install sherpa-onnx  (optional `sensevoice` extra; torch-free; no Vietnamese)")),
     # ---- STT: remote (config, no download) ----
     Candidate("stt", "whisper_service", "whisper_service", "Remote Whisper (OpenAI-compatible)",
               "cpu", "medium", False, None, "remote API", None, ["whisper_service"],

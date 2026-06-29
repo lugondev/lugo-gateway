@@ -1,7 +1,7 @@
 """Qwen3-ASR STT — runs on Apple Silicon (MLX) or NVIDIA GPU (official qwen-asr).
 
-Qwen3-ASR (Alibaba, Apache-2.0) is a strong multilingual ASR model that — unlike
-SenseVoice — supports Vietnamese, and beats Whisper-large-v3 on several benchmarks.
+Qwen3-ASR (Alibaba, Apache-2.0) is a strong multilingual ASR model that supports
+Vietnamese and beats Whisper-large-v3 on several benchmarks.
 Two GPU backends, auto-selected by what's installed:
   - `mlx-qwen3-asr`  -> Apple GPU (Metal), torch-free  (verified VN on Apple Silicon)
   - `qwen-asr`       -> NVIDIA GPU (PyTorch + CUDA)     (e.g. a T4 on Colab)
