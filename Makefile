@@ -36,6 +36,10 @@ install: ## Install the package + dev deps into .venv
 	@test -d $(VENV) || python3 -m venv $(VENV)
 	$(PY) -m pip install -e ".[dev]"
 
+.PHONY: setup
+setup: ## Setup wizard: detect host + install matching engines (pass ARGS="--gpu-tts --ollama")
+	PYTHON=$(PY) bash scripts/setup.sh $(ARGS)
+
 # ---- Run (foreground, hot-reload) ----
 .PHONY: dev run
 dev run: ## Run in foreground with --reload (Ctrl-C to stop)

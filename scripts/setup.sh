@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# Setup wizard — detect the host (Apple Silicon / NVIDIA GPU / CPU) and install the
+# matching engine packages + system libs. Pick extras with flags ("tick" what you want).
+#
+#   bash scripts/setup.sh                      # host-appropriate STT + TTS
+#   bash scripts/setup.sh --gpu-tts            # + VieNeu GPU modes (NVIDIA)
+#   bash scripts/setup.sh --ollama gemma2:2b   # + local LLM via Ollama
+#   bash scripts/setup.sh --dry-run            # print the plan, install nothing
+set -euo pipefail
+
+GPU_TTS=0
+OLLAMA=""
+DRY=0
+PY="${PYTHON:-python}"   # install into THIS interpreter (use system python on Colab)
+
+usage() {
+  cat <<'EOF'
+Setup wizard for speech-text-transformer.
+
+Options (tick what you want):
+  --gpu-tts          VieNeu GPU modes (vieneu[gpu]: llama-cpp-python + lmdeploy) — NVIDIA only
+  --ollama [MODEL]   Install Ollama + pull MODEL (default gemma2:2b) for a local conversation LLM
+  --dry-run          Print the plan only; install nothing
+  -h, --help         Show this help
+
+Engines installed per detected host:
+  Apple Silicon -> .[mlx,qwen3-asr,tts,opus]  (whisper_mlx, qwen3_asr MLX, VieNeu, Opus)
+  NVIDIA GPU    -> .[qwen3-asr-cuda,tts]       (qwen3_asr CUDA, VieNeu)  [+ vieneu[gpu] with --gpu-tts]
+  CPU only      -> .[tts,opus]                 (whisper/PhoWhisper CPU, VieNeu v3turbo, Opus)
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --gpu-tts) GPU_TTS=1; shift ;;
+    --ollama) shift; if [ $# -gt 0 ] && [[ "$1" != -* ]]; then OLLAMA="$1"; shift; else OLLAMA="gemma2:2b"; fi ;;
+    --dry-run) DRY=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+  esac
+done
+
+run() { echo "+ $*"; [ "$DRY" -eq 1 ] || "$@"; }
+sh_run() { echo "+ $*"; [ "$DRY" -eq 1 ] || bash -c "$*"; }
+
+# ---- detect host ----
+OS=$(uname -s); ARCH=$(uname -m)
+if [ "$OS" = "Darwin" ] && { [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; }; then
+  HOST=apple
+elif command -v nvidia-smi >/dev/null 2>&1 || [ -e /proc/driver/nvidia/version ]; then
+  HOST=nvidia
+else
+  HOST=cpu
+fi
+echo "==> Host: $HOST ($OS/$ARCH) — python: $($PY --version 2>&1)"
+
+# ---- system libraries ----
+if [ "$OS" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
+  SUDO=""; command -v sudo >/dev/null 2>&1 && [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+  PKGS="libsndfile1 libopus0"            # TTS (soundfile) + Opus transport
+  [ -n "$OLLAMA" ] && PKGS="$PKGS zstd"  # Ollama installer needs zstd
+  sh_run "$SUDO apt-get -qq update"
+  sh_run "$SUDO apt-get -qq install -y $PKGS"
+elif [ "$HOST" = "apple" ]; then
+  command -v brew >/dev/null 2>&1 && run brew install opus libsndfile || echo "  (brew not found — install opus/libsndfile manually if needed)"
+fi
+
+# ---- python extras per host ----
+case "$HOST" in
+  apple)  EXTRAS="mlx,qwen3-asr,tts,opus" ;;
+  nvidia) EXTRAS="qwen3-asr-cuda,tts" ;;
+  cpu)    EXTRAS="tts,opus" ;;
+esac
+run "$PY" -m pip install -e ".[$EXTRAS]"
+
+if [ "$GPU_TTS" -eq 1 ]; then
+  if [ "$HOST" = "nvidia" ]; then
+    sh_run "$PY -m pip install 'vieneu[gpu]'"   # llama-cpp-python + lmdeploy (Turbo/Fast/Standard modes)
+  else
+    echo "  (skip --gpu-tts: no NVIDIA GPU detected)"
+  fi
+fi
+
+# ---- optional local LLM via Ollama ----
+if [ -n "$OLLAMA" ]; then
+  if ! command -v ollama >/dev/null 2>&1; then
+    sh_run "curl -fsSL https://ollama.com/install.sh | sh"
+  fi
+  sh_run "nohup ollama serve >/tmp/ollama.log 2>&1 &"
+  run sleep 5
+  run ollama pull "$OLLAMA"
+fi
+
+# ---- recommended runtime config ----
+cat <<EOF
+
+==> Done. Recommended env when starting the gateway:
+    ENABLE_MOCK_ENGINES=false           # real audio (not silent placeholders)
+    DEFAULT_TTS_ENGINE=vieneu
+    CONVERSATION_TTS_ENGINE=vieneu
+    CONVERSATION_STT_ENGINE=$([ "$HOST" = cpu ] && echo whisper || echo qwen3_asr)
+EOF
+if [ -n "$OLLAMA" ]; then
+  cat <<EOF
+    CONVERSATION_LLM_BASE_URL=http://localhost:11434/v1
+    CONVERSATION_LLM_MODEL=$OLLAMA
+EOF
+else
+  echo "    # LLM: configure an online provider in the UI (Models -> Conversation LLM - Online)"
+fi
+cat <<'EOF'
+
+    Run: PYTHONPATH=apps/api_gateway python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+EOF
