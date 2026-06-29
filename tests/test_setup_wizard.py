@@ -49,6 +49,15 @@ def test_omnivoice_is_a_pip_component():
     assert omni is not None and omni["install"] == ("pip", "omnivoice")
 
 
+def test_extra_tts_engines_are_pip_components():
+    by_id = {c["id"]: c for c in setup.COMPONENTS}
+    assert by_id["voxcpm2"]["install"] == ("pip", "voxcpm") and by_id["voxcpm2"]["module"] == "voxcpm"
+    assert by_id["kittentts"]["install"] == ("pip", "kittentts")
+    assert by_id["sherpa_onnx"]["install"] == ("pip", "sherpa-onnx")
+    # Kokoro is MLX -> Apple only
+    assert by_id["kokoro"]["hosts"] == {"apple"}
+
+
 def test_build_env_picks_engines_and_omnivoice_python():
     env = setup.build_env({"qwen3_asr_cuda", "omnivoice"}, "nvidia")
     assert env["ENABLE_MOCK_ENGINES"] == "false"
