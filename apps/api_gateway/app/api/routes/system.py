@@ -85,6 +85,9 @@ async def system_status() -> dict:
 @router.get("/models")
 async def list_models() -> dict:
     tts = tts_model_manager.snapshot()
+    # Per-engine availability (is the engine PACKAGE installed?) so the UI can show
+    # the truth — "selected" / "weights downloaded" are not the same as "engine ready".
+    tts_engines = {e["engine"]: e for e in tts_service.list_engines()}
     return {
         "success": True,
         "data": {
@@ -94,6 +97,8 @@ async def list_models() -> dict:
             "vieneu": tts["vieneu"],
             "llm": llm_manager.snapshot(),
             "qwen_omni": qwen_omni_manager.snapshot(),
+            "tts_engines": tts_engines,
+            "install_enabled": settings.allow_runtime_install,
         },
     }
 

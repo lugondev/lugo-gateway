@@ -258,13 +258,23 @@ async function loadModels() {
     // ---- Whisper ----
     el("whisper-models").innerHTML = w.models.map(renderWhisperRow).join("");
 
+    // Per-engine install truth + whether the runtime Install button is enabled.
+    const ttsEngines = body.data.tts_engines || {};
+    const installEnabled = body.data.install_enabled;
+    const omniAvail = !!(ttsEngines.omnivoice && ttsEngines.omnivoice.available);
+    const vieneuAvail = !!(ttsEngines.vieneu && ttsEngines.vieneu.available);
+
     // ---- OmniVoice (TTS) ----
     const omni = body.data.omnivoice;
-    el("omnivoice-models").innerHTML = omni.models.map(renderOmniRow).join("");
+    el("omnivoice-models").innerHTML =
+      engineBanner("omnivoice", ttsEngines, installEnabled) +
+      omni.models.map((m) => renderOmniRow(m, omniAvail)).join("");
 
     // ---- VieNeu (TTS) ----
     const vieneu = body.data.vieneu;
-    el("vieneu-models").innerHTML = vieneu.modes.map(renderVieneuRow).join("");
+    el("vieneu-models").innerHTML =
+      engineBanner("vieneu", ttsEngines, installEnabled) +
+      vieneu.modes.map((m) => renderVieneuRow(m, vieneuAvail)).join("");
 
     // ---- Conversation LLM (Ollama) ----
     const llm = body.data.llm;
@@ -279,10 +289,10 @@ async function loadModels() {
       llmBtn.textContent = llm.available ? "Stop service" : "Start service";
     }
     const llmNames = new Set(llm.suggestions.map((s) => s.model));
-    const llmRows = llm.suggestions.map((s) => renderLlmRow(s, llm.jobs));
+    const llmRows = llm.suggestions.map((s) => renderLlmRow(s, llm.jobs, llm.available));
     llm.installed
       .filter((m) => !llmNames.has(m.model))
-      .forEach((m) => llmRows.push(renderLlmRow({ ...m, installed: true }, llm.jobs)));
+      .forEach((m) => llmRows.push(renderLlmRow({ ...m, installed: true }, llm.jobs, llm.available)));
     el("llm-models").innerHTML = llmRows.join("");
 
     // ---- Qwen-Omni (audio-native STT, MLX) ----
@@ -293,7 +303,7 @@ async function loadModels() {
           ? `mlx-vlm ready — active: ${qo.active.split("/").pop()}`
           : "Needs mlx-vlm (pip install -e '.[mlx]', Apple Silicon). Audio → Vietnamese text, no Whisper.";
       }
-      el("qwen-omni-models").innerHTML = qo.models.map(renderQwenOmniRow).join("");
+      el("qwen-omni-models").innerHTML = qo.models.map((m) => renderQwenOmniRow(m, qo.available)).join("");
     }
 
     bindModelButtons();
@@ -330,18 +340,45 @@ const useOrActive = (active, attr, key) =>
   active ? ACTIVE_BADGE : `<button class="mini" data-${attr}="${key}">Use</button>`;
 const dlBtn = (attr, key, job) =>
   `<button class="mini" data-${attr}="${key}">${isErr(job) ? "Retry" : "Download"}</button>`;
+// Shown when a model/mode is the *selected* one but its engine package isn't installed
+// (so it is not actually running).
+const SELECTED_OFF = `<span class="badge mock">selected · engine not installed</span>`;
+// Managed TTS engines that are installable via the pip allowlist (/v1/models/install).
+const TTS_PIP = { vieneu: "vieneu" };
 
-function renderOmniRow(m) {
+// Per-section banner showing whether the engine PACKAGE is installed (the real
+// "can it run" truth), with a one-click Install when available + enabled.
+function engineBanner(engine, ttsEngines, installEnabled) {
+  const e = ttsEngines && ttsEngines[engine];
+  if (!e) return "";
+  if (e.available) return `<p class="meta"><span class="badge ok">engine installed</span></p>`;
+  const hint = e.install_hint || "";
+  const pkg = TTS_PIP[engine];
+  const btn = pkg && installEnabled ? ` <button class="mini" data-pip-install="${pkg}">Install</button>` : "";
+  return `<p class="meta"><span class="badge danger">engine not installed</span> ${hint}${btn}</p>`;
+}
+
+function renderOmniRow(m, available) {
+  // OmniVoice weights download via HF (no package import needed), so Download stays
+  // usable; only the "active" label must reflect whether the engine is installed.
   let action;
   if (m.job && m.job.state === "downloading") action = SPINNER_ACTION;
-  else if (m.cached) action = `${useOrActive(m.active, "o-select", m.id)}<button class="mini danger" data-o-delete="${m.id}">Delete</button>`;
-  else action = dlBtn("o-download", m.id, m.job);
+  else if (m.cached) {
+    const use = m.active
+      ? (available ? ACTIVE_BADGE : SELECTED_OFF)
+      : `<button class="mini" data-o-select="${m.id}">Use</button>`;
+    action = `${use}<button class="mini danger" data-o-delete="${m.id}">Delete</button>`;
+  } else action = dlBtn("o-download", m.id, m.job);
   return modelRow({ title: m.label, code: m.id, size: m.cached ? fmtBytes(m.size_bytes) : "", err: jobErr(m.job), action });
 }
 
-function renderVieneuRow(m) {
+function renderVieneuRow(m, available) {
+  // VieNeu Download warms the model, which imports the `vieneu` package — so without
+  // the package it would crash ("No module named 'vieneu'"). Gate it; the section
+  // banner offers Install.
   let action;
   if (m.job && m.job.state === "downloading") action = SPINNER_ACTION;
+  else if (!available) action = m.active ? SELECTED_OFF : `<span class="meta">install vieneu first</span>`;
   else if (m.active) action = ACTIVE_BADGE;
   else if (m.cpu || m.cached) {
     const del = m.cached ? `<button class="mini danger" data-vn-delete="${m.mode}">Delete</button>` : "";
@@ -360,11 +397,15 @@ function renderWhisperRow(m) {
   return modelRow({ title: m.label, code: m.size, size: m.cached ? fmtBytes(m.size_bytes) : "", err: jobErr(m.job), action });
 }
 
-function renderQwenOmniRow(m) {
+function renderQwenOmniRow(m, available) {
   let action;
   if (m.job && m.job.state === "downloading") action = SPINNER_ACTION;
-  else if (m.cached) action = `${useOrActive(m.active, "qo-select", m.model)}<button class="mini danger" data-qo-delete="${m.model}">Delete</button>`;
-  else action = dlBtn("qo-download", m.model, m.job);
+  else if (m.cached) {
+    const use = m.active
+      ? (available ? ACTIVE_BADGE : SELECTED_OFF)
+      : `<button class="mini" data-qo-select="${m.model}">Use</button>`;
+    action = `${use}<button class="mini danger" data-qo-delete="${m.model}">Delete</button>`;
+  } else action = dlBtn("qo-download", m.model, m.job);
   return modelRow({ title: m.label, code: m.model, size: m.cached ? fmtBytes(m.size_bytes) : "", err: jobErr(m.job), action });
 }
 
@@ -596,6 +637,14 @@ el("recommend-list").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-rec-idx]");
   if (btn) recAct(recommendActions[Number(btn.getAttribute("data-rec-idx"))]);
 });
+
+// Install buttons in the model-manager section banners (re-rendered by loadModels),
+// delegated at document level so they survive re-renders.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-pip-install]");
+  if (!btn) return;
+  recAct({ type: "install", method: "POST", path: "/v1/models/install", payload: { package: btn.getAttribute("data-pip-install") } });
+});
 el("recommend-only").addEventListener("change", renderRecommend);
 
 el("llm-start").addEventListener("click", async () => {
@@ -720,7 +769,7 @@ if (el("llm-online-reset")) {
   });
 }
 
-function renderLlmRow(m, jobs) {
+function renderLlmRow(m, jobs, available) {
   const job = jobs[m.model];
   let action;
   if (job && job.state === "downloading") {
@@ -728,6 +777,10 @@ function renderLlmRow(m, jobs) {
     action = `<div class="progress"><div class="bar" style="width:${pct}%"></div></div><span class="pct">${pct}%</span>`;
   } else if (m.installed) {
     action = `${useOrActive(m.active, "llm-select", m.model)}<button class="mini danger" data-llm-delete="${m.model}">Delete</button>`;
+  } else if (!available) {
+    // Pulling a model needs a running Ollama; without it the pull errors. Point the
+    // user at the Ollama status banner above instead of a Download that will fail.
+    action = `<span class="meta">start Ollama first</span>`;
   } else {
     action = dlBtn("llm-download", m.model, job);
   }

@@ -35,6 +35,9 @@ class VieNeuProvider(MockFallbackTTSProvider):
     def detail(self) -> str:
         return f"{get_active_vieneu_mode()} · 48kHz · Vietnamese"
 
+    def install_hint(self) -> str:
+        return "pip install vieneu"
+
     def _model(self):
         mode = get_active_vieneu_mode()
         if mode not in _CACHE:
