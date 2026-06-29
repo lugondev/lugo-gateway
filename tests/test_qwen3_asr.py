@@ -11,20 +11,33 @@ def test_registered():
     assert isinstance(stt_service.providers["qwen3_asr"], Qwen3AsrProvider)
 
 
-def test_available_with_either_backend(monkeypatch):
+def test_mlx_backend_only_on_apple_silicon(monkeypatch):
     p = stt_service.providers["qwen3_asr"]
-    # MLX backend present (Apple)
     monkeypatch.setattr(q_mod, "module_available", lambda m: m == "mlx_qwen3_asr")
-    assert p.available() is True
+    # Apple Silicon + mlx package -> mlx backend
+    monkeypatch.setattr(q_mod, "_is_apple_silicon", lambda: True)
     assert p._backend() == "mlx"
-    # CUDA backend present (NVIDIA), no MLX
-    monkeypatch.setattr(q_mod, "module_available", lambda m: m == "qwen_asr")
-    assert p.available() is True
-    assert p._backend() == "cuda"
-    # neither -> hidden
-    monkeypatch.setattr(q_mod, "module_available", lambda m: False)
-    assert p.available() is False
+    # NOT Apple (e.g. Colab Linux) — even with mlx_qwen3_asr installed, never load MLX
+    # (libmlx.so doesn't exist on Linux); no other backend -> hidden, not a crash.
+    monkeypatch.setattr(q_mod, "_is_apple_silicon", lambda: False)
     assert p._backend() is None
+
+
+def test_non_apple_prefers_cuda_when_both_present(monkeypatch):
+    p = stt_service.providers["qwen3_asr"]
+    monkeypatch.setattr(q_mod, "_is_apple_silicon", lambda: False)
+    # both mlx + qwen_asr installed on a Linux/CUDA host -> pick cuda, never mlx
+    monkeypatch.setattr(q_mod, "module_available", lambda m: m in {"mlx_qwen3_asr", "qwen_asr"})
+    assert p._backend() == "cuda"
+    assert p.available() is True
+
+
+def test_neither_backend_hidden(monkeypatch):
+    p = stt_service.providers["qwen3_asr"]
+    monkeypatch.setattr(q_mod, "_is_apple_silicon", lambda: False)
+    monkeypatch.setattr(q_mod, "module_available", lambda m: False)
+    assert p._backend() is None
+    assert p.available() is False
 
 
 def test_listed_reflects_package_presence():

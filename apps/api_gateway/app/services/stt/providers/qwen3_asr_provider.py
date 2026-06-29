@@ -12,6 +12,7 @@ package is present (e.g. the CPU-only Linux deploy). Weights download on first u
 
 import asyncio
 import os
+import platform
 import tempfile
 
 from app.core.deps import module_available
@@ -20,6 +21,11 @@ from app.schemas.stt import STTResult
 from app.services.stt.base import STTProvider
 
 _MODEL_CACHE: dict[str, object] = {}
+
+
+def _is_apple_silicon() -> bool:
+    """MLX only runs on Apple Silicon (libmlx.so is absent on Linux)."""
+    return platform.system().lower() == "darwin" and platform.machine().lower() in {"arm64", "aarch64"}
 
 # Map our short language codes to the names Qwen3-ASR expects; unknown -> auto-detect.
 _LANG = {
@@ -45,7 +51,10 @@ class Qwen3AsrProvider(STTProvider):
     name = "qwen3_asr"
 
     def _backend(self) -> str | None:
-        if module_available("mlx_qwen3_asr"):
+        # MLX only on Apple Silicon — importing mlx on Linux fails with
+        # "libmlx.so: cannot open shared object file". So on non-Apple hosts prefer
+        # the CUDA backend even if mlx-qwen3-asr happens to be installed.
+        if _is_apple_silicon() and module_available("mlx_qwen3_asr"):
             return "mlx"
         if module_available("qwen_asr"):
             return "cuda"
