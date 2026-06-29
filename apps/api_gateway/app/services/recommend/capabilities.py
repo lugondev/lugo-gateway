@@ -10,6 +10,7 @@ import importlib.metadata
 import os
 import platform
 import shutil
+import sys
 from dataclasses import asdict, dataclass
 
 from app.core.deps import module_available
@@ -95,6 +96,27 @@ def _mlx_vlm_version() -> str | None:
         return None
 
 
+def _cuda() -> bool:
+    """Can the host actually run CUDA GPU compute?
+
+    Authoritative when a GPU framework is already loaded (torch.cuda.is_available()
+    is what qwen-asr / vieneu[gpu] actually rely on). Falls back to the NVIDIA driver
+    (nvidia-smi or /proc) so a Colab T4 is detected even before torch is imported.
+    Only NVIDIA-CUDA is considered — no project engine targets AMD/Intel GPUs, so
+    detecting them would not enable anything.
+    """
+    torch = sys.modules.get("torch")  # use it only if already imported (avoid slow import)
+    if torch is not None:
+        try:
+            if torch.cuda.is_available():
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+    if shutil.which("nvidia-smi") is not None:
+        return True
+    return os.path.exists("/proc/driver/nvidia/version")
+
+
 def _libopus() -> bool:
     try:
         from app.core.opus import opus_available
@@ -144,7 +166,7 @@ def detect_capabilities() -> Capabilities:
         disk_free_gb=_disk_free_gb(settings.stt_model_dir),
         mlx=mlx,
         mlx_vlm_version=_mlx_vlm_version() if modules.get("mlx_vlm") else None,
-        cuda=shutil.which("nvidia-smi") is not None,
+        cuda=_cuda(),
         libopus=_libopus(),
         ollama=_ollama(),
         modules=modules,
