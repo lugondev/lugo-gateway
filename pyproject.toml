@@ -33,6 +33,12 @@ mlx = [
 opus = [
   "opuslib>=3.0.1",
 ]
+# VieNeu-TTS — Vietnamese TTS. The base package runs the v3turbo mode on CPU via
+# onnxruntime (torch-free); the heavy GPU modes live in vieneu's own [gpu] extra.
+# soundfile needs system libsndfile1 (apt-get install libsndfile1).
+tts = [
+  "vieneu>=3.0.7",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
