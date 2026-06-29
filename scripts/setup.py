@@ -178,33 +178,81 @@ def _checklist(host: str, rows: list) -> list:
     return curses.wrapper(draw)
 
 
-def main() -> int:
-    host = detect_host()
-    comps = compatible_components(host)
-    rows = [{"c": c, "label": c["label"], "installed": is_installed(c)} for c in comps]
-
-    if not sys.stdout.isatty():
-        # Non-interactive (e.g. Colab `!`): print the host-filtered list + how to install.
-        print(f"Host: {host}. Installable components (use scripts/setup.sh flags or `make setup` in a TTY):")
-        for r in rows:
-            print(f"  {'[installed]' if r['installed'] else '[ ]'} {r['label']}")
-        return 0
-
-    selected = _checklist(host, rows)
+def _apply(selected: list, host: str) -> None:
+    """Install the selected components and persist runtime config to .env."""
     if not selected:
         print("Nothing selected.")
-        return 0
+        return
     for cmd in install_commands(selected):
         print("+", " ".join(cmd))
         subprocess.run(cmd, check=False)
-    # Persist runtime config to .env so the gateway needs no manual env vars.
     cfg = build_env({c["id"] for c in selected}, host)
     write_env(cfg)
     print("\nWrote config to .env:")
     for k, v in cfg.items():
         print(f"  {k}={v}")
-    print("\nDone. Just run the gateway (it reads .env — no env vars needed):")
+    print("\nDone — the gateway reads .env, just run (no env vars):")
     print("  PYTHONPATH=apps/api_gateway python -m uvicorn app.main:app --host 0.0.0.0 --port 8000")
+
+
+def _in_notebook() -> bool:
+    try:
+        from IPython import get_ipython
+
+        ip = get_ipython()
+        return ip is not None and "IPKernelApp" in ip.config
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _widget_checklist(host: str, rows: list) -> None:
+    """ipywidgets checklist for notebooks/Colab — tick boxes, click to install."""
+    import ipywidgets as wdg
+    from IPython.display import display
+
+    items, pairs = [], []
+    for r in rows:
+        if r["installed"]:
+            items.append(wdg.HTML(f"✓ <b>{r['label']}</b> — <span style='color:#6ee7a8'>installed</span>"))
+        else:
+            cb = wdg.Checkbox(value=False, description=r["label"], indent=False)
+            pairs.append((r["c"], cb))
+            items.append(cb)
+    btn = wdg.Button(description="Install & write .env", button_style="success")
+    out = wdg.Output()
+
+    def on_click(_):
+        with out:
+            out.clear_output()
+            _apply([c for c, cb in pairs if cb.value], host)
+
+    btn.on_click(on_click)
+    display(wdg.VBox(
+        [wdg.HTML(f"<b>Setup — host: {host}</b> (tick các engine chưa cài)")] + items + [btn, out]
+    ))
+
+
+def wizard() -> None:
+    """Pick the best UI for the environment: ipywidgets (notebook) > curses (TTY) > list."""
+    host = detect_host()
+    rows = [{"c": c, "label": c["label"], "installed": is_installed(c)} for c in compatible_components(host)]
+    if _in_notebook():
+        try:
+            _widget_checklist(host, rows)
+            return
+        except Exception as exc:  # noqa: BLE001 - ipywidgets missing -> fall through
+            print(f"(widgets unavailable: {exc})")
+    if sys.stdout.isatty():
+        _apply(_checklist(host, rows), host)
+        return
+    print(f"Host: {host}. Installable components:")
+    for r in rows:
+        print(f"  {'[installed]' if r['installed'] else '[ ]'} {r['label']}")
+    print("\nRun `make setup` in a terminal, or `import setup; setup.wizard()` in a notebook cell.")
+
+
+def main() -> int:
+    wizard()
     return 0
 
 
