@@ -28,6 +28,14 @@ def test_listed_in_engines_unavailable_in_dev():
     assert engines["sensevoice"]["available"] is False
 
 
+def test_stt_request_schema_accepts_sensevoice():
+    # The /transcribe route validates engine against STTRequest's pattern — it must
+    # include sensevoice, or the engine is unusable via the API (regression).
+    from app.schemas.stt import STTRequest
+
+    assert STTRequest(engine="sensevoice").engine == "sensevoice"
+
+
 def test_in_recommend_catalog():
     sv = [c for c in CANDIDATES if c.engine == "sensevoice"]
     assert sv, "expected a SenseVoice candidate"
