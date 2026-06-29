@@ -10,6 +10,12 @@ class EngineNotFoundError(AppError):
     status_code = 400
 
 
+class RuntimeInstallDisabledError(AppError):
+    """Raised when the runtime pip-install endpoint is hit while disabled."""
+
+    status_code = 403
+
+
 class ProviderError(AppError):
     """Raised when a provider fails to process a request (config/runtime)."""
 

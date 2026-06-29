@@ -108,4 +108,20 @@ def recommend_all() -> dict:
         members = [c for c in CANDIDATES if c.category == cat]
         categories[cat] = rank(members, caps, installed, active)
 
-    return {"capabilities": caps.as_dict(), "categories": categories}
+    # Mark items whose only blocker is an installable pip package (needs:<pkg> where
+    # <pkg> is in the allowlist) so the UI can offer a one-click Install when enabled.
+    from app.services.install_manager import ALLOWLIST
+
+    enabled = settings.allow_runtime_install
+    for items in categories.values():
+        for it in items:
+            pkg = it["status"].split(":", 1)[1] if it["status"].startswith("needs:") else None
+            installable_pkg = pkg if pkg in ALLOWLIST else None
+            it["install_package"] = installable_pkg
+            it["installable"] = bool(enabled and installable_pkg)
+
+    return {
+        "capabilities": caps.as_dict(),
+        "categories": categories,
+        "install_enabled": settings.allow_runtime_install,
+    }

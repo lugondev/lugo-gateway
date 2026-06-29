@@ -507,6 +507,10 @@ function recRow(it) {
   } else if (it.status === "runnable") {
     // Runnable but not a download (configured remote/online, built-in).
     action = `<span class="badge ok">ready</span>`;
+  } else if (it.installable) {
+    // needs:<pip pkg> and runtime install is enabled — one-click pip install.
+    recommendActions.push({ type: "install", method: "POST", path: "/v1/models/install", payload: { package: it.install_package } });
+    action = `<button class="mini" data-rec-idx="${recommendActions.length - 1}">Install</button>`;
   } else {
     // needs:<x> (engine/runtime missing) or incompatible:<x> — guidance only.
     action = `<span class="meta">${it.action.hint || it.reason || ""}</span>`;
@@ -557,8 +561,8 @@ async function loadRecommend() {
 }
 
 async function recAct(action) {
-  const isSelect = action.type === "select";
-  print(el("model-msg"), `${isSelect ? "use" : "download"} ${JSON.stringify(action.payload)}...`);
+  const verb = { select: "use", install: "install" }[action.type] || "download";
+  print(el("model-msg"), `${verb} ${JSON.stringify(action.payload)}...`);
   try {
     const resp = await fetch(action.path, {
       method: action.method || "POST",
@@ -570,17 +574,19 @@ async function recAct(action) {
       print(el("model-msg"), body.error || body, true);
       return;
     }
-    el("model-msg").textContent = isSelect
-      ? "active model updated"
-      : "download started — see the lists below for progress";
+    const msg = {
+      select: "active model updated",
+      install: "installing package… refreshing shortly (a restart may be needed)",
+    }[action.type] || "download started — see the lists below for progress";
+    el("model-msg").textContent = msg;
     loadModels();
-    if (isSelect) {
+    if (action.type === "select") {
       loadSystemStatus();
       if (typeof loadSttEngines === "function") loadSttEngines();
       if (typeof loadTtsEngines === "function") loadTtsEngines();
       if (typeof loadConversationEngines === "function") loadConversationEngines();
     }
-    setTimeout(loadRecommend, isSelect ? 300 : 1500);
+    setTimeout(loadRecommend, { select: 300, install: 8000 }[action.type] || 1500);
   } catch (error) {
     print(el("model-msg"), String(error), true);
   }

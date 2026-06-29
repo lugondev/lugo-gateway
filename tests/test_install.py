@@ -1,0 +1,41 @@
+"""Runtime pip-install endpoint: gated by ALLOW_RUNTIME_INSTALL, allowlist-only."""
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.core.errors import AppError
+from app.core.settings import settings
+from app.main import app
+from app.services.install_manager import install_manager
+
+client = TestClient(app)
+
+
+def test_validate_disabled_by_default():
+    # settings.allow_runtime_install defaults to False
+    with pytest.raises(AppError):
+        install_manager.validate("vieneu")
+
+
+def test_validate_rejects_non_allowlist(monkeypatch):
+    monkeypatch.setattr(settings, "allow_runtime_install", True)
+    with pytest.raises(AppError):
+        install_manager.validate("evil-package; rm -rf /")
+
+
+def test_validate_allows_known_when_enabled(monkeypatch):
+    monkeypatch.setattr(settings, "allow_runtime_install", True)
+    for pkg in ("vieneu", "sherpa_onnx", "qwen_asr", "mlx_qwen3_asr", "silero_vad", "pyannote.audio"):
+        install_manager.validate(pkg)  # must not raise
+
+
+def test_endpoint_403_when_disabled():
+    resp = client.post("/v1/models/install", json={"package": "vieneu"})
+    assert resp.status_code == 403
+
+
+def test_recommend_exposes_install_enabled():
+    from app.services.recommend.service import recommend_all
+
+    data = recommend_all()
+    assert data.get("install_enabled") is False  # default off

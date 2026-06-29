@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     default_tts_engine_voice: str = ""  # optional VieNeu preset voice
     enable_mock_engines: bool = True
 
+    # Allow the /v1/models/install endpoint to pip-install engine packages at runtime.
+    # OFF by default — keep it OFF on public deploys (it runs pip on the server). Turn
+    # ON for local/Colab convenience. Installs are restricted to a fixed allowlist.
+    allow_runtime_install: bool = False
+
     artifacts_dir: str = "artifacts"
 
     stt_model_dir: str = "models/stt"
