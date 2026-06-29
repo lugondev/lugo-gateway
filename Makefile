@@ -37,8 +37,8 @@ install: ## Install the package + dev deps into .venv
 	$(PY) -m pip install -e ".[dev]"
 
 .PHONY: setup
-setup: ## Setup wizard: detect host + install matching engines (pass ARGS="--gpu-tts --ollama")
-	PYTHON=$(PY) bash scripts/setup.sh $(ARGS)
+setup: ## Interactive setup checklist: tick engines to install (host-aware). Scripted: scripts/setup.sh
+	PYTHON=$(PY) $(PY) scripts/setup.py
 
 # ---- Run (foreground, hot-reload) ----
 .PHONY: dev run
