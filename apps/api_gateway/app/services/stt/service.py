@@ -103,7 +103,7 @@ class STTService:
                 entry = {
                     "mode": "local",
                     "available": q_ok,
-                    "detail": provider.detail() if q_ok else "needs mlx-qwen3-asr (Apple Silicon only)",
+                    "detail": provider.detail() if q_ok else "needs mlx-qwen3-asr (Apple) or qwen-asr (NVIDIA GPU)",
                 }
             elif engine == "sensevoice":
                 sv_ok = provider.available()

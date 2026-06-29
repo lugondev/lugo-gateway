@@ -1,13 +1,13 @@
-"""Qwen3-ASR STT on Apple Silicon via MLX (mlx-qwen3-asr).
+"""Qwen3-ASR STT — runs on Apple Silicon (MLX) or NVIDIA GPU (official qwen-asr).
 
 Qwen3-ASR (Alibaba, Apache-2.0) is a strong multilingual ASR model that — unlike
 SenseVoice — supports Vietnamese, and beats Whisper-large-v3 on several benchmarks.
-This runs the MLX port on Apple GPU (Metal), torch-free. Verified transcribing
-Vietnamese correctly on Apple Silicon.
+Two GPU backends, auto-selected by what's installed:
+  - `mlx-qwen3-asr`  -> Apple GPU (Metal), torch-free  (verified VN on Apple Silicon)
+  - `qwen-asr`       -> NVIDIA GPU (PyTorch + CUDA)     (e.g. a T4 on Colab)
 
-Apple-Silicon only (like whisper_mlx / qwen_omni): the engine auto-hides when
-`mlx-qwen3-asr` (the optional `qwen3-asr` extra) is absent — so it never appears on
-the Linux deploy. Weights download from the hub on first use.
+CPU is not supported by either backend, so the engine auto-hides when neither
+package is present (e.g. the CPU-only Linux deploy). Weights download on first use.
 """
 
 import asyncio
@@ -28,33 +28,75 @@ _LANG = {
 }
 
 
+def _extract_text(out) -> str:
+    """Pull transcript text out of whatever the backend returns (str/dict/list/obj)."""
+    if out is None:
+        return ""
+    if isinstance(out, str):
+        return out.strip()
+    if isinstance(out, dict):
+        return str(out.get("text") or out.get("transcription") or "").strip()
+    if isinstance(out, (list, tuple)) and out:
+        return _extract_text(out[0])
+    return (getattr(out, "text", None) or "").strip()
+
+
 class Qwen3AsrProvider(STTProvider):
     name = "qwen3_asr"
 
+    def _backend(self) -> str | None:
+        if module_available("mlx_qwen3_asr"):
+            return "mlx"
+        if module_available("qwen_asr"):
+            return "cuda"
+        return None
+
     def available(self) -> bool:
-        return module_available("mlx_qwen3_asr")
+        return self._backend() is not None
 
     def detail(self) -> str:
-        return f"{settings.qwen3_asr_model.split('/')[-1]} · Apple GPU (MLX) · multilingual incl. Vietnamese"
+        model = settings.qwen3_asr_model.split("/")[-1]
+        backend = self._backend()
+        where = {"mlx": "Apple GPU (MLX)", "cuda": "NVIDIA GPU (CUDA)"}.get(backend, "GPU")
+        return f"{model} · {where} · multilingual incl. Vietnamese"
 
-    def _session(self):
-        """Cache a Session (owns model + tokenizer) per model id — loads are costly."""
-        model_id = settings.qwen3_asr_model
-        if model_id not in _MODEL_CACHE:
+    def _mlx_session(self):
+        key = f"mlx:{settings.qwen3_asr_model}"
+        if key not in _MODEL_CACHE:
             from mlx_qwen3_asr import Session
 
-            _MODEL_CACHE[model_id] = Session(model_id)
-        return _MODEL_CACHE[model_id]
+            _MODEL_CACHE[key] = Session(settings.qwen3_asr_model)
+        return _MODEL_CACHE[key]
+
+    def _cuda_model(self):
+        key = f"cuda:{settings.qwen3_asr_model}"
+        if key not in _MODEL_CACHE:
+            import torch
+            from qwen_asr import Qwen3ASRModel
+
+            _MODEL_CACHE[key] = Qwen3ASRModel.from_pretrained(
+                settings.qwen3_asr_model,
+                dtype=torch.bfloat16,
+                device_map=settings.qwen3_asr_device or "cuda:0",
+                max_new_tokens=256,
+            )
+        return _MODEL_CACHE[key]
 
     def _transcribe(self, wav_path: str, language: str | None) -> str:
-        session = self._session()
+        backend = self._backend()
         lang = _LANG.get((language or "").lower())  # None => auto-detect
-        result = session.transcribe(wav_path, language=lang)
-        return (getattr(result, "text", "") or "").strip()
+        if backend == "mlx":
+            return _extract_text(self._mlx_session().transcribe(wav_path, language=lang))
+        if backend == "cuda":
+            return _extract_text(self._cuda_model().transcribe(audio=wav_path, language=lang))
+        raise RuntimeError("Qwen3-ASR needs mlx-qwen3-asr (Apple) or qwen-asr (CUDA) installed")
 
     def warm(self) -> None:
         try:
-            self._session()
+            if self._backend() == "mlx":
+                self._mlx_session()
+            elif self._backend() == "cuda":
+                self._cuda_model()
         except Exception:  # noqa: BLE001 - best-effort warm
             pass
 

@@ -50,6 +50,11 @@ sensevoice = [
 qwen3-asr = [
   "mlx-qwen3-asr",
 ]
+# Qwen3-ASR on NVIDIA GPU via the official qwen-asr (PyTorch + CUDA). For GPU hosts
+# (e.g. a Colab T4). Pulls torch+CUDA — heavy; needs a GPU at runtime.
+qwen3-asr-cuda = [
+  "qwen-asr",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

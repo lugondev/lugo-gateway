@@ -11,12 +11,20 @@ def test_registered():
     assert isinstance(stt_service.providers["qwen3_asr"], Qwen3AsrProvider)
 
 
-def test_available_tracks_mlx_package(monkeypatch):
+def test_available_with_either_backend(monkeypatch):
     p = stt_service.providers["qwen3_asr"]
+    # MLX backend present (Apple)
     monkeypatch.setattr(q_mod, "module_available", lambda m: m == "mlx_qwen3_asr")
     assert p.available() is True
+    assert p._backend() == "mlx"
+    # CUDA backend present (NVIDIA), no MLX
+    monkeypatch.setattr(q_mod, "module_available", lambda m: m == "qwen_asr")
+    assert p.available() is True
+    assert p._backend() == "cuda"
+    # neither -> hidden
     monkeypatch.setattr(q_mod, "module_available", lambda m: False)
     assert p.available() is False
+    assert p._backend() is None
 
 
 def test_listed_reflects_package_presence():
@@ -34,10 +42,12 @@ def test_stt_request_schema_accepts_qwen3_asr():
     assert STTRequest(engine="qwen3_asr").engine == "qwen3_asr"
 
 
-def test_in_recommend_catalog_apple_vietnamese():
-    c = [x for x in CANDIDATES if x.engine == "qwen3_asr"]
-    assert c, "expected a Qwen3-ASR candidate"
-    c = c[0]
-    assert c.category == "stt"
-    assert c.chip == "apple_silicon"
-    assert c.vietnamese is True  # Qwen3-ASR supports Vietnamese (verified)
+def test_in_recommend_catalog_apple_and_cuda_vietnamese():
+    cands = [x for x in CANDIDATES if x.engine == "qwen3_asr"]
+    chips = {c.chip for c in cands}
+    assert chips == {"apple_silicon", "nvidia_gpu"}, "expect both Apple + CUDA candidates"
+    for c in cands:
+        assert c.category == "stt"
+        assert c.vietnamese is True  # Qwen3-ASR supports Vietnamese (verified on Apple)
+    cuda = next(c for c in cands if c.chip == "nvidia_gpu")
+    assert "qwen_asr" in cuda.requires

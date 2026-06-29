@@ -82,11 +82,15 @@ CANDIDATES: list[Candidate] = [
     Candidate("stt", _QWEN_8BIT, "qwen_omni", "Qwen3-Omni 30B · 8-bit (audio-native)",
               "apple_silicon", "high", True, 32.0, "~32 GB", 40.0, ["mlx"],
               _dl(_QWEN, model=_QWEN_8BIT)),
-    # ---- STT: Qwen3-ASR on Apple Silicon (MLX) — multilingual incl. Vietnamese ----
-    Candidate("stt", "Qwen/Qwen3-ASR-0.6B", "qwen3_asr",
+    # ---- STT: Qwen3-ASR — multilingual incl. Vietnamese (Apple MLX or NVIDIA CUDA) ----
+    Candidate("stt", "qwen3-asr-mlx", "qwen3_asr",
               "Qwen3-ASR — Apple GPU (MLX), multilingual incl. Vietnamese ⭐",
               "apple_silicon", "high", True, 1.2, "~1.2 GB", 8.0, ["mlx_qwen3_asr"],
               _pip("pip install mlx-qwen3-asr  (optional `qwen3-asr` extra; Apple Silicon only)")),
+    Candidate("stt", "qwen3-asr-cuda", "qwen3_asr",
+              "Qwen3-ASR — NVIDIA GPU (CUDA), multilingual incl. Vietnamese ⭐",
+              "nvidia_gpu", "high", True, 1.2, "~1.2 GB", None, ["qwen_asr"],
+              _pip("pip install qwen-asr  (optional `qwen3-asr-cuda` extra; needs an NVIDIA GPU)")),
     # ---- STT: SenseVoice (FunAudioLLM) via sherpa-onnx — multilingual, CPU, no VN ----
     Candidate("stt", "sense-voice-int8", "sensevoice",
               "SenseVoice-Small — multilingual zh/yue/en/ja/ko (sherpa-onnx, int8, no VN)",
