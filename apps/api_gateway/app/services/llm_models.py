@@ -115,6 +115,14 @@ class LlmManager:
             return
         self._jobs[model] = {"state": "downloading", "progress": 0.0, "status": "starting", "error": None}
         base = _ollama_base()
+        if not base:
+            self._jobs[model] = {
+                "state": "error", "progress": 0.0, "status": "error",
+                "error": "Ollama is not configured on this server. Local LLM download needs "
+                         "Ollama running — set CONVERSATION_LLM_BASE_URL (e.g. "
+                         "http://host:11434/v1) or use an online LLM instead.",
+            }
+            return
         try:
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream("POST", f"{base}/api/pull", json={"name": model}) as resp:

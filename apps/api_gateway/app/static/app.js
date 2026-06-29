@@ -501,11 +501,15 @@ function recRow(it) {
     action = `<button class="mini" data-rec-idx="${recommendActions.length - 1}">Use</button>`;
   } else if (it.status === "installed") {
     action = `<span class="badge ok">installed</span>`;
-  } else if (it.action.kind === "download" && !it.status.startsWith("incompatible")) {
+  } else if (it.status === "runnable" && it.action.kind === "download") {
     recommendActions.push({ type: "download", ...it.action });
     action = `<button class="mini" data-rec-idx="${recommendActions.length - 1}">Download</button>`;
+  } else if (it.status === "runnable") {
+    // Runnable but not a download (configured remote/online, built-in).
+    action = `<span class="badge ok">ready</span>`;
   } else {
-    action = `<span class="meta">${it.action.hint || ""}</span>`;
+    // needs:<x> (engine/runtime missing) or incompatible:<x> — guidance only.
+    action = `<span class="meta">${it.action.hint || it.reason || ""}</span>`;
   }
   const badges = `${recStatusBadge(it)}<span class="badge">fit ${it.fit_score}</span>`;
   const titleHint = it.reason ? ` title="${it.reason.replace(/"/g, "&quot;")}"` : "";
