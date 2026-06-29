@@ -82,11 +82,11 @@ CANDIDATES: list[Candidate] = [
     Candidate("stt", _QWEN_8BIT, "qwen_omni", "Qwen3-Omni 30B · 8-bit (audio-native)",
               "apple_silicon", "high", True, 32.0, "~32 GB", 40.0, ["mlx"],
               _dl(_QWEN, model=_QWEN_8BIT)),
-    # ---- STT: SenseVoice (FunAudioLLM) — multilingual, CPU, NOT Vietnamese ----
-    Candidate("stt", "iic/SenseVoiceSmall", "sensevoice",
-              "SenseVoice-Small — multilingual zh/yue/en/ja/ko (fast, no VN)",
-              "cpu", "medium", False, 1.0, "~1 GB", 2.0, ["funasr"],
-              _pip("pip install funasr  (optional `sensevoice` extra; pulls torch; no Vietnamese)")),
+    # ---- STT: SenseVoice (FunAudioLLM) via sherpa-onnx — multilingual, CPU, no VN ----
+    Candidate("stt", "sense-voice-int8", "sensevoice",
+              "SenseVoice-Small — multilingual zh/yue/en/ja/ko (sherpa-onnx, int8, no VN)",
+              "cpu", "medium", False, 0.25, "~250 MB", 1.0, ["sherpa_onnx"],
+              _pip("pip install sherpa-onnx  (optional `sensevoice` extra; torch-free; no Vietnamese)")),
     # ---- STT: remote (config, no download) ----
     Candidate("stt", "whisper_service", "whisper_service", "Remote Whisper (OpenAI-compatible)",
               "cpu", "medium", False, None, "remote API", None, ["whisper_service"],

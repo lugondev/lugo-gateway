@@ -11,16 +11,16 @@ def test_sensevoice_registered():
     assert isinstance(stt_service.providers["sensevoice"], SenseVoiceProvider)
 
 
-def test_available_tracks_funasr(monkeypatch):
+def test_available_tracks_sherpa_onnx(monkeypatch):
     p = stt_service.providers["sensevoice"]
-    monkeypatch.setattr(sv_mod, "module_available", lambda m: m == "funasr")
+    monkeypatch.setattr(sv_mod, "module_available", lambda m: m == "sherpa_onnx")
     assert p.available() is True
     monkeypatch.setattr(sv_mod, "module_available", lambda m: False)
     assert p.available() is False
 
 
 def test_listed_in_engines_unavailable_in_dev():
-    # funasr is not a dev/test dependency, so the engine must report unavailable
+    # sherpa-onnx is not a dev/test dependency, so the engine must report unavailable
     # (auto-hidden) rather than erroring.
     engines = {e["engine"]: e for e in stt_service.list_engines()}
     assert "sensevoice" in engines
@@ -34,5 +34,5 @@ def test_in_recommend_catalog():
     c = sv[0]
     assert c.category == "stt"
     assert c.chip == "cpu"
-    assert "funasr" in c.requires
+    assert "sherpa_onnx" in c.requires
     assert c.vietnamese is False  # SenseVoice has no Vietnamese support

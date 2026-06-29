@@ -1,74 +1,73 @@
-"""SenseVoice (FunAudioLLM) STT via the funasr framework.
+"""SenseVoice (FunAudioLLM) STT via sherpa-onnx — the lightweight, torch-free path.
 
-SenseVoice-Small is a fast, non-autoregressive multilingual ASR model
-(Mandarin / Cantonese / English / Japanese / Korean) with emotion + audio-event
-tags. It is NOT a Vietnamese model — use whisper/PhoWhisper for Vietnamese; this
-engine is for the languages above (or fast multilingual fallback).
+SenseVoice-Small is a fast non-autoregressive multilingual ASR model
+(Mandarin / Cantonese / English / Japanese / Korean). This runs the quantized int8
+ONNX export through sherpa-onnx (onnxruntime, CPU) — no PyTorch, ~250 MB model — so
+it is light enough for the slim deploy image (unlike the funasr/torch path).
 
-Available only when `funasr` is installed (the optional `sensevoice` extra, which
-pulls PyTorch). The SenseVoiceSmall weights download from the hub on first use, so
-the engine auto-hides when funasr is absent (e.g. the slim deploy image).
+NOT a Vietnamese model — use whisper/PhoWhisper for Vietnamese. The engine auto-hides
+when `sherpa-onnx` (the optional `sensevoice` extra) is absent. The ONNX model
+(model.int8.onnx + tokens.txt) downloads from the hub on first use.
 """
 
 import asyncio
 import os
 import tempfile
 
+import numpy as np
+
+from app.core.audio import wav_file_to_pcm16
 from app.core.deps import module_available
 from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.stt.base import STTProvider
 
-_MODEL_CACHE: dict[str, object] = {}
-
-# Languages SenseVoice actually supports; anything else (incl. Vietnamese) → auto.
-_SUPPORTED = {"zh", "yue", "en", "ja", "ko", "auto", "nospeech"}
+_SAMPLE_RATE = 16000
+_recognizer = None
 
 
 class SenseVoiceProvider(STTProvider):
     name = "sensevoice"
 
     def available(self) -> bool:
-        return module_available("funasr")
+        return module_available("sherpa_onnx")
 
     def detail(self) -> str:
-        model = settings.sensevoice_model.split("/")[-1]
-        return f"{model} · multilingual zh/yue/en/ja/ko · downloads on first use"
+        return "SenseVoice-Small · sherpa-onnx int8 · zh/yue/en/ja/ko · downloads on first use"
+
+    def _model_files(self) -> tuple[str, str]:
+        """Return (model.int8.onnx, tokens.txt) paths, downloading them once."""
+        from huggingface_hub import hf_hub_download
+
+        repo = settings.sensevoice_onnx_repo
+        model = hf_hub_download(repo, "model.int8.onnx")
+        tokens = hf_hub_download(repo, "tokens.txt")
+        return model, tokens
 
     def _load(self):
-        model_id = settings.sensevoice_model
-        if model_id not in _MODEL_CACHE:
-            from funasr import AutoModel
+        global _recognizer
+        if _recognizer is None:
+            import sherpa_onnx
 
-            _MODEL_CACHE[model_id] = AutoModel(
-                model=model_id,
-                trust_remote_code=True,
-                vad_model="fsmn-vad",
-                vad_kwargs={"max_single_segment_time": 30000},
-                device=settings.sensevoice_device or "cpu",
-                disable_update=True,
+            model, tokens = self._model_files()
+            _recognizer = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+                model=model,
+                tokens=tokens,
+                num_threads=settings.sensevoice_num_threads,
+                use_itn=settings.sensevoice_use_itn,
+                language="auto",
+                provider="cpu",
             )
-        return _MODEL_CACHE[model_id]
+        return _recognizer
 
-    def _transcribe(self, wav_path: str, language: str | None) -> str:
-        from funasr.utils.postprocess_utils import rich_transcription_postprocess
-
-        model = self._load()
-        lang = (language or "auto").lower()
-        if lang not in _SUPPORTED:  # e.g. "vi" — SenseVoice can't, fall back to auto
-            lang = "auto"
-        res = model.generate(
-            input=wav_path,
-            cache={},
-            language=lang,
-            use_itn=True,
-            batch_size_s=60,
-            merge_vad=True,
-            merge_length_s=15,
-        )
-        if not res:
-            return ""
-        return rich_transcription_postprocess(res[0]["text"]).strip()
+    def _transcribe(self, wav_path: str) -> str:
+        rec = self._load()
+        pcm = wav_file_to_pcm16(wav_path, _SAMPLE_RATE)
+        samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+        stream = rec.create_stream()
+        stream.accept_waveform(_SAMPLE_RATE, samples)
+        rec.decode_stream(stream)
+        return (stream.result.text or "").strip()
 
     def warm(self) -> None:
         try:
@@ -82,7 +81,7 @@ class SenseVoiceProvider(STTProvider):
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 f.write(audio_bytes)
                 tmp = f.name
-            text = await asyncio.to_thread(self._transcribe, tmp, language)
+            text = await asyncio.to_thread(self._transcribe, tmp)
             return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
         finally:
             if tmp and os.path.isfile(tmp):

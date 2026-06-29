@@ -101,7 +101,7 @@ class STTService:
                 entry = {
                     "mode": "local",
                     "available": sv_ok,
-                    "detail": provider.detail() if sv_ok else "needs funasr (pip install funasr — pulls torch)",
+                    "detail": provider.detail() if sv_ok else "needs sherpa-onnx (pip install sherpa-onnx — torch-free)",
                 }
             elif engine == "whisper_gemma":
                 entry = {"mode": "local", "available": fw_available, "detail": provider.detail()}

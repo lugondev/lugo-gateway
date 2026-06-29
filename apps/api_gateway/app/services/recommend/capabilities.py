@@ -25,7 +25,7 @@ _PROBE_MODULES = [
     "mlx_whisper",
     "mlx_vlm",
     "opuslib",
-    "funasr",
+    "sherpa_onnx",
 ]
 
 
