@@ -111,7 +111,7 @@ catalog duplication).
 Each category list is sorted by `fit_score` desc, then label. One endpoint serves
 both UI modes; filtering/grouping happens client-side.
 
-## UI (System tab panel "Khuyến nghị theo cấu hình")
+## UI (Models tab panel "Khuyến nghị theo cấu hình")
 
 - A capabilities chip row (e.g. `linux · x86_64 · CPU · 8 GB · no-mlx · no-cuda`).
 - Checkbox **"Chỉ hiện khuyến nghị"** (default **checked**): show only items with

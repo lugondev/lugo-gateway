@@ -460,6 +460,120 @@ bindDownloadByName("omni-download", "omni-name", "omnivoice");
 bindDownloadByName("model-download", "model-name", "vosk");
 bindDownloadByName("llm-download", "llm-name", "llm");
 
+// ============================================================ model recommender
+let recommendData = null;
+let recommendActions = [];
+const REC_CHIP_GROUPS = [
+  ["apple_silicon", "Apple Silicon (MLX)"],
+  ["cpu", "CPU"],
+  ["nvidia_gpu", "NVIDIA GPU"],
+];
+const REC_CAT_LABELS = { stt: "STT", tts: "TTS", llm: "LLM", vad: "VAD" };
+
+function recCapChips(c) {
+  const chips = [
+    c.os,
+    c.arch,
+    c.cpu_count ? `${c.cpu_count} cores` : null,
+    c.ram_total_gb ? `${c.ram_total_gb} GB RAM` : null,
+    c.disk_free_gb ? `${c.disk_free_gb} GB free` : null,
+    c.mlx ? "mlx" : "no-mlx",
+    c.cuda ? "cuda" : "no-cuda",
+    c.libopus ? "libopus" : "no-libopus",
+    c.ollama ? "ollama" : "no-ollama",
+  ].filter(Boolean);
+  return chips.map((x) => `<span class="badge">${x}</span>`).join("");
+}
+
+function recStatusBadge(it) {
+  if (it.status.startsWith("incompatible")) return `<span class="badge danger">${it.status}</span>`;
+  if (it.status.startsWith("needs")) return `<span class="badge mock">${it.status}</span>`;
+  if (it.status === "installed") return `<span class="badge ok">installed</span>`;
+  return `<span class="badge ok">runnable</span>`;
+}
+
+function recRow(it) {
+  let action;
+  if (it.status === "installed") {
+    action = `<span class="badge ok">installed</span>`;
+  } else if (it.action.kind === "download" && !it.status.startsWith("incompatible")) {
+    recommendActions.push(it.action);
+    action = `<button class="mini" data-rec-idx="${recommendActions.length - 1}">Download</button>`;
+  } else {
+    action = `<span class="meta">${it.action.hint || ""}</span>`;
+  }
+  const badges = `${recStatusBadge(it)}<span class="badge">fit ${it.fit_score}</span>`;
+  const titleHint = it.reason ? ` title="${it.reason.replace(/"/g, "&quot;")}"` : "";
+  const row = `<div class="model-row${it.status.startsWith("incompatible") ? " dim" : ""}"${titleHint}>`
+    + `<div class="model-info"><strong>${it.label}</strong><code>${it.id}</code>${badges}`
+    + `<span class="model-size">${it.size_estimate}</span></div>`
+    + `<div class="model-action">${action}</div></div>`;
+  return row;
+}
+
+function renderRecommend() {
+  if (!recommendData) return;
+  recommendActions = [];
+  el("recommend-caps").innerHTML = recCapChips(recommendData.capabilities);
+  const only = el("recommend-only").checked;
+  const parts = [];
+  for (const cat of ["stt", "tts", "llm", "vad"]) {
+    const items = recommendData.categories[cat] || [];
+    parts.push(`<h3 class="sub">${REC_CAT_LABELS[cat]}</h3>`);
+    if (only) {
+      const rec = items.filter((i) => i.recommended);
+      parts.push(
+        `<div class="model-list">${rec.length ? rec.map(recRow).join("") : '<p class="meta">Không có model khuyến nghị chạy được trên cấu hình này.</p>'}</div>`,
+      );
+    } else {
+      for (const [chip, label] of REC_CHIP_GROUPS) {
+        const group = items.filter((i) => i.chip === chip);
+        if (!group.length) continue;
+        parts.push(`<div class="rec-group-label meta">${label}</div>`);
+        parts.push(`<div class="model-list">${group.map(recRow).join("")}</div>`);
+      }
+    }
+  }
+  el("recommend-list").innerHTML = parts.join("");
+}
+
+async function loadRecommend() {
+  try {
+    const body = await (await fetch("/v1/models/recommend")).json();
+    recommendData = body.data;
+    renderRecommend();
+  } catch (error) {
+    el("recommend-list").innerHTML = `<p class="meta error">${error}</p>`;
+  }
+}
+
+async function recDownload(action) {
+  print(el("model-msg"), `download ${JSON.stringify(action.payload)}...`);
+  try {
+    const resp = await fetch(action.path, {
+      method: action.method || "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(action.payload),
+    });
+    const body = await resp.json();
+    if (!resp.ok) {
+      print(el("model-msg"), body.error || body, true);
+      return;
+    }
+    el("model-msg").textContent = "download started — see the lists below for progress";
+    loadModels();
+    setTimeout(loadRecommend, 1500);
+  } catch (error) {
+    print(el("model-msg"), String(error), true);
+  }
+}
+
+el("recommend-list").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-rec-idx]");
+  if (btn) recDownload(recommendActions[Number(btn.getAttribute("data-rec-idx"))]);
+});
+el("recommend-only").addEventListener("change", renderRecommend);
+
 el("llm-start").addEventListener("click", async () => {
   const hint = el("llm-hint");
   const stopping = el("llm-start").dataset.mode === "stop";
@@ -1480,6 +1594,7 @@ function initTabs() {
       document.querySelectorAll(".tab-panel").forEach((panel) => {
         panel.classList.toggle("active", panel.id === `tab-${target}`);
       });
+      if (target === "models") loadRecommend();
     });
   });
 }
@@ -1496,4 +1611,5 @@ loadTtsEngines();
 loadConversationEngines();
 loadSystemStatus();
 loadModels();
+loadRecommend();
 loadLlmOnlineConfig();

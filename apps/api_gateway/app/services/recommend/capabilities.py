@@ -1,0 +1,148 @@
+"""Detect the running container's capabilities (stdlib-only, never raises).
+
+Used by the model recommender to decide which STT/TTS/LLM/VAD models actually fit
+the machine the gateway runs on. Unknown values are ``None`` and are treated as
+"unknown" by the recommender — only a definitively-failed hard requirement marks a
+model incompatible.
+"""
+
+import importlib.metadata
+import os
+import platform
+import shutil
+from dataclasses import asdict, dataclass
+
+from app.core.deps import module_available
+from app.core.settings import settings
+
+# Optional Python modules probed for the recommender's `requires` flags.
+_PROBE_MODULES = [
+    "faster_whisper",
+    "vosk",
+    "vieneu",
+    "silero_vad",
+    "pyannote.audio",
+    "mlx_whisper",
+    "mlx_vlm",
+    "opuslib",
+]
+
+
+@dataclass
+class Capabilities:
+    os: str | None
+    arch: str | None
+    apple_silicon: bool
+    cpu_count: int | None
+    ram_total_gb: float | None
+    disk_free_gb: float | None
+    mlx: bool
+    mlx_vlm_version: str | None
+    cuda: bool
+    libopus: bool
+    ollama: bool
+    modules: dict
+
+    def has(self, flag: str) -> bool:
+        """Resolve a candidate ``requires`` flag against named fields + modules."""
+        named = {
+            "apple_silicon": self.apple_silicon,
+            "mlx": self.mlx,
+            "cuda": self.cuda,
+            "libopus": self.libopus,
+            "ollama": self.ollama,
+        }
+        if flag in named:
+            return bool(named[flag])
+        return bool(self.modules.get(flag, False))
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+def _ram_total_gb() -> float | None:
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        return round(pages * page_size / (1024**3), 1)
+    except (ValueError, OSError, AttributeError):
+        pass
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return round(int(line.split()[1]) / (1024**2), 1)
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _disk_free_gb(path: str) -> float | None:
+    try:
+        target = path if os.path.isdir(path) else "."
+        return round(shutil.disk_usage(target).free / (1024**3), 1)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _mlx_vlm_version() -> str | None:
+    try:
+        return importlib.metadata.version("mlx-vlm")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _libopus() -> bool:
+    try:
+        from app.core.opus import opus_available
+
+        return bool(opus_available())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ollama() -> bool:
+    try:
+        if settings.ollama_bin and os.path.exists(settings.ollama_bin):
+            return True
+        return shutil.which("ollama") is not None or os.path.exists(
+            "/opt/homebrew/opt/ollama/bin/ollama"
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def detect_capabilities() -> Capabilities:
+    try:
+        sys_os = platform.system().lower()
+    except Exception:  # noqa: BLE001
+        sys_os = None
+    try:
+        arch = platform.machine().lower()
+    except Exception:  # noqa: BLE001
+        arch = None
+
+    apple_silicon = sys_os == "darwin" and arch in {"arm64", "aarch64"}
+
+    modules = {m: module_available(m) for m in _PROBE_MODULES}
+    try:
+        modules["omnivoice"] = os.path.isdir(settings.omnivoice_path)
+    except Exception:  # noqa: BLE001
+        modules["omnivoice"] = False
+
+    mlx = bool(modules.get("mlx_whisper") or modules.get("mlx_vlm"))
+
+    return Capabilities(
+        os=sys_os,
+        arch=arch,
+        apple_silicon=apple_silicon,
+        cpu_count=os.cpu_count(),
+        ram_total_gb=_ram_total_gb(),
+        disk_free_gb=_disk_free_gb(settings.stt_model_dir),
+        mlx=mlx,
+        mlx_vlm_version=_mlx_vlm_version() if modules.get("mlx_vlm") else None,
+        cuda=shutil.which("nvidia-smi") is not None,
+        libopus=_libopus(),
+        ollama=_ollama(),
+        modules=modules,
+    )

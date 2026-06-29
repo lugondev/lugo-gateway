@@ -449,6 +449,39 @@ button.ghost {
   border-color: rgba(255, 178, 102, 0.5);
 }
 
+.badge.ok {
+  color: #6ee7a8;
+  border-color: rgba(110, 231, 168, 0.5);
+}
+
+.badge.danger {
+  color: #ff8a8a;
+  border-color: rgba(255, 138, 138, 0.45);
+}
+
+/* ---- model recommender panel ---- */
+.rec-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.rec-caps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.rec-group-label {
+  margin: 12px 0 6px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.model-row.dim {
+  opacity: 0.45;
+}
+
 button.mini {
   padding: 2px 10px;
   font-size: 12px;

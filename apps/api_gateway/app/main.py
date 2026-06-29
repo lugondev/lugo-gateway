@@ -7,6 +7,7 @@ from app.api.routes.agents_docs import router as agents_docs_router
 from app.api.routes.conversation import router as conversation_router
 from app.api.routes.events import router as events_router
 from app.api.routes.health import router as health_router
+from app.api.routes.recommend import router as recommend_router
 from app.api.routes.stt import router as stt_router
 from app.api.routes.system import router as system_router
 from app.api.routes.tts import router as tts_router
@@ -43,6 +44,7 @@ app.include_router(tts_router)
 app.include_router(events_router)
 app.include_router(conversation_router)
 app.include_router(system_router)
+app.include_router(recommend_router)
 app.include_router(ui_router)
 app.include_router(agents_docs_router)
 
