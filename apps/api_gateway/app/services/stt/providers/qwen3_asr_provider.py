@@ -27,6 +27,15 @@ def _is_apple_silicon() -> bool:
     """MLX only runs on Apple Silicon (libmlx.so is absent on Linux)."""
     return platform.system().lower() == "darwin" and platform.machine().lower() in {"arm64", "aarch64"}
 
+
+def _cuda_dtype(torch):
+    """bf16 only on GPUs that support it (Ampere+); float16 on older ones like the
+    NVIDIA T4 (Turing has no native bfloat16)."""
+    try:
+        return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    except Exception:  # noqa: BLE001
+        return torch.float16
+
 # Map our short language codes to the names Qwen3-ASR expects; unknown -> auto-detect.
 _LANG = {
     "vi": "Vietnamese", "en": "English", "zh": "Chinese",
@@ -85,7 +94,7 @@ class Qwen3AsrProvider(STTProvider):
 
             _MODEL_CACHE[key] = Qwen3ASRModel.from_pretrained(
                 settings.qwen3_asr_model,
-                dtype=torch.bfloat16,
+                dtype=_cuda_dtype(torch),  # bf16 on Ampere+, fp16 on T4/Turing
                 device_map=settings.qwen3_asr_device or "cuda:0",
                 max_new_tokens=256,
             )

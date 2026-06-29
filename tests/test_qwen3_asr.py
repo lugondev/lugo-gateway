@@ -32,6 +32,21 @@ def test_non_apple_prefers_cuda_when_both_present(monkeypatch):
     assert p.available() is True
 
 
+def test_cuda_dtype_prefers_bf16_only_when_supported():
+    class _Cuda:
+        supported = False
+        @classmethod
+        def is_bf16_supported(cls):
+            return cls.supported
+    fake = type("T", (), {"bfloat16": "bf16", "float16": "fp16", "cuda": _Cuda})
+    # T4 (Turing) — no bf16 -> float16
+    _Cuda.supported = False
+    assert q_mod._cuda_dtype(fake) == "fp16"
+    # Ampere+ -> bfloat16
+    _Cuda.supported = True
+    assert q_mod._cuda_dtype(fake) == "bf16"
+
+
 def test_neither_backend_hidden(monkeypatch):
     p = stt_service.providers["qwen3_asr"]
     monkeypatch.setattr(q_mod, "_is_apple_silicon", lambda: False)

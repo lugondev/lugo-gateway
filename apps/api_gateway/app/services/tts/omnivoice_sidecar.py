@@ -31,6 +31,8 @@ def _detect_device(arg: str) -> str:
         return "cuda:0"
     if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
         return "mps"
+    if getattr(torch, "xpu", None) and torch.xpu.is_available():
+        return "xpu"  # Intel Arc — OmniVoice supports device_map="xpu" (SDPA, no flash-attn)
     return "cpu"
 
 
