@@ -19,13 +19,15 @@ def test_available_tracks_sherpa_onnx(monkeypatch):
     assert p.available() is False
 
 
-def test_listed_in_engines_unavailable_in_dev():
-    # sherpa-onnx is not a dev/test dependency, so the engine must report unavailable
-    # (auto-hidden) rather than erroring.
+def test_listed_in_engines_reflects_sherpa_presence():
+    # Listed as a local engine; its availability must track whether sherpa-onnx is
+    # importable (robust whether or not the optional extra is installed).
+    from app.core.deps import module_available
+
     engines = {e["engine"]: e for e in stt_service.list_engines()}
     assert "sensevoice" in engines
     assert engines["sensevoice"]["mode"] == "local"
-    assert engines["sensevoice"]["available"] is False
+    assert engines["sensevoice"]["available"] == module_available("sherpa_onnx")
 
 
 def test_stt_request_schema_accepts_sensevoice():
