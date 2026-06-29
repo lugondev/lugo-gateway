@@ -119,24 +119,34 @@ if [ -n "$OLLAMA" ]; then
   run ollama pull "$OLLAMA"
 fi
 
-# ---- recommended runtime config ----
-cat <<EOF
+# ---- persist runtime config to .env (gateway reads it; no manual env vars) ----
+upsert_env() {  # upsert_env KEY VALUE
+  local k="$1" v="$2" f=".env"
+  echo "  .env: $k=$v"
+  [ "$DRY" -eq 1 ] && return 0
+  touch "$f"
+  if grep -qE "^${k}=" "$f"; then
+    sed -i.bak "s|^${k}=.*|${k}=${v}|" "$f" && rm -f "$f.bak"
+  else
+    echo "${k}=${v}" >> "$f"
+  fi
+}
 
-==> Done. Recommended env when starting the gateway:
-    ENABLE_MOCK_ENGINES=false           # real audio (not silent placeholders)
-    DEFAULT_TTS_ENGINE=vieneu
-    CONVERSATION_TTS_ENGINE=vieneu
-    CONVERSATION_STT_ENGINE=$([ "$HOST" = cpu ] && echo whisper || echo qwen3_asr)
-EOF
+echo
+echo "==> Writing runtime config to .env:"
+upsert_env ENABLE_MOCK_ENGINES false
+upsert_env ALLOW_RUNTIME_INSTALL true
+upsert_env DEFAULT_TTS_ENGINE vieneu
+upsert_env CONVERSATION_TTS_ENGINE vieneu
+upsert_env CONVERSATION_AUDIO_NATIVE false
+upsert_env CONVERSATION_STT_ENGINE "$([ "$HOST" = cpu ] && echo whisper || echo qwen3_asr)"
 if [ -n "$OLLAMA" ]; then
-  cat <<EOF
-    CONVERSATION_LLM_BASE_URL=http://localhost:11434/v1
-    CONVERSATION_LLM_MODEL=$OLLAMA
-EOF
-else
-  echo "    # LLM: configure an online provider in the UI (Models -> Conversation LLM - Online)"
+  upsert_env CONVERSATION_LLM_BASE_URL http://localhost:11434/v1
+  upsert_env CONVERSATION_LLM_MODEL "$OLLAMA"
 fi
+
 cat <<'EOF'
 
-    Run: PYTHONPATH=apps/api_gateway python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+==> Done. The gateway reads .env — just run (no env vars needed):
+    PYTHONPATH=apps/api_gateway python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 EOF
