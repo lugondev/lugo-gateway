@@ -1,13 +1,11 @@
-"""Extra TTS engines ported from OmniVoice-Studio (top-5, CPU/MPS-reasonable).
+"""Extra TTS engines ported from OmniVoice-Studio (CPU/MPS-reasonable).
 
 Each engine lazily imports its package and runs real inference following the
 OmniVoice-Studio adapter; if the package isn't installed it degrades to silent
 mock audio and reports an install hint. Engines:
 
-- kittentts   — English, ONNX CPU, ~80 MB, 8 preset voices.       pip install kittentts
 - kokoro      — MLX-Audio / Kokoro 82M, Apple-Silicon, multilingual. pip install mlx-audio
 - voxcpm2     — 30 langs, CPU/MPS, 48 kHz, clone + voice design.   pip install voxcpm
-- moss-tts-nano — 20 langs, CPU realtime, 48 kHz (clone).          git+OpenMOSS/MOSS-TTS-Nano
 - sherpa-onnx — universal ONNX runtime (VITS/Piper/…).            pip install sherpa-onnx
 """
 
@@ -58,40 +56,6 @@ class _ExtraTTSProvider(MockFallbackTTSProvider):
     async def _render_wav(self, payload: TTSRequest) -> bytes:
         audio = await asyncio.to_thread(self._generate_f32, payload)
         return float_array_to_wav_bytes(audio, sample_rate=self.sample_rate)
-
-
-class KittenTTSProvider(_ExtraTTSProvider):
-    name = "kittentts"
-    sample_rate = 24000
-    _modules = ("kittentts",)
-    _hint = "pip install kittentts + brew install espeak  (ONNX CPU, English, needs espeak phonemizer)"
-    PRESET_VOICES = [
-        "expr-voice-2-m", "expr-voice-2-f", "expr-voice-3-m", "expr-voice-3-f",
-        "expr-voice-4-m", "expr-voice-4-f", "expr-voice-5-m", "expr-voice-5-f",
-    ]
-
-    def available(self) -> bool:
-        import shutil
-
-        has_espeak = bool(shutil.which("espeak") or shutil.which("espeak-ng"))
-        return super().available() and has_espeak
-
-    def detail(self) -> str:
-        return os.environ.get("OMNIVOICE_KITTENTTS_MODEL", "KittenML/kitten-tts-mini-0.8")
-
-    def list_voices(self) -> list[dict]:
-        return [{"label": v, "voice": v} for v in self.PRESET_VOICES]
-
-    def _model(self):
-        if self.name not in _CACHE:
-            from kittentts import KittenTTS
-
-            _CACHE[self.name] = KittenTTS(self.detail())
-        return _CACHE[self.name]
-
-    def _generate_f32(self, payload: TTSRequest) -> np.ndarray:
-        voice = payload.voice if payload.voice in self.PRESET_VOICES else "expr-voice-2-f"
-        return _to_mono_f32(self._model().generate(payload.text, voice=voice, speed=float(payload.speed or 1.0)))
 
 
 class KokoroMLXProvider(_ExtraTTSProvider):
@@ -164,26 +128,6 @@ class VoxCPM2Provider(_ExtraTTSProvider):
         return _to_mono_f32(wav)
 
 
-class MossTTSNanoProvider(_ExtraTTSProvider):
-    name = "moss-tts-nano"
-    sample_rate = 48000
-    _modules = ("transformers", "moss_tts_nano")
-    _hint = "git clone OpenMOSS/MOSS-TTS-Nano && pip install -e .  (not on PyPI)"
-
-    def detail(self) -> str:
-        return os.environ.get("OMNIVOICE_MOSS_TTS_MODEL", "OpenMOSS-Team/MOSS-TTS-Nano")
-
-    def _model(self):
-        if self.name not in _CACHE:
-            from moss_tts_nano import MossTTSNano
-
-            _CACHE[self.name] = MossTTSNano.from_pretrained(self.detail(), trust_remote_code=True)
-        return _CACHE[self.name]
-
-    def _generate_f32(self, payload: TTSRequest) -> np.ndarray:
-        return _to_mono_f32(self._model().generate(text=payload.text, prompt_audio_path=payload.ref_audio_path))
-
-
 class SherpaOnnxProvider(_ExtraTTSProvider):
     name = "sherpa-onnx"
     sample_rate = 22050
@@ -220,9 +164,7 @@ class SherpaOnnxProvider(_ExtraTTSProvider):
 
 
 EXTRA_TTS_PROVIDERS = [
-    KittenTTSProvider(),
     KokoroMLXProvider(),
     VoxCPM2Provider(),
-    MossTTSNanoProvider(),
     SherpaOnnxProvider(),
 ]

@@ -42,8 +42,6 @@ COMPONENTS = [
          install=("pip", "omnivoice"), hosts={"apple", "nvidia", "cpu"}, note=""),
     dict(id="voxcpm2", label="VoxCPM — TTS (30 langs, CPU/MPS/CUDA, clone)", module="voxcpm",
          install=("pip", "voxcpm"), hosts={"apple", "nvidia", "cpu"}, note=""),
-    dict(id="kittentts", label="KittenTTS — TTS (English, ONNX CPU; needs espeak)", module="kittentts",
-         install=("pip", "kittentts"), hosts={"apple", "nvidia", "cpu"}, note=""),
     dict(id="kokoro", label="Kokoro — TTS (Apple MLX, multilingual)", module="mlx_audio",
          install=("pip", "mlx-audio"), hosts={"apple"}, note=""),
     dict(id="sherpa_onnx", label="sherpa-onnx — SenseVoice STT + TTS (CPU)", module="sherpa_onnx",
