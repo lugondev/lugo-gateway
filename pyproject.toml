@@ -39,6 +39,11 @@ opus = [
 tts = [
   "vieneu>=3.0.7",
 ]
+# SenseVoice (FunAudioLLM) multilingual ASR via funasr (zh/yue/en/ja/ko — NOT
+# Vietnamese). Pulls PyTorch (heavy); engine auto-hides when funasr is absent.
+sensevoice = [
+  "funasr>=1.1.0",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

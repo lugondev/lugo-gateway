@@ -81,6 +81,12 @@ class Settings(BaseSettings):
     # reliable phrasing (6/6 clips transcribed correctly in testing).
     qwen_omni_prompt: str = "Phiên âm đoạn âm thanh sau thành văn bản tiếng Việt."
 
+    # SenseVoice (FunAudioLLM) multilingual ASR via funasr (engine "sensevoice").
+    # zh/yue/en/ja/ko — NOT Vietnamese. Needs the optional `sensevoice` extra (funasr,
+    # pulls torch); engine auto-hides when funasr is absent. Empty device = cpu.
+    sensevoice_model: str = "iic/SenseVoiceSmall"
+    sensevoice_device: str = ""
+
     # Extra STT preprocessing (defaults OFF: our energy gate / spectral denoise can
     # clip or add artifacts and don't help Whisper, which has its own VAD).
     stt_vad_enabled: bool = False

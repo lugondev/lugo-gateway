@@ -8,6 +8,7 @@ from app.services.stt.base import STTProvider
 from app.services.stt.providers.remote_whisper_provider import RemoteWhisperProvider
 from app.services.stt.providers.vosk_provider import VoskProvider
 from app.services.stt.providers.qwen_omni_provider import QwenOmniProvider
+from app.services.stt.providers.sensevoice_provider import SenseVoiceProvider
 from app.services.stt.providers.whisper_gemma_provider import WhisperGemmaProvider
 from app.services.stt.providers.whisper_mlx_provider import WhisperMlxProvider
 from app.services.stt.providers.whisper_provider import WhisperProvider
@@ -22,6 +23,7 @@ class STTService:
             "whisper_local": whisper_local,
             "whisper_mlx": WhisperMlxProvider(),
             "qwen_omni": QwenOmniProvider(),
+            "sensevoice": SenseVoiceProvider(),
             "whisper_gemma": WhisperGemmaProvider(),
             "whisper_service": RemoteWhisperProvider(
                 name="whisper_service",
@@ -93,6 +95,13 @@ class STTService:
                     "mode": "local",
                     "available": q_ok,
                     "detail": provider.detail() if q_ok else "needs mlx-vlm + downloaded model (System tab)",
+                }
+            elif engine == "sensevoice":
+                sv_ok = provider.available()
+                entry = {
+                    "mode": "local",
+                    "available": sv_ok,
+                    "detail": provider.detail() if sv_ok else "needs funasr (pip install funasr — pulls torch)",
                 }
             elif engine == "whisper_gemma":
                 entry = {"mode": "local", "available": fw_available, "detail": provider.detail()}
