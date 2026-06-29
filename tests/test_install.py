@@ -11,8 +11,8 @@ from app.services.install_manager import install_manager
 client = TestClient(app)
 
 
-def test_validate_disabled_by_default():
-    # settings.allow_runtime_install defaults to False
+def test_validate_raises_when_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "allow_runtime_install", False)
     with pytest.raises(AppError):
         install_manager.validate("vieneu")
 
@@ -29,13 +29,16 @@ def test_validate_allows_known_when_enabled(monkeypatch):
         install_manager.validate(pkg)  # must not raise
 
 
-def test_endpoint_403_when_disabled():
+def test_endpoint_403_when_disabled(monkeypatch):
+    monkeypatch.setattr(settings, "allow_runtime_install", False)
     resp = client.post("/v1/models/install", json={"package": "vieneu"})
     assert resp.status_code == 403
 
 
-def test_recommend_exposes_install_enabled():
+def test_recommend_reflects_install_enabled(monkeypatch):
     from app.services.recommend.service import recommend_all
 
-    data = recommend_all()
-    assert data.get("install_enabled") is False  # default off
+    monkeypatch.setattr(settings, "allow_runtime_install", False)
+    assert recommend_all()["install_enabled"] is False
+    monkeypatch.setattr(settings, "allow_runtime_install", True)
+    assert recommend_all()["install_enabled"] is True
