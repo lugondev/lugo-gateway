@@ -11,6 +11,7 @@ set -euo pipefail
 GPU_TTS=0
 OLLAMA=""
 DRY=0
+LIST=0
 PY="${PYTHON:-python}"   # install into THIS interpreter (use system python on Colab)
 
 usage() {
@@ -35,6 +36,7 @@ while [ $# -gt 0 ]; do
     --gpu-tts) GPU_TTS=1; shift ;;
     --ollama) shift; if [ $# -gt 0 ] && [[ "$1" != -* ]]; then OLLAMA="$1"; shift; else OLLAMA="gemma2:2b"; fi ;;
     --dry-run) DRY=1; shift ;;
+    --list) LIST=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
@@ -53,6 +55,32 @@ else
   HOST=cpu
 fi
 echo "==> Host: $HOST ($OS/$ARCH) — python: $($PY --version 2>&1)"
+
+# ---- host-filtered menu: only what can run here ----
+print_menu() {
+  echo
+  echo "Installable on this host ($HOST):"
+  case "$HOST" in
+    apple)
+      echo "  STT : whisper_mlx, qwen3_asr (MLX), whisper/PhoWhisper (CPU), vosk"
+      echo "  TTS : VieNeu v3turbo (CPU)"
+      echo "  LLM : Ollama (--ollama MODEL)  |  online (UI)"
+      echo "  Skipped (incompatible): qwen3_asr CUDA, VieNeu GPU modes  (need NVIDIA)" ;;
+    nvidia)
+      echo "  STT : qwen3_asr (CUDA) ⭐, whisper/PhoWhisper (CPU), vosk"
+      echo "  TTS : VieNeu v3turbo (CPU)  |  VieNeu GPU modes (--gpu-tts)"
+      echo "  LLM : Ollama (--ollama MODEL)  |  online (UI)"
+      echo "  Skipped (incompatible): whisper_mlx, qwen3_asr MLX, qwen_omni  (Apple Silicon only)" ;;
+    cpu)
+      echo "  STT : whisper/PhoWhisper (CPU), vosk"
+      echo "  TTS : VieNeu v3turbo (CPU)"
+      echo "  LLM : online (UI)  |  Ollama (--ollama MODEL, slow on CPU)"
+      echo "  Skipped (incompatible): qwen3_asr (needs GPU), whisper_mlx/qwen_omni (Apple), VieNeu GPU modes" ;;
+  esac
+  echo
+}
+print_menu
+[ "$LIST" -eq 1 ] && exit 0
 
 # ---- system libraries ----
 if [ "$OS" = "Linux" ] && command -v apt-get >/dev/null 2>&1; then
