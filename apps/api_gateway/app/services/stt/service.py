@@ -7,6 +7,7 @@ from app.core.settings import settings
 from app.services.stt.base import STTProvider
 from app.services.stt.providers.remote_whisper_provider import RemoteWhisperProvider
 from app.services.stt.providers.vosk_provider import VoskProvider
+from app.services.stt.providers.qwen3_asr_provider import Qwen3AsrProvider
 from app.services.stt.providers.qwen_omni_provider import QwenOmniProvider
 from app.services.stt.providers.sensevoice_provider import SenseVoiceProvider
 from app.services.stt.providers.whisper_gemma_provider import WhisperGemmaProvider
@@ -23,6 +24,7 @@ class STTService:
             "whisper_local": whisper_local,
             "whisper_mlx": WhisperMlxProvider(),
             "qwen_omni": QwenOmniProvider(),
+            "qwen3_asr": Qwen3AsrProvider(),
             "sensevoice": SenseVoiceProvider(),
             "whisper_gemma": WhisperGemmaProvider(),
             "whisper_service": RemoteWhisperProvider(
@@ -95,6 +97,13 @@ class STTService:
                     "mode": "local",
                     "available": q_ok,
                     "detail": provider.detail() if q_ok else "needs mlx-vlm + downloaded model (System tab)",
+                }
+            elif engine == "qwen3_asr":
+                q_ok = provider.available()
+                entry = {
+                    "mode": "local",
+                    "available": q_ok,
+                    "detail": provider.detail() if q_ok else "needs mlx-qwen3-asr (Apple Silicon only)",
                 }
             elif engine == "sensevoice":
                 sv_ok = provider.available()

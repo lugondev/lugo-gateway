@@ -90,6 +90,11 @@ class Settings(BaseSettings):
     sensevoice_num_threads: int = 2
     sensevoice_use_itn: bool = True
 
+    # Qwen3-ASR on Apple Silicon via MLX (engine "qwen3_asr"). Multilingual incl.
+    # Vietnamese; Apple-only (needs the optional `qwen3-asr` extra: mlx-qwen3-asr).
+    # 0.6B (default, light, verified VN) or Qwen/Qwen3-ASR-1.7B (higher accuracy).
+    qwen3_asr_model: str = "Qwen/Qwen3-ASR-0.6B"
+
     # Extra STT preprocessing (defaults OFF: our energy gate / spectral denoise can
     # clip or add artifacts and don't help Whisper, which has its own VAD).
     stt_vad_enabled: bool = False

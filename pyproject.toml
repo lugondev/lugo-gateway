@@ -45,6 +45,11 @@ tts = [
 sensevoice = [
   "sherpa-onnx>=1.10.0",
 ]
+# Qwen3-ASR on Apple Silicon via MLX (multilingual incl. Vietnamese, torch-free,
+# Metal GPU). Mac-only — the engine auto-hides where mlx-qwen3-asr is absent.
+qwen3-asr = [
+  "mlx-qwen3-asr",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
