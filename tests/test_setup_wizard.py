@@ -42,3 +42,32 @@ def test_install_plan_groups_extras_and_pips():
     joined = " ".join(" ".join(c) for c in cmds)
     assert "qwen3-asr-cuda" in joined  # extra folded into pip install -e .[...]
     assert "vieneu[gpu]" in joined     # raw pip spec
+
+
+def test_omnivoice_is_a_pip_component():
+    omni = next((c for c in setup.COMPONENTS if c["id"] == "omnivoice"), None)
+    assert omni is not None and omni["install"] == ("pip", "omnivoice")
+
+
+def test_build_env_picks_engines_and_omnivoice_python():
+    env = setup.build_env({"qwen3_asr_cuda", "omnivoice"}, "nvidia")
+    assert env["ENABLE_MOCK_ENGINES"] == "false"
+    assert env["CONVERSATION_STT_ENGINE"] == "qwen3_asr"
+    assert env["OMNIVOICE_PYTHON"]  # set so OmniVoice resolves in the gateway's python
+    assert env.get("OMNIVOICE_DEVICE") == "cuda:0"
+    # whisper-only selection -> STT falls back to whisper
+    env2 = setup.build_env(set(), "cpu")
+    assert env2["CONVERSATION_STT_ENGINE"] == "whisper"
+    assert "OMNIVOICE_PYTHON" not in env2
+
+
+def test_write_env_merges_preserving_existing(tmp_path):
+    p = tmp_path / ".env"
+    p.write_text("# comment\nFOO=1\nENABLE_MOCK_ENGINES=true\n")
+    setup.write_env({"ENABLE_MOCK_ENGINES": "false", "NEW_KEY": "x"}, str(p))
+    text = p.read_text()
+    assert "FOO=1" in text                      # untouched key preserved
+    assert "# comment" in text                  # comment preserved
+    assert "ENABLE_MOCK_ENGINES=false" in text  # updated in place
+    assert "ENABLE_MOCK_ENGINES=true" not in text
+    assert "NEW_KEY=x" in text                   # new key appended

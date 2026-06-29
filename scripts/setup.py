@@ -38,6 +38,8 @@ COMPONENTS = [
          install=("extra", "tts"), hosts={"apple", "nvidia", "cpu"}, note=""),
     dict(id="vieneu_gpu", label="VieNeu GPU modes — TTS (turbo/fast)", module="lmdeploy",
          install=("pip", "vieneu[gpu]"), hosts={"nvidia"}, note=""),
+    dict(id="omnivoice", label="OmniVoice — TTS (600+ langs, voice clone)", module="omnivoice",
+         install=("pip", "omnivoice"), hosts={"apple", "nvidia", "cpu"}, note=""),
     dict(id="silero", label="Silero VAD (CPU)", module="silero_vad",
          install=("pip", "silero-vad"), hosts={"apple", "nvidia", "cpu"}, note=""),
     dict(id="pyannote", label="pyannote VAD (gated)", module="pyannote.audio",
@@ -75,6 +77,51 @@ def compatible_components(host: str) -> list:
 
 def is_installed(component: dict) -> bool:
     return module_available(component["module"])
+
+
+def build_env(selected_ids: set, host: str) -> dict:
+    """Runtime config to persist to .env so the gateway needs no manual env vars."""
+    env = {
+        "ENABLE_MOCK_ENGINES": "false",      # real audio, not silent placeholders
+        "ALLOW_RUNTIME_INSTALL": "true",     # enable the Install buttons in the UI
+        "DEFAULT_TTS_ENGINE": "vieneu",
+        "CONVERSATION_TTS_ENGINE": "vieneu",
+        "CONVERSATION_AUDIO_NATIVE": "false",
+    }
+    if {"qwen3_asr_cuda", "qwen3_asr_mlx"} & selected_ids:
+        env["CONVERSATION_STT_ENGINE"] = "qwen3_asr"
+    else:
+        env["CONVERSATION_STT_ENGINE"] = "whisper"
+    if "omnivoice" in selected_ids:
+        # Point OmniVoice at THIS interpreter (where we just pip-installed it) + a real
+        # cwd for the sidecar, so available() resolves without the Mac-only default path.
+        env["OMNIVOICE_PYTHON"] = sys.executable
+        env["OMNIVOICE_PATH"] = os.getcwd()
+        if host == "nvidia":
+            env["OMNIVOICE_DEVICE"] = "cuda:0"
+    return env
+
+
+def write_env(updates: dict, path: str = ".env") -> None:
+    """Merge KEY=VALUE updates into .env, preserving existing keys/comments."""
+    lines = []
+    if os.path.exists(path):
+        with open(path) as f:
+            lines = f.read().splitlines()
+    seen, out = set(), []
+    for ln in lines:
+        if "=" in ln and not ln.lstrip().startswith("#"):
+            key = ln.split("=", 1)[0].strip()
+            if key in updates:
+                out.append(f"{key}={updates[key]}")
+                seen.add(key)
+                continue
+        out.append(ln)
+    for k, v in updates.items():
+        if k not in seen:
+            out.append(f"{k}={v}")
+    with open(path, "w") as f:
+        f.write("\n".join(out) + "\n")
 
 
 def install_commands(selected: list) -> list:
@@ -150,7 +197,14 @@ def main() -> int:
     for cmd in install_commands(selected):
         print("+", " ".join(cmd))
         subprocess.run(cmd, check=False)
-    print("\nDone. Start the gateway with ENABLE_MOCK_ENGINES=false (see scripts/setup.sh output / docs).")
+    # Persist runtime config to .env so the gateway needs no manual env vars.
+    cfg = build_env({c["id"] for c in selected}, host)
+    write_env(cfg)
+    print("\nWrote config to .env:")
+    for k, v in cfg.items():
+        print(f"  {k}={v}")
+    print("\nDone. Just run the gateway (it reads .env — no env vars needed):")
+    print("  PYTHONPATH=apps/api_gateway python -m uvicorn app.main:app --host 0.0.0.0 --port 8000")
     return 0
 
 
