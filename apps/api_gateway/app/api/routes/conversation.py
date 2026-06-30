@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import uuid
+from contextlib import aclosing
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -23,6 +24,7 @@ from app.services.stt.service import stt_service
 from app.schemas.tts import TTSRequest
 from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
+from app.services.tts.streaming import prefetch_synthesis
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/conversation", tags=["conversation"])
@@ -231,58 +233,58 @@ async def conversation_stream(websocket: WebSocket) -> None:
         turn += 1
         await send("processing", turn=turn)
 
-        # Stream a sentence iterator through TTS: a producer fills a queue while a
-        # consumer synthesizes + sends each sentence, so the next sentence's audio is
-        # usually ready before the current finishes -> gapless playback.
+        # Stream a sentence iterator through TTS. For audio output we synthesize up to
+        # `conversation_tts_lookahead` sentences AHEAD of sending (prefetch_synthesis),
+        # so the next sentence's audio is usually ready before the current finishes ->
+        # gapless playback. Text-only just emits sentences as the LLM streams them.
         async def _stream_to_tts(sentence_aiter, responder_name: str) -> list[str]:
             parts: list[str] = []
-            queue: asyncio.Queue = asyncio.Queue()
 
-            async def _produce() -> None:
-                try:
-                    async for sentence in sentence_aiter:
-                        await queue.put(sentence)
-                finally:
-                    await queue.put(None)
-
-            producer = asyncio.create_task(_produce())
-            index = 0
-            try:
-                while True:
-                    sentence = await queue.get()
-                    if sentence is None:
-                        break
+            if not want_audio:
+                index = 0
+                async for sentence in sentence_aiter:
                     parts.append(sentence)
                     if want_text:
                         await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
-                    if want_audio:
-                        result = await tts_provider.synthesize(
-                            TTSRequest(text=sentence, engine=tts_engine, voice=voice)
-                        )
-                        if opus_encoder is not None:
-                            # Decode the TTS wav -> PCM16 @ output_sr -> Opus packets, push as
-                            # binary frames bracketed by audio_start/audio_end (for devices).
-                            path = result.audio_url.lstrip("/")
-                            pcm = await asyncio.to_thread(wav_file_to_pcm16, path, output_sample_rate)
-                            packets = await asyncio.to_thread(opus_encoder.encode_pcm16, pcm)
-                            await send(
-                                "audio_start", turn=turn, chunk_index=index,
-                                text=sentence if want_text else None,
-                                codec="opus", sample_rate=output_sample_rate, frames=len(packets),
-                            )
-                            for pkt in packets:
-                                await websocket.send_bytes(pkt)
-                            await send("audio_end", turn=turn, chunk_index=index)
-                        else:
-                            await send(
-                                "audio_chunk", turn=turn, chunk_index=index, text=sentence,
-                                audio_url=result.audio_url, sample_rate=result.sample_rate, mock=result.mock,
-                            )
                     index += 1
-                await producer  # surface errors (e.g. LLMUnavailableError)
-            finally:
-                if not producer.done():
-                    producer.cancel()
+                return parts
+
+            async def _synth(sentence: str):
+                result = await tts_provider.synthesize(
+                    TTSRequest(text=sentence, engine=tts_engine, voice=voice)
+                )
+                if opus_encoder is not None:
+                    # Decode the TTS wav -> PCM16 @ output_sr -> Opus packets (off-loop).
+                    path = result.audio_url.lstrip("/")
+                    pcm = await asyncio.to_thread(wav_file_to_pcm16, path, output_sample_rate)
+                    packets = await asyncio.to_thread(opus_encoder.encode_pcm16, pcm)
+                    return result, packets
+                return result, None
+
+            async with aclosing(
+                prefetch_synthesis(
+                    sentence_aiter, _synth, lookahead=settings.conversation_tts_lookahead
+                )
+            ) as pipeline:
+                async for index, sentence, (result, packets) in pipeline:
+                    parts.append(sentence)
+                    if want_text:
+                        await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
+                    if packets is not None:
+                        # Push Opus binary frames bracketed by audio_start/audio_end (devices).
+                        await send(
+                            "audio_start", turn=turn, chunk_index=index,
+                            text=sentence if want_text else None,
+                            codec="opus", sample_rate=output_sample_rate, frames=len(packets),
+                        )
+                        for pkt in packets:
+                            await websocket.send_bytes(pkt)
+                        await send("audio_end", turn=turn, chunk_index=index)
+                    else:
+                        await send(
+                            "audio_chunk", turn=turn, chunk_index=index, text=sentence,
+                            audio_url=result.audio_url, sample_rate=result.sample_rate, mock=result.mock,
+                        )
             return parts
 
         # Text input: skip STT, reply via the text responder (text→text / text→audio).

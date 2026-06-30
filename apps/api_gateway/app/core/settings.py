@@ -122,6 +122,10 @@ class Settings(BaseSettings):
     # audio directly in one pass instead of transcribe -> separate text LLM (gemma).
     conversation_audio_native: bool = True
     conversation_tts_engine: str = "vieneu"  # in-process & warm (~0.4s); OmniVoice CLI reloads per call (~7s)
+    # How many reply sentences to synthesize ahead of sending (gapless playback). The
+    # next sentence's audio is prepared while the current is being sent. 0/1 = no
+    # prefetch. Bounds memory/in-flight synth per turn.
+    conversation_tts_lookahead: int = 2
     conversation_language: str = "vi"        # STT language hint; "" = auto-detect
     # Optional OpenAI-compatible chat endpoint (Ollama/LM Studio/vLLM/OpenAI).
     # Empty base url -> built-in echo responder (no external service).
