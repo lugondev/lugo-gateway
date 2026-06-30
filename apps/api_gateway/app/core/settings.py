@@ -126,11 +126,13 @@ class Settings(BaseSettings):
     # next sentence's audio is prepared while the current is being sent. 0/1 = no
     # prefetch. Bounds memory/in-flight synth per turn.
     conversation_tts_lookahead: int = 2
-    # Opus push (audio_out=opus, for ESP32/RPi): pace outgoing packets at real-time
-    # after an initial burst, so the device's small buffer isn't flooded on long
-    # replies. The first `prebuffer` frames go out immediately (fast first audio),
-    # the rest are spaced by one frame (60ms). Set pace=false to dump all at once.
-    conversation_opus_pace: bool = True
+    # Opus push (audio_out=opus): pace outgoing packets at real-time after an initial
+    # burst. DEFAULT OFF — clients with their own jitter buffer (the RPi client, browser
+    # WebCodecs) play smoothest when the server sends frames as fast as possible and the
+    # *client* paces playback. Real-time server pacing has no slack, so any sleep/network
+    # overhead starves a real-time consumer -> choppy audio + dropped words. Only enable
+    # this for a truly buffer-less device that plays each frame as it arrives.
+    conversation_opus_pace: bool = False
     conversation_opus_prebuffer_frames: int = 5
     conversation_language: str = "vi"        # STT language hint; "" = auto-detect
     # Optional OpenAI-compatible chat endpoint (Ollama/LM Studio/vLLM/OpenAI).
