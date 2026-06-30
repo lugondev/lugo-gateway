@@ -140,8 +140,11 @@ libopus, falls back to `pcm16` if absent).
 
 **Output audio** (`audio_out=opus`): each reply sentence is sent as JSON `audio_start`
 `{chunk_index, text, codec:"opus", sample_rate, frames}`, then `frames` binary Opus
-packets (mono @ `output_sample_rate`, 60 ms each), then `audio_end`. With `audio_out=url`
-(default) the server sends an `audio_chunk` with an `audio_url` instead.
+packets (mono @ `output_sample_rate`, 60 ms each), then `audio_end`. The packets are
+**paced**: the first ~5 go out immediately (fast first audio), the rest at one 60 ms
+frame apart so a small device buffer isn't flooded on long replies. With `audio_out=url`
+(default) the server sends an `audio_chunk` with an `audio_url` instead. Browsers can
+decode the Opus frames via WebCodecs `AudioDecoder` — see `docs/device-integration.md` §6.
 
 Server → client events (`{"event": ...}`):
 

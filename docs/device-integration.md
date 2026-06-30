@@ -48,6 +48,10 @@ On connect the server sends one `session_started` JSON with the negotiated confi
 
 - Each Opus packet is **one binary WebSocket frame** (no extra header).
 - PCM is signed 16-bit little-endian before/after Opus.
+- **Downlink pacing:** the server sends the first ~5 packets of each sentence immediately
+  (fills your jitter buffer fast → low first-audio latency), then paces the rest at one
+  frame (60 ms) so it emits at playback rate and a small device buffer never overflows on
+  long replies. Just play packets as they arrive; keep ~100–200 ms of jitter buffer.
 - If you cannot do Opus, use `audio_codec=pcm16` (uplink) and `audio_out=url` (downlink,
   the server returns an `audio_url` to fetch) — simpler but ~10× more bandwidth.
 
@@ -118,7 +122,46 @@ It captures the mic at 16 kHz, encodes 60 ms Opus frames, streams them, decodes 
 24 kHz reply frames between `audio_start`/`audio_end`, and plays them — with
 half-duplex mic muting during playback.
 
-## 6. Other modes (same endpoint)
+## 6. Browser client (WebCodecs Opus downlink)
+
+Browsers can receive the streamed Opus reply (instead of fetching WAV URLs) using the
+**WebCodecs** `AudioDecoder` — ~10× less downlink bandwidth, gapless playback. Connect
+with `audio_out=opus&output_sample_rate=24000`, set `ws.binaryType = "arraybuffer"`:
+
+```js
+const dec = new AudioDecoder({
+  output: (audioData) => {
+    // copy planar f32 -> AudioBuffer -> schedule on an AudioContext timeline
+    const buf = ctx.createBuffer(1, audioData.numberOfFrames, audioData.sampleRate);
+    const arr = new Float32Array(audioData.numberOfFrames);
+    audioData.copyTo(arr, { planeIndex: 0, format: "f32-planar" });
+    buf.copyToChannel(arr, 0);
+    audioData.close();
+    /* createBufferSource → start at max(ctx.currentTime, nextTime) → advance nextTime */
+  },
+  error: (e) => console.error(e),
+});
+dec.configure({ codec: "opus", sampleRate: 24000, numberOfChannels: 1 });
+
+let ts = 0; // microseconds
+ws.onmessage = (ev) => {
+  if (typeof ev.data !== "string") {            // binary = one 60 ms Opus packet
+    dec.decode(new EncodedAudioChunk({ type: "key", timestamp: ts, data: ev.data }));
+    ts += 60000;                                // 60 ms frames
+    return;
+  }
+  const m = JSON.parse(ev.data);                // audio_start / audio_end / response_text / …
+};
+```
+
+- Each Opus packet is self-contained → use `type:"key"` for every frame.
+- On `aborted` (barge-in), close + recreate the decoder and reset `ts` so stale audio can't play.
+- Needs a WebCodecs-capable browser (Chromium, Safari 16.4+, recent Firefox); fall back to
+  `audio_out=url` (fetch the WAV and `decodeAudioData`) otherwise.
+- The built-in playground (`/ui` → Conversation) has an **"Opus downlink"** checkbox that
+  does exactly this — use it to verify before writing your own client.
+
+## 7. Other modes (same endpoint)
 
 - **Audio → text only** (transcription service): `?output=text` (no `audio_out`). You
   get `user_transcript` + `response_text`, no audio.
@@ -126,7 +169,7 @@ half-duplex mic muting during playback.
   to hear a spoken reply (no mic).
 - **Text → text** (chatbot): `?output=text` + `{"type":"text",…}`.
 
-## 7. Notes for the device dev
+## 8. Notes for the device dev
 
 - The server's TTS/LLM run remotely; first use of a heavy STT (`qwen_omni`) loads a
   model — call `POST /v1/stt/warm?engine=qwen_omni` once at boot if you use it.
