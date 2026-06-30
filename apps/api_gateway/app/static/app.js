@@ -1306,7 +1306,7 @@ function renderChunkItem(payload) {
 }
 
 // ============================================================ conversation
-const conv = { ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null, assistantBubble: null };
+const conv = { ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null, assistantBubble: null, opusMode: false, opusDec: null, opusTs: 0, outRate: 24000 };
 
 function setConvStatus(text, state) {
   const node = el("conv-status");
@@ -1343,6 +1343,7 @@ function convStopAudio() {
   conv.sources = [];
   conv.nextTime = 0;
   conv.chain = Promise.resolve();
+  convResetOpus(); // flush any in-flight Opus decode so stale audio can't play
 }
 // Gapless playback: decode each chunk and schedule it back-to-back on the audio
 // timeline (no <audio> src-swap gaps, no queue underrun between sentences).
@@ -1365,6 +1366,72 @@ function convEnqueueAudio(url) {
       };
     })
     .catch((e) => convLog("audio error: " + e));
+}
+
+// ---- Opus downlink (WebCodecs): decode streamed Opus frames in-browser ----
+// Same gapless scheduling as convEnqueueAudio, but the audio arrives as raw 60ms
+// Opus packets (binary WS frames) decoded by AudioDecoder instead of fetched WAVs.
+function convOpusSupported() {
+  return typeof window.AudioDecoder === "function" && typeof window.EncodedAudioChunk === "function";
+}
+function convScheduleBuffer(buf) {
+  const ctx = convAudioCtx();
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(ctx.destination);
+  const start = Math.max(ctx.currentTime + 0.05, conv.nextTime || 0);
+  src.start(start);
+  conv.nextTime = start + buf.duration;
+  conv.sources.push(src);
+  src.onended = () => {
+    conv.sources = conv.sources.filter((s) => s !== src);
+  };
+}
+function convInitOpusDecoder() {
+  if (conv.opusDec) {
+    try {
+      conv.opusDec.close();
+    } catch {}
+  }
+  conv.opusTs = 0;
+  const ctx = convAudioCtx();
+  const dec = new AudioDecoder({
+    output: (audioData) => {
+      try {
+        const frames = audioData.numberOfFrames;
+        const buf = ctx.createBuffer(1, frames, audioData.sampleRate);
+        const arr = new Float32Array(frames);
+        audioData.copyTo(arr, { planeIndex: 0, format: "f32-planar" });
+        buf.copyToChannel(arr, 0);
+        convScheduleBuffer(buf);
+      } catch (e) {
+        convLog("opus output error: " + e);
+      } finally {
+        audioData.close();
+      }
+    },
+    error: (e) => convLog("opus decoder error: " + e),
+  });
+  dec.configure({ codec: "opus", sampleRate: conv.outRate, numberOfChannels: 1 });
+  conv.opusDec = dec;
+}
+function convFeedOpus(data) {
+  if (!conv.opusDec || conv.opusDec.state === "closed") convInitOpusDecoder();
+  try {
+    conv.opusDec.decode(new EncodedAudioChunk({ type: "key", timestamp: conv.opusTs, data }));
+    conv.opusTs += 60000; // 60ms frames (microseconds)
+  } catch (e) {
+    convLog("opus feed error: " + e);
+  }
+}
+function convResetOpus() {
+  if (conv.opusDec) {
+    try {
+      conv.opusDec.close();
+    } catch {}
+    conv.opusDec = null;
+  }
+  conv.opusTs = 0;
 }
 
 const convDetails = { stt: {}, tts: {}, llm: "" };
@@ -1416,6 +1483,7 @@ async function loadConversationEngines() {
     restoreAndBind("conv-stt-engine");
     restoreAndBind("conv-tts-engine");
     restoreAndBind("conv-language");
+    restoreAndBind("conv-opus");
     el("conv-tts-engine").addEventListener("change", convVoiceToggle);
     el("conv-stt-engine").addEventListener("change", updateConvEnginesInfo);
     el("conv-tts-engine").addEventListener("change", updateConvEnginesInfo);
@@ -1480,6 +1548,18 @@ async function startConversation() {
   const cpp = getPreproc();
   params += `&denoise=${cpp.denoise}&vad=${cpp.vad}&vad_backend=${encodeURIComponent(cpp.backend)}`;
 
+  // Opus downlink: stream reply audio as Opus frames decoded in-browser (WebCodecs).
+  // Falls back to the default URL/WAV path if unchecked or unsupported.
+  conv.opusMode = !!el("conv-opus")?.checked && convOpusSupported();
+  if (el("conv-opus")?.checked && !conv.opusMode) {
+    convLog("Opus downlink unsupported in this browser — using WAV/URL.");
+  }
+  if (conv.opusMode) {
+    conv.outRate = 24000;
+    params += `&output=audio,text&audio_out=opus&output_sample_rate=${conv.outRate}`;
+  }
+  convResetOpus();
+
   let capture;
   try {
     capture = createMicCapture({
@@ -1500,6 +1580,7 @@ async function startConversation() {
 
   const ws = new WebSocket(wsUrl(`/v1/conversation/stream?${params}`));
   conv.ws = ws;
+  if (conv.opusMode) ws.binaryType = "arraybuffer";
 
   ws.onopen = async () => {
     try {
@@ -1514,6 +1595,11 @@ async function startConversation() {
   };
 
   ws.onmessage = (event) => {
+    // Binary frames are Opus packets (audio_out=opus) — decode + play in-browser.
+    if (typeof event.data !== "string") {
+      convFeedOpus(event.data);
+      return;
+    }
     let d;
     try {
       d = JSON.parse(event.data);
@@ -1523,6 +1609,7 @@ async function startConversation() {
     convLog(`${d.event}: ${d.text ? d.text.slice(0, 60) : JSON.stringify({ ...d, event: undefined })}`);
     switch (d.event) {
       case "session_started": {
+        if (d.output_sample_rate) conv.outRate = d.output_sample_rate;
         // Authoritative: show exactly which models this session is using.
         const info = el("conv-engines-info");
         if (info) {
@@ -1551,8 +1638,12 @@ async function startConversation() {
           el("conv-dialogue").scrollTop = el("conv-dialogue").scrollHeight;
         }
         break;
+      case "audio_start":
+        // Opus stream chunk begins; ensure the decoder matches the server's rate.
+        if (d.codec === "opus" && d.sample_rate) conv.outRate = d.sample_rate;
+        break;
       case "audio_chunk":
-        if (d.audio_url) convEnqueueAudio(d.audio_url);
+        if (d.audio_url) convEnqueueAudio(d.audio_url); // URL/WAV mode (non-opus)
         break;
       case "turn_done":
         setConvStatus("● listening", "status-rec");

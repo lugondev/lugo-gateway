@@ -198,6 +198,11 @@
               <select id="conv-voice"></select>
             </label>
           </div>
+          <div class="row">
+            <label class="check" title="Receive reply audio as streamed Opus frames decoded in-browser (WebCodecs) instead of fetching WAV files — ~10x less bandwidth. Needs a WebCodecs-capable browser.">
+              <input type="checkbox" id="conv-opus" /> Opus downlink (low bandwidth)
+            </label>
+          </div>
           <p class="hint engine-detail" id="conv-engines-info">Active models will appear here when the session starts.</p>
           <div class="actions">
             <button id="conv-start">Start talking</button>
