@@ -6,7 +6,7 @@
 
 **Architecture:** Thin client — WiFi + WebSocket + Opus + I2S only; all STT/LLM/TTS run server-side. A pure-logic `ws_protocol` module (host-testable) parses gateway events and builds client messages; `wifi`, `audio` (ES8311+I2S), and `opus_codec` are ESP-IDF components; `main` runs the conversation state machine over three FreeRTOS tasks (mic capture, WS receive, speaker playback) with a half-duplex mute and a ~150 ms Opus jitter buffer.
 
-**Tech Stack:** ESP-IDF v5.x (C), `esp_websocket_client`, bundled `cJSON`, `espressif/esp_codec_dev` (ES8311 + `i2s_std`), Opus managed component, FreeRTOS. Host tests: plain C + vendored cJSON compiled with `cc`.
+**Tech Stack:** ESP-IDF v5.x (C), `esp_websocket_client`, `espressif/esp_codec_dev` (ES8311 + `i2s_std`), Opus managed component, FreeRTOS. `ws_protocol` is dependency-free standalone C (its own tiny JSON helper). Host tests: plain C compiled with `cc`.
 
 ## Global Constraints
 
@@ -16,7 +16,7 @@
 - Downlink audio: **Opus, 24000 Hz, mono, 60 ms = 1440 samples/frame**, one Opus packet per binary WS frame.
 - Gateway endpoint path: **`/v1/conversation/stream`**. Fixed query: `audio_codec=opus`, `output=audio,text`, `audio_out=opus`. Configurable query: `stt_engine` (default `whisper_mlx`), `tts_engine` (`vieneu`), `language` (`vi`), `sample_rate` (16000), `output_sample_rate` (24000).
 - Turn-taking: **hands-free, server-side VAD**; half-duplex — do NOT send mic uplink while playing the reply.
-- `ws_protocol` MUST NOT include any ESP-IDF header (it must compile on the host); its only dependency is cJSON.
+- `ws_protocol` MUST NOT include any ESP-IDF header and MUST have no third-party dependency (it must compile on the host with just `cc` and the C standard library). It uses a small internal JSON helper for the gateway's flat event objects — no cJSON.
 - PCM is signed 16-bit little-endian.
 - Out of scope (do not build): OLED, wake-word, OTA, web WiFi provisioning, push-to-talk.
 
@@ -27,12 +27,11 @@
 **Files:**
 - Create: `esp32-assistant/components/ws_protocol/include/ws_protocol.h`
 - Create: `esp32-assistant/components/ws_protocol/ws_protocol.c`
-- Create: `esp32-assistant/test/vendor/.gitkeep`
 - Create: `esp32-assistant/test/Makefile`
 - Create: `esp32-assistant/test/test_ws_protocol.c`
 
 **Interfaces:**
-- Consumes: cJSON (`cJSON_Parse`, `cJSON_GetObjectItem`, etc.).
+- Consumes: nothing — standalone C (`string.h`, `stdlib.h`, `stdio.h`). A small internal JSON helper (`find_value`/`get_string`/`get_int`) parses the gateway's flat event objects.
 - Produces:
   - `wsp_event_type_t` enum: `WSP_EV_UNKNOWN, WSP_EV_SESSION_STARTED, WSP_EV_SPEECH_START, WSP_EV_SPEECH_END, WSP_EV_PROCESSING, WSP_EV_USER_TRANSCRIPT, WSP_EV_RESPONSE_TEXT, WSP_EV_AUDIO_START, WSP_EV_AUDIO_END, WSP_EV_TURN_DONE, WSP_EV_ABORTED, WSP_EV_ERROR`.
   - `typedef struct { wsp_event_type_t type; int chunk_index; int frames; int sample_rate; char text[256]; } wsp_event_t;`
@@ -40,22 +39,12 @@
 
 - [ ] **Step 1: Set up the host test harness**
 
-Create `esp32-assistant/test/vendor/.gitkeep` (empty). Then fetch the single-file cJSON into the vendor dir (run from repo root):
-
-```bash
-cd esp32-assistant/test/vendor
-curl -fsSL -o cJSON.c https://raw.githubusercontent.com/DaveGamble/cJSON/v1.7.18/cJSON.c
-curl -fsSL -o cJSON.h https://raw.githubusercontent.com/DaveGamble/cJSON/v1.7.18/cJSON.h
-cd -
-```
-
-Create `esp32-assistant/test/Makefile`:
+No external dependency — `ws_protocol` is standalone C. Create `esp32-assistant/test/Makefile`:
 
 ```makefile
 CC ?= cc
-CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
-  -I../components/ws_protocol/include -Ivendor
-SRC = ../components/ws_protocol/ws_protocol.c vendor/cJSON.c
+CFLAGS = -std=c11 -Wall -Wextra -g -O0 -I../components/ws_protocol/include
+SRC = ../components/ws_protocol/ws_protocol.c
 .PHONY: test
 test: test_ws_protocol
 	./test_ws_protocol
@@ -191,37 +180,76 @@ Expected: link error — `undefined reference to wsp_parse_event` (no implementa
 
 - [ ] **Step 4: Write minimal implementation**
 
-Create `esp32-assistant/components/ws_protocol/ws_protocol.c`:
+Create `esp32-assistant/components/ws_protocol/ws_protocol.c`. The gateway's events are
+flat JSON objects with string and integer values, so a small key-scanning helper is
+enough — no JSON library. The helper matches a `"key"` token (the leading quote in the
+search pattern prevents `"sample_rate"` from matching inside `"output_sample_rate"`):
 
 ```c
 #include "ws_protocol.h"
-#include "cJSON.h"
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 
-static void copy_str(char *dst, size_t cap, const cJSON *item) {
-    dst[0] = '\0';
-    if (cJSON_IsString(item) && item->valuestring) {
-        strncpy(dst, item->valuestring, cap - 1);
-        dst[cap - 1] = '\0';
-    }
+static const char *skip_ws(const char *p) {
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    return p;
 }
 
-static int get_int(const cJSON *root, const char *key) {
-    const cJSON *it = cJSON_GetObjectItemCaseSensitive(root, key);
-    return cJSON_IsNumber(it) ? it->valueint : 0;
+// Locate the value for top-level "key"; returns pointer to first value char or NULL.
+static const char *find_value(const char *json, const char *key) {
+    char pat[64];
+    int n = snprintf(pat, sizeof pat, "\"%s\"", key);
+    if (n < 0 || (size_t)n >= sizeof pat) return NULL;
+    const char *p = strstr(json, pat);
+    if (!p) return NULL;
+    p = skip_ws(p + n);
+    if (*p != ':') return NULL;
+    return skip_ws(p + 1);
+}
+
+// Copy string value for key into out (unescaping common escapes). out is "" if absent.
+static void get_string(const char *json, const char *key, char *out, size_t cap) {
+    out[0] = '\0';
+    const char *p = find_value(json, key);
+    if (!p || *p != '"') return;
+    p++;
+    size_t o = 0;
+    while (*p && *p != '"') {
+        char c = *p;
+        if (c == '\\' && p[1]) {
+            p++;
+            switch (*p) {
+                case 'n': c = '\n'; break; case 't': c = '\t'; break;
+                case 'r': c = '\r'; break; case 'b': c = '\b'; break;
+                case 'f': c = '\f'; break; default: c = *p; break;
+            }
+        }
+        if (o < cap - 1) out[o++] = c;
+        p++;
+    }
+    out[o] = '\0';
+}
+
+// Read integer value for key; returns 0 if absent/non-numeric.
+static int get_int(const char *json, const char *key) {
+    const char *p = find_value(json, key);
+    if (!p) return 0;
+    char *end;
+    long v = strtol(p, &end, 10);
+    return end == p ? 0 : (int)v;
 }
 
 int wsp_parse_event(const char *json, wsp_event_t *out) {
     memset(out, 0, sizeof(*out));
-    cJSON *root = cJSON_Parse(json);
-    if (!root) return -1;
+    if (*skip_ws(json) != '{') return -1;
 
-    const cJSON *ev = cJSON_GetObjectItemCaseSensitive(root, "event");
-    const char *name = cJSON_IsString(ev) ? ev->valuestring : "";
+    char name[64];
+    get_string(json, "event", name, sizeof name);
 
     if (!strcmp(name, "session_started")) {
         out->type = WSP_EV_SESSION_STARTED;
-        out->sample_rate = get_int(root, "output_sample_rate");
+        out->sample_rate = get_int(json, "output_sample_rate");
     } else if (!strcmp(name, "speech_start")) {
         out->type = WSP_EV_SPEECH_START;
     } else if (!strcmp(name, "speech_end")) {
@@ -230,36 +258,30 @@ int wsp_parse_event(const char *json, wsp_event_t *out) {
         out->type = WSP_EV_PROCESSING;
     } else if (!strcmp(name, "user_transcript")) {
         out->type = WSP_EV_USER_TRANSCRIPT;
-        copy_str(out->text, sizeof(out->text),
-                 cJSON_GetObjectItemCaseSensitive(root, "text"));
+        get_string(json, "text", out->text, sizeof out->text);
     } else if (!strcmp(name, "response_text")) {
         out->type = WSP_EV_RESPONSE_TEXT;
-        out->chunk_index = get_int(root, "chunk_index");
-        copy_str(out->text, sizeof(out->text),
-                 cJSON_GetObjectItemCaseSensitive(root, "text"));
+        out->chunk_index = get_int(json, "chunk_index");
+        get_string(json, "text", out->text, sizeof out->text);
     } else if (!strcmp(name, "audio_start")) {
         out->type = WSP_EV_AUDIO_START;
-        out->chunk_index = get_int(root, "chunk_index");
-        out->frames = get_int(root, "frames");
-        out->sample_rate = get_int(root, "sample_rate");
+        out->chunk_index = get_int(json, "chunk_index");
+        out->frames = get_int(json, "frames");
+        out->sample_rate = get_int(json, "sample_rate");
     } else if (!strcmp(name, "audio_end")) {
         out->type = WSP_EV_AUDIO_END;
-        out->chunk_index = get_int(root, "chunk_index");
+        out->chunk_index = get_int(json, "chunk_index");
     } else if (!strcmp(name, "turn_done")) {
         out->type = WSP_EV_TURN_DONE;
     } else if (!strcmp(name, "aborted")) {
         out->type = WSP_EV_ABORTED;
-        copy_str(out->text, sizeof(out->text),
-                 cJSON_GetObjectItemCaseSensitive(root, "reason"));
+        get_string(json, "reason", out->text, sizeof out->text);
     } else if (!strcmp(name, "error")) {
         out->type = WSP_EV_ERROR;
-        copy_str(out->text, sizeof(out->text),
-                 cJSON_GetObjectItemCaseSensitive(root, "message"));
+        get_string(json, "message", out->text, sizeof out->text);
     } else {
         out->type = WSP_EV_UNKNOWN;
     }
-
-    cJSON_Delete(root);
     return 0;
 }
 ```
@@ -286,7 +308,7 @@ git commit -m "feat(esp32): ws_protocol event parser + host test harness"
 - Modify: `esp32-assistant/test/test_ws_protocol.c`
 
 **Interfaces:**
-- Consumes: cJSON.
+- Consumes: nothing (standalone C).
 - Produces:
   - `int wsp_build_control(char *buf, size_t buflen, const char *type);` — writes `{"type":"<type>"}` (e.g. `flush`, `abort`, `reset`, `end`). Returns string length, or -1 if buffer too small.
   - `int wsp_build_text(char *buf, size_t buflen, const char *text);` — writes `{"type":"text","text":"<text>"}` with proper JSON escaping. Returns length or -1.
@@ -335,32 +357,54 @@ Expected: link error — `undefined reference to wsp_build_control`.
 - [ ] **Step 3: Write minimal implementation** — append to `ws_protocol.c`:
 
 ```c
-#include <stdio.h>
-
-static int emit(char *buf, size_t buflen, cJSON *root) {
-    int rc = -1;
-    if (cJSON_PrintPreallocated(root, buf, (int)buflen, false)) {
-        rc = (int)strlen(buf);
+// Append src to buf at *o (cap total), JSON-escaping " \ and control chars.
+// Returns false on overflow.
+static bool append_escaped(char *buf, size_t cap, size_t *o, const char *src) {
+    for (; *src; src++) {
+        const char *esc = NULL;
+        switch (*src) {
+            case '"':  esc = "\\\""; break;
+            case '\\': esc = "\\\\"; break;
+            case '\n': esc = "\\n";  break;
+            case '\t': esc = "\\t";  break;
+            case '\r': esc = "\\r";  break;
+        }
+        if (esc) {
+            if (*o + 2 >= cap) return false;
+            buf[(*o)++] = esc[0]; buf[(*o)++] = esc[1];
+        } else {
+            if (*o + 1 >= cap) return false;
+            buf[(*o)++] = *src;
+        }
     }
-    cJSON_Delete(root);
-    return rc;
+    return true;
 }
 
 int wsp_build_control(char *buf, size_t buflen, const char *type) {
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "type", type);
-    return emit(buf, buflen, root);
+    int n = snprintf(buf, buflen, "{\"type\":\"%s\"}", type);
+    if (n < 0 || (size_t)n >= buflen) return -1;
+    return n;
 }
 
 int wsp_build_text(char *buf, size_t buflen, const char *text) {
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "type", "text");
-    cJSON_AddStringToObject(root, "text", text);
-    return emit(buf, buflen, root);
+    const char *prefix = "{\"type\":\"text\",\"text\":\"";
+    const char *suffix = "\"}";
+    size_t o = 0;
+    size_t plen = strlen(prefix), slen = strlen(suffix);
+    if (plen + slen >= buflen) return -1;
+    memcpy(buf, prefix, plen); o = plen;
+    if (!append_escaped(buf, buflen - slen, &o, text)) return -1;
+    memcpy(buf + o, suffix, slen); o += slen;
+    buf[o] = '\0';
+    return (int)o;
 }
 ```
 
-Note: `cJSON_PrintPreallocated` with `fmt=false` emits compact JSON and returns false (→ -1) when the buffer is too small, satisfying `test_build_too_small`.
+Note: control message types (`flush`/`abort`/`reset`/`end`) are fixed tokens with no
+characters needing escaping, so `wsp_build_control` uses a plain `snprintf` whose
+truncation check (`n >= buflen`) returns -1 for a too-small buffer, satisfying
+`test_build_too_small`. `wsp_build_text` reserves room for the closing `"}` before
+escaping the body.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -544,8 +588,7 @@ dependencies:
 ```cmake
 idf_component_register(
     SRCS "ws_protocol.c"
-    INCLUDE_DIRS "include"
-    REQUIRES json)
+    INCLUDE_DIRS "include")
 ```
 
 `esp32-assistant/components/wifi/CMakeLists.txt`:
