@@ -11,6 +11,7 @@ package is present (e.g. the CPU-only Linux deploy). Weights download on first u
 """
 
 import asyncio
+import concurrent.futures
 import os
 import platform
 import tempfile
@@ -21,6 +22,18 @@ from app.schemas.stt import STTResult
 from app.services.stt.base import STTProvider
 
 _MODEL_CACHE: dict[str, object] = {}
+
+# A single dedicated worker thread for ALL Qwen3-ASR GPU work (model build + every
+# transcribe + warm). MLX is not safe for concurrent cross-thread use: its streams are
+# thread-local, so a Session built on one thread and used on another — or two builds
+# racing on different threads — corrupts MLX state ("There is no Stream(gpu, N) in
+# current thread", or a segfault). asyncio.to_thread uses a *pool* of threads, and the
+# conversation warms STT in the background while the user speaks, so turn-1 transcribe
+# would otherwise race the warm's build on a different thread. Pinning to one thread
+# makes the build single-flight and keeps all MLX work on the same thread.
+_INFER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="qwen3-asr"
+)
 
 
 def _is_apple_silicon() -> bool:
@@ -110,11 +123,14 @@ class Qwen3AsrProvider(STTProvider):
         raise RuntimeError("Qwen3-ASR needs mlx-qwen3-asr (Apple) or qwen-asr (CUDA) installed")
 
     def warm(self) -> None:
+        # Build the model on the dedicated inference thread (not the caller's thread),
+        # so the Session that later serves transcribes lives on the same thread.
         try:
-            if self._backend() == "mlx":
-                self._mlx_session()
-            elif self._backend() == "cuda":
-                self._cuda_model()
+            backend = self._backend()
+            if backend == "mlx":
+                _INFER_EXECUTOR.submit(self._mlx_session).result()
+            elif backend == "cuda":
+                _INFER_EXECUTOR.submit(self._cuda_model).result()
         except Exception:  # noqa: BLE001 - best-effort warm
             pass
 
@@ -124,7 +140,10 @@ class Qwen3AsrProvider(STTProvider):
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 f.write(audio_bytes)
                 tmp = f.name
-            text = await asyncio.to_thread(self._transcribe, tmp, language)
+            # Run on the single dedicated thread so the model is built once and all MLX
+            # work stays thread-pinned (see _INFER_EXECUTOR above).
+            loop = asyncio.get_running_loop()
+            text = await loop.run_in_executor(_INFER_EXECUTOR, self._transcribe, tmp, language)
             return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
         finally:
             if tmp and os.path.isfile(tmp):
