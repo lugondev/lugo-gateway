@@ -24,7 +24,7 @@ from app.services.stt.service import stt_service
 from app.schemas.tts import TTSRequest
 from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
-from app.services.tts.streaming import prefetch_synthesis
+from app.services.tts.streaming import pacing_delays, prefetch_synthesis
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/conversation", tags=["conversation"])
@@ -277,7 +277,18 @@ async def conversation_stream(websocket: WebSocket) -> None:
                             text=sentence if want_text else None,
                             codec="opus", sample_rate=output_sample_rate, frames=len(packets),
                         )
-                        for pkt in packets:
+                        # Pace packets at real-time after an initial burst so the
+                        # device buffer isn't flooded on long replies (xiaozhi-style).
+                        if settings.conversation_opus_pace and packets:
+                            frame_s = opus_encoder.frame / opus_encoder.sample_rate
+                            delays = pacing_delays(
+                                len(packets), settings.conversation_opus_prebuffer_frames, frame_s
+                            )
+                        else:
+                            delays = [0.0] * len(packets)
+                        for delay, pkt in zip(delays, packets):
+                            if delay:
+                                await asyncio.sleep(delay)
                             await websocket.send_bytes(pkt)
                         await send("audio_end", turn=turn, chunk_index=index)
                     else:

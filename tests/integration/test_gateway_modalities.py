@@ -79,7 +79,12 @@ def _opus_ok():
 
 
 @pytest.mark.skipif(not _opus_ok(), reason="libopus not loadable")
-def test_text_to_opus_frames():
+def test_text_to_opus_frames(monkeypatch):
+    # Verify Opus framing only; disable real-time pacing so the test doesn't sleep
+    # through the (multi-second) mock reply audio. Pacing schedule is unit-tested.
+    from app.core.settings import settings
+
+    monkeypatch.setattr(settings, "conversation_opus_pace", False)
     c = TestClient(app)
     url = "/v1/conversation/stream?stt_engine=stub-gw&tts_engine=omnivoice&output=audio&audio_out=opus&output_sample_rate=24000"
     with c.websocket_connect(url) as ws:

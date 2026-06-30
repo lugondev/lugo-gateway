@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from app.services.tts.streaming import prefetch_synthesis
+from app.services.tts.streaming import pacing_delays, prefetch_synthesis
 
 
 async def _agen(items):
@@ -70,6 +70,23 @@ async def test_propagates_synth_error():
         async for x in agen:
             got.append(x)
     assert got[0] == (0, "a", "a")
+
+
+def test_pacing_delays_prebuffer_then_paced():
+    # First `prebuffer` frames go out immediately (fill the device jitter buffer),
+    # then each subsequent frame is paced by one frame duration (real-time playback).
+    d = pacing_delays(10, prebuffer=3, frame_s=0.06)
+    assert d[:3] == [0.0, 0.0, 0.0]
+    assert d[3:] == [0.06] * 7
+    assert len(d) == 10
+
+
+def test_pacing_delays_all_immediate_when_fewer_than_prebuffer():
+    assert pacing_delays(2, prebuffer=5, frame_s=0.06) == [0.0, 0.0]
+
+
+def test_pacing_delays_empty():
+    assert pacing_delays(0, prebuffer=5, frame_s=0.06) == []
 
 
 async def test_propagates_producer_error():

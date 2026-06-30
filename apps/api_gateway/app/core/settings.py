@@ -126,6 +126,12 @@ class Settings(BaseSettings):
     # next sentence's audio is prepared while the current is being sent. 0/1 = no
     # prefetch. Bounds memory/in-flight synth per turn.
     conversation_tts_lookahead: int = 2
+    # Opus push (audio_out=opus, for ESP32/RPi): pace outgoing packets at real-time
+    # after an initial burst, so the device's small buffer isn't flooded on long
+    # replies. The first `prebuffer` frames go out immediately (fast first audio),
+    # the rest are spaced by one frame (60ms). Set pace=false to dump all at once.
+    conversation_opus_pace: bool = True
+    conversation_opus_prebuffer_frames: int = 5
     conversation_language: str = "vi"        # STT language hint; "" = auto-detect
     # Optional OpenAI-compatible chat endpoint (Ollama/LM Studio/vLLM/OpenAI).
     # Empty base url -> built-in echo responder (no external service).

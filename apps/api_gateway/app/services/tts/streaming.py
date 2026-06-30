@@ -13,6 +13,18 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 _SENTINEL = object()
 
 
+def pacing_delays(n_packets: int, prebuffer: int, frame_s: float) -> list[float]:
+    """Delay (seconds) to wait BEFORE sending each Opus packet, for real-time pacing.
+
+    The first ``prebuffer`` packets go out with no delay to fill the device's jitter
+    buffer fast (lowest first-audio latency); every packet after that is paced by one
+    frame duration so the server emits at playback rate and the device buffer stays
+    bounded instead of being flooded. Mirrors xiaozhi-server's pre-buffer +
+    AudioRateController.
+    """
+    return [0.0 if i < prebuffer else frame_s for i in range(n_packets)]
+
+
 async def prefetch_synthesis(
     sentences: AsyncIterator[str],
     synth: Callable[[str], Awaitable],
