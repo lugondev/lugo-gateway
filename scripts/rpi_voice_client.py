@@ -2,7 +2,7 @@
 """Reference voice client for Raspberry Pi (or any Python host).
 
 Full-duplex voice loop against the gateway: capture mic → Opus (16 kHz mono) → send;
-receive Opus (24 kHz mono) reply frames → play. The heavy STT/LLM/TTS run on the
+receive Opus (16 kHz mono) reply frames → play. The heavy STT/LLM/TTS run on the
 server; the device only does audio capture/playback + Opus + WebSocket.
 
 Install (Raspberry Pi OS / Debian):
@@ -27,7 +27,7 @@ import sounddevice as sd
 import websockets
 
 IN_RATE = 16000          # mic / uplink sample rate
-OUT_RATE = 24000         # downlink (server output_sample_rate)
+OUT_RATE = 16000         # downlink (server output_sample_rate)
 FRAME_MS = 60
 IN_FRAME = IN_RATE * FRAME_MS // 1000     # 960 samples
 OUT_FRAME_MAX = OUT_RATE * 120 // 1000    # decode buffer (max Opus frame)
