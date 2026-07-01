@@ -69,6 +69,15 @@ class Settings(BaseSettings):
     # short conversation turns). Initial prompt seeds Vietnamese orthography; empty = off.
     whisper_condition_on_previous_text: bool = False
     whisper_initial_prompt: str = ""
+    # Optional hotword/glossary file (one domain term per line, "#" comments). Merged
+    # into the Whisper initial prompt to bias recognition toward domain vocabulary
+    # (product names, wake-words, commands) — the Whisper-family analogue of a
+    # FunASR hotword list. Empty = no glossary biasing.
+    stt_glossary_path: str = ""
+    # Language preset -> (engine, language). One of: vi | en | multi | en_vi (see
+    # services/stt/profile.py). Empty = use conversation_stt_engine/language as-is.
+    # An explicit stt_engine/language (query param) still overrides the profile.
+    stt_profile: str = ""
 
     # whisper_mlx: Apple Silicon GPU path (mlx-whisper). ~7x faster than CPU faster-
     # whisper on M-series. Point at a locally converted MLX model dir (see
@@ -100,6 +109,13 @@ class Settings(BaseSettings):
     stt_noise_reduce_enabled: bool = False
     stt_noise_reduce_amount: float = 0.85
 
+    # VAD-segmented parallel transcription for long batch audio (FunASR-style): split
+    # on silence, transcribe segments concurrently, merge. Off by default; when on it
+    # only kicks in for clips at/over stt_segment_min_seconds.
+    stt_segment_long_enabled: bool = False
+    stt_segment_min_seconds: float = 30.0
+    stt_segment_concurrency: int = 4
+
     # Pyannote VAD model + optional Hugging Face token (gated models)
     pyannote_vad_model: str = "pyannote/segmentation-3.0"
     pyannote_auth_token: str = ""
@@ -113,14 +129,29 @@ class Settings(BaseSettings):
     )
 
     # Conversation (voice turn-taking) defaults
-    conversation_silence_ms: int = 700       # trailing silence that ends a turn
+    conversation_silence_ms: int = 700       # trailing silence that ends a turn (short utterance)
+    # Adaptive endpointing: for a long, clearly-finished utterance the required
+    # trailing silence shrinks toward this floor (lower turn latency) once the
+    # utterance passes conversation_adaptive_full_ms. Set == silence_ms to disable.
+    conversation_min_silence_ms: int = 450
+    conversation_adaptive_full_ms: int = 3000
     conversation_min_speech_ms: int = 300    # ignore utterances shorter than this
     conversation_rms_threshold: float = 0.015  # speech vs silence (float RMS)
     conversation_max_utterance_ms: int = 30000
     conversation_stt_engine: str = "whisper"  # better than vosk for Vietnamese
+    # Fast-path routing: short utterances (<= max_ms) go to a low-latency engine,
+    # longer/harder ones stay on the accurate default. Empty engine = disabled.
+    conversation_fast_stt_engine: str = ""
+    conversation_fast_stt_max_ms: int = 1500
     # When the conversation STT engine is audio-native (qwen_omni), let it answer the
     # audio directly in one pass instead of transcribe -> separate text LLM (gemma).
     conversation_audio_native: bool = True
+    # Chunked streaming STT (see services/stt/streaming_chunked.py): emit partial
+    # transcripts while the user is still speaking so ASR overlaps speech. Default OFF
+    # — enabling it on the live device path needs on-device tuning (partial cadence vs
+    # barge-in responsiveness); the component itself is tested and ready.
+    conversation_streaming_stt: bool = False
+    conversation_streaming_chunk_ms: int = 1000
     conversation_tts_engine: str = "vieneu"  # in-process & warm (~0.4s); OmniVoice CLI reloads per call (~7s)
     # How many reply sentences to synthesize ahead of sending (gapless playback). The
     # next sentence's audio is prepared while the current is being sent. 0/1 = no

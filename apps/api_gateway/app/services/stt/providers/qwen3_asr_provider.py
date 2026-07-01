@@ -23,6 +23,31 @@ from app.services.stt.base import STTProvider
 
 _MODEL_CACHE: dict[str, object] = {}
 
+# Size variants (Apache-2.0). 1.7B is more accurate (esp. multilingual); 0.6B is
+# lighter/faster. Shorthand -> full HF repo so callers can say "0.6B"/"1.7B".
+QWEN3_ASR_MODELS = {
+    "0.6b": "Qwen/Qwen3-ASR-0.6B",
+    "1.7b": "Qwen/Qwen3-ASR-1.7B",
+}
+
+# Runtime-selected model (e.g. benchmark A/B, language profile). None -> settings.
+_active_model: str | None = None
+
+
+def resolve_qwen3_asr_model(name: str) -> str:
+    """Map a size shorthand ('0.6B'/'1.7B') to its HF repo; pass full ids through."""
+    return QWEN3_ASR_MODELS.get((name or "").strip().lower(), name)
+
+
+def get_active_qwen3_asr_model() -> str:
+    return _active_model or settings.qwen3_asr_model
+
+
+def set_active_qwen3_asr_model(name: str | None) -> None:
+    """Override the active model at runtime (shorthand resolved); None resets to settings."""
+    global _active_model
+    _active_model = resolve_qwen3_asr_model(name) if name else None
+
 # A single dedicated worker thread for ALL Qwen3-ASR GPU work (model build + every
 # transcribe + warm). MLX is not safe for concurrent cross-thread use: its streams are
 # thread-local, so a Session built on one thread and used on another — or two builds
@@ -86,27 +111,29 @@ class Qwen3AsrProvider(STTProvider):
         return self._backend() is not None
 
     def detail(self) -> str:
-        model = settings.qwen3_asr_model.split("/")[-1]
+        model = get_active_qwen3_asr_model().split("/")[-1]
         backend = self._backend()
         where = {"mlx": "Apple GPU (MLX)", "cuda": "NVIDIA GPU (CUDA)"}.get(backend, "GPU")
         return f"{model} · {where} · multilingual incl. Vietnamese"
 
     def _mlx_session(self):
-        key = f"mlx:{settings.qwen3_asr_model}"
+        model = get_active_qwen3_asr_model()
+        key = f"mlx:{model}"
         if key not in _MODEL_CACHE:
             from mlx_qwen3_asr import Session
 
-            _MODEL_CACHE[key] = Session(settings.qwen3_asr_model)
+            _MODEL_CACHE[key] = Session(model)
         return _MODEL_CACHE[key]
 
     def _cuda_model(self):
-        key = f"cuda:{settings.qwen3_asr_model}"
+        model = get_active_qwen3_asr_model()
+        key = f"cuda:{model}"
         if key not in _MODEL_CACHE:
             import torch
             from qwen_asr import Qwen3ASRModel
 
             _MODEL_CACHE[key] = Qwen3ASRModel.from_pretrained(
-                settings.qwen3_asr_model,
+                model,
                 dtype=_cuda_dtype(torch),  # bf16 on Ampere+, fp16 on T4/Turing
                 device_map=settings.qwen3_asr_device or "cuda:0",
                 max_new_tokens=256,

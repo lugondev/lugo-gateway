@@ -22,6 +22,8 @@ class VadEndpointer:
         max_utterance_ms: int = 30000,
         noise_factor: float = 2.5,
         preroll_ms: int = 300,
+        min_silence_ms: int | None = None,
+        adaptive_full_ms: int = 3000,
     ) -> None:
         self.sample_rate = sample_rate
         self.silence_ms = silence_ms
@@ -30,6 +32,11 @@ class VadEndpointer:
         self.max_utterance_ms = max_utterance_ms
         self.noise_factor = noise_factor
         self.preroll_ms = preroll_ms  # lead-in kept before speech is detected
+        # Adaptive endpointing: required trailing silence shrinks from silence_ms
+        # toward min_silence_ms as the utterance length approaches adaptive_full_ms.
+        # min_silence_ms=None (or >= silence_ms) disables adaptation (fixed window).
+        self.min_silence_ms = silence_ms if min_silence_ms is None else min_silence_ms
+        self.adaptive_full_ms = adaptive_full_ms
         self.reset()
 
     def reset(self) -> None:
@@ -87,7 +94,10 @@ class VadEndpointer:
         if self._speaking:
             self._collected.extend(pcm)  # keep a little trailing silence for the decoder
             self._silence_acc_ms += frame_ms
-            if self._silence_acc_ms >= self.silence_ms and self._speech_ms >= self.min_speech_ms:
+            if (
+                self._silence_acc_ms >= self._effective_silence_ms()
+                and self._speech_ms >= self.min_speech_ms
+            ):
                 return self._emit_endpoint()
         else:
             # Idle: keep a rolling pre-roll buffer of the most recent audio.
@@ -97,6 +107,17 @@ class VadEndpointer:
                 _, dropped = self._preroll.popleft()
                 self._preroll_ms -= dropped
         return None
+
+    def _effective_silence_ms(self) -> float:
+        """Trailing silence required to end the current turn.
+
+        Interpolates linearly from ``silence_ms`` (short utterance) down to
+        ``min_silence_ms`` as ``speech_ms`` grows to ``adaptive_full_ms``.
+        """
+        if self.min_silence_ms >= self.silence_ms or self.adaptive_full_ms <= 0:
+            return self.silence_ms
+        ratio = min(1.0, self._speech_ms / self.adaptive_full_ms)
+        return self.silence_ms - (self.silence_ms - self.min_silence_ms) * ratio
 
     def flush(self) -> bytes | None:
         """End-of-stream: return any buffered utterance that meets the minimum."""

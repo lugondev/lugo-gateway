@@ -5,6 +5,7 @@ from pathlib import Path
 from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.stt.base import STTProvider
+from app.services.stt.glossary import resolve_initial_prompt
 
 _MODEL_CACHE: dict[str, object] = {}
 
@@ -93,7 +94,9 @@ class WhisperProvider(STTProvider):
                 vad_filter=settings.whisper_vad_filter,
                 beam_size=settings.whisper_beam_size,
                 condition_on_previous_text=settings.whisper_condition_on_previous_text,
-                initial_prompt=settings.whisper_initial_prompt or None,
+                initial_prompt=resolve_initial_prompt(
+                    settings.whisper_initial_prompt, settings.stt_glossary_path
+                ),
             )
 
             text_parts = [segment.text.strip() for segment in segments if segment.text.strip()]

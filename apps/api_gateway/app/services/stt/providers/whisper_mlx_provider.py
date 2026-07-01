@@ -16,6 +16,7 @@ import tempfile
 from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.stt.base import STTProvider
+from app.services.stt.glossary import resolve_initial_prompt
 
 
 class WhisperMlxProvider(STTProvider):
@@ -39,7 +40,9 @@ class WhisperMlxProvider(STTProvider):
             path_or_hf_repo=settings.whisper_mlx_model_path,
             language=language,
             condition_on_previous_text=settings.whisper_condition_on_previous_text,
-            initial_prompt=settings.whisper_initial_prompt or None,
+            initial_prompt=resolve_initial_prompt(
+                settings.whisper_initial_prompt, settings.stt_glossary_path
+            ),
         )
         return (result.get("text") or "").strip()
 

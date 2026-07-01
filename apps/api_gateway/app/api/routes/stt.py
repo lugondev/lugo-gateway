@@ -4,12 +4,19 @@ import uuid
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 
-from app.core.audio import preprocess_pcm16, preprocess_wav_bytes
+from app.core.audio import (
+    pcm16_to_float_array,
+    preprocess_pcm16,
+    preprocess_wav_bytes,
+    read_wav,
+    wav_duration_seconds,
+)
 from app.core.errors import AppError
 from app.core.settings import settings
 from app.schemas.common import StreamEvent
 from app.schemas.stt import STTRequest, STTResult
 from app.services.stt.base import STTStream
+from app.services.stt.segmented import transcribe_long
 from app.services.stt.service import stt_service
 from app.services.vad import apply_vad
 from app.streaming.event_bus import event_bus
@@ -36,6 +43,7 @@ async def transcribe(
     denoise: bool | None = Form(default=None),
     vad: bool | None = Form(default=None),
     vad_backend: str | None = Form(default=None),
+    segment: bool | None = Form(default=None),
 ) -> dict:
     payload = STTRequest(engine=engine, language=language)
     provider = stt_service.get_provider(payload.engine)
@@ -50,8 +58,21 @@ async def transcribe(
         vad_fn=lambda s, sr: apply_vad(s, sr, backend),
     )
 
+    # Long clips: split on silence and transcribe segments in parallel (higher
+    # throughput). Only when enabled and the clip is at/over the length threshold.
+    use_segment = _resolve_flag(segment, settings.stt_segment_long_enabled)
     try:
-        result = await provider.transcribe_bytes(audio_bytes, payload.language)
+        if use_segment and wav_duration_seconds(audio_bytes) >= settings.stt_segment_min_seconds:
+            pcm, sample_rate, _, _ = read_wav(audio_bytes)
+            result = await transcribe_long(
+                provider,
+                pcm16_to_float_array(pcm),
+                sample_rate,
+                language=payload.language,
+                concurrency=settings.stt_segment_concurrency,
+            )
+        else:
+            result = await provider.transcribe_bytes(audio_bytes, payload.language)
     except AppError:
         raise  # handled globally -> clean JSON
     except RuntimeError as exc:
