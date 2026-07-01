@@ -12,12 +12,16 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 import httpx
 
 from app.core.errors import LLMUnavailableError
 from app.core.settings import settings
 from app.services.tts.segmenter import SentenceAggregator, segment_text
+
+if TYPE_CHECKING:
+    from app.services.conversation.tools.base import ToolContext, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +73,19 @@ class Responder(ABC):
         """Given chat history [{role, content}, ...] return the assistant reply."""
         raise NotImplementedError
 
-    async def reply_stream(self, history: list[dict]) -> AsyncIterator[str]:
+    async def reply_stream(
+        self,
+        history: list[dict],
+        registry: "ToolRegistry | None" = None,
+        ctx: "ToolContext | None" = None,
+        max_iters: int = 3,
+    ) -> AsyncIterator[str]:
         """Yield the reply sentence-by-sentence for low-latency TTS.
 
         Default: produce the full reply, then segment it. LLM backends override
         this to stream tokens and emit sentences as they complete.
+        ``registry``/``ctx``/``max_iters`` are accepted for interface compatibility
+        but ignored by non-LLM responders.
         """
         reply = await self.reply(history)
         for sentence in segment_text(reply) or ([reply] if reply else []):
@@ -125,7 +137,72 @@ class OpenAICompatResponder(Responder):
                 "or check CONVERSATION_LLM_BASE_URL."
             ) from exc
 
-    async def reply_stream(self, history: list[dict]) -> AsyncIterator[str]:
+    async def reply_stream(
+        self,
+        history: list[dict],
+        registry: "ToolRegistry | None" = None,
+        ctx: "ToolContext | None" = None,
+        max_iters: int = 3,
+    ) -> AsyncIterator[str]:
+        """Stream the assistant reply sentence-by-sentence.
+
+        When *registry* is provided the method runs a 2-phase tool-calling loop
+        before streaming:
+          1. Non-streaming detect POST — checks ``choices[0].message.tool_calls``.
+          2. If tool_calls present: run each tool, append result messages, repeat
+             up to *max_iters*.
+          3. Stream final content from the (possibly augmented) history.
+        """
+        if registry is not None and len(registry) > 0:
+            async for chunk in self._tool_then_stream(history, registry, ctx, max_iters):
+                yield chunk
+        else:
+            async for chunk in self._stream_history(history):
+                yield chunk
+
+    async def _tool_then_stream(
+        self,
+        history: list[dict],
+        registry: "ToolRegistry",
+        ctx: "ToolContext | None",
+        max_iters: int,
+    ) -> AsyncIterator[str]:
+        from app.services.conversation.tools.base import ToolContext as _TC
+
+        working = list(history)
+        ctx = ctx or _TC()
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+
+        for _ in range(max_iters):
+            messages = [{"role": "system", "content": self.system_prompt}, *working]
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers=headers,
+                    json={"model": self.model, "messages": messages, "tools": registry.openai_schema()},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+
+            assistant_msg = data["choices"][0]["message"]
+            tool_calls = assistant_msg.get("tool_calls")
+            if not tool_calls:
+                break
+
+            working.append(assistant_msg)
+            for tc in tool_calls:
+                tool_name = tc["function"]["name"]
+                try:
+                    tool_args = json.loads(tc["function"].get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    tool_args = {}
+                result = await registry.run(tool_name, tool_args, ctx)
+                working.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+
+        async for chunk in self._stream_history(working):
+            yield chunk
+
+    async def _stream_history(self, history: list[dict]) -> AsyncIterator[str]:
         messages = [{"role": "system", "content": self.system_prompt}, *history]
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         agg = SentenceAggregator()

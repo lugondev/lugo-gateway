@@ -11,6 +11,8 @@ from app.core.audio import pcm16_to_wav_bytes, preprocess_pcm16, wav_file_to_pcm
 from app.core.errors import AppError
 from app.core.settings import settings
 from app.services.conversation.endpointer import VadEndpointer
+from app.services.conversation.tools.base import ToolContext, ToolRegistry
+from app.services.conversation.tools.local import LocalToolSource
 from app.services.conversation.responder import (
     build_responder,
     get_active_llm_api_key,
@@ -19,7 +21,9 @@ from app.services.conversation.responder import (
     reset_active_llm_config,
     set_active_llm_config,
 )
+from app.services.stt.profile import resolve_stt_profile
 from app.services.stt.providers.whisper_provider import get_active_whisper_model
+from app.services.stt.routing import select_stt_engine
 from app.services.stt.service import stt_service
 from app.schemas.tts import TTSRequest
 from app.services.tts.segmenter import segment_text
@@ -98,10 +102,18 @@ async def conversation_stream(websocket: WebSocket) -> None:
     session_id = str(uuid.uuid4())
     q = websocket.query_params
 
-    stt_engine = q.get("stt_engine") or settings.conversation_stt_engine or settings.default_stt_engine
+    # Language profile (vi|en|multi|en_vi) sets the engine + language default; an
+    # explicit stt_engine/language query param still wins over it.
+    profile = resolve_stt_profile(q.get("profile") or settings.stt_profile)
+    if profile:
+        prof_engine, prof_lang = profile
+        stt_engine = q.get("stt_engine") or prof_engine
+        language = q.get("language") or prof_lang
+    else:
+        stt_engine = q.get("stt_engine") or settings.conversation_stt_engine or settings.default_stt_engine
+        language = q.get("language") or settings.conversation_language or None
     tts_engine = q.get("tts_engine") or settings.conversation_tts_engine or settings.default_tts_engine
     voice = q.get("voice") or None
-    language = q.get("language") or settings.conversation_language or None
     sample_rate = int(q.get("sample_rate", settings.stt_stream_sample_rate))
     # Audio transport: pcm16 (default) or opus (embedded ESP32/RPi + browser WebCodecs;
     # ~10x less bandwidth). Server decodes Opus packets -> PCM16 for the endpointer.
@@ -154,6 +166,14 @@ async def conversation_stream(websocket: WebSocket) -> None:
 
     responder = build_responder()
 
+    # Tool registry: opt-in via CONVERSATION_TOOLS_ENABLED=1.  Default OFF so
+    # existing behaviour is never broken.  LocalToolSource adds get_time and
+    # device_command; McpToolSource can be added here when an MCP endpoint is
+    # configured.
+    tool_registry: ToolRegistry | None = None
+    if settings.conversation_tools_enabled:
+        tool_registry = ToolRegistry([LocalToolSource()])
+
     # Detail strings so the UI can show exactly WHICH models are active this session.
     if hasattr(stt_provider, "detail"):
         stt_detail = stt_provider.detail()  # whisper_mlx / whisper_gemma expose this
@@ -180,6 +200,8 @@ async def conversation_stream(websocket: WebSocket) -> None:
         min_speech_ms=settings.conversation_min_speech_ms,
         rms_threshold=settings.conversation_rms_threshold,
         max_utterance_ms=settings.conversation_max_utterance_ms,
+        min_silence_ms=settings.conversation_min_silence_ms,
+        adaptive_full_ms=settings.conversation_adaptive_full_ms,
     )
     history: list[dict] = []
     turn = 0
@@ -220,15 +242,24 @@ async def conversation_stream(websocket: WebSocket) -> None:
     async def send(event: str, **payload) -> None:
         await websocket.send_json({"event": event, **payload})
 
-    async def handle_turn(audio_pcm: bytes | None = None, text_input: str | None = None) -> None:
+    async def _emit_command(cmd_payload: dict) -> None:
+        await websocket.send_json(cmd_payload)
+
+    tool_ctx = ToolContext(emit_command=_emit_command, language=language or None)
+
+    async def handle_turn(
+        audio_pcm: bytes | None = None, text_input: str | None = None, speech_ms: float = 0.0
+    ) -> None:
         try:
-            await _run_turn(audio_pcm=audio_pcm, text_input=text_input)
+            await _run_turn(audio_pcm=audio_pcm, text_input=text_input, speech_ms=speech_ms)
         except Exception as exc:  # noqa: BLE001 - keep the conversation alive
             logger.exception("conversation turn failed")
             await send("error", message=str(exc))
             await send("turn_done", turn=turn)
 
-    async def _run_turn(audio_pcm: bytes | None = None, text_input: str | None = None) -> None:
+    async def _run_turn(
+        audio_pcm: bytes | None = None, text_input: str | None = None, speech_ms: float = 0.0
+    ) -> None:
         nonlocal turn
         turn += 1
         await send("processing", turn=turn)
@@ -306,7 +337,15 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 await send("turn_done", turn=turn, skipped="empty text")
                 return
             history.append({"role": "user", "content": user_text})
-            parts = await _stream_to_tts(responder.reply_stream(history), responder.name)
+            parts = await _stream_to_tts(
+                responder.reply_stream(
+                    history,
+                    registry=tool_registry,
+                    ctx=tool_ctx,
+                    max_iters=settings.conversation_tool_max_iters,
+                ),
+                responder.name,
+            )
             history.append({"role": "assistant", "content": " ".join(parts)})
             await send("turn_done", turn=turn)
             return
@@ -348,13 +387,30 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 return
             logger.info("qwen_omni audio-native reply empty; falling back to transcribe + LLM")
 
+        # Fast-path routing: short commands can go to a lower-latency engine.
+        turn_provider = stt_provider
+        turn_engine = stt_engine
+        if speech_ms and settings.conversation_fast_stt_engine:
+            chosen = select_stt_engine(
+                speech_ms,
+                stt_engine,
+                settings.conversation_fast_stt_engine,
+                settings.conversation_fast_stt_max_ms,
+            )
+            if chosen != stt_engine:
+                try:
+                    turn_provider = stt_service.get_provider(chosen)
+                    turn_engine = chosen
+                except AppError:
+                    logger.info("fast STT engine %s unavailable; using %s", chosen, stt_engine)
+
         try:
-            stt_result = await stt_provider.transcribe_bytes(wav, language)
+            stt_result = await turn_provider.transcribe_bytes(wav, language)
         except RuntimeError as exc:
             await send("error", message=f"STT failed: {exc}")
             return
         user_text = (stt_result.text or "").strip()
-        await send("user_transcript", turn=turn, text=user_text, engine=stt_engine)
+        await send("user_transcript", turn=turn, text=user_text, engine=turn_engine)
         if not user_text:
             await send("turn_done", turn=turn, skipped="empty transcript")
             return
@@ -401,7 +457,9 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 elif event["event"] == "endpoint":
                     await abort_turn("superseded")
                     await send("speech_end", speech_ms=round(event["speech_ms"]))
-                    current_turn = asyncio.create_task(handle_turn(event["audio"]))
+                    current_turn = asyncio.create_task(
+                        handle_turn(event["audio"], speech_ms=event["speech_ms"])
+                    )
 
             if message.get("text") is not None:
                 try:
