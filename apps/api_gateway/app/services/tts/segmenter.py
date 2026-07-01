@@ -8,9 +8,50 @@ import re
 
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?…。！？])\s+|\n+")
 
+# Emoji / pictographic symbols that must never reach TTS (they get mispronounced
+# or read out as their Unicode name). Covers the common emoji blocks plus the
+# ZWJ / variation-selector / keycap glue used to build composite emoji. A plain
+# digit like "1" in a keycap "1️⃣" survives (only the FE0F + 20E3 glue is dropped).
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001f1e6-\U0001f1ff"  # regional indicators (flags)
+    "\U0001f300-\U0001f5ff"  # symbols & pictographs
+    "\U0001f600-\U0001f64f"  # emoticons
+    "\U0001f680-\U0001f6ff"  # transport & map
+    "\U0001f700-\U0001f77f"  # alchemical
+    "\U0001f780-\U0001f7ff"  # geometric shapes extended
+    "\U0001f800-\U0001f8ff"  # supplemental arrows-C
+    "\U0001f900-\U0001f9ff"  # supplemental symbols & pictographs
+    "\U0001fa00-\U0001faff"  # symbols & pictographs extended-A
+    "\U0001f000-\U0001f0ff"  # mahjong / dominoes / playing cards
+    "\U00002300-\U000023ff"  # misc technical (⌚⏰⏳ …)
+    "\U00002600-\U000026ff"  # miscellaneous symbols (☀☎♻ …)
+    "\U00002700-\U000027bf"  # dingbats (✂✅✨ …)
+    "\U00002b00-\U00002bff"  # misc symbols & arrows (⭐⬅ …)
+    "\U0000fe00-\U0000fe0f"  # variation selectors
+    "\U0000200d"             # zero-width joiner
+    "\U000020e3"             # combining enclosing keycap
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def strip_emoji(text: str) -> str:
+    """Remove emoji/pictographic symbols so TTS never tries to speak them.
+
+    Also tidies the whitespace and stray punctuation gaps left behind, e.g.
+    "Xin chào 👋 !" -> "Xin chào!".
+    """
+    if not text:
+        return text
+    cleaned = _EMOJI_RE.sub("", text)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)          # collapse doubled spaces
+    cleaned = re.sub(r"\s+([,.;:!?…。！？])", r"\1", cleaned)  # no space before punctuation
+    return cleaned.strip()
+
 
 def segment_text(text: str, max_chars: int = 200) -> list[str]:
-    text = (text or "").strip()
+    text = strip_emoji((text or "").strip())
     if not text:
         return []
 
@@ -55,7 +96,7 @@ class SentenceAggregator:
         """Cut at the earliest clause boundary at/after the min length; else None."""
         for m in _CLAUSE_BOUNDARY.finditer(self._buf):
             if m.end() >= self.first_chunk_min_chars:
-                chunk = self._buf[: m.end()].strip()
+                chunk = strip_emoji(self._buf[: m.end()].strip())
                 self._buf = self._buf[m.end() :]
                 return chunk or None
         return None
@@ -73,19 +114,21 @@ class SentenceAggregator:
                 match = _SENTENCE_END.match(self._buf)
                 if not match:
                     break
-                sentence = match.group().strip()
+                sentence = strip_emoji(match.group().strip())
                 self._buf = self._buf[match.end() :]
                 if sentence:
                     out.append(sentence)
         # Force-flush an overly long run with no punctuation.
         if len(self._buf) >= self.max_chars:
-            out.append(self._buf.strip())
+            chunk = strip_emoji(self._buf.strip())
             self._buf = ""
             self._first_done = True
+            if chunk:
+                out.append(chunk)
         return out
 
     def flush(self) -> list[str]:
-        rest = self._buf.strip()
+        rest = strip_emoji(self._buf.strip())
         self._buf = ""
         self._first_done = True
         return [rest] if rest else []

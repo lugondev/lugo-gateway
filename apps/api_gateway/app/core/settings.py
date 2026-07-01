@@ -144,7 +144,10 @@ class Settings(BaseSettings):
     conversation_llm_timeout_seconds: float = 60.0
     conversation_system_prompt: str = (
         "You are a helpful, concise voice assistant. Reply in the user's language, "
-        "in 2-4 short sentences suitable for being spoken aloud."
+        "in 2-4 short sentences suitable for being spoken aloud. "
+        "Your reply is read aloud by text-to-speech, so write plain speakable prose only: "
+        "do NOT use emojis, emoticons, kaomoji, or decorative/pictographic symbols, "
+        "and avoid markdown, bullet points, or code blocks."
     )
 
     whisper_service_base_url: str = ""

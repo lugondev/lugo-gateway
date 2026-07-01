@@ -1,9 +1,29 @@
-from app.services.tts.segmenter import SentenceAggregator, segment_text
+from app.services.tts.segmenter import SentenceAggregator, segment_text, strip_emoji
 
 
 def test_empty_text_returns_no_chunks():
     assert segment_text("") == []
     assert segment_text("   ") == []
+
+
+def test_strip_emoji_removes_symbols_and_tidies_spacing():
+    assert strip_emoji("Xin chào 👋 bạn nhé! 😊") == "Xin chào bạn nhé!"
+    assert strip_emoji("Trời ☀️ đẹp 🎉🎉🎉") == "Trời đẹp"
+    # a digit inside a keycap emoji survives; only the glue is dropped
+    assert strip_emoji("Chọn 1️⃣ hoặc 2️⃣") == "Chọn 1 hoặc 2"
+
+
+def test_segment_text_strips_emoji():
+    assert segment_text("Chào bạn 😊. Tốt 👍!") == ["Chào bạn.", "Tốt!"]
+
+
+def test_aggregator_strips_emoji_from_streamed_chunks():
+    agg = SentenceAggregator()
+    out: list[str] = []
+    for tok in ["Chào ", "bạn 😊, ", "hôm nay ", "thế nào? ", "Tốt 👍."]:
+        out += agg.push(tok)
+    out += agg.flush()
+    assert out == ["Chào bạn, hôm nay thế nào?", "Tốt."]
 
 
 def test_splits_on_sentence_boundaries():
