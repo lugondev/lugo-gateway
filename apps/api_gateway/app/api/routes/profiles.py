@@ -8,6 +8,13 @@ from app.services.profiles.store import profile_store
 router = APIRouter(prefix="/v1/profiles", tags=["profiles"])
 
 
+def _mask(profile: Profile) -> dict:
+    data = profile.model_dump()
+    if data.get("llm", {}).get("api_key"):
+        data["llm"]["api_key"] = "***"
+    return data
+
+
 class ProfileRequest(BaseModel):
     name: str
     llm: LlmConfig = LlmConfig()
@@ -19,7 +26,7 @@ class ProfileRequest(BaseModel):
 @router.get("")
 async def list_profiles() -> dict:
     profiles = profile_store.list()
-    return {"success": True, "data": {k: v.model_dump() for k, v in profiles.items()}}
+    return {"success": True, "data": {k: _mask(v) for k, v in profiles.items()}}
 
 
 @router.post("")
@@ -34,7 +41,7 @@ async def get_profile(name: str) -> dict:
     profile = profile_store.get(name)
     if not profile:
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
-    return {"success": True, "data": profile.model_dump()}
+    return {"success": True, "data": _mask(profile)}
 
 
 @router.put("/{name}")

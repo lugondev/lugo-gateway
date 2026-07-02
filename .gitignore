@@ -100,3 +100,7 @@ Thumbs.db
 
 # Make: background service PID/log
 .run/
+
+# JSON data files (profiles, MCP server configs)
+profiles.json
+mcp_servers.json

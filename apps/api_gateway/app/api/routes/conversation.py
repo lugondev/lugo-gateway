@@ -216,17 +216,14 @@ async def conversation_stream(websocket: WebSocket) -> None:
     merged_servers = {**global_servers, **profile_specific}
 
     tool_sources: list = []
-    has_mcp = bool(merged_servers)
-    if settings.conversation_tools_enabled or has_mcp:
+    if settings.conversation_tools_enabled:
         tool_sources.append(LocalToolSource())
-        for srv in merged_servers.values():
-            tools = await mcp_pool.get_tools(srv.url)
-            if tools:
-                url = srv.url
-                tool_sources.append(
-                    McpToolSource(tools, invoker=lambda n, a, u=url: mcp_pool.invoke(u, n, a))
-                )
-
+    for srv in merged_servers.values():
+        tools = await mcp_pool.get_tools(srv.url)
+        if tools:
+            tool_sources.append(
+                McpToolSource(tools, invoker=lambda n, a, u=srv.url: mcp_pool.invoke(u, n, a))
+            )
     tool_registry: ToolRegistry | None = ToolRegistry(tool_sources) if tool_sources else None
 
     # Detail strings so the UI can show exactly WHICH models are active this session.

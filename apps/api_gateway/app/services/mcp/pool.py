@@ -41,16 +41,19 @@ class McpConnectionPool:
             cached = self._cache.get(url)
             if cached and (time.monotonic() - cached[0]) < self._ttl:
                 return cached[1]
-            try:
-                client = self._get_client(url)
-                tools = await client.list_tools()
-                # Skip cache write if invalidate() ran during the await
-                if url in self._clients:
-                    self._cache[url] = (time.monotonic(), tools)
-                return tools
-            except McpConnectionError as exc:
-                logger.warning("MCP server %s unreachable: %s", url, exc)
-                return []
+            client = self._get_client(url)
+
+        try:
+            tools = await client.list_tools()
+        except McpConnectionError as exc:
+            logger.warning("MCP server %s unreachable: %s", url, exc)
+            return []
+
+        async with self._lock:
+            # Skip cache write if invalidate() ran during the await
+            if url in self._clients:
+                self._cache[url] = (time.monotonic(), tools)
+        return tools
 
     async def invoke(self, url: str, tool_name: str, args: dict) -> str:
         async with self._lock:
