@@ -1,3 +1,4 @@
+import asyncio
 import time
 from unittest.mock import AsyncMock, patch
 
@@ -39,7 +40,7 @@ async def test_get_tools_cache_expires():
     mock = _mock_client()
     with patch("app.services.mcp.pool.McpHttpClient", return_value=mock):
         await pool.get_tools("http://mcp.test")
-        time.sleep(0.02)
+        await asyncio.sleep(0.02)
         await pool.get_tools("http://mcp.test")
     assert mock.list_tools.call_count == 2
 
