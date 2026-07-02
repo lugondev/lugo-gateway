@@ -190,6 +190,16 @@ class Settings(BaseSettings):
     eventlab_model: str = "whisper-1"
     remote_stt_timeout_seconds: float = 60.0
 
+    # LLM profiles + MCP tooling
+    profiles_path: str = "profiles.json"
+    mcp_servers_path: str = "mcp_servers.json"
+    mcp_tool_cache_ttl_seconds: int = 300
+    mcp_connection_timeout_seconds: float = 10.0
+    mcp_tool_timeout_seconds: float = 30.0
+    # Function-calling / tool use
+    conversation_tools_enabled: bool = False
+    conversation_tool_max_iters: int = 3
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
