@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Speech Text Transformer UI</title>
+    <title>Speech Text Transformer</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -13,353 +13,576 @@
     <div class="bg-orb orb-a"></div>
     <div class="bg-orb orb-b"></div>
 
-    <main class="app-shell">
-      <header class="hero">
-        <p class="kicker">speech-text-transformer</p>
-        <h1>Gateway Playground</h1>
-        <p class="subtitle">Manage models, transcribe files or the live mic, synthesize speech, and watch SSE audio chunks play back progressively.</p>
+    <div class="app-layout">
+
+      <!-- ======================== HEADER ======================== -->
+      <header class="app-header">
+        <div class="hdr-left">
+          <button class="sidebar-toggle" id="sidebar-toggle" title="Toggle sidebar">&#9776;</button>
+          <span class="app-title">Speech&nbsp;Text&nbsp;Transformer</span>
+        </div>
+        <div class="hdr-badges">
+          <span class="hdr-badge" id="badge-stt">&#9679; STT</span>
+          <span class="hdr-badge" id="badge-tts">&#9679; TTS</span>
+          <span class="hdr-badge" id="badge-llm">&#9679; LLM</span>
+        </div>
       </header>
 
-      <nav class="tabs" id="tabs">
-        <button class="tab-btn active" data-tab="system">System</button>
-        <button class="tab-btn" data-tab="models">Models</button>
-        <button class="tab-btn" data-tab="conversation">Conversation</button>
-        <button class="tab-btn" data-tab="chat">LLM Chat</button>
-        <button class="tab-btn" data-tab="stt">Speech → Text</button>
-        <button class="tab-btn" data-tab="tts">Text → Speech</button>
-      </nav>
+      <div class="app-body">
 
-      <!-- ============================== SYSTEM (service/config) ============================== -->
-      <div class="tab-panel active" id="tab-system">
-        <section class="card">
-          <div class="card-head">
-            <h2>System status &amp; config</h2>
-            <button id="status-refresh" class="ghost mini">Refresh</button>
-          </div>
-          <div id="system-status" class="status-grid"></div>
-          <p class="hint">Engines, devices and preprocessing come from environment config (see <code>.env</code> / docs/runbook.md). Manage downloadable models in the <strong>Models</strong> tab.</p>
+        <!-- ======================== SIDEBAR ======================== -->
+        <nav class="sidebar" id="sidebar">
+          <ul class="nav-list">
+            <li>
+              <button class="nav-item active" data-section="chat">
+                <span class="nav-icon">&#9679;</span>
+                <span class="nav-label">Chat</span>
+              </button>
+            </li>
+            <li>
+              <button class="nav-item" data-section="stt">
+                <span class="nav-icon">&#9679;</span>
+                <span class="nav-label">STT</span>
+              </button>
+            </li>
+            <li>
+              <button class="nav-item" data-section="tts">
+                <span class="nav-icon">&#9679;</span>
+                <span class="nav-label">TTS</span>
+              </button>
+            </li>
+            <li>
+              <button class="nav-item" data-section="models">
+                <span class="nav-icon">&#9679;</span>
+                <span class="nav-label">Models</span>
+              </button>
+            </li>
+            <li>
+              <button class="nav-item" data-section="mcp">
+                <span class="nav-icon">&#9679;</span>
+                <span class="nav-label">MCP</span>
+              </button>
+            </li>
+            <li>
+              <button class="nav-item" data-section="system">
+                <span class="nav-icon">&#9679;</span>
+                <span class="nav-label">System</span>
+              </button>
+            </li>
+          </ul>
+        </nav>
 
-          <div class="card-head">
-            <h3 class="sub" style="margin:18px 0 0">Conversation LLM service (Ollama)</h3>
-            <button id="llm-start" class="ghost mini">Start service</button>
-          </div>
-          <p class="hint" id="llm-hint"></p>
-        </section>
+        <!-- ======================== CONTENT ======================== -->
+        <main class="content">
 
-        <section class="card">
-          <h2>STT preprocessing</h2>
-          <p class="hint">Shared defaults for noise reduction &amp; VAD, applied across STT (file / streaming) and Conversation.</p>
-          <div class="checks">
-            <label class="check"><input type="checkbox" id="pp-denoise" /> Noise reduce</label>
-            <label class="check"><input type="checkbox" id="pp-vad" /> VAD</label>
-            <label class="check">backend
-              <select id="pp-vad-backend" class="inline-select"></select>
-            </label>
+          <!-- ============================== CHAT (unified) ============================== -->
+          <div class="section active" id="section-chat">
+
+            <!-- Mode selector -->
+            <div class="seg" id="chat-mode-seg">
+              <button class="seg-btn active" data-mode="text-text">Text&#8594;Text</button>
+              <button class="seg-btn" data-mode="voice-voice">Voice&#8594;Voice</button>
+              <button class="seg-btn" data-mode="voice-text">Voice&#8594;Text</button>
+              <button class="seg-btn" data-mode="text-voice">Text&#8594;Voice</button>
+            </div>
+
+            <!-- Profile bar -->
+            <div class="profile-bar">
+              <label class="profile-bar-select">
+                Profile
+                <select id="profile-select">
+                  <option value="">(none &mdash; server defaults)</option>
+                </select>
+              </label>
+              <div class="profile-bar-btns">
+                <button id="profile-edit-btn" class="ghost mini">Edit</button>
+                <button id="profile-new-btn" class="mini">+ New</button>
+              </div>
+            </div>
+
+            <!-- Profile edit panel (hidden by default) -->
+            <div class="profile-panel hidden" id="profile-panel">
+              <div class="profile-panel-hd">
+                <h3>Profile Configuration</h3>
+                <button id="profile-close-btn" class="ghost mini">&#10005;</button>
+              </div>
+              <p class="hint">After saving, select the profile in the bar above to use it for chat.</p>
+              <div class="profile-panel-body">
+                <div class="pf-left">
+                  <label>
+                    Name <span class="hint" style="display:inline;margin:0">(slug, no spaces)</span>
+                    <input id="pf-name" type="text" placeholder="my-profile" />
+                  </label>
+                  <label>
+                    System Prompt
+                    <textarea id="pf-system-prompt" rows="7" placeholder="You are a helpful assistant&#8230;"></textarea>
+                  </label>
+                  <p class="field-label">MCP Servers (per-profile)</p>
+                  <div id="pf-mcp-list" class="pf-mcp-list">
+                    <p class="hint">Loading&#8230;</p>
+                  </div>
+                </div>
+                <div class="pf-right">
+                  <label>
+                    LLM Base URL
+                    <input id="pf-llm-url" type="text" placeholder="https://api.openai.com/v1" />
+                  </label>
+                  <label>
+                    LLM Model
+                    <input id="pf-llm-model" type="text" placeholder="gpt-4o-mini" />
+                  </label>
+                  <label>
+                    LLM API Key
+                    <input id="pf-llm-key" type="password" placeholder="sk-&#8230; (leave blank to keep existing)" autocomplete="off" />
+                  </label>
+                  <label>
+                    TTS Engine
+                    <select id="pf-tts-engine">
+                      <option value="">(inherit global)</option>
+                    </select>
+                  </label>
+                  <label id="pf-tts-voice-wrap" class="hidden">
+                    TTS Voice
+                    <select id="pf-tts-voice">
+                      <option value="">(auto)</option>
+                    </select>
+                  </label>
+                  <div class="pf-foot">
+                    <button id="pf-save-btn">Save Configuration</button>
+                    <button id="pf-cancel-btn" class="ghost">Cancel</button>
+                    <button id="pf-delete-btn" class="danger hidden">Delete Profile</button>
+                  </div>
+                  <p id="pf-status" class="meta"></p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Main chat card -->
+            <section class="card">
+              <div class="card-head">
+                <h2 id="chat-section-title">Text Chat</h2>
+                <button id="chat-reset" class="ghost mini">Reset</button>
+              </div>
+              <p class="hint" id="chat-hint">Text chat with the configured conversation model.</p>
+              <p class="hint engine-detail" id="conv-engines-info">Active models will appear here when the session starts.</p>
+
+              <!-- Unified dialogue area -->
+              <div id="chat-dialogue" class="dialogue"></div>
+              <audio id="conv-audio" class="player hidden" controls></audio>
+
+              <!-- === TEXT→TEXT === -->
+              <div id="mode-text-text" class="mode-pane">
+                <div class="row tight">
+                  <label>
+                    Message
+                    <textarea id="chat-input" rows="2" placeholder="Type a message and press Enter (Shift+Enter for newline)&#8230;"></textarea>
+                  </label>
+                  <div class="actions end">
+                    <button id="chat-send">Send</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- === VOICE→VOICE === -->
+              <div id="mode-voice-voice" class="mode-pane hidden">
+                <div class="row">
+                  <label>
+                    STT engine
+                    <select id="conv-stt-engine"></select>
+                  </label>
+                  <label>
+                    TTS engine
+                    <select id="conv-tts-engine"></select>
+                  </label>
+                </div>
+                <div class="row">
+                  <label>
+                    Language (STT hint)
+                    <input id="conv-language" type="text" value="vi" placeholder="vi, en, ja&#8230; (vi recommended)" />
+                  </label>
+                  <label id="conv-voice-wrap" class="hidden">
+                    Voice (VieNeu)
+                    <select id="conv-voice"></select>
+                  </label>
+                </div>
+                <div class="row">
+                  <label class="check" title="Receive reply audio as streamed Opus frames decoded in-browser instead of fetching WAV files.">
+                    <input type="checkbox" id="conv-opus" /> Opus downlink (low bandwidth)
+                  </label>
+                </div>
+                <div class="actions">
+                  <button id="conv-start">Start talking</button>
+                  <button id="conv-stop" class="ghost" disabled>Stop</button>
+                  <button id="conv-reset" class="ghost">Reset</button>
+                  <span id="conv-status" class="status-idle">idle</span>
+                </div>
+                <pre id="conv-log" class="output small"></pre>
+              </div>
+
+              <!-- === VOICE→TEXT === -->
+              <div id="mode-voice-text" class="mode-pane hidden">
+                <p class="hint">Live microphone transcription &mdash; no LLM, no TTS.</p>
+                <div class="row">
+                  <label>
+                    STT engine
+                    <select id="v2t-stt-engine"></select>
+                  </label>
+                  <label>
+                    Language
+                    <input id="v2t-language" type="text" value="vi" placeholder="vi, en, ja&#8230;" />
+                  </label>
+                </div>
+                <div class="actions">
+                  <button id="v2t-start">Start Mic</button>
+                  <button id="v2t-stop" class="ghost" disabled>Stop &amp; Finalize</button>
+                  <span id="v2t-status" class="status-idle">idle</span>
+                </div>
+                <div class="transcript-wrap">
+                  <p class="field-label">Partial</p>
+                  <p id="v2t-partial" class="partial">&mdash;</p>
+                </div>
+                <pre id="v2t-log" class="output small"></pre>
+              </div>
+
+              <!-- === TEXT→VOICE === -->
+              <div id="mode-text-voice" class="mode-pane hidden">
+                <p class="hint">Type text to synthesize and play back.</p>
+                <div class="row">
+                  <label>
+                    TTS engine
+                    <select id="t2v-tts-engine"></select>
+                    <small class="engine-detail" id="t2v-engine-detail"></small>
+                  </label>
+                  <label id="t2v-voice-wrap" class="hidden">
+                    Voice (VieNeu)
+                    <select id="t2v-tts-voice">
+                      <option value="">(auto)</option>
+                    </select>
+                  </label>
+                </div>
+                <label>
+                  Text
+                  <textarea id="t2v-text" rows="4" placeholder="Type text to speak&#8230;"></textarea>
+                </label>
+                <div class="actions">
+                  <button id="t2v-submit">Synthesize &amp; Play</button>
+                </div>
+                <audio id="t2v-audio" class="player hidden" controls></audio>
+                <p id="t2v-meta" class="meta"></p>
+              </div>
+            </section>
           </div>
-        </section>
+
+          <!-- ============================== STT ============================== -->
+          <div class="section" id="section-stt">
+            <section class="card">
+              <h2>STT Batch</h2>
+              <div class="row">
+                <label>
+                  Engine
+                  <select id="stt-engine"></select>
+                  <small class="engine-detail" id="stt-engine-detail"></small>
+                </label>
+                <label>
+                  Language (optional)
+                  <input id="stt-language" type="text" placeholder="en, vi, ja..." />
+                </label>
+              </div>
+              <div class="seg" id="stt-mode">
+                <button type="button" class="seg-btn active" data-mode="upload">Upload file</button>
+                <button type="button" class="seg-btn" data-mode="record">Record mic</button>
+              </div>
+
+              <div id="stt-upload-pane">
+                <label>
+                  Audio file (prefer WAV PCM16 mono for local Vosk)
+                  <input id="stt-audio" type="file" accept="audio/*" />
+                </label>
+              </div>
+
+              <div id="stt-record-pane" class="hidden">
+                <div class="actions">
+                  <button id="stt-record" class="ghost">&#9679; Record</button>
+                  <span id="stt-record-status" class="status-idle">no recording</span>
+                </div>
+                <audio id="stt-record-preview" class="player hidden" controls></audio>
+              </div>
+
+              <p class="hint">Noise reduce / VAD use the shared defaults in the <strong>System</strong> section.</p>
+              <div class="actions">
+                <button id="stt-submit">Transcribe</button>
+              </div>
+              <pre id="stt-result" class="output"></pre>
+            </section>
+
+            <section class="card" id="stt-stream-card">
+              <h2>STT Streaming <span class="tag">WebSocket</span></h2>
+              <p class="hint">Streams microphone audio as PCM16 mono @ 16&nbsp;kHz. Vosk returns live partials; other engines return one final transcript on stop.</p>
+              <div class="row">
+                <label>
+                  Engine
+                  <select id="stt-stream-engine"></select>
+                  <small class="engine-detail" id="stt-stream-engine-detail"></small>
+                </label>
+                <label>
+                  Language (optional)
+                  <input id="stt-stream-language" type="text" placeholder="en, vi, ja..." />
+                </label>
+              </div>
+              <div class="actions">
+                <button id="stt-stream-record">Start Mic</button>
+                <button id="stt-stream-end" class="ghost" disabled>Stop &amp; Finalize</button>
+                <span id="stt-stream-status" class="status-idle">idle</span>
+              </div>
+              <div class="transcript-wrap">
+                <p class="field-label">Partial</p>
+                <p id="stt-stream-partial" class="partial">&mdash;</p>
+                <p class="field-label">Transcript</p>
+                <p id="stt-stream-transcript" class="transcript"></p>
+              </div>
+              <pre id="stt-stream-log" class="output small"></pre>
+            </section>
+          </div>
+
+          <!-- ============================== TTS ============================== -->
+          <div class="section" id="section-tts">
+            <section class="card">
+              <h2>TTS Batch</h2>
+              <div class="row">
+                <label>
+                  Engine
+                  <select id="tts-engine"></select>
+                  <small class="engine-detail" id="tts-engine-detail"></small>
+                </label>
+                <label id="tts-voice-wrap" class="hidden">
+                  Voice (VieNeu)
+                  <select id="tts-voice"></select>
+                </label>
+              </div>
+              <label>
+                Text
+                <textarea id="tts-text" rows="4" placeholder="Type text for TTS..."></textarea>
+              </label>
+              <div class="actions">
+                <button id="tts-submit">Synthesize</button>
+              </div>
+              <audio id="tts-audio" class="player hidden" controls></audio>
+              <p id="tts-meta" class="meta"></p>
+              <pre id="tts-result" class="output"></pre>
+            </section>
+
+            <section class="card">
+              <h2>TTS Stream <span class="tag">SSE</span></h2>
+              <p class="hint">Text is split into sentences; each chunk is synthesized and played back in order as it arrives.</p>
+              <div class="row">
+                <label>
+                  Engine
+                  <select id="tts-stream-engine"></select>
+                  <small class="engine-detail" id="tts-stream-engine-detail"></small>
+                </label>
+              </div>
+              <label>
+                Stream text
+                <textarea id="tts-stream-text" rows="4" placeholder="Type longer text to stream chunk events..."></textarea>
+              </label>
+              <div class="actions">
+                <button id="tts-stream-start">Start Stream Job</button>
+                <button id="tts-stream-stop" class="ghost">Stop Listening</button>
+              </div>
+              <p id="tts-job" class="meta"></p>
+              <audio id="tts-stream-audio" class="player hidden" controls></audio>
+              <ol id="tts-stream-chunks" class="chunk-list"></ol>
+              <pre id="tts-stream-events" class="output small"></pre>
+            </section>
+          </div>
+
+          <!-- ============================== MODELS ============================== -->
+          <div class="section" id="section-models">
+            <section class="card" id="recommend-card">
+              <div class="card-head">
+                <h2>Recommended for this host</h2>
+                <label class="rec-toggle"><input type="checkbox" id="recommend-only" checked /> Recommended only</label>
+              </div>
+              <div id="recommend-caps" class="rec-caps"></div>
+              <div id="recommend-list"></div>
+              <p class="hint">Ranked for the hardware this gateway runs on. Uncheck to show everything, grouped by chip; dimmed items can't run on this host.</p>
+            </section>
+
+            <section class="card">
+              <h2>STT models</h2>
+              <h3 class="sub">Vosk</h3>
+              <div id="model-suggestions" class="model-list"></div>
+              <div class="row tight">
+                <label>
+                  Download by name
+                  <input id="model-name" type="text" placeholder="vosk-model-small-en-us-0.15" />
+                </label>
+                <div class="actions end">
+                  <button id="model-download">Download</button>
+                </div>
+              </div>
+
+              <h3 class="sub">Whisper (local CPU/GPU)</h3>
+              <div id="whisper-models" class="model-list"></div>
+
+              <h3 class="sub">Qwen3-ASR (MLX, Apple GPU)</h3>
+              <div id="qwen-asr-models" class="model-list"></div>
+            </section>
+
+            <section class="card">
+              <h2>TTS models</h2>
+              <h3 class="sub">OmniVoice</h3>
+              <div id="omnivoice-models" class="model-list"></div>
+              <div class="row tight">
+                <label>
+                  Download by HF repo id
+                  <input id="omni-name" type="text" placeholder="k2-fsa/OmniVoice" />
+                </label>
+                <div class="actions end">
+                  <button id="omni-download">Download</button>
+                </div>
+              </div>
+
+              <h3 class="sub">VieNeu</h3>
+              <div id="vieneu-models" class="model-list"></div>
+              <p class="hint">v3turbo runs on CPU (torch-free). Other modes need <code>pip install vieneu[gpu]</code>.</p>
+
+              <h3 class="sub">Engines (ported from OmniVoice-Studio)</h3>
+              <div id="tts-engines-status" class="model-list"></div>
+              <p class="hint">Ready engines appear in the TTS section. Install the package shown to enable the rest.</p>
+            </section>
+
+            <section class="card">
+              <h2>Conversation LLM (Ollama)</h2>
+              <div class="card-head">
+                <h3 class="sub" style="margin:0">Local Ollama service</h3>
+                <button id="llm-start" class="ghost mini">Start service</button>
+              </div>
+              <p class="hint" id="llm-hint"></p>
+              <div id="llm-models" class="model-list"></div>
+              <div class="row tight">
+                <label>
+                  Download by name
+                  <input id="llm-name" type="text" placeholder="gemma2:9b" />
+                </label>
+                <div class="actions end">
+                  <button id="llm-download">Download</button>
+                </div>
+              </div>
+              <p id="model-msg" class="meta"></p>
+            </section>
+
+            <section class="card">
+              <h2>Audio-native STT &mdash; Qwen3-Omni (MLX, Apple GPU) <span class="tag">experimental</span></h2>
+              <p class="hint" id="qwen-omni-hint">Audio &rarr; Vietnamese text in one step (no Whisper), with punctuation &amp; casing.</p>
+              <div id="qwen-omni-models" class="model-list"></div>
+            </section>
+
+            <section class="card">
+              <h2>Conversation LLM &mdash; Online (OpenAI-compatible)</h2>
+              <p class="hint">Use a hosted OpenAI-compatible provider. The API key is held in memory only (not persisted, not saved to the browser).</p>
+              <div class="row tight">
+                <label>
+                  Quick preset
+                  <select id="llm-online-preset">
+                    <option value="">&mdash; choose a provider &mdash;</option>
+                    <option value="openai">OpenAI (paste API key)</option>
+                    <option value="groq">Groq</option>
+                    <option value="together">Together AI</option>
+                  </select>
+                </label>
+              </div>
+              <div class="row tight">
+                <label>
+                  Base URL
+                  <input id="llm-online-url" type="text" placeholder="https://api.openai.com/v1" />
+                </label>
+                <label>
+                  Model
+                  <input id="llm-online-model" type="text" placeholder="gpt-4o-mini" />
+                </label>
+              </div>
+              <div class="row tight">
+                <label>
+                  API key
+                  <input id="llm-online-key" type="password" placeholder="sk-&#8230; (leave blank if not required)" autocomplete="off" />
+                </label>
+                <div class="actions end">
+                  <button id="llm-online-apply">Use this LLM</button>
+                  <button id="llm-online-reset" class="ghost">Revert to .env</button>
+                </div>
+              </div>
+              <p id="llm-online-status" class="meta"></p>
+            </section>
+          </div>
+
+          <!-- ============================== MCP ============================== -->
+          <div class="section" id="section-mcp">
+            <section class="card">
+              <div class="card-head">
+                <h2>Global MCP Servers</h2>
+                <button id="mcp-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <p class="hint">MCP (Model Context Protocol) servers provide tools to the LLM. Add servers here globally, then attach them to individual profiles in the Chat section.</p>
+              <div id="mcp-server-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <h3 class="sub">Add Server</h3>
+              <div class="row tight">
+                <label>
+                  Name
+                  <input id="mcp-add-name" type="text" placeholder="my-server" />
+                </label>
+                <label>
+                  URL
+                  <input id="mcp-add-url" type="text" placeholder="http://localhost:8080/mcp" />
+                </label>
+                <div class="actions end">
+                  <button id="mcp-add-btn">Add</button>
+                </div>
+              </div>
+              <p id="mcp-status" class="meta"></p>
+            </section>
+          </div>
+
+          <!-- ============================== SYSTEM ============================== -->
+          <div class="section" id="section-system">
+            <section class="card">
+              <div class="card-head">
+                <h2>System status &amp; config</h2>
+                <button id="status-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <div id="system-status" class="status-grid"></div>
+              <p class="hint">Engines, devices and preprocessing come from environment config (see <code>.env</code>). Manage downloadable models in the <strong>Models</strong> section.</p>
+            </section>
+
+            <section class="card">
+              <h2>STT preprocessing</h2>
+              <p class="hint">Shared defaults for noise reduction &amp; VAD, applied across STT (file / streaming) and Conversation.</p>
+              <div class="checks">
+                <label class="check"><input type="checkbox" id="pp-denoise" /> Noise reduce</label>
+                <label class="check"><input type="checkbox" id="pp-vad" /> VAD</label>
+                <label class="check">backend
+                  <select id="pp-vad-backend" class="inline-select"></select>
+                </label>
+              </div>
+            </section>
+          </div>
+
+        </main>
       </div>
 
-      <!-- ============================== MODELS ============================== -->
-      <div class="tab-panel" id="tab-models">
-        <section class="card" id="recommend-card">
-          <div class="card-head">
-            <h2>Recommended for this host</h2>
-            <label class="rec-toggle"><input type="checkbox" id="recommend-only" checked /> Recommended only</label>
-          </div>
-          <div id="recommend-caps" class="rec-caps"></div>
-          <div id="recommend-list"></div>
-          <p class="hint">Ranked for the hardware this gateway runs on. Uncheck to show everything, grouped by chip (Apple Silicon / CPU / NVIDIA GPU); dimmed items can't run on this host.</p>
-        </section>
+      <!-- ======================== FOOTER ======================== -->
+      <footer class="app-footer">
+        <span class="footer-left">speech-text-transformer</span>
+        <div class="footer-badges">
+          <span class="footer-badge" id="foot-llm">&#9679; LLM</span>
+          <span class="footer-badge" id="foot-stt">&#9679; STT</span>
+          <span class="footer-badge" id="foot-tts">&#9679; TTS</span>
+        </div>
+      </footer>
 
-        <section class="card">
-          <h2>STT models</h2>
-          <h3 class="sub">Vosk</h3>
-          <div id="model-suggestions" class="model-list"></div>
-          <div class="row tight">
-            <label>
-              Download by name
-              <input id="model-name" type="text" placeholder="vosk-model-small-de-0.15" />
-            </label>
-            <div class="actions end">
-              <button id="model-download">Download</button>
-            </div>
-          </div>
-          <p class="hint">Browse the full catalog at alphacephei.com/vosk/models — paste any model name.</p>
-
-          <h3 class="sub">Whisper</h3>
-          <div id="whisper-models" class="model-list"></div>
-          <p class="hint">Downloading warms the faster-whisper weights (Hugging Face cache). "Use" switches the active model for local Whisper.</p>
-        </section>
-
-        <section class="card">
-          <h2>TTS models</h2>
-          <h3 class="sub">OmniVoice</h3>
-          <div id="omnivoice-models" class="model-list"></div>
-          <div class="row tight">
-            <label>
-              Download by HF repo id
-              <input id="omni-name" type="text" placeholder="k2-fsa/OmniVoice" />
-            </label>
-            <div class="actions end">
-              <button id="omni-download">Download</button>
-            </div>
-          </div>
-
-          <h3 class="sub">VieNeu</h3>
-          <div id="vieneu-models" class="model-list"></div>
-          <p class="hint">v3turbo runs on CPU (torch-free). Other modes need <code>pip install vieneu[gpu]</code>.</p>
-
-          <h3 class="sub">Engines (ported from OmniVoice-Studio)</h3>
-          <div id="tts-engines-status" class="model-list"></div>
-          <p class="hint">Ready engines appear in the Text → Speech tab. Install the package shown to enable the rest.</p>
-        </section>
-
-        <section class="card">
-          <h2>Conversation LLM (Ollama)</h2>
-          <div id="llm-models" class="model-list"></div>
-          <div class="row tight">
-            <label>
-              Download by name
-              <input id="llm-name" type="text" placeholder="gemma2:9b" />
-            </label>
-            <div class="actions end">
-              <button id="llm-download">Download</button>
-            </div>
-          </div>
-          <p id="model-msg" class="meta"></p>
-        </section>
-
-        <section class="card">
-          <h2>Audio-native STT — Qwen3-Omni (MLX, Apple GPU) <span class="tag">experimental</span></h2>
-          <p class="hint" id="qwen-omni-hint">Audio → Vietnamese text in one step (no Whisper), with punctuation &amp; casing. Heavy (30B MoE, ~1s/utterance). Pick a quant to download, then select engine <code>qwen_omni</code>.</p>
-          <div id="qwen-omni-models" class="model-list"></div>
-        </section>
-
-        <section class="card">
-          <h2>Conversation LLM — Online (OpenAI-compatible)</h2>
-          <p class="hint">Use a hosted OpenAI-compatible provider instead of local Ollama. For local models, just activate one in the “Conversation LLM (Ollama)” list above — no setup here. The API key is sent to the gateway and held in memory only (not persisted, not saved to the browser).</p>
-          <div class="row tight">
-            <label>
-              Quick preset
-              <select id="llm-online-preset">
-                <option value="">— choose a provider —</option>
-                <option value="openai">OpenAI (paste API key)</option>
-                <option value="groq">Groq</option>
-                <option value="together">Together AI</option>
-              </select>
-            </label>
-          </div>
-          <div class="row tight">
-            <label>
-              Base URL
-              <input id="llm-online-url" type="text" placeholder="https://api.openai.com/v1" />
-            </label>
-            <label>
-              Model
-              <input id="llm-online-model" type="text" placeholder="gpt-4o-mini" />
-            </label>
-          </div>
-          <div class="row tight">
-            <label>
-              API key
-              <input id="llm-online-key" type="password" placeholder="sk-… (leave blank if not required)" autocomplete="off" />
-            </label>
-            <div class="actions end">
-              <button id="llm-online-apply">Use this LLM</button>
-              <button id="llm-online-reset" class="ghost">Revert to .env</button>
-            </div>
-          </div>
-          <p id="llm-online-status" class="meta"></p>
-        </section>
-      </div>
-
-      <!-- ============================== CONVERSATION ============================== -->
-      <div class="tab-panel" id="tab-conversation">
-        <section class="card">
-          <h2>Conversation <span class="tag">voice</span></h2>
-          <p class="hint">Speak naturally — VAD detects when you pause to end your turn, transcribes it, generates a reply, and speaks it back. Configure an OpenAI-compatible LLM (<code>CONVERSATION_LLM_BASE_URL</code>) for real replies; otherwise a built-in echo responds.</p>
-          <div class="row">
-            <label>
-              STT engine
-              <select id="conv-stt-engine"></select>
-            </label>
-            <label>
-              TTS engine
-              <select id="conv-tts-engine"></select>
-            </label>
-          </div>
-          <div class="row">
-            <label>
-              Language (STT hint)
-              <input id="conv-language" type="text" value="vi" placeholder="vi, en, ja… (vi recommended)" />
-            </label>
-            <label id="conv-voice-wrap" class="hidden">
-              Voice (VieNeu)
-              <select id="conv-voice"></select>
-            </label>
-          </div>
-          <div class="row">
-            <label class="check" title="Receive reply audio as streamed Opus frames decoded in-browser (WebCodecs) instead of fetching WAV files — ~10x less bandwidth. Needs a WebCodecs-capable browser.">
-              <input type="checkbox" id="conv-opus" /> Opus downlink (low bandwidth)
-            </label>
-          </div>
-          <p class="hint engine-detail" id="conv-engines-info">Active models will appear here when the session starts.</p>
-          <div class="actions">
-            <button id="conv-start">Start talking</button>
-            <button id="conv-stop" class="ghost" disabled>Stop</button>
-            <button id="conv-reset" class="ghost">Reset</button>
-            <span id="conv-status" class="status-idle">idle</span>
-          </div>
-          <audio id="conv-audio" class="player hidden" controls></audio>
-          <div id="conv-dialogue" class="dialogue"></div>
-          <pre id="conv-log" class="output small"></pre>
-        </section>
-      </div>
-
-      <!-- ============================== LLM CHAT ============================== -->
-      <div class="tab-panel" id="tab-chat">
-        <section class="card">
-          <div class="card-head">
-            <h2>LLM Chat</h2>
-            <button id="chat-reset" class="ghost mini">Reset</button>
-          </div>
-          <p class="hint" id="chat-hint">Text chat with the enabled conversation model.</p>
-          <div id="chat-dialogue" class="dialogue"></div>
-          <div class="row tight">
-            <label>
-              Message
-              <textarea id="chat-input" rows="2" placeholder="Type a message and press Enter (Shift+Enter for newline)…"></textarea>
-            </label>
-            <div class="actions end">
-              <button id="chat-send">Send</button>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <!-- ============================== STT ============================== -->
-      <div class="tab-panel" id="tab-stt">
-        <section class="card">
-          <h2>STT Batch</h2>
-          <div class="row">
-            <label>
-              Engine
-              <select id="stt-engine"></select>
-              <small class="engine-detail" id="stt-engine-detail"></small>
-            </label>
-            <label>
-              Language (optional)
-              <input id="stt-language" type="text" placeholder="en, vi, ja..." />
-            </label>
-          </div>
-          <div class="seg" id="stt-mode">
-            <button type="button" class="seg-btn active" data-mode="upload">Upload file</button>
-            <button type="button" class="seg-btn" data-mode="record">Record mic</button>
-          </div>
-
-          <div id="stt-upload-pane">
-            <label>
-              Audio file (prefer WAV PCM16 mono for local Vosk)
-              <input id="stt-audio" type="file" accept="audio/*" />
-            </label>
-          </div>
-
-          <div id="stt-record-pane" class="hidden">
-            <div class="actions">
-              <button id="stt-record" class="ghost">● Record</button>
-              <span id="stt-record-status" class="status-idle">no recording</span>
-            </div>
-            <audio id="stt-record-preview" class="player hidden" controls></audio>
-          </div>
-
-          <p class="hint">Noise reduce / VAD use the shared defaults in the <strong>System</strong> tab.</p>
-          <div class="actions">
-            <button id="stt-submit">Transcribe</button>
-          </div>
-          <pre id="stt-result" class="output"></pre>
-        </section>
-
-        <section class="card" id="stt-stream-card">
-          <h2>STT Streaming <span class="tag">WebSocket</span></h2>
-          <p class="hint">Streams microphone audio as PCM16 mono @ 16&nbsp;kHz. Vosk returns live partials; other engines return one final transcript on stop.</p>
-          <div class="row">
-            <label>
-              Engine
-              <select id="stt-stream-engine"></select>
-              <small class="engine-detail" id="stt-stream-engine-detail"></small>
-            </label>
-            <label>
-              Language (optional)
-              <input id="stt-stream-language" type="text" placeholder="en, vi, ja..." />
-            </label>
-          </div>
-          <div class="actions">
-            <button id="stt-stream-record">Start Mic</button>
-            <button id="stt-stream-end" class="ghost" disabled>Stop &amp; Finalize</button>
-            <span id="stt-stream-status" class="status-idle">idle</span>
-          </div>
-          <div class="transcript-wrap">
-            <p class="field-label">Partial</p>
-            <p id="stt-stream-partial" class="partial">—</p>
-            <p class="field-label">Transcript</p>
-            <p id="stt-stream-transcript" class="transcript"></p>
-          </div>
-          <pre id="stt-stream-log" class="output small"></pre>
-        </section>
-      </div>
-
-      <!-- ============================== TTS ============================== -->
-      <div class="tab-panel" id="tab-tts">
-        <section class="card">
-          <h2>TTS Batch</h2>
-          <div class="row">
-            <label>
-              Engine
-              <select id="tts-engine"></select>
-              <small class="engine-detail" id="tts-engine-detail"></small>
-            </label>
-            <label id="tts-voice-wrap" class="hidden">
-              Voice (VieNeu)
-              <select id="tts-voice"></select>
-            </label>
-          </div>
-          <label>
-            Text
-            <textarea id="tts-text" rows="4" placeholder="Type text for TTS..."></textarea>
-          </label>
-          <div class="actions">
-            <button id="tts-submit">Synthesize</button>
-          </div>
-          <audio id="tts-audio" class="player hidden" controls></audio>
-          <p id="tts-meta" class="meta"></p>
-          <pre id="tts-result" class="output"></pre>
-        </section>
-
-        <section class="card">
-          <h2>TTS Stream <span class="tag">SSE</span></h2>
-          <p class="hint">Text is split into sentences; each chunk is synthesized and played back in order as it arrives.</p>
-          <div class="row">
-            <label>
-              Engine
-              <select id="tts-stream-engine"></select>
-              <small class="engine-detail" id="tts-stream-engine-detail"></small>
-            </label>
-          </div>
-          <label>
-            Stream text
-            <textarea id="tts-stream-text" rows="4" placeholder="Type longer text to stream chunk events..."></textarea>
-          </label>
-          <div class="actions">
-            <button id="tts-stream-start">Start Stream Job</button>
-            <button id="tts-stream-stop" class="ghost">Stop Listening</button>
-          </div>
-          <p id="tts-job" class="meta"></p>
-          <audio id="tts-stream-audio" class="player hidden" controls></audio>
-          <ol id="tts-stream-chunks" class="chunk-list"></ol>
-          <pre id="tts-stream-events" class="output small"></pre>
-        </section>
-      </div>
-    </main>
+    </div><!-- /.app-layout -->
 
     <script src="/static/app.js"></script>
   </body>

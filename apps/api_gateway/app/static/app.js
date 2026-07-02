@@ -197,6 +197,12 @@ async function loadSystemStatus() {
     tile("Artifacts", `${d.artifacts.count} · ${fmtBytes(d.artifacts.total_bytes)}`);
     host.innerHTML = tiles.join("");
 
+    // Update header/footer status badges
+    const sttOk = (d.stt_engines || []).some(e => e.available);
+    const ttsOk = !d.tts.mock_enabled;
+    setBadge("badge-stt", sttOk); setBadge("foot-stt", sttOk);
+    setBadge("badge-tts", ttsOk); setBadge("foot-tts", ttsOk);
+
     // Initialize the shared preprocessing config from server defaults (once).
     if (!preprocessInit && d.stt_preprocess) {
       preprocessInit = true;
@@ -297,6 +303,7 @@ async function loadModels() {
         llmBtn.textContent = llm.available ? "Stop service" : "Start service";
       }
     }
+    setBadge("badge-llm", llm.available); setBadge("foot-llm", llm.available);
     const llmNames = new Set(llm.suggestions.map((s) => s.model));
     const llmRows = llm.suggestions.map((s) => renderLlmRow(s, llm.jobs, llm.available));
     llm.installed
@@ -817,6 +824,7 @@ async function loadSttEngines() {
   const pairs = [
     ["stt-engine", "stt-engine-detail"],
     ["stt-stream-engine", "stt-stream-engine-detail"],
+    ["v2t-stt-engine", null],
   ];
   try {
     const body = await (await fetch("/v1/stt/engines")).json();
@@ -1086,7 +1094,7 @@ async function loadTtsEngines() {
 
     renderTtsEnginesStatus(body.data);
 
-    [["tts-engine", "tts-engine-detail"], ["tts-stream-engine", "tts-stream-engine-detail"]].forEach(
+    [["tts-engine", "tts-engine-detail"], ["tts-stream-engine", "tts-stream-engine-detail"], ["t2v-tts-engine", "t2v-engine-detail"], ["pf-tts-engine", null]].forEach(
       ([selId, detId]) => {
         const select = el(selId);
         if (!select) return;
@@ -1139,6 +1147,32 @@ function updateTtsEngine(selId, detId) {
     const isVieneu = engine === "vieneu";
     el("tts-voice-wrap").classList.toggle("hidden", !isVieneu);
     if (isVieneu && !el("tts-voice").dataset.loaded) loadTtsVoices();
+  }
+  if (selId === "t2v-tts-engine") {
+    const isVieneu = engine === "vieneu";
+    const wrap = el("t2v-voice-wrap");
+    if (wrap) wrap.classList.toggle("hidden", !isVieneu);
+    if (isVieneu) {
+      fetch("/v1/tts/voices?engine=vieneu").then(r => r.json()).then(b => {
+        const sel = el("t2v-tts-voice");
+        if (!sel) return;
+        sel.innerHTML = '<option value="">(auto)</option>';
+        b.data.forEach(v => { const o = document.createElement("option"); o.value = v.voice; o.textContent = v.label; sel.appendChild(o); });
+      }).catch(() => {});
+    }
+  }
+  if (selId === "pf-tts-engine") {
+    const isVieneu = engine === "vieneu";
+    const wrap = el("pf-tts-voice-wrap");
+    if (wrap) wrap.classList.toggle("hidden", !isVieneu);
+    if (isVieneu) {
+      fetch("/v1/tts/voices?engine=vieneu").then(r => r.json()).then(b => {
+        const sel = el("pf-tts-voice");
+        if (!sel) return;
+        sel.innerHTML = '<option value="">(auto)</option>';
+        b.data.forEach(v => { const o = document.createElement("option"); o.value = v.voice; o.textContent = v.label; sel.appendChild(o); });
+      }).catch(() => {});
+    }
   }
 }
 
@@ -1331,8 +1365,8 @@ function addBubble(role, text) {
   const div = document.createElement("div");
   div.className = `bubble ${role}`;
   div.textContent = text;
-  el("conv-dialogue").appendChild(div);
-  el("conv-dialogue").scrollTop = el("conv-dialogue").scrollHeight;
+  el("chat-dialogue").appendChild(div);
+  el("chat-dialogue").scrollTop = el("chat-dialogue").scrollHeight;
   return div;
 }
 function convAudioCtx() {
@@ -1534,7 +1568,7 @@ async function startConversation() {
   setConvUI("starting");
   convStopAudio();
   conv.assistantBubble = null;
-  el("conv-dialogue").innerHTML = "";
+  el("chat-dialogue").innerHTML = "";
   conv.log = [];
   el("conv-log").textContent = "";
 
@@ -1563,6 +1597,8 @@ async function startConversation() {
 
   let params = `stt_engine=${encodeURIComponent(el("conv-stt-engine").value)}`;
   params += `&tts_engine=${encodeURIComponent(el("conv-tts-engine").value)}&sample_rate=${STREAM_SAMPLE_RATE}`;
+  const activeProfile = el("profile-select")?.value;
+  if (activeProfile) params += `&profile=${encodeURIComponent(activeProfile)}`;
   if (el("conv-voice").value) params += `&voice=${encodeURIComponent(el("conv-voice").value)}`;
   if (el("conv-language").value.trim()) params += `&language=${encodeURIComponent(el("conv-language").value.trim())}`;
   const cpp = getPreproc();
@@ -1707,7 +1743,7 @@ el("conv-stop").addEventListener("click", () => {
 el("conv-reset").addEventListener("click", () => {
   convStopAudio();
   conv.assistantBubble = null;
-  el("conv-dialogue").innerHTML = "";
+  el("chat-dialogue").innerHTML = "";
   if (conv.ws && conv.ws.readyState === WebSocket.OPEN) conv.ws.send(JSON.stringify({ type: "reset" }));
 });
 
@@ -1718,8 +1754,11 @@ function chatBubble(role, text) {
   const div = document.createElement("div");
   div.className = `bubble ${role}`;
   div.textContent = text;
-  el("chat-dialogue").appendChild(div);
-  el("chat-dialogue").scrollTop = el("chat-dialogue").scrollHeight;
+  const dialogue = el("chat-dialogue");
+  if (dialogue) {
+    dialogue.appendChild(div);
+    dialogue.scrollTop = dialogue.scrollHeight;
+  }
   return div;
 }
 
@@ -1736,7 +1775,9 @@ async function sendChat() {
   const pending = chatBubble("assistant", "…");
 
   try {
-    const resp = await fetch("/v1/conversation/chat", {
+    const profileVal = el("profile-select")?.value;
+    const chatUrl = profileVal ? `/v1/conversation/chat?profile=${encodeURIComponent(profileVal)}` : "/v1/conversation/chat";
+    const resp = await fetch(chatUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: chat.history }),
@@ -1769,27 +1810,38 @@ el("chat-input").addEventListener("keydown", (e) => {
 });
 el("chat-reset").addEventListener("click", () => {
   chat.history = [];
-  el("chat-dialogue").innerHTML = "";
+  const dialogue = el("chat-dialogue");
+  if (dialogue) dialogue.innerHTML = "";
+  convStopAudio();
+  conv.assistantBubble = null;
 });
 
-// ============================================================ tabs
-function initTabs() {
-  const buttons = document.querySelectorAll(".tab-btn");
-  buttons.forEach((btn) => {
+// ============================================================ sidebar nav
+function initSidebar() {
+  document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const target = btn.getAttribute("data-tab");
-      buttons.forEach((b) => b.classList.toggle("active", b === btn));
-      document.querySelectorAll(".tab-panel").forEach((panel) => {
-        panel.classList.toggle("active", panel.id === `tab-${target}`);
+      const section = btn.getAttribute("data-section");
+      document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b === btn));
+      document.querySelectorAll(".section").forEach((s) => {
+        s.classList.toggle("active", s.id === `section-${section}`);
       });
-      if (target === "models") loadRecommend();
+      if (section === "models") loadRecommend();
+      if (section === "mcp") loadMcpServers();
     });
   });
+
+  const toggle = el("sidebar-toggle");
+  if (toggle) {
+    toggle.addEventListener("click", () => {
+      el("sidebar").classList.toggle("collapsed");
+    });
+  }
 }
 
 // ============================================================ init
-initTabs();
+initSidebar();
 initSttMode();
+initChatModes();
 setStreamUI("idle");
 setConvUI("idle");
 // Persist + restore free-text controls (selects/checkboxes are bound after they populate).
@@ -1801,3 +1853,440 @@ loadSystemStatus();
 loadModels();
 loadRecommend();
 loadLlmOnlineConfig();
+loadProfiles();
+loadMcpServers();
+
+// ============================================================ status badges
+function setBadge(id, ok) {
+  const e = el(id);
+  if (!e) return;
+  e.classList.toggle("ok", !!ok);
+  e.classList.toggle("err", !ok);
+}
+
+// ============================================================ chat modes
+const CHAT_MODES = {
+  "text-text":   { title: "Text Chat",      hint: "Text chat with the configured LLM." },
+  "voice-voice": { title: "Voice Chat",     hint: "Speak — VAD detects your pause, transcribes, LLM replies, TTS plays back." },
+  "voice-text":  { title: "Voice → Text",   hint: "Live microphone transcription. No LLM, no TTS." },
+  "text-voice":  { title: "Text → Voice",   hint: "Type text to synthesize and play back." },
+};
+let chatMode = "text-text";
+
+function setChatMode(mode) {
+  chatMode = mode;
+  document.querySelectorAll("#chat-mode-seg .seg-btn").forEach((b) => {
+    b.classList.toggle("active", b.getAttribute("data-mode") === mode);
+  });
+  ["text-text", "voice-voice", "voice-text", "text-voice"].forEach((m) => {
+    const pane = el(`mode-${m}`);
+    if (pane) pane.classList.toggle("hidden", m !== mode);
+  });
+  const info = CHAT_MODES[mode] || {};
+  if (el("chat-section-title")) el("chat-section-title").textContent = info.title || "Chat";
+  if (el("chat-hint")) el("chat-hint").textContent = info.hint || "";
+  const enginesInfo = el("conv-engines-info");
+  if (enginesInfo) enginesInfo.classList.toggle("hidden", mode !== "voice-voice");
+}
+
+function initChatModes() {
+  document.querySelectorAll("#chat-mode-seg .seg-btn").forEach((btn) => {
+    btn.addEventListener("click", () => setChatMode(btn.getAttribute("data-mode")));
+  });
+  setChatMode("text-text");
+}
+
+// ============================================================ profiles
+let profileData = {};
+let profileEditMode = null; // null | "new" | "<profile-name>"
+let mcpServerData = {};     // loaded first so profile panel can use it
+
+async function loadProfiles() {
+  try {
+    const body = await (await fetch("/v1/profiles")).json();
+    profileData = body.data || {};
+    renderProfileSelect();
+  } catch {
+    /* ignore */
+  }
+}
+
+function renderProfileSelect() {
+  const sel = el("profile-select");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">(none — server defaults)</option>';
+  Object.keys(profileData).sort().forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  });
+  if (profileData[prev]) sel.value = prev;
+}
+
+function openProfilePanel(mode, name) {
+  profileEditMode = mode === "new" ? "new" : name;
+  const panel = el("profile-panel");
+  if (!panel) return;
+
+  if (mode === "new") {
+    el("pf-name").value = "";
+    el("pf-name").disabled = false;
+    el("pf-system-prompt").value = "";
+    el("pf-llm-url").value = "";
+    el("pf-llm-model").value = "";
+    el("pf-llm-key").value = "";
+    if (el("pf-tts-engine")) el("pf-tts-engine").value = "";
+    el("pf-delete-btn").classList.add("hidden");
+  } else {
+    const p = profileData[name];
+    if (!p) return;
+    el("pf-name").value = name;
+    el("pf-name").disabled = true;
+    el("pf-system-prompt").value = p.system_prompt || "";
+    el("pf-llm-url").value = p.llm?.base_url || "";
+    el("pf-llm-model").value = p.llm?.model || "";
+    el("pf-llm-key").value = "";
+    if (el("pf-tts-engine")) el("pf-tts-engine").value = p.tts?.engine || "";
+    el("pf-delete-btn").classList.remove("hidden");
+    renderProfileMcpList(p.mcp_servers || []);
+  }
+
+  el("pf-status").textContent = "";
+  panel.classList.remove("hidden");
+  pfUpdateTtsVoice();
+}
+
+function closeProfilePanel() {
+  profileEditMode = null;
+  const panel = el("profile-panel");
+  if (panel) panel.classList.add("hidden");
+}
+
+function pfUpdateTtsVoice() {
+  const eng = el("pf-tts-engine");
+  const wrap = el("pf-tts-voice-wrap");
+  if (!eng || !wrap) return;
+  wrap.classList.toggle("hidden", eng.value !== "vieneu");
+}
+
+function renderProfileMcpList(selectedServers) {
+  const container = el("pf-mcp-list");
+  if (!container) return;
+  const selectedUrls = new Set((selectedServers || []).map((s) => s.url));
+  const servers = Object.values(mcpServerData);
+  if (!servers.length) {
+    container.innerHTML = '<p class="hint" style="margin:0">No global MCP servers. Add them in the MCP section first.</p>';
+    return;
+  }
+  container.innerHTML = servers.map((s) => `
+    <label class="pf-mcp-item">
+      <input type="checkbox" data-mcp-srv="${s.name}" ${selectedUrls.has(s.url) ? "checked" : ""} />
+      <span>${s.name}</span>
+      <code>${s.url}</code>
+    </label>
+  `).join("");
+}
+
+async function saveProfile() {
+  const name = el("pf-name").value.trim();
+  if (!name) { print(el("pf-status"), "Enter a profile name", true); return; }
+
+  const selectedMcpServers = [...document.querySelectorAll("#pf-mcp-list input[data-mcp-srv]:checked")]
+    .map((cb) => cb.getAttribute("data-mcp-srv"))
+    .map((n) => mcpServerData[n])
+    .filter(Boolean)
+    .map((s) => ({ name: s.name, url: s.url }));
+
+  const payload = {
+    name,
+    llm: {
+      base_url: el("pf-llm-url").value.trim(),
+      api_key: el("pf-llm-key").value,
+      model: el("pf-llm-model").value.trim(),
+    },
+    system_prompt: el("pf-system-prompt").value,
+    tts: {
+      engine: el("pf-tts-engine")?.value || "",
+      voice: el("pf-tts-voice")?.value || "",
+    },
+    mcp_servers: selectedMcpServers,
+  };
+
+  print(el("pf-status"), "Saving…");
+  try {
+    const isNew = profileEditMode === "new";
+    const url = isNew ? "/v1/profiles" : `/v1/profiles/${encodeURIComponent(name)}`;
+    const resp = await fetch(url, {
+      method: isNew ? "POST" : "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await resp.json();
+    if (!resp.ok) {
+      print(el("pf-status"), body.detail || body.error || JSON.stringify(body), true);
+      return;
+    }
+    el("pf-status").textContent = "Saved ✓";
+    el("pf-llm-key").value = "";
+    await loadProfiles();
+    el("profile-select").value = name;
+    if (isNew) { profileEditMode = name; el("pf-name").disabled = true; el("pf-delete-btn").classList.remove("hidden"); }
+  } catch (error) {
+    print(el("pf-status"), String(error), true);
+  }
+}
+
+async function deleteProfile() {
+  const name = el("pf-name").value.trim();
+  if (!name || !confirm(`Delete profile "${name}"?`)) return;
+  try {
+    const resp = await fetch(`/v1/profiles/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!resp.ok) { const b = await resp.json(); print(el("pf-status"), b.detail || "Delete failed", true); return; }
+    await loadProfiles();
+    el("profile-select").value = "";
+    closeProfilePanel();
+  } catch (error) {
+    print(el("pf-status"), String(error), true);
+  }
+}
+
+// Profile bar event listeners
+if (el("profile-edit-btn")) {
+  el("profile-edit-btn").addEventListener("click", () => {
+    const name = el("profile-select").value;
+    if (!name) { alert("Select a profile first, or click + New to create one."); return; }
+    openProfilePanel("edit", name);
+  });
+}
+if (el("profile-new-btn")) el("profile-new-btn").addEventListener("click", () => openProfilePanel("new"));
+if (el("profile-close-btn")) el("profile-close-btn").addEventListener("click", closeProfilePanel);
+if (el("pf-cancel-btn")) el("pf-cancel-btn").addEventListener("click", closeProfilePanel);
+if (el("pf-save-btn")) el("pf-save-btn").addEventListener("click", saveProfile);
+if (el("pf-delete-btn")) el("pf-delete-btn").addEventListener("click", deleteProfile);
+if (el("pf-tts-engine")) el("pf-tts-engine").addEventListener("change", pfUpdateTtsVoice);
+
+// ============================================================ MCP servers
+async function loadMcpServers() {
+  try {
+    const body = await (await fetch("/v1/mcp/servers")).json();
+    mcpServerData = body.data || {};
+    renderMcpList();
+  } catch {
+    /* ignore */
+  }
+}
+
+function renderMcpList() {
+  const host = el("mcp-server-list");
+  if (!host) return;
+  const servers = Object.values(mcpServerData);
+  if (!servers.length) {
+    host.innerHTML = '<p class="hint">No servers configured yet. Add one below.</p>';
+    return;
+  }
+  host.innerHTML = servers.map((s) => `
+    <div class="model-row">
+      <div class="model-info">
+        <strong>${s.name}</strong>
+        <code>${s.url}</code>
+        <span class="mcp-row-status" id="mcp-test-${s.name}"></span>
+      </div>
+      <div class="model-action">
+        <button class="mini" data-mcp-test="${s.name}">Test</button>
+        <button class="mini danger" data-mcp-delete="${s.name}">Delete</button>
+      </div>
+    </div>
+  `).join("");
+
+  document.querySelectorAll("[data-mcp-test]").forEach((btn) =>
+    btn.addEventListener("click", () => testMcpServer(btn.getAttribute("data-mcp-test")))
+  );
+  document.querySelectorAll("[data-mcp-delete]").forEach((btn) =>
+    btn.addEventListener("click", () => deleteMcpServer(btn.getAttribute("data-mcp-delete")))
+  );
+}
+
+async function addMcpServer() {
+  const name = el("mcp-add-name").value.trim();
+  const url = el("mcp-add-url").value.trim();
+  const status = el("mcp-status");
+  if (!name || !url) { print(status, "Enter both name and URL", true); return; }
+  try {
+    const resp = await fetch("/v1/mcp/servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, url }),
+    });
+    const body = await resp.json();
+    if (!resp.ok) { print(status, body.detail || JSON.stringify(body), true); return; }
+    status.textContent = `Added "${name}" ✓`;
+    el("mcp-add-name").value = "";
+    el("mcp-add-url").value = "";
+    await loadMcpServers();
+    // Refresh profile panel MCP list if open
+    if (el("profile-panel") && !el("profile-panel").classList.contains("hidden")) {
+      const pName = el("pf-name").value;
+      renderProfileMcpList(pName && profileData[pName] ? profileData[pName].mcp_servers : []);
+    }
+  } catch (error) {
+    print(status, String(error), true);
+  }
+}
+
+async function testMcpServer(name) {
+  const statusEl = el(`mcp-test-${name}`);
+  if (statusEl) { statusEl.textContent = "testing…"; statusEl.className = "mcp-row-status"; }
+  try {
+    const resp = await fetch(`/v1/mcp/servers/${encodeURIComponent(name)}/tools`);
+    const body = await resp.json();
+    if (!resp.ok) {
+      if (statusEl) { statusEl.textContent = `✗ ${body.detail || "error"}`; statusEl.className = "mcp-row-status err"; }
+      return;
+    }
+    const tools = body.data.tools || [];
+    if (statusEl) { statusEl.textContent = `✓ ${tools.length} tool${tools.length !== 1 ? "s" : ""}`; statusEl.className = "mcp-row-status ok"; }
+  } catch (error) {
+    if (statusEl) { statusEl.textContent = `✗ ${error}`; statusEl.className = "mcp-row-status err"; }
+  }
+}
+
+async function deleteMcpServer(name) {
+  if (!confirm(`Delete MCP server "${name}"?`)) return;
+  try {
+    const resp = await fetch(`/v1/mcp/servers/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!resp.ok) { const b = await resp.json(); print(el("mcp-status"), b.detail || "Delete failed", true); return; }
+    await loadMcpServers();
+  } catch (error) {
+    print(el("mcp-status"), String(error), true);
+  }
+}
+
+if (el("mcp-add-btn")) el("mcp-add-btn").addEventListener("click", addMcpServer);
+if (el("mcp-refresh")) el("mcp-refresh").addEventListener("click", loadMcpServers);
+
+// ============================================================ voice→text (in chat section)
+const v2t = { ws: null, capture: null };
+
+function setV2tUI(state) {
+  const start = el("v2t-start");
+  const stop = el("v2t-stop");
+  if (start) start.disabled = state !== "idle";
+  if (stop) stop.disabled = state !== "recording";
+}
+
+function setV2tStatus(text, cls) {
+  const e = el("v2t-status");
+  if (e) { e.textContent = text; e.className = cls; }
+}
+
+async function startV2t() {
+  const engine = el("v2t-stt-engine")?.value || "vosk";
+  const language = el("v2t-language")?.value.trim() || "";
+  if (el("v2t-partial")) el("v2t-partial").textContent = "—";
+  if (el("v2t-log")) el("v2t-log").textContent = "";
+
+  const pp = getPreproc();
+  let params = `engine=${encodeURIComponent(engine)}&sample_rate=${STREAM_SAMPLE_RATE}`;
+  if (language) params += `&language=${encodeURIComponent(language)}`;
+  params += `&denoise=${pp.denoise}&vad=${pp.vad}&vad_backend=${encodeURIComponent(pp.backend)}`;
+
+  let capture;
+  try {
+    capture = createMicCapture({
+      onframe: (pcm) => {
+        if (v2t.ws && v2t.ws.readyState === WebSocket.OPEN) v2t.ws.send(pcm.buffer);
+      },
+    });
+  } catch {
+    setV2tStatus("mic error", "status-error");
+    return;
+  }
+
+  const ws = new WebSocket(wsUrl(`/v1/stt/stream?${params}`));
+  v2t.ws = ws;
+
+  ws.onopen = async () => {
+    try {
+      await capture.start();
+      v2t.capture = capture;
+      setV2tStatus("● recording", "status-rec");
+      setV2tUI("recording");
+    } catch {
+      setV2tStatus("mic denied", "status-error");
+      ws.close();
+    }
+  };
+
+  ws.onmessage = (event) => {
+    let data;
+    try { data = JSON.parse(event.data); } catch { return; }
+    if (el("v2t-log")) {
+      const lines = el("v2t-log").textContent.split("\n");
+      lines.push(`${data.event_type}: ${JSON.stringify(data.payload ?? {})}`);
+      if (lines.length > 30) lines.shift();
+      el("v2t-log").textContent = lines.join("\n");
+    }
+    if (data.event_type === "partial") {
+      if (el("v2t-partial")) el("v2t-partial").textContent = data.payload?.text || "…";
+    } else if (data.event_type === "final") {
+      const text = (data.payload?.text || "").trim();
+      if (text) chatBubble("user", text);
+      if (el("v2t-partial")) el("v2t-partial").textContent = "—";
+    } else if (data.event_type === "done") {
+      stopV2t();
+    }
+  };
+
+  ws.onerror = () => setV2tStatus("ws error", "status-error");
+  ws.onclose = () => {
+    setV2tUI("idle");
+    if (el("v2t-status")?.className !== "status-error") setV2tStatus("idle", "status-idle");
+  };
+}
+
+function stopV2t() {
+  if (v2t.capture) { v2t.capture.stop(); v2t.capture = null; }
+  if (v2t.ws) {
+    if (v2t.ws.readyState === WebSocket.OPEN) v2t.ws.send(JSON.stringify({ type: "end" }));
+    v2t.ws = null;
+  }
+}
+
+if (el("v2t-start")) el("v2t-start").addEventListener("click", startV2t);
+if (el("v2t-stop")) el("v2t-stop").addEventListener("click", stopV2t);
+setV2tUI("idle");
+
+// ============================================================ text→voice (in chat section)
+if (el("t2v-submit")) {
+  el("t2v-submit").addEventListener("click", async () => {
+    const text = el("t2v-text")?.value.trim();
+    const audio = el("t2v-audio");
+    const meta = el("t2v-meta");
+    if (!text) return;
+    if (meta) meta.textContent = "Synthesizing…";
+    if (audio) audio.classList.add("hidden");
+    try {
+      const resp = await fetch("/v1/tts/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          engine: el("t2v-tts-engine")?.value || undefined,
+          voice: el("t2v-tts-voice")?.value || null,
+        }),
+      });
+      const body = await resp.json();
+      if (!resp.ok) { if (meta) meta.textContent = body.error || "TTS error"; return; }
+      if (body.data?.audio_url && audio) {
+        audio.src = body.data.audio_url;
+        audio.classList.remove("hidden");
+        audio.play().catch(() => {});
+        if (meta) meta.textContent = `${body.data.duration_seconds ?? "?"}s @ ${body.data.sample_rate}Hz`;
+      }
+    } catch (error) {
+      if (meta) meta.textContent = String(error);
+    }
+  });
+}
