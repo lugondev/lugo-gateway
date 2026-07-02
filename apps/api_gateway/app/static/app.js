@@ -1691,7 +1691,7 @@ async function startConversation() {
           conv.assistantBubble = addBubble("assistant", d.text);
         } else {
           conv.assistantBubble.textContent += " " + d.text;
-          el("conv-dialogue").scrollTop = el("conv-dialogue").scrollHeight;
+          el("chat-dialogue").scrollTop = el("chat-dialogue").scrollHeight;
         }
         break;
       case "audio_start":
