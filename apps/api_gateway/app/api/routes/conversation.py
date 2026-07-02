@@ -433,7 +433,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
                     history.append({"role": "user", "content": transcript})
 
                 async def _reply_sentences():
-                    for sentence in segment_text(reply) or [reply]:
+                    for sentence in segment_text(reply):
                         yield sentence
 
                 parts = await _stream_to_tts(_reply_sentences(), stt_engine)
