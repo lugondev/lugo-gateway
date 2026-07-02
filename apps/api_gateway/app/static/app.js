@@ -1931,6 +1931,8 @@ function openProfilePanel(mode, name) {
   const panel = el("profile-panel");
   if (!panel) return;
 
+  let selectedMcpServers = [];
+
   if (mode === "new") {
     el("pf-name").value = "";
     el("pf-name").disabled = false;
@@ -1951,12 +1953,13 @@ function openProfilePanel(mode, name) {
     el("pf-llm-key").value = "";
     if (el("pf-tts-engine")) el("pf-tts-engine").value = p.tts?.engine || "";
     el("pf-delete-btn").classList.remove("hidden");
-    renderProfileMcpList(p.mcp_servers || []);
+    selectedMcpServers = p.mcp_servers || [];
   }
 
   el("pf-status").textContent = "";
   panel.classList.remove("hidden");
   pfUpdateTtsVoice();
+  renderProfileMcpList(selectedMcpServers);
 }
 
 function closeProfilePanel() {
