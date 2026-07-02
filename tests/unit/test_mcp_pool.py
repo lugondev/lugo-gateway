@@ -83,3 +83,23 @@ async def test_different_urls_are_independent():
         tools_b = await pool.get_tools("http://b.test")
     assert tools_a[0]["name"] == "a"
     assert tools_b[0]["name"] == "b"
+
+
+async def test_get_tools_invalidate_during_fetch_skips_cache_write():
+    """invalidate() called while get_tools() is awaiting must not be undone."""
+    pool = McpConnectionPool(cache_ttl=60)
+
+    async def slow_list_tools():
+        # Simulate the event loop yielding and invalidate() running
+        pool.invalidate("http://mcp.test")
+        return TOOLS
+
+    mock = AsyncMock()
+    mock.list_tools = slow_list_tools
+    with patch("app.services.mcp.pool.McpHttpClient", return_value=mock):
+        tools = await pool.get_tools("http://mcp.test")
+
+    # Tools returned correctly
+    assert tools == TOOLS
+    # But cache was NOT written (invalidate won)
+    assert "http://mcp.test" not in pool._cache

@@ -44,7 +44,9 @@ class McpConnectionPool:
             try:
                 client = self._get_client(url)
                 tools = await client.list_tools()
-                self._cache[url] = (time.monotonic(), tools)
+                # Skip cache write if invalidate() ran during the await
+                if url in self._clients:
+                    self._cache[url] = (time.monotonic(), tools)
                 return tools
             except McpConnectionError as exc:
                 logger.warning("MCP server %s unreachable: %s", url, exc)
