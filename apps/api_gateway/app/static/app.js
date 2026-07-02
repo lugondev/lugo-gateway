@@ -1838,6 +1838,19 @@ function initSidebar() {
   }
 }
 
+// ============================================================ module-level state (must precede init)
+const CHAT_MODES = {
+  "text-text":   { title: "Text Chat",      hint: "Text chat with the configured LLM." },
+  "voice-voice": { title: "Voice Chat",     hint: "Speak — VAD detects your pause, transcribes, LLM replies, TTS plays back." },
+  "voice-text":  { title: "Voice → Text",   hint: "Live microphone transcription. No LLM, no TTS." },
+  "text-voice":  { title: "Text → Voice",   hint: "Type text to synthesize and play back." },
+};
+let chatMode = "text-text";
+let profileData = {};
+let profileEditMode = null; // null | "new" | "<profile-name>"
+let mcpServerData = {};     // loaded first so profile panel can use it
+const v2t = { ws: null, capture: null };
+
 // ============================================================ init
 initSidebar();
 initSttMode();
@@ -1865,14 +1878,6 @@ function setBadge(id, ok) {
 }
 
 // ============================================================ chat modes
-const CHAT_MODES = {
-  "text-text":   { title: "Text Chat",      hint: "Text chat with the configured LLM." },
-  "voice-voice": { title: "Voice Chat",     hint: "Speak — VAD detects your pause, transcribes, LLM replies, TTS plays back." },
-  "voice-text":  { title: "Voice → Text",   hint: "Live microphone transcription. No LLM, no TTS." },
-  "text-voice":  { title: "Text → Voice",   hint: "Type text to synthesize and play back." },
-};
-let chatMode = "text-text";
-
 function setChatMode(mode) {
   chatMode = mode;
   document.querySelectorAll("#chat-mode-seg .seg-btn").forEach((b) => {
@@ -1897,10 +1902,6 @@ function initChatModes() {
 }
 
 // ============================================================ profiles
-let profileData = {};
-let profileEditMode = null; // null | "new" | "<profile-name>"
-let mcpServerData = {};     // loaded first so profile panel can use it
-
 async function loadProfiles() {
   try {
     const body = await (await fetch("/v1/profiles")).json();
@@ -2167,8 +2168,6 @@ if (el("mcp-add-btn")) el("mcp-add-btn").addEventListener("click", addMcpServer)
 if (el("mcp-refresh")) el("mcp-refresh").addEventListener("click", loadMcpServers);
 
 // ============================================================ voice→text (in chat section)
-const v2t = { ws: null, capture: null };
-
 function setV2tUI(state) {
   const start = el("v2t-start");
   const stop = el("v2t-stop");
