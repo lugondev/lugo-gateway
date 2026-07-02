@@ -279,14 +279,23 @@ async function loadModels() {
     // ---- Conversation LLM (Ollama) ----
     const llm = body.data.llm;
     if (el("llm-hint")) {
-      el("llm-hint").textContent = llm.available
-        ? `Ollama at ${llm.base_url} — active: ${llm.active} ${llm.running ? "(running)" : "(idle)"}`
-        : "Ollama not reachable. Install & run Ollama, then set CONVERSATION_LLM_BASE_URL=http://localhost:11434/v1.";
+      if (llm.remote && llm.available) {
+        el("llm-hint").textContent = `Cloud API: ${llm.base_url} — model: ${llm.active} ✓`;
+      } else if (llm.remote) {
+        el("llm-hint").textContent = `Cloud API: ${llm.base_url} — set CONVERSATION_LLM_API_KEY to use.`;
+      } else if (llm.available) {
+        el("llm-hint").textContent = `Ollama at ${llm.base_url} — active: ${llm.active} ${llm.running ? "(running)" : "(idle)"}`;
+      } else {
+        el("llm-hint").textContent = "Ollama not reachable. Install & run Ollama, then set CONVERSATION_LLM_BASE_URL=http://localhost:11434/v1.";
+      }
     }
     const llmBtn = el("llm-start");
     if (llmBtn) {
-      llmBtn.dataset.mode = llm.available ? "stop" : "start";
-      llmBtn.textContent = llm.available ? "Stop service" : "Start service";
+      llmBtn.hidden = !!llm.remote;
+      if (!llm.remote) {
+        llmBtn.dataset.mode = llm.available ? "stop" : "start";
+        llmBtn.textContent = llm.available ? "Stop service" : "Start service";
+      }
     }
     const llmNames = new Set(llm.suggestions.map((s) => s.model));
     const llmRows = llm.suggestions.map((s) => renderLlmRow(s, llm.jobs, llm.available));

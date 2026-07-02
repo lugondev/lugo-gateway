@@ -45,6 +45,14 @@ def _ollama_base() -> str:
     return base[:-3].rstrip("/") if base.endswith("/v1") else base
 
 
+def _is_remote_endpoint() -> bool:
+    """True when base_url points at a cloud API (not localhost/LAN Ollama)."""
+    from urllib.parse import urlparse
+    host = urlparse(settings.conversation_llm_base_url).hostname or ""
+    return bool(host) and host not in ("localhost", "127.0.0.1", "0.0.0.0", "::1") \
+        and not host.startswith("192.168.") and not host.endswith(".local")
+
+
 class LlmManager:
     def __init__(self) -> None:
         self._jobs: dict[str, dict] = {}
@@ -54,6 +62,8 @@ class LlmManager:
             raise AppError(f"Invalid model name: {model!r}")
 
     def available(self) -> bool:
+        if _is_remote_endpoint():
+            return bool(settings.conversation_llm_base_url and settings.conversation_llm_api_key)
         base = _ollama_base()
         if not base:
             return False
@@ -83,13 +93,15 @@ class LlmManager:
             return set()
 
     def snapshot(self) -> dict:
+        remote = _is_remote_endpoint()
         available = self.available()
-        installed = self._installed() if available else []
-        running = self._running_models() if available else set()
+        installed = self._installed() if (available and not remote) else []
+        running = self._running_models() if (available and not remote) else set()
         names = {m["model"] for m in installed}
         active = get_active_llm_model()
         return {
             "available": available,
+            "remote": remote,
             "base_url": settings.conversation_llm_base_url,
             "active": active,
             "running": active in running,
