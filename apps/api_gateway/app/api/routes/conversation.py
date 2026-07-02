@@ -15,12 +15,17 @@ from app.services.conversation.tools.base import ToolContext, ToolRegistry
 from app.services.conversation.tools.local import LocalToolSource
 from app.services.conversation.responder import (
     build_responder,
+    build_responder_ex,
     get_active_llm_api_key,
     get_active_llm_base_url,
     get_active_llm_model,
     reset_active_llm_config,
     set_active_llm_config,
 )
+from app.services.conversation.tools.mcp import McpToolSource
+from app.services.mcp.pool import mcp_pool
+from app.services.mcp.server_store import mcp_server_store
+from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt_profile
 from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.stt.routing import select_stt_engine
@@ -85,14 +90,29 @@ async def reset_llm_config() -> dict:
 
 
 @router.post("/chat")
-async def chat(payload: ChatRequest) -> dict:
+async def chat(payload: ChatRequest, profile: str | None = None) -> dict:
     """Text chat with the configured conversation responder (LLM or echo)."""
-    responder = build_responder()
+    active_profile = profile_store.get(profile) if profile else None
+    llm_base_url = (active_profile.llm.base_url or None) if (active_profile and active_profile.llm.base_url) else None
+    llm_api_key = active_profile.llm.api_key if (active_profile and active_profile.llm.base_url) else None
+    llm_model = (active_profile.llm.model or None) if (active_profile and active_profile.llm.model) else None
+    system_prompt = (active_profile.system_prompt or None) if (active_profile and active_profile.system_prompt) else None
+    responder = build_responder_ex(
+        base_url=llm_base_url,
+        api_key=llm_api_key,
+        model=llm_model,
+        system_prompt=system_prompt,
+    )
     history = [{"role": m.role, "content": m.content} for m in payload.messages]
     reply = await responder.reply(history)
     return {
         "success": True,
-        "data": {"reply": reply, "responder": responder.name, "model": get_active_llm_model()},
+        "data": {
+            "reply": reply,
+            "responder": responder.name,
+            "model": get_active_llm_model(),
+            "profile": profile,
+        },
     }
 
 
@@ -102,18 +122,37 @@ async def conversation_stream(websocket: WebSocket) -> None:
     session_id = str(uuid.uuid4())
     q = websocket.query_params
 
+    # --- Profile resolution ---
+    profile_name = q.get("profile")
+    profile = profile_store.get(profile_name) if profile_name else None
+    if profile_name and not profile:
+        await websocket.send_json({
+            "event": "warning",
+            "message": f"profile '{profile_name}' not found, using defaults",
+        })
+
+    # LLM config: profile overrides global state / .env
+    llm_base_url = (profile.llm.base_url or None) if (profile and profile.llm.base_url) else None
+    llm_api_key = profile.llm.api_key if (profile and profile.llm.base_url) else None
+    llm_model = (profile.llm.model or None) if (profile and profile.llm.model) else None
+    system_prompt = (profile.system_prompt or None) if (profile and profile.system_prompt) else None
+
     # Language profile (vi|en|multi|en_vi) sets the engine + language default; an
     # explicit stt_engine/language query param still wins over it.
-    profile = resolve_stt_profile(q.get("profile") or settings.stt_profile)
-    if profile:
-        prof_engine, prof_lang = profile
+    stt_profile_res = resolve_stt_profile(q.get("profile") or settings.stt_profile)
+    if stt_profile_res:
+        prof_engine, prof_lang = stt_profile_res
         stt_engine = q.get("stt_engine") or prof_engine
         language = q.get("language") or prof_lang
     else:
         stt_engine = q.get("stt_engine") or settings.conversation_stt_engine or settings.default_stt_engine
         language = q.get("language") or settings.conversation_language or None
-    tts_engine = q.get("tts_engine") or settings.conversation_tts_engine or settings.default_tts_engine
-    voice = q.get("voice") or None
+    if profile and profile.tts.engine:
+        tts_engine = profile.tts.engine
+        voice = profile.tts.voice or q.get("voice") or None
+    else:
+        tts_engine = q.get("tts_engine") or settings.conversation_tts_engine or settings.default_tts_engine
+        voice = q.get("voice") or None
     sample_rate = int(q.get("sample_rate", settings.stt_stream_sample_rate))
     # Audio transport: pcm16 (default) or opus (embedded ESP32/RPi + browser WebCodecs;
     # ~10x less bandwidth). Server decodes Opus packets -> PCM16 for the endpointer.
@@ -164,15 +203,31 @@ async def conversation_stream(websocket: WebSocket) -> None:
             audio_out = "url"
             logger.warning("client requested opus output but server has no libopus; using url")
 
-    responder = build_responder()
+    responder = build_responder_ex(
+        base_url=llm_base_url,
+        api_key=llm_api_key,
+        model=llm_model,
+        system_prompt=system_prompt,
+    )
 
-    # Tool registry: opt-in via CONVERSATION_TOOLS_ENABLED=1.  Default OFF so
-    # existing behaviour is never broken.  LocalToolSource adds get_time and
-    # device_command; McpToolSource can be added here when an MCP endpoint is
-    # configured.
-    tool_registry: ToolRegistry | None = None
-    if settings.conversation_tools_enabled:
-        tool_registry = ToolRegistry([LocalToolSource()])
+    # Tool registry: merge global MCP servers + per-profile MCP servers (profile wins on name collision).
+    global_servers = mcp_server_store.list()
+    profile_specific = {s.name: s for s in (profile.mcp_servers if profile else [])}
+    merged_servers = {**global_servers, **profile_specific}
+
+    tool_sources: list = []
+    has_mcp = bool(merged_servers)
+    if settings.conversation_tools_enabled or has_mcp:
+        tool_sources.append(LocalToolSource())
+        for srv in merged_servers.values():
+            tools = await mcp_pool.get_tools(srv.url)
+            if tools:
+                url = srv.url
+                tool_sources.append(
+                    McpToolSource(tools, invoker=lambda n, a, u=url: mcp_pool.invoke(u, n, a))
+                )
+
+    tool_registry: ToolRegistry | None = ToolRegistry(tool_sources) if tool_sources else None
 
     # Detail strings so the UI can show exactly WHICH models are active this session.
     if hasattr(stt_provider, "detail"):
@@ -206,10 +261,13 @@ async def conversation_stream(websocket: WebSocket) -> None:
     history: list[dict] = []
     turn = 0
 
+    active_tools = list(tool_registry._tools.keys()) if tool_registry else []
     await websocket.send_json(
         {
             "event": "session_started",
             "session_id": session_id,
+            "profile": profile_name,
+            "active_tools": active_tools,
             "stt_engine": stt_engine,
             "stt_detail": stt_detail,
             "tts_engine": tts_engine,
@@ -416,7 +474,15 @@ async def conversation_stream(websocket: WebSocket) -> None:
             return
 
         history.append({"role": "user", "content": user_text})
-        parts = await _stream_to_tts(responder.reply_stream(history), responder.name)
+        parts = await _stream_to_tts(
+            responder.reply_stream(
+                history,
+                registry=tool_registry,
+                ctx=tool_ctx,
+                max_iters=settings.conversation_tool_max_iters,
+            ),
+            responder.name,
+        )
         history.append({"role": "assistant", "content": " ".join(parts)})
         await send("turn_done", turn=turn)
 
