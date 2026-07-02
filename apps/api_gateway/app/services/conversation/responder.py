@@ -246,3 +246,27 @@ def build_responder() -> Responder:
             timeout=settings.conversation_llm_timeout_seconds,
         )
     return EchoResponder()
+
+
+def build_responder_ex(
+    base_url: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+    system_prompt: str | None = None,
+) -> Responder:
+    """Build a responder with optional overrides; falls back to .env defaults.
+
+    Passing None for any arg uses the current global active config value.
+    """
+    effective_url = base_url if base_url is not None else get_active_llm_base_url()
+    if effective_url:
+        return OpenAICompatResponder(
+            base_url=effective_url,
+            api_key=api_key if api_key is not None else get_active_llm_api_key(),
+            model=model if model is not None else get_active_llm_model(),
+            system_prompt=(
+                system_prompt if system_prompt is not None else settings.conversation_system_prompt
+            ),
+            timeout=settings.conversation_llm_timeout_seconds,
+        )
+    return EchoResponder()
