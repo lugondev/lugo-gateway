@@ -1,3 +1,4 @@
+import asyncio
 import os
 import tempfile
 from pathlib import Path
@@ -79,15 +80,17 @@ class WhisperProvider(STTProvider):
             )
         return _MODEL_CACHE[key]
 
-    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None) -> STTResult:
+    def warm(self) -> None:
+        """Load the model into memory so the first conversation turn isn't slow."""
+        self._load_model()
+
+    def _do_transcribe(self, audio_bytes: bytes, language: str | None) -> str:
         model = self._load_model()
         temp_file_path = ""
-
         try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                temp_file.write(audio_bytes)
-                temp_file_path = temp_file.name
-
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                f.write(audio_bytes)
+                temp_file_path = f.name
             segments, _ = model.transcribe(
                 temp_file_path,
                 language=language,
@@ -98,10 +101,11 @@ class WhisperProvider(STTProvider):
                     settings.whisper_initial_prompt, settings.stt_glossary_path
                 ),
             )
-
-            text_parts = [segment.text.strip() for segment in segments if segment.text.strip()]
-            text = " ".join(text_parts)
-            return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
+            return " ".join(s.text.strip() for s in segments if s.text.strip())
         finally:
             if temp_file_path and os.path.isfile(temp_file_path):
                 os.unlink(temp_file_path)
+
+    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None) -> STTResult:
+        text = await asyncio.to_thread(self._do_transcribe, audio_bytes, language)
+        return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
