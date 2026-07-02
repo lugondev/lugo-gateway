@@ -24,7 +24,9 @@ _EMOJI_RE = re.compile(
     "\U0001f900-\U0001f9ff"  # supplemental symbols & pictographs
     "\U0001fa00-\U0001faff"  # symbols & pictographs extended-A
     "\U0001f000-\U0001f0ff"  # mahjong / dominoes / playing cards
+    "\U00002190-\U000021ff"  # arrows (→ ← ↑ ↓ ↗ …)
     "\U00002300-\U000023ff"  # misc technical (⌚⏰⏳ …)
+    "\U00002400-\U000025ff"  # enclosed alphanumerics (①②③) + box drawing + geometric shapes (■▲▶◆ …)
     "\U00002600-\U000026ff"  # miscellaneous symbols (☀☎♻ …)
     "\U00002700-\U000027bf"  # dingbats (✂✅✨ …)
     "\U00002b00-\U00002bff"  # misc symbols & arrows (⭐⬅ …)
