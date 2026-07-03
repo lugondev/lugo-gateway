@@ -47,3 +47,12 @@ def test_delete_all_memories(client):
 
 def test_empty_content_rejected(client):
     assert client.post("/v1/profiles/pet/memories", json={"content": "  "}).status_code == 422
+
+
+def test_cross_profile_isolation(client):
+    mid = client.post("/v1/profiles/pet/memories", json={"content": "secret"}).json()["data"]["id"]
+    # another profile's URL cannot edit or delete it
+    assert client.put(f"/v1/profiles/other/memories/{mid}", json={"content": "hax"}).status_code == 404
+    assert client.delete(f"/v1/profiles/other/memories/{mid}").status_code == 404
+    # owner still can
+    assert client.delete(f"/v1/profiles/pet/memories/{mid}").status_code == 200

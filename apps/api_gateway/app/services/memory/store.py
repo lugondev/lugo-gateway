@@ -52,20 +52,20 @@ class MemoryStore:
             await s.commit()
             return _mem_dict(row)
 
-    async def update(self, memory_id: str, content: str) -> dict | None:
+    async def update(self, memory_id: str, content: str, profile_id: str | None = None) -> dict | None:
         async with db_session() as s:
             row = await s.get(MemoryItem, memory_id)
-            if not row:
+            if not row or (profile_id is not None and row.profile_id != profile_id):
                 return None
             row.content = content
             row.updated_at = utcnow()
             await s.commit()
             return _mem_dict(row)
 
-    async def delete(self, memory_id: str) -> bool:
+    async def delete(self, memory_id: str, profile_id: str | None = None) -> bool:
         async with db_session() as s:
             row = await s.get(MemoryItem, memory_id)
-            if not row:
+            if not row or (profile_id is not None and row.profile_id != profile_id):
                 return False
             await s.delete(row)
             await s.commit()

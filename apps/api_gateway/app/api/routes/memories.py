@@ -31,7 +31,7 @@ async def add_memory(name: str, payload: MemoryRequest) -> dict:
 
 @router.put("/{memory_id}")
 async def update_memory(name: str, memory_id: str, payload: MemoryRequest) -> dict:
-    row = await memory_store.update(memory_id, payload.content)
+    row = await memory_store.update(memory_id, payload.content, profile_id=name)
     if not row:
         raise HTTPException(status_code=404, detail=f"Memory '{memory_id}' not found")
     return {"success": True, "data": row}
@@ -39,7 +39,7 @@ async def update_memory(name: str, memory_id: str, payload: MemoryRequest) -> di
 
 @router.delete("/{memory_id}")
 async def delete_memory(name: str, memory_id: str) -> dict:
-    if not await memory_store.delete(memory_id):
+    if not await memory_store.delete(memory_id, profile_id=name):
         raise HTTPException(status_code=404, detail=f"Memory '{memory_id}' not found")
     return {"success": True, "data": {"id": memory_id, "deleted": True}}
 
