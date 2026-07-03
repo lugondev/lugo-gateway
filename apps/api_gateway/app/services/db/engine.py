@@ -29,6 +29,8 @@ _initialized = False
 def configure(url: str | None = None) -> None:
     """(Re)point the DB at a URL. Tests pass a tmp path; prod uses settings."""
     global _engine, _factory, _initialized
+    if _engine is not None:
+        _engine.sync_engine.dispose()
     url = url or settings.database_url
     if url.startswith("sqlite"):
         db_file = url.split("///", 1)[-1]
