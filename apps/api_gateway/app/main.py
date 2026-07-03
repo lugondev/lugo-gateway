@@ -10,6 +10,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.mcp import router as mcp_router
 from app.api.routes.profiles import router as profiles_router
 from app.api.routes.recommend import router as recommend_router
+from app.api.routes.sessions import router as sessions_router
 from app.api.routes.stt import router as stt_router
 from app.api.routes.system import router as system_router
 from app.api.routes.tts import router as tts_router
@@ -51,6 +52,7 @@ app.include_router(ui_router)
 app.include_router(agents_docs_router)
 app.include_router(profiles_router)
 app.include_router(mcp_router)
+app.include_router(sessions_router)
 
 app.mount("/static", StaticFiles(directory="apps/api_gateway/app/static"), name="static")
 # Serve generated audio artifacts (foundation; swap for object storage later).
