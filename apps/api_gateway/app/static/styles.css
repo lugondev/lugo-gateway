@@ -499,9 +499,14 @@ input[type="file"]:focus {
 }
 input[type="checkbox"],
 input[type="radio"] {
+  appearance: auto;
   width: auto;
+  height: auto;
   accent-color: var(--accent);
   padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
   cursor: pointer;
 }
 
