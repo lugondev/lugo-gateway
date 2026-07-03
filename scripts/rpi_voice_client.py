@@ -13,6 +13,8 @@ Run:
     python rpi_voice_client.py --host 192.168.1.50 --port 8000
     # push-to-talk instead of always-on VAD:
     python rpi_voice_client.py --host 192.168.1.50 --ptt
+    # activate a saved LLM profile (model/system prompt/TTS/MCP/memory):
+    python rpi_voice_client.py --host 192.168.1.50 --profile home-assistant
 """
 
 import argparse
@@ -39,6 +41,10 @@ def build_url(args) -> str:
         f"&sample_rate={IN_RATE}&audio_codec=opus"
         f"&output=audio,text&audio_out=opus&output_sample_rate={OUT_RATE}"
     )
+    if args.profile:
+        # Overrides LLM model/system prompt/TTS/MCP/memory from a saved profile
+        # (POST /v1/profiles) — stt/tts/lang above stay as fallbacks.
+        q += f"&profile={args.profile}"
     return f"ws://{args.host}:{args.port}/v1/conversation/stream?{q}"
 
 
@@ -118,5 +124,6 @@ if __name__ == "__main__":
     p.add_argument("--stt", default="whisper_mlx")
     p.add_argument("--tts", default="vieneu")
     p.add_argument("--lang", default="vi")
+    p.add_argument("--profile", default=None, help="named LLM profile (POST /v1/profiles) to activate")
     p.add_argument("--ptt", action="store_true", help="(placeholder) push-to-talk mode")
     asyncio.run(main(p.parse_args()))

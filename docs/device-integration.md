@@ -29,15 +29,70 @@ Recommended params for a duplex voice device:
 | `output` | `audio,text` | what to receive: `audio` (+ `text` for subtitles/debug) |
 | `audio_out` | `opus` | reply audio delivered as **pushed Opus frames** (not a URL) |
 | `output_sample_rate` | `24000` | **downlink** Opus rate (Hz) |
+| `profile` | *(optional)* | named **chatllm profile** — see §1a below |
 
 Full example:
 ```
 ws://192.168.1.50:8000/v1/conversation/stream?stt_engine=whisper_mlx&tts_engine=vieneu&language=vi&sample_rate=16000&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=24000
 ```
 
+Full example with a profile (replaces `tts_engine`/LLM config, `stt_engine`/`language` still apply as fallback):
+```
+ws://192.168.1.50:8000/v1/conversation/stream?profile=kitchen&sample_rate=16000&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=24000
+```
+
 On connect the server sends one `session_started` JSON with the negotiated config
 (`stt_engine`, `tts_engine`, `llm_model`, `audio_codec`, `audio_out`,
 `output_sample_rate`). Always read it first.
+
+## 1a. Profiles: connect a device as a preset "chatllm" persona
+
+A **profile** is a named bundle of everything a conversation session needs — LLM
+endpoint/model, system prompt, TTS engine/voice, MCP tool servers, and memory
+(auto-extraction/retrieval) settings — created once via the REST API and then activated
+on any device by passing `?profile=<name>` instead of wiring each setting separately.
+
+Create a profile (once, from any machine that can reach the gateway):
+```bash
+curl -X POST http://<server-host>:8000/v1/profiles \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "kitchen",
+        "llm": {"base_url": "http://localhost:11434/v1", "model": "qwen2.5:7b"},
+        "system_prompt": "You are a concise kitchen assistant.",
+        "tts": {"engine": "vieneu"}
+      }'
+```
+
+Then point the device's WS URL at `?profile=kitchen`. Precedence:
+- **LLM (model/base_url/api_key/system_prompt) and MCP tool servers**: always come from
+  the profile when set — there's no device-side query param for these.
+- **TTS**: the profile's `tts.engine`/`tts.voice` win over `?tts_engine=`/`?voice=` if
+  the profile sets them.
+- **STT engine/language**: an explicit `?stt_engine=`/`?language=` on the device URL still
+  wins. If neither is given and the profile's *name* matches a built-in language preset
+  (`vi`, `en`, `multi`, `en_vi`), that preset's engine/language is used.
+- **Memory**: if `memory.enabled` is true on the profile, the server auto-extracts and
+  later injects relevant memories into the system prompt for that profile — no device
+  change needed.
+
+If the `profile` name doesn't exist, the server sends a `warning` event and the session
+proceeds with defaults (nothing breaks, but you'll be talking to whatever the `.env`
+default LLM is instead of the intended persona) — check for that event during device
+bring-up.
+
+Manage profiles with `GET /v1/profiles`, `GET/PUT/DELETE /v1/profiles/{name}` — see
+[api.md](api.md#profiles--named-chatllm-presets).
+
+**Client support today:**
+- `scripts/rpi_voice_client.py` — pass `--profile <name>`.
+- `agent-assistant/` (production RPi service) — set `session.profile: <name>` in
+  `config.yaml`.
+- **ESP32 firmware** (`esp32-assistant/`) does not yet expose a profile option in
+  `menuconfig` — it always sends `stt_engine`/`tts_engine`/`language` from its Kconfig
+  values. Until that's added, an ESP32 device can only reach a profile's LLM/system
+  prompt/MCP config indirectly (e.g. by making that profile's settings the server's
+  `.env` defaults), or by connecting via the RPi/browser clients above.
 
 ## 2. Audio formats
 
@@ -116,6 +171,8 @@ sudo apt install -y libopus0 portaudio19-dev
 pip install websockets sounddevice opuslib numpy
 
 python scripts/rpi_voice_client.py --host <server-ip> --port 8000
+# activate a saved profile instead of --stt/--tts:
+python scripts/rpi_voice_client.py --host <server-ip> --profile kitchen
 ```
 
 It captures the mic at 16 kHz, encodes 60 ms Opus frames, streams them, decodes the

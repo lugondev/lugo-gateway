@@ -123,11 +123,25 @@ ws://localhost:8000/v1/conversation/stream?stt_engine=whisper_mlx&tts_engine=vie
 | query param | default | meaning |
 |-------------|---------|---------|
 | `stt_engine` / `tts_engine` / `voice` / `language` | settings | per-session engines |
+| `profile` | — | named **chatllm profile** (see below) — sets LLM model/system prompt/TTS/MCP tools/memory in one shot |
 | `sample_rate` | 16000 | input audio rate (Hz) |
 | `audio_codec` | `pcm16` | **input** codec: `pcm16` or `opus` |
 | `output` | `audio,text` | what to send back: any of `audio`, `text` |
 | `audio_out` | `url` | reply-audio delivery: `url` (browser fetches /artifacts) or `opus` (binary frames pushed — for devices) |
 | `output_sample_rate` | 24000 | output Opus frame rate when `audio_out=opus` |
+
+**`profile`** does double duty:
+1. If it names a saved profile (`POST /v1/profiles`), the session uses that profile's
+   `llm` (base_url/api_key/model), `system_prompt`, `tts.engine`/`tts.voice`, `mcp_servers`,
+   and `memory` settings — overriding `.env` defaults. An explicit `stt_engine`/`tts_engine`/
+   `voice` query param still wins over the profile's STT choice (TTS engine from the
+   profile wins over `tts_engine` if the profile sets one).
+2. If it matches a built-in **language preset** (`vi` / `en` / `multi` / `en_vi`), it also
+   selects the STT engine + language for that language, unless `stt_engine`/`language` are
+   passed explicitly. A profile can be named e.g. `vi` to get both behaviors at once.
+
+If `profile` is set but unknown, the server replies with a `warning` event and falls back
+to defaults (the connection still proceeds).
 
 Client → server:
 - binary frames — audio input (PCM16, or Opus packets when `audio_codec=opus`).
@@ -182,7 +196,37 @@ The reply comes from:
 | `GET /v1/conversation/llm` | current config: `base_url`, `model`, `api_key_set`, `responder` |
 | `POST /v1/conversation/llm` | set `{base_url, api_key, model}` at runtime (any OpenAI-compatible endpoint). API key kept in memory only — never echoed or persisted |
 | `POST /v1/conversation/llm/reset` | revert to the `.env` config |
-| `POST /v1/conversation/chat` | `{messages:[…]}` → text reply from the active responder |
+| `POST /v1/conversation/chat` | `{messages:[…]}` → text reply from the active responder. Accepts the same `?profile=` and `?session_id=` params as the WS stream |
+
+### Profiles — named chatllm presets
+
+A **profile** bundles everything a conversation session needs into one name: LLM
+endpoint/model, system prompt, TTS engine/voice, MCP tool servers, and memory settings.
+Activate one on any conversation session with `?profile=<name>` (WS stream or
+`POST /v1/conversation/chat`) — see `profile` in the WS query-param table above and
+[device-integration.md](device-integration.md) for ESP32/RPi usage.
+
+| route | does |
+|-------|------|
+| `GET /v1/profiles` | list all profiles (`api_key` masked as `***`) |
+| `POST /v1/profiles` | create/replace a profile — body: `{name, nickname, llm:{base_url,api_key,model}, system_prompt, tts:{engine,voice}, mcp_servers:[…], memory:{enabled,mode,top_k,extractor_model,embed_model}}` |
+| `GET /v1/profiles/{name}` | fetch one profile |
+| `PUT /v1/profiles/{name}` | update a profile (full replace) |
+| `DELETE /v1/profiles/{name}` | delete a profile |
+
+Example — create a profile for a hands-free kitchen device pointed at a local Ollama model:
+```bash
+curl -X POST http://localhost:8000/v1/profiles \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "kitchen",
+        "llm": {"base_url": "http://localhost:11434/v1", "model": "qwen2.5:7b"},
+        "system_prompt": "You are a concise kitchen assistant.",
+        "tts": {"engine": "vieneu"}
+      }'
+```
+Then point the device at `?profile=kitchen` instead of setting `tts_engine`/LLM config
+per-request.
 
 ---
 
