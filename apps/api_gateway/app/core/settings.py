@@ -193,6 +193,7 @@ class Settings(BaseSettings):
     # LLM profiles + MCP tooling
     profiles_path: str = "profiles.json"
     mcp_servers_path: str = "mcp_servers.json"
+    database_url: str = "sqlite+aiosqlite:///data/app.db"
     mcp_tool_cache_ttl_seconds: int = 300
     mcp_connection_timeout_seconds: float = 10.0
     mcp_tool_timeout_seconds: float = 30.0
