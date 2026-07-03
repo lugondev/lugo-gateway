@@ -1009,6 +1009,81 @@ input[type="radio"] {
   border-top: 1px solid var(--line);
 }
 
+.pf-memory {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.pf-mem-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.pf-mem-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.pf-mem-item .mem-text {
+  flex: 1;
+}
+.pf-mem-item button {
+  flex: none;
+}
+
+/* ================================================================
+   SESSIONS PANEL
+   ================================================================ */
+
+.session-panel {
+  border: 1px solid rgba(125, 234, 214, 0.22);
+  border-radius: var(--r-xl);
+  padding: 20px 22px;
+  background: rgba(4, 11, 18, 0.97);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  animation: fadeUp 260ms ease;
+  margin: 8px 0;
+}
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+.session-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+}
+.session-row:hover {
+  background: var(--surface-hover);
+}
+.session-row .sess-time {
+  flex: none;
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+}
+.session-row .sess-preview {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
 /* ================================================================
    MODE PANE (chat card)
    ================================================================ */

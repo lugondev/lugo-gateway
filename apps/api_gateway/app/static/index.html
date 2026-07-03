@@ -95,9 +95,20 @@
                 </select>
               </label>
               <div class="profile-bar-btns">
+                <button id="session-list-btn" class="ghost mini">Sessions</button>
+                <button id="session-new-btn" class="ghost mini">New session</button>
                 <button id="profile-edit-btn" class="ghost mini">Edit</button>
                 <button id="profile-new-btn" class="mini">+ New</button>
               </div>
+            </div>
+
+            <!-- Sessions panel (hidden by default) -->
+            <div class="session-panel hidden" id="session-panel">
+              <div class="profile-panel-hd">
+                <h3>Sessions</h3>
+                <button id="session-close-btn" class="ghost mini">&#10005;</button>
+              </div>
+              <div id="session-list" class="session-list"></div>
             </div>
 
             <!-- Profile edit panel (hidden by default) -->
@@ -114,11 +125,33 @@
                     <input id="pf-name" type="text" placeholder="my-profile" />
                   </label>
                   <label>
+                    Nickname <span class="hint" style="display:inline;margin:0">(display name)</span>
+                    <input id="pf-nickname" type="text" placeholder="My Pet" />
+                  </label>
+                  <label>
                     System Prompt
                     <textarea id="pf-system-prompt" rows="7" placeholder="You are a helpful assistant&#8230;"></textarea>
                   </label>
                   <p class="field-label">MCP Servers (per-profile)</p>
                   <div id="pf-mcp-list" class="pf-mcp-list"></div>
+                  <p class="field-label">Memory</p>
+                  <div class="pf-memory">
+                    <label class="check">
+                      <input type="checkbox" id="pf-mem-enabled" checked /> Auto-extract memory after sessions
+                    </label>
+                    <label>
+                      Retrieval mode
+                      <select id="pf-mem-mode">
+                        <option value="all">All memories</option>
+                        <option value="semantic">Semantic (top-k)</option>
+                      </select>
+                    </label>
+                    <div id="pf-mem-list" class="pf-mem-list"></div>
+                    <div class="row tight">
+                      <input id="pf-mem-new" type="text" placeholder="Add a memory fact&#8230;" />
+                      <button id="pf-mem-add" class="mini" type="button">+ Add</button>
+                    </div>
+                  </div>
                 </div>
                 <div class="pf-right">
                   <label>

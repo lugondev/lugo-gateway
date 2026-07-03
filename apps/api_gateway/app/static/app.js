@@ -1599,6 +1599,7 @@ async function startConversation() {
   params += `&tts_engine=${encodeURIComponent(el("conv-tts-engine").value)}&sample_rate=${STREAM_SAMPLE_RATE}`;
   const activeProfile = el("profile-select")?.value;
   if (activeProfile) params += `&profile=${encodeURIComponent(activeProfile)}`;
+  if (currentSessionId) params += `&session_id=${encodeURIComponent(currentSessionId)}`;
   if (el("conv-voice").value) params += `&voice=${encodeURIComponent(el("conv-voice").value)}`;
   if (el("conv-language").value.trim()) params += `&language=${encodeURIComponent(el("conv-language").value.trim())}`;
   const cpp = getPreproc();
@@ -1665,6 +1666,7 @@ async function startConversation() {
     convLog(`${d.event}: ${d.text ? d.text.slice(0, 60) : JSON.stringify({ ...d, event: undefined })}`);
     switch (d.event) {
       case "session_started": {
+        if (d.session_id) currentSessionId = d.session_id;
         if (d.output_sample_rate) conv.outRate = d.output_sample_rate;
         // Authoritative: show exactly which models this session is using.
         const info = el("conv-engines-info");
@@ -1749,6 +1751,7 @@ el("conv-reset").addEventListener("click", () => {
 
 // ============================================================ LLM text chat
 const chat = { history: [], busy: false };
+let currentSessionId = null;
 
 function chatBubble(role, text) {
   const div = document.createElement("div");
@@ -1776,11 +1779,18 @@ async function sendChat() {
 
   try {
     const profileVal = el("profile-select")?.value;
-    const chatUrl = profileVal ? `/v1/conversation/chat?profile=${encodeURIComponent(profileVal)}` : "/v1/conversation/chat";
+    const params = new URLSearchParams();
+    if (profileVal) params.set("profile", profileVal);
+    if (currentSessionId) params.set("session_id", currentSessionId);
+    const qs = params.toString();
+    const chatUrl = qs ? `/v1/conversation/chat?${qs}` : "/v1/conversation/chat";
+    // Send only the new turn: the backend prefixes stored session context by
+    // session_id, so resending chat.history here would double up persisted
+    // messages and duplicate context sent to the LLM on every subsequent turn.
     const resp = await fetch(chatUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: chat.history }),
+      body: JSON.stringify({ messages: [{ role: "user", content: text }] }),
     });
     const body = await resp.json();
     if (!resp.ok) {
@@ -1789,6 +1799,7 @@ async function sendChat() {
     } else {
       pending.textContent = body.data.reply;
       chat.history.push({ role: "assistant", content: body.data.reply });
+      if (body.data.session_id) currentSessionId = body.data.session_id;
       el("chat-hint").textContent = `Responder: ${body.data.responder}${body.data.responder === "llm" ? " · " + body.data.model : " (no LLM configured — set CONVERSATION_LLM_BASE_URL)"}`;
     }
   } catch (error) {
@@ -1936,17 +1947,22 @@ function openProfilePanel(mode, name) {
   if (mode === "new") {
     el("pf-name").value = "";
     el("pf-name").disabled = false;
+    el("pf-nickname").value = "";
     el("pf-system-prompt").value = "";
     el("pf-llm-url").value = "";
     el("pf-llm-model").value = "";
     el("pf-llm-key").value = "";
     if (el("pf-tts-engine")) el("pf-tts-engine").value = "";
     el("pf-delete-btn").classList.add("hidden");
+    el("pf-mem-enabled").checked = true;
+    el("pf-mem-mode").value = "all";
+    el("pf-mem-list").innerHTML = "";
   } else {
     const p = profileData[name];
     if (!p) return;
     el("pf-name").value = name;
     el("pf-name").disabled = true;
+    el("pf-nickname").value = p.nickname || "";
     el("pf-system-prompt").value = p.system_prompt || "";
     el("pf-llm-url").value = p.llm?.base_url || "";
     el("pf-llm-model").value = p.llm?.model || "";
@@ -1954,6 +1970,9 @@ function openProfilePanel(mode, name) {
     if (el("pf-tts-engine")) el("pf-tts-engine").value = p.tts?.engine || "";
     el("pf-delete-btn").classList.remove("hidden");
     selectedMcpServers = p.mcp_servers || [];
+    el("pf-mem-enabled").checked = p.memory?.enabled ?? true;
+    el("pf-mem-mode").value = p.memory?.mode || "all";
+    loadMemories(name);
   }
 
   el("pf-status").textContent = "";
@@ -2003,8 +2022,13 @@ async function saveProfile() {
     .filter(Boolean)
     .map((s) => ({ name: s.name, url: s.url }));
 
+  // Preserve memory fields this panel doesn't expose (top_k, extractor_model, embed_model)
+  // by spreading the previously loaded profile's memory config, then overriding what we edit.
+  const existingMemory = profileData[name]?.memory || {};
+
   const payload = {
     name,
+    nickname: el("pf-nickname").value.trim(),
     llm: {
       base_url: el("pf-llm-url").value.trim(),
       api_key: el("pf-llm-key").value,
@@ -2016,6 +2040,11 @@ async function saveProfile() {
       voice: el("pf-tts-voice")?.value || "",
     },
     mcp_servers: selectedMcpServers,
+    memory: {
+      ...existingMemory,
+      enabled: el("pf-mem-enabled").checked,
+      mode: el("pf-mem-mode").value,
+    },
   };
 
   print(el("pf-status"), "Saving…");
@@ -2056,6 +2085,68 @@ async function deleteProfile() {
   }
 }
 
+// ============================================================ profile memory
+async function loadMemories(name) {
+  const list = el("pf-mem-list");
+  if (!list) return;
+  list.innerHTML = "";
+  if (!name) return;
+  try {
+    const body = await (await fetch(`/v1/profiles/${encodeURIComponent(name)}/memories`)).json();
+    for (const m of body.data || []) list.appendChild(memRow(name, m));
+    if (!(body.data || []).length) list.innerHTML = '<p class="hint">No memories yet.</p>';
+  } catch (e) {
+    list.innerHTML = '<p class="hint">Failed to load memories.</p>';
+  }
+}
+
+function memRow(name, m) {
+  const row = document.createElement("div");
+  row.className = "pf-mem-item";
+  const text = document.createElement("span");
+  text.className = "mem-text";
+  text.textContent = m.content;
+  const edit = document.createElement("button");
+  edit.className = "ghost mini";
+  edit.type = "button";
+  edit.textContent = "✎";
+  edit.addEventListener("click", async () => {
+    const next = prompt("Edit memory:", m.content);
+    if (next === null || !next.trim()) return;
+    await fetch(`/v1/profiles/${encodeURIComponent(name)}/memories/${m.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: next.trim() }),
+    });
+    loadMemories(name);
+  });
+  const del = document.createElement("button");
+  del.className = "ghost mini";
+  del.type = "button";
+  del.textContent = "✕";
+  del.addEventListener("click", async () => {
+    await fetch(`/v1/profiles/${encodeURIComponent(name)}/memories/${m.id}`, { method: "DELETE" });
+    loadMemories(name);
+  });
+  row.append(text, edit, del);
+  return row;
+}
+
+if (el("pf-mem-add")) {
+  el("pf-mem-add").addEventListener("click", async () => {
+    const name = el("pf-name").value.trim();
+    const content = el("pf-mem-new").value.trim();
+    if (!name || !content) return;
+    await fetch(`/v1/profiles/${encodeURIComponent(name)}/memories`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    el("pf-mem-new").value = "";
+    loadMemories(name);
+  });
+}
+
 // Profile bar event listeners
 if (el("profile-edit-btn")) {
   el("profile-edit-btn").addEventListener("click", () => {
@@ -2070,6 +2161,69 @@ if (el("pf-cancel-btn")) el("pf-cancel-btn").addEventListener("click", closeProf
 if (el("pf-save-btn")) el("pf-save-btn").addEventListener("click", saveProfile);
 if (el("pf-delete-btn")) el("pf-delete-btn").addEventListener("click", deleteProfile);
 if (el("pf-tts-engine")) el("pf-tts-engine").addEventListener("change", pfUpdateTtsVoice);
+if (el("profile-select")) {
+  el("profile-select").addEventListener("change", () => {
+    currentSessionId = null;
+    const dialogue = el("chat-dialogue");
+    if (dialogue) dialogue.innerHTML = "";
+  });
+}
+
+// ============================================================ sessions panel
+async function openSessionsPanel() {
+  const panel = el("session-panel");
+  const list = el("session-list");
+  if (!panel || !list) return;
+  panel.classList.remove("hidden");
+  list.innerHTML = '<p class="hint">Loading&#8230;</p>';
+  const profile = el("profile-select")?.value || "";
+  const url = profile ? `/v1/sessions?profile=${encodeURIComponent(profile)}` : "/v1/sessions";
+  try {
+    const body = await (await fetch(url)).json();
+    list.innerHTML = "";
+    for (const s of body.data || []) {
+      const row = document.createElement("div");
+      row.className = "session-row";
+      const t = document.createElement("span");
+      t.className = "sess-time";
+      t.textContent = (s.created_at || "").slice(0, 16).replace("T", " ");
+      const p = document.createElement("span");
+      p.className = "sess-preview";
+      p.textContent = s.preview || "(empty)";
+      row.append(t, p);
+      row.addEventListener("click", () => loadSession(s.id));
+      list.appendChild(row);
+    }
+    if (!(body.data || []).length) list.innerHTML = '<p class="hint">No sessions yet.</p>';
+  } catch (e) {
+    list.innerHTML = '<p class="hint">Failed to load sessions.</p>';
+  }
+}
+
+async function loadSession(id) {
+  const body = await (await fetch(`/v1/sessions/${id}`)).json();
+  currentSessionId = id;
+  const dlg = el("chat-dialogue");
+  dlg.innerHTML = "";
+  chat.history = [];
+  for (const m of body.data.messages || []) {
+    if (m.role !== "user" && m.role !== "assistant") continue;
+    addBubble(m.role, m.content);
+    chat.history.push({ role: m.role, content: m.content });
+  }
+  el("session-panel").classList.add("hidden");
+}
+
+if (el("session-list-btn")) el("session-list-btn").addEventListener("click", openSessionsPanel);
+if (el("session-close-btn")) el("session-close-btn").addEventListener("click", () => el("session-panel").classList.add("hidden"));
+if (el("session-new-btn")) {
+  el("session-new-btn").addEventListener("click", () => {
+    currentSessionId = null;
+    chat.history = [];
+    const dialogue = el("chat-dialogue");
+    if (dialogue) dialogue.innerHTML = "";
+  });
+}
 
 // ============================================================ MCP servers
 async function loadMcpServers() {
