@@ -1821,6 +1821,7 @@ el("chat-input").addEventListener("keydown", (e) => {
 });
 el("chat-reset").addEventListener("click", () => {
   chat.history = [];
+  currentSessionId = null;
   const dialogue = el("chat-dialogue");
   if (dialogue) dialogue.innerHTML = "";
   convStopAudio();
@@ -2113,20 +2114,38 @@ function memRow(name, m) {
   edit.addEventListener("click", async () => {
     const next = prompt("Edit memory:", m.content);
     if (next === null || !next.trim()) return;
-    await fetch(`/v1/profiles/${encodeURIComponent(name)}/memories/${m.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: next.trim() }),
-    });
-    loadMemories(name);
+    try {
+      const resp = await fetch(`/v1/profiles/${encodeURIComponent(name)}/memories/${m.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: next.trim() }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        print(el("pf-status"), "Memory update failed: " + (body.detail || body.error || resp.statusText), true);
+        return;
+      }
+      loadMemories(name);
+    } catch (error) {
+      print(el("pf-status"), "Memory update failed: " + error, true);
+    }
   });
   const del = document.createElement("button");
   del.className = "ghost mini";
   del.type = "button";
   del.textContent = "✕";
   del.addEventListener("click", async () => {
-    await fetch(`/v1/profiles/${encodeURIComponent(name)}/memories/${m.id}`, { method: "DELETE" });
-    loadMemories(name);
+    try {
+      const resp = await fetch(`/v1/profiles/${encodeURIComponent(name)}/memories/${m.id}`, { method: "DELETE" });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        print(el("pf-status"), "Memory delete failed: " + (body.detail || body.error || resp.statusText), true);
+        return;
+      }
+      loadMemories(name);
+    } catch (error) {
+      print(el("pf-status"), "Memory delete failed: " + error, true);
+    }
   });
   row.append(text, edit, del);
   return row;
@@ -2137,13 +2156,22 @@ if (el("pf-mem-add")) {
     const name = el("pf-name").value.trim();
     const content = el("pf-mem-new").value.trim();
     if (!name || !content) return;
-    await fetch(`/v1/profiles/${encodeURIComponent(name)}/memories`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
-    });
-    el("pf-mem-new").value = "";
-    loadMemories(name);
+    try {
+      const resp = await fetch(`/v1/profiles/${encodeURIComponent(name)}/memories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        print(el("pf-status"), "Memory add failed: " + (body.detail || body.error || resp.statusText), true);
+        return;
+      }
+      el("pf-mem-new").value = "";
+      loadMemories(name);
+    } catch (error) {
+      print(el("pf-status"), "Memory add failed: " + error, true);
+    }
   });
 }
 
@@ -2201,7 +2229,22 @@ async function openSessionsPanel() {
 }
 
 async function loadSession(id) {
-  const body = await (await fetch(`/v1/sessions/${id}`)).json();
+  let body;
+  try {
+    const resp = await fetch(`/v1/sessions/${id}`);
+    if (!resp.ok) {
+      const errBody = await resp.json().catch(() => ({}));
+      const list = el("session-list");
+      if (list) list.insertAdjacentHTML("afterbegin", `<p class="hint error">Failed to load session: ${errBody.detail || errBody.error || resp.statusText}</p>`);
+      return;
+    }
+    body = await resp.json();
+  } catch (error) {
+    const list = el("session-list");
+    if (list) list.insertAdjacentHTML("afterbegin", `<p class="hint error">Failed to load session: ${error}</p>`);
+    return;
+  }
+  // Only mutate chat state/DOM after the fetch has succeeded.
   currentSessionId = id;
   const dlg = el("chat-dialogue");
   dlg.innerHTML = "";
