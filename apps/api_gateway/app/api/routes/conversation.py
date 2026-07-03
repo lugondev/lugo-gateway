@@ -23,8 +23,11 @@ from app.services.conversation.responder import (
     set_active_llm_config,
 )
 from app.services.conversation.tools.mcp import McpToolSource
+from app.services.history.store import session_store
 from app.services.mcp.pool import mcp_pool
 from app.services.mcp.server_store import mcp_server_store
+from app.services.memory.extractor import memory_extractor
+from app.services.memory.retriever import inject_memories, memory_retriever
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt_profile
 from app.services.stt.providers.whisper_provider import get_active_whisper_model
@@ -90,21 +93,45 @@ async def reset_llm_config() -> dict:
 
 
 @router.post("/chat")
-async def chat(payload: ChatRequest, profile: str | None = None) -> dict:
+async def chat(payload: ChatRequest, profile: str | None = None, session_id: str | None = None) -> dict:
     """Text chat with the configured conversation responder (LLM or echo)."""
     active_profile = profile_store.get(profile) if profile else None
     llm_base_url = (active_profile.llm.base_url or None) if (active_profile and active_profile.llm.base_url) else None
     llm_api_key = active_profile.llm.api_key if (active_profile and active_profile.llm.base_url) else None
     llm_model = (active_profile.llm.model or None) if (active_profile and active_profile.llm.model) else None
     system_prompt = (active_profile.system_prompt or None) if (active_profile and active_profile.system_prompt) else None
+
+    # Session: resume when session_id given (stored messages prefix the context).
+    sid = session_id or str(uuid.uuid4())
+    stored: list[dict] = []
+    if session_id and await session_store.exists(session_id):
+        stored = await session_store.get_messages(session_id)
+    elif not await session_store.exists(sid):
+        await session_store.create(sid, profile_id=profile or "")
+
+    new_msgs = [{"role": m.role, "content": m.content} for m in payload.messages]
+    history = [{"role": m["role"], "content": m["content"]} for m in stored] + new_msgs
+
+    # Memory injection: prepend the profile's memories to the system prompt.
+    last_user = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
+    block = await memory_retriever.get_context(active_profile, query=last_user)
+    system_prompt = inject_memories(system_prompt or settings.conversation_system_prompt, block) if block else system_prompt
+
     responder = build_responder_ex(
         base_url=llm_base_url,
         api_key=llm_api_key,
         model=llm_model,
         system_prompt=system_prompt,
     )
-    history = [{"role": m.role, "content": m.content} for m in payload.messages]
     reply = await responder.reply(history)
+
+    turn = (len(stored) // 2) + 1
+    for m in new_msgs:
+        await session_store.append_message(sid, turn, m["role"], m["content"])
+    await session_store.append_message(sid, turn, "assistant", reply)
+    if active_profile and active_profile.memory.enabled and active_profile.llm.base_url:
+        asyncio.create_task(memory_extractor.extract_and_upsert(sid, active_profile))
+
     return {
         "success": True,
         "data": {
@@ -112,6 +139,7 @@ async def chat(payload: ChatRequest, profile: str | None = None) -> dict:
             "responder": responder.name,
             "model": get_active_llm_model(),
             "profile": profile,
+            "session_id": sid,
         },
     }
 
@@ -119,7 +147,8 @@ async def chat(payload: ChatRequest, profile: str | None = None) -> dict:
 @router.websocket("/stream")
 async def conversation_stream(websocket: WebSocket) -> None:
     await websocket.accept()
-    session_id = str(uuid.uuid4())
+    requested_sid = websocket.query_params.get("session_id")
+    session_id = requested_sid or str(uuid.uuid4())
     q = websocket.query_params
 
     # --- Profile resolution ---
@@ -255,7 +284,19 @@ async def conversation_stream(websocket: WebSocket) -> None:
         min_silence_ms=settings.conversation_min_silence_ms,
         adaptive_full_ms=settings.conversation_adaptive_full_ms,
     )
+    # Session persistence: resume seeds history from the DB; new sessions are recorded.
     history: list[dict] = []
+    if requested_sid and await session_store.exists(requested_sid):
+        history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in await session_store.get_messages(requested_sid)
+        ]
+    else:
+        await session_store.create(
+            session_id,
+            profile_id=profile_name or "",
+            meta={"stt_engine": stt_engine, "tts_engine": tts_engine},
+        )
     turn = 0
 
     active_tools = list(tool_registry._tools.keys()) if tool_registry else []
@@ -296,6 +337,24 @@ async def conversation_stream(websocket: WebSocket) -> None:
 
     async def send(event: str, **payload) -> None:
         await websocket.send_json({"event": event, **payload})
+
+    base_system_prompt = system_prompt or settings.conversation_system_prompt
+
+    async def persist(role: str, content: str) -> None:
+        try:
+            await session_store.append_message(session_id, turn, role, content)
+        except Exception as exc:  # noqa: BLE001 - persistence must not kill the turn
+            logger.warning("history persist failed: %s", exc)
+
+    async def refresh_memory(query: str) -> None:
+        """Per-turn memory injection (mutates the responder's system prompt)."""
+        if not hasattr(responder, "system_prompt"):
+            return
+        try:
+            block = await memory_retriever.get_context(profile, query=query)
+            responder.system_prompt = inject_memories(base_system_prompt, block)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("memory retrieval failed: %s", exc)
 
     async def _emit_command(cmd_payload: dict) -> None:
         await websocket.send_json(cmd_payload)
@@ -392,6 +451,8 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 await send("turn_done", turn=turn, skipped="empty text")
                 return
             history.append({"role": "user", "content": user_text})
+            await persist("user", user_text)
+            await refresh_memory(user_text)
             parts = await _stream_to_tts(
                 responder.reply_stream(
                     history,
@@ -402,6 +463,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 responder.name,
             )
             history.append({"role": "assistant", "content": " ".join(parts)})
+            await persist("assistant", " ".join(parts))
             await send("turn_done", turn=turn)
             return
 
@@ -431,6 +493,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 await send("user_transcript", turn=turn, text=transcript or "🎤", engine=stt_engine)
                 if transcript:
                     history.append({"role": "user", "content": transcript})
+                    await persist("user", transcript)
 
                 async def _reply_sentences():
                     for sentence in segment_text(reply):
@@ -438,6 +501,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
 
                 parts = await _stream_to_tts(_reply_sentences(), stt_engine)
                 history.append({"role": "assistant", "content": " ".join(parts)})
+                await persist("assistant", " ".join(parts))
                 await send("turn_done", turn=turn)
                 return
             logger.info("qwen_omni audio-native reply empty; falling back to transcribe + LLM")
@@ -471,6 +535,8 @@ async def conversation_stream(websocket: WebSocket) -> None:
             return
 
         history.append({"role": "user", "content": user_text})
+        await persist("user", user_text)
+        await refresh_memory(user_text)
         parts = await _stream_to_tts(
             responder.reply_stream(
                 history,
@@ -481,6 +547,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
             responder.name,
         )
         history.append({"role": "assistant", "content": " ".join(parts)})
+        await persist("assistant", " ".join(parts))
         await send("turn_done", turn=turn)
 
     current_turn: asyncio.Task | None = None
@@ -556,6 +623,9 @@ async def conversation_stream(websocket: WebSocket) -> None:
     finally:
         if current_turn and not current_turn.done():
             current_turn.cancel()
+        await session_store.mark_ended(session_id)
+        if profile is not None:
+            asyncio.create_task(memory_extractor.extract_and_upsert(session_id, profile))
         try:
             await websocket.close()
         except RuntimeError:
