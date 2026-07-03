@@ -41,6 +41,16 @@ from app.services.tts.streaming import pacing_delays, prefetch_synthesis
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/conversation", tags=["conversation"])
 
+# Fire-and-forget background tasks (e.g. memory extraction) must be retained
+# somewhere or CPython may garbage-collect them mid-flight.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background(coro) -> None:
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 
 def _truthy(value: str | None, default: bool) -> bool:
     if value is None:
@@ -142,7 +152,7 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
                 await session_store.append_message(sid, turn, m["role"], m["content"])
             await session_store.append_message(sid, turn, "assistant", reply)
             if active_profile and active_profile.memory.enabled and active_profile.llm.base_url:
-                asyncio.create_task(memory_extractor.extract_and_upsert(sid, active_profile))
+                _spawn_background(memory_extractor.extract_and_upsert(sid, active_profile))
         except Exception as exc:  # noqa: BLE001 - persistence must not fail a successful reply
             logger.warning("chat persistence failed for %s: %s", sid, exc)
 
@@ -300,17 +310,23 @@ async def conversation_stream(websocket: WebSocket) -> None:
     )
     # Session persistence: resume seeds history from the DB; new sessions are recorded.
     history: list[dict] = []
-    if requested_sid and await session_store.exists(requested_sid):
-        history = [
-            {"role": m["role"], "content": m["content"]}
-            for m in await session_store.get_messages(requested_sid)
-        ]
-    else:
-        await session_store.create(
-            session_id,
-            profile_id=profile_name or "",
-            meta={"stt_engine": stt_engine, "tts_engine": tts_engine},
-        )
+    session_ready = True
+    try:
+        if requested_sid and await session_store.exists(requested_sid):
+            history = [
+                {"role": m["role"], "content": m["content"]}
+                for m in await session_store.get_messages(requested_sid)
+            ]
+        else:
+            await session_store.create(
+                session_id,
+                profile_id=profile_name or "",
+                meta={"stt_engine": stt_engine, "tts_engine": tts_engine},
+            )
+    except Exception as exc:  # noqa: BLE001 - session setup must not drop the connection
+        logger.warning("session setup failed for %s: %s", session_id, exc)
+        history = []
+        session_ready = False
     turn = 0
 
     active_tools = list(tool_registry._tools.keys()) if tool_registry else []
@@ -355,6 +371,8 @@ async def conversation_stream(websocket: WebSocket) -> None:
     base_system_prompt = system_prompt or settings.conversation_system_prompt
 
     async def persist(role: str, content: str) -> None:
+        if not session_ready:
+            return
         try:
             await session_store.append_message(session_id, turn, role, content)
         except Exception as exc:  # noqa: BLE001 - persistence must not kill the turn
@@ -637,12 +655,13 @@ async def conversation_stream(websocket: WebSocket) -> None:
     finally:
         if current_turn and not current_turn.done():
             current_turn.cancel()
-        try:
-            await session_store.mark_ended(session_id)
-        except Exception as exc:  # noqa: BLE001 - teardown must not fail
-            logger.warning("mark_ended failed for %s: %s", session_id, exc)
-        if profile is not None:
-            asyncio.create_task(memory_extractor.extract_and_upsert(session_id, profile))
+        if session_ready:
+            try:
+                await session_store.mark_ended(session_id)
+            except Exception as exc:  # noqa: BLE001 - teardown must not fail
+                logger.warning("mark_ended failed for %s: %s", session_id, exc)
+            if profile is not None:
+                _spawn_background(memory_extractor.extract_and_upsert(session_id, profile))
         try:
             await websocket.close()
         except RuntimeError:
