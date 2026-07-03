@@ -88,11 +88,8 @@ Manage profiles with `GET /v1/profiles`, `GET/PUT/DELETE /v1/profiles/{name}` �
 - `scripts/rpi_voice_client.py` — pass `--profile <name>`.
 - `agent-assistant/` (production RPi service) — set `session.profile: <name>` in
   `config.yaml`.
-- **ESP32 firmware** (`esp32-assistant/`) does not yet expose a profile option in
-  `menuconfig` — it always sends `stt_engine`/`tts_engine`/`language` from its Kconfig
-  values. Until that's added, an ESP32 device can only reach a profile's LLM/system
-  prompt/MCP config indirectly (e.g. by making that profile's settings the server's
-  `.env` defaults), or by connecting via the RPi/browser clients above.
+- **ESP32 firmware** (`esp32-assistant/`) — set `AA_PROFILE` in `menuconfig` →
+  "Assistant configuration" (empty by default = no profile sent).
 
 ## 2. Audio formats
 
