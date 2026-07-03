@@ -29,6 +29,15 @@ def test_parse_facts_garbage_returns_empty():
     assert _parse_facts('[1, 2, {"x": 3}]') == []
 
 
+def test_parse_facts_trailing_prose_with_brackets():
+    raw = 'Here:\n["User likes tea", "User is a dev"]\nSee item[1] above.'
+    assert _parse_facts(raw) == ["User likes tea", "User is a dev"]
+
+
+def test_parse_facts_fact_containing_brackets():
+    assert _parse_facts('["User works on [ESP32] firmware"]') == ["User works on [ESP32] firmware"]
+
+
 @pytest.mark.asyncio
 async def test_extract_calls_llm(monkeypatch):
     captured = {}

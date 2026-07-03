@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 
 import httpx
 
@@ -29,22 +28,25 @@ EXTRACTION_PROMPT = (
     "Do not include small talk or one-off requests. Return [] if none."
 )
 
-_ARRAY_RE = re.compile(r"\[.*\]", re.DOTALL)
+_decoder = json.JSONDecoder()
 
 
 def _parse_facts(raw: str) -> list[str]:
     """Extract a JSON array of strings from an LLM reply (tolerant of prose/fences)."""
-    match = _ARRAY_RE.search(raw or "")
-    if not match:
-        return []
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(data, list):
-        return []
-    facts = [item.strip() for item in data if isinstance(item, str) and item.strip()]
-    return facts if len(facts) == len(data) else []
+    text = raw or ""
+    pos = text.find("[")
+    while pos != -1:
+        try:
+            data, _ = _decoder.raw_decode(text, pos)
+        except json.JSONDecodeError:
+            pos = text.find("[", pos + 1)
+            continue
+        if not isinstance(data, list):
+            pos = text.find("[", pos + 1)
+            continue
+        facts = [item.strip() for item in data if isinstance(item, str) and item.strip()]
+        return facts if len(facts) == len(data) else []
+    return []
 
 
 class MemoryExtractor:
