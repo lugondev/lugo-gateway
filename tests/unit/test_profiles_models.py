@@ -34,3 +34,25 @@ def test_profile_roundtrip():
     data = p.model_dump()
     p2 = Profile.model_validate(data)
     assert p2.system_prompt == "hello"
+
+
+def test_profile_defaults_memory_and_nickname():
+    from app.services.profiles.models import Profile
+
+    p = Profile(name="x")
+    assert p.nickname == ""
+    assert p.memory.enabled is True
+    assert p.memory.mode == "all"
+    assert p.memory.top_k == 5
+    assert p.memory.extractor_model == ""
+    assert p.memory.embed_model == ""
+
+
+def test_profile_back_compat_old_json():
+    from app.services.profiles.models import Profile
+
+    # a profile saved before memory/nickname existed still validates
+    old = {"name": "legacy", "system_prompt": "hi", "llm": {"model": "m"}}
+    p = Profile.model_validate(old)
+    assert p.memory.enabled is True
+    assert p.nickname == ""

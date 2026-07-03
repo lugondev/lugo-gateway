@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.services.mcp.models import McpServer
-from app.services.profiles.models import LlmConfig, Profile, TtsConfig
+from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, TtsConfig
 from app.services.profiles.store import profile_store
 
 router = APIRouter(prefix="/v1/profiles", tags=["profiles"])
@@ -17,10 +17,12 @@ def _mask(profile: Profile) -> dict:
 
 class ProfileRequest(BaseModel):
     name: str
+    nickname: str = ""
     llm: LlmConfig = LlmConfig()
     system_prompt: str = ""
     tts: TtsConfig = TtsConfig()
     mcp_servers: list[McpServer] = []
+    memory: MemoryConfig = MemoryConfig()
 
 
 @router.get("")
