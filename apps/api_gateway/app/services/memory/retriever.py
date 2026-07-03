@@ -49,6 +49,11 @@ class MemoryRetriever:
         """Top-k by cosine similarity; falls back to the full list on any gap."""
         with_vec = [i for i in items if i.get("embedding")]
         if not with_vec or not profile.memory.embed_model or not profile.llm.base_url:
+            logger.warning(
+                "semantic memory mode for profile %s falling back to all: %s",
+                profile.name,
+                "no stored embeddings" if not with_vec else "embed_model/base_url not configured",
+            )
             return items
         try:
             qvec = (

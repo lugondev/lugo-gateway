@@ -68,12 +68,14 @@ async def test_semantic_mode_top_k(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_semantic_falls_back_when_no_embeddings():
+async def test_semantic_falls_back_when_no_embeddings(caplog):
     await memory_store.add("pet", "no vector here")
     profile = Profile(
         name="pet",
         llm={"base_url": "http://llm.local/v1"},
         memory={"mode": "semantic", "embed_model": "emb"},
     )
-    block = await MemoryRetriever().get_context(profile, query="anything")
+    with caplog.at_level("WARNING"):
+        block = await MemoryRetriever().get_context(profile, query="anything")
     assert "- no vector here" in block
+    assert any("falling back to all" in r.message for r in caplog.records)
