@@ -1,14 +1,6 @@
 import pytest
 
-from app.services.db import engine as db_engine
 from app.services.memory.store import MemoryStore
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path):
-    db_engine.configure(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    yield
-    db_engine.configure()
 
 
 @pytest.fixture

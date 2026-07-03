@@ -4,13 +4,6 @@ from app.services.db import engine as db_engine
 from app.services.db.models import ChatMessage, ChatSession, MemoryItem
 
 
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path):
-    db_engine.configure(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    yield
-    db_engine.configure()  # restore default for other tests
-
-
 @pytest.mark.asyncio
 async def test_db_session_creates_tables_lazily():
     async with db_engine.db_session() as s:

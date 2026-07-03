@@ -2,15 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.db import engine as db_engine
 from app.services.history.store import session_store
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path):
-    db_engine.configure(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    yield
-    db_engine.configure()
 
 
 @pytest.fixture

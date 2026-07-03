@@ -104,17 +104,27 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
     # Session: resume when session_id given (stored messages prefix the context).
     sid = session_id or str(uuid.uuid4())
     stored: list[dict] = []
-    if session_id and await session_store.exists(session_id):
-        stored = await session_store.get_messages(session_id)
-    elif not await session_store.exists(sid):
-        await session_store.create(sid, profile_id=profile or "")
+    session_ready = True
+    try:
+        if session_id and await session_store.exists(session_id):
+            stored = await session_store.get_messages(session_id)
+        elif not await session_store.exists(sid):
+            await session_store.create(sid, profile_id=profile or "")
+    except Exception as exc:  # noqa: BLE001 - session setup must not block the reply
+        logger.warning("session setup failed for %s: %s", sid, exc)
+        stored = []
+        session_ready = False
 
     new_msgs = [{"role": m.role, "content": m.content} for m in payload.messages]
     history = [{"role": m["role"], "content": m["content"]} for m in stored] + new_msgs
 
     # Memory injection: prepend the profile's memories to the system prompt.
     last_user = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
-    block = await memory_retriever.get_context(active_profile, query=last_user)
+    try:
+        block = await memory_retriever.get_context(active_profile, query=last_user)
+    except Exception as exc:  # noqa: BLE001 - memory retrieval must not block the reply
+        logger.warning("memory retrieval failed for %s: %s", sid, exc)
+        block = ""
     system_prompt = inject_memories(system_prompt or settings.conversation_system_prompt, block) if block else system_prompt
 
     responder = build_responder_ex(
@@ -125,12 +135,16 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
     )
     reply = await responder.reply(history)
 
-    turn = (len(stored) // 2) + 1
-    for m in new_msgs:
-        await session_store.append_message(sid, turn, m["role"], m["content"])
-    await session_store.append_message(sid, turn, "assistant", reply)
-    if active_profile and active_profile.memory.enabled and active_profile.llm.base_url:
-        asyncio.create_task(memory_extractor.extract_and_upsert(sid, active_profile))
+    if session_ready:
+        try:
+            turn = (len(stored) // 2) + 1
+            for m in new_msgs:
+                await session_store.append_message(sid, turn, m["role"], m["content"])
+            await session_store.append_message(sid, turn, "assistant", reply)
+            if active_profile and active_profile.memory.enabled and active_profile.llm.base_url:
+                asyncio.create_task(memory_extractor.extract_and_upsert(sid, active_profile))
+        except Exception as exc:  # noqa: BLE001 - persistence must not fail a successful reply
+            logger.warning("chat persistence failed for %s: %s", sid, exc)
 
     return {
         "success": True,
@@ -623,7 +637,10 @@ async def conversation_stream(websocket: WebSocket) -> None:
     finally:
         if current_turn and not current_turn.done():
             current_turn.cancel()
-        await session_store.mark_ended(session_id)
+        try:
+            await session_store.mark_ended(session_id)
+        except Exception as exc:  # noqa: BLE001 - teardown must not fail
+            logger.warning("mark_ended failed for %s: %s", session_id, exc)
         if profile is not None:
             asyncio.create_task(memory_extractor.extract_and_upsert(session_id, profile))
         try:

@@ -1,17 +1,9 @@
 import pytest
 
-from app.services.db import engine as db_engine
 from app.services.memory.embedder import cosine
 from app.services.memory.retriever import MemoryRetriever, inject_memories
 from app.services.memory.store import memory_store
 from app.services.profiles.models import Profile
-
-
-@pytest.fixture(autouse=True)
-def _tmp_db(tmp_path):
-    db_engine.configure(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    yield
-    db_engine.configure()
 
 
 def test_cosine():
