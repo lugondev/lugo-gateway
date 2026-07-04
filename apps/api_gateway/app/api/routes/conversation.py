@@ -48,6 +48,30 @@ router = APIRouter(prefix="/v1/conversation", tags=["conversation"])
 _background_tasks: set[asyncio.Task] = set()
 
 
+async def _build_tool_registry(profile) -> ToolRegistry | None:
+    """Merge global + per-profile MCP servers (profile wins on name collision),
+    skip disabled entries, and fetch each enabled server's tools."""
+    global_servers = mcp_server_store.list()
+    profile_specific = {s.name: s for s in (profile.mcp_servers if profile else [])}
+    merged_servers = {**global_servers, **profile_specific}
+
+    tool_sources: list = []
+    if settings.conversation_tools_enabled:
+        tool_sources.append(LocalToolSource())
+    for srv in merged_servers.values():
+        if not srv.enabled:
+            continue
+        tools = await mcp_pool.get_tools(srv.url, headers=srv.headers)
+        if tools:
+            tool_sources.append(
+                McpToolSource(
+                    tools,
+                    invoker=lambda n, a, u=srv.url, h=srv.headers: mcp_pool.invoke(u, n, a, headers=h),
+                )
+            )
+    return ToolRegistry(tool_sources) if tool_sources else None
+
+
 def _spawn_background(coro) -> None:
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
@@ -145,7 +169,17 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
         model=llm_model,
         system_prompt=system_prompt,
     )
-    reply = await responder.reply(history)
+    tool_registry = await _build_tool_registry(active_profile)
+    if tool_registry:
+        parts = [
+            chunk
+            async for chunk in responder.reply_stream(
+                history, registry=tool_registry, max_iters=settings.conversation_tool_max_iters
+            )
+        ]
+        reply = " ".join(parts).strip()
+    else:
+        reply = await responder.reply(history)
 
     if session_ready:
         try:
@@ -265,21 +299,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
         system_prompt=system_prompt,
     )
 
-    # Tool registry: merge global MCP servers + per-profile MCP servers (profile wins on name collision).
-    global_servers = mcp_server_store.list()
-    profile_specific = {s.name: s for s in (profile.mcp_servers if profile else [])}
-    merged_servers = {**global_servers, **profile_specific}
-
-    tool_sources: list = []
-    if settings.conversation_tools_enabled:
-        tool_sources.append(LocalToolSource())
-    for srv in merged_servers.values():
-        tools = await mcp_pool.get_tools(srv.url)
-        if tools:
-            tool_sources.append(
-                McpToolSource(tools, invoker=lambda n, a, u=srv.url: mcp_pool.invoke(u, n, a))
-            )
-    tool_registry: ToolRegistry | None = ToolRegistry(tool_sources) if tool_sources else None
+    tool_registry = await _build_tool_registry(profile)
 
     # Detail strings so the UI can show exactly WHICH models are active this session.
     if hasattr(stt_provider, "detail"):

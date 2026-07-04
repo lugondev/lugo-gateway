@@ -31,17 +31,19 @@ class McpConnectionPool:
         self._tool_timeout = tool_timeout
         self._lock = asyncio.Lock()
 
-    def _get_client(self, url: str) -> McpHttpClient:
+    def _get_client(self, url: str, headers: dict[str, str] | None = None) -> McpHttpClient:
         if url not in self._clients:
-            self._clients[url] = McpHttpClient(url, self._connect_timeout, self._tool_timeout)
+            self._clients[url] = McpHttpClient(
+                url, self._connect_timeout, self._tool_timeout, headers=headers
+            )
         return self._clients[url]
 
-    async def get_tools(self, url: str) -> list[dict]:
+    async def get_tools(self, url: str, headers: dict[str, str] | None = None) -> list[dict]:
         async with self._lock:
             cached = self._cache.get(url)
             if cached and (time.monotonic() - cached[0]) < self._ttl:
                 return cached[1]
-            client = self._get_client(url)
+            client = self._get_client(url, headers)
 
         try:
             tools = await client.list_tools()
@@ -55,9 +57,11 @@ class McpConnectionPool:
                 self._cache[url] = (time.monotonic(), tools)
         return tools
 
-    async def invoke(self, url: str, tool_name: str, args: dict) -> str:
+    async def invoke(
+        self, url: str, tool_name: str, args: dict, headers: dict[str, str] | None = None
+    ) -> str:
         async with self._lock:
-            client = self._get_client(url)
+            client = self._get_client(url, headers)
         return await client.invoke(tool_name, args)
 
     def invalidate(self, url: str) -> None:

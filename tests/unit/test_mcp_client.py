@@ -75,6 +75,22 @@ async def test_invoke_returns_result_string():
     )
 
 
+async def test_list_tools_sends_custom_headers():
+    mock_client = _make_mock_client(get_response=_json_response([]))
+    with patch("httpx.AsyncClient", return_value=mock_client) as mock_ctor:
+        client = McpHttpClient("http://mcp.test", headers={"X-API-Key": "secret"})
+        await client.list_tools()
+    assert mock_ctor.call_args.kwargs["headers"] == {"X-API-Key": "secret"}
+
+
+async def test_invoke_sends_custom_headers():
+    mock_client = _make_mock_client(post_response=_json_response({"result": "ok"}))
+    with patch("httpx.AsyncClient", return_value=mock_client) as mock_ctor:
+        client = McpHttpClient("http://mcp.test", headers={"Authorization": "Bearer x"})
+        await client.invoke("search", {})
+    assert mock_ctor.call_args.kwargs["headers"] == {"Authorization": "Bearer x"}
+
+
 async def test_invoke_connection_error_raises():
     mock_client = AsyncMock()
     mock_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))

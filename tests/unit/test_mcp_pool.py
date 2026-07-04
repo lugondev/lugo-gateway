@@ -64,6 +64,22 @@ async def test_invoke_returns_result():
     mock.invoke.assert_called_once_with("search", {"query": "hello"})
 
 
+async def test_get_tools_passes_headers_to_client():
+    pool = McpConnectionPool(cache_ttl=60)
+    mock = _mock_client()
+    with patch("app.services.mcp.pool.McpHttpClient", return_value=mock) as mock_ctor:
+        await pool.get_tools("http://mcp.test", headers={"X-API-Key": "k"})
+    assert mock_ctor.call_args.kwargs["headers"] == {"X-API-Key": "k"}
+
+
+async def test_invoke_passes_headers_to_client():
+    pool = McpConnectionPool(cache_ttl=60)
+    mock = _mock_client()
+    with patch("app.services.mcp.pool.McpHttpClient", return_value=mock) as mock_ctor:
+        await pool.invoke("http://mcp.test", "search", {}, headers={"Authorization": "Bearer x"})
+    assert mock_ctor.call_args.kwargs["headers"] == {"Authorization": "Bearer x"}
+
+
 async def test_invalidate_clears_cache():
     pool = McpConnectionPool(cache_ttl=60)
     mock = _mock_client()

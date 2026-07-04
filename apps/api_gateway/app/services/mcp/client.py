@@ -19,14 +19,16 @@ class McpHttpClient:
         url: str,
         connect_timeout: float = 10.0,
         tool_timeout: float = 30.0,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self.url = url.rstrip("/")
         self._connect_timeout = connect_timeout
         self._tool_timeout = tool_timeout
+        self._headers = headers or {}
 
     async def list_tools(self) -> list[dict]:
         try:
-            async with httpx.AsyncClient(timeout=self._connect_timeout) as client:
+            async with httpx.AsyncClient(timeout=self._connect_timeout, headers=self._headers) as client:
                 resp = await client.get(f"{self.url}/tools")
                 resp.raise_for_status()
                 data = resp.json()
@@ -36,7 +38,7 @@ class McpHttpClient:
 
     async def invoke(self, tool_name: str, arguments: dict) -> str:
         try:
-            async with httpx.AsyncClient(timeout=self._tool_timeout) as client:
+            async with httpx.AsyncClient(timeout=self._tool_timeout, headers=self._headers) as client:
                 resp = await client.post(
                     f"{self.url}/tools/{tool_name}",
                     json={"arguments": arguments},

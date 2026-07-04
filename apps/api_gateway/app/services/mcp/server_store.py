@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.core.settings import settings
 from app.services.mcp.models import McpServer
+from app.services.mcp.presets import seed_default_servers
 
 
 class McpServerStore:
@@ -51,3 +52,4 @@ class McpServerStore:
 
 
 mcp_server_store = McpServerStore(settings.mcp_servers_path)
+seed_default_servers(mcp_server_store)

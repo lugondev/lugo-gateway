@@ -6,6 +6,8 @@ from pydantic import BaseModel, field_validator
 class McpServer(BaseModel):
     name: str
     url: str
+    headers: dict[str, str] = {}
+    enabled: bool = True
 
     @field_validator("url")
     @classmethod

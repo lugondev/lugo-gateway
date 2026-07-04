@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -74,3 +74,47 @@ def test_chat_with_profile_uses_profile_system_prompt(client, monkeypatch, tmp_p
         )
 
     assert any("howdy" in sp for sp in captured)
+
+
+def test_disabled_mcp_server_tools_not_fetched(client, monkeypatch, _hermetic):
+    _, servers = _hermetic
+    servers.upsert(McpServer(name="off", url="http://off.test", enabled=False))
+    mock_pool = AsyncMock()
+    mock_pool.get_tools = AsyncMock(return_value=[{"name": "t", "description": "d"}])
+    monkeypatch.setattr("app.api.routes.conversation.mcp_pool", mock_pool)
+    with client.websocket_connect("/v1/conversation/stream?output=text") as ws:
+        ws.receive_json()  # session_started
+    mock_pool.get_tools.assert_not_called()
+
+
+def test_enabled_mcp_server_tools_are_fetched(client, monkeypatch, _hermetic):
+    _, servers = _hermetic
+    servers.upsert(McpServer(name="on", url="http://on.test", enabled=True))
+    mock_pool = AsyncMock()
+    mock_pool.get_tools = AsyncMock(return_value=[{"name": "t", "description": "d"}])
+    monkeypatch.setattr("app.api.routes.conversation.mcp_pool", mock_pool)
+    with client.websocket_connect("/v1/conversation/stream?output=text") as ws:
+        ws.receive_json()  # session_started
+    mock_pool.get_tools.assert_called_once_with("http://on.test", headers={})
+
+
+def test_chat_endpoint_fetches_enabled_mcp_tools(client, monkeypatch, _hermetic):
+    _, servers = _hermetic
+    servers.upsert(McpServer(name="on", url="http://on.test", enabled=True))
+    mock_pool = AsyncMock()
+    mock_pool.get_tools = AsyncMock(return_value=[{"name": "t", "description": "d"}])
+    monkeypatch.setattr("app.api.routes.conversation.mcp_pool", mock_pool)
+    resp = client.post("/v1/conversation/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert resp.status_code == 200
+    mock_pool.get_tools.assert_called_once_with("http://on.test", headers={})
+
+
+def test_chat_endpoint_skips_disabled_mcp_tools(client, monkeypatch, _hermetic):
+    _, servers = _hermetic
+    servers.upsert(McpServer(name="off", url="http://off.test", enabled=False))
+    mock_pool = AsyncMock()
+    mock_pool.get_tools = AsyncMock(return_value=[{"name": "t", "description": "d"}])
+    monkeypatch.setattr("app.api.routes.conversation.mcp_pool", mock_pool)
+    resp = client.post("/v1/conversation/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert resp.status_code == 200
+    mock_pool.get_tools.assert_not_called()
