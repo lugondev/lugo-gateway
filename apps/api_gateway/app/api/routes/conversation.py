@@ -33,6 +33,7 @@ from app.services.stt.profile import resolve_stt_profile
 from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.stt.routing import select_stt_engine
 from app.services.stt.service import stt_service
+from app.services.warmup import is_ready, warm_providers
 from app.schemas.tts import TTSRequest
 from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
@@ -330,6 +331,11 @@ async def conversation_stream(websocket: WebSocket) -> None:
     turn = 0
 
     active_tools = list(tool_registry._tools.keys()) if tool_registry else []
+    # Tell the client up front whether the models it's about to use are still
+    # loading, so it can show "warming up, please wait" instead of the user
+    # speaking into a cold pipeline and losing the start of their utterance.
+    stt_ready = is_ready(stt_provider)
+    tts_ready = is_ready(tts_provider)
     await websocket.send_json(
         {
             "event": "session_started",
@@ -347,23 +353,25 @@ async def conversation_stream(websocket: WebSocket) -> None:
             "output": sorted(out_modalities),
             "audio_out": audio_out,
             "output_sample_rate": output_sample_rate if want_audio and audio_out != "url" else None,
+            "stt_ready": stt_ready,
+            "tts_ready": tts_ready,
         }
     )
 
     # Warm TTS (and STT if it supports it, e.g. MLX graph compile) in the background
     # while the user speaks their first turn, so the first turn isn't delayed by a
-    # cold model load / compile.
-    async def _warm() -> None:
-        for provider in (tts_provider, stt_provider):
-            warm = getattr(provider, "warm", None)
-            if not callable(warm):
-                continue
+    # cold model load / compile. Usually a no-op by now: the gateway already warms
+    # the default engines eagerly at boot (see app.main.lifespan) — this covers
+    # non-default engines picked via query params.
+    async def _warm_and_notify() -> None:
+        await warm_providers(tts_provider, stt_provider)
+        if not (stt_ready and tts_ready):
             try:
-                await asyncio.to_thread(warm)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("%s warm failed: %s", type(provider).__name__, exc)
+                await websocket.send_json({"event": "engines_ready"})
+            except Exception:  # noqa: BLE001 - socket may already be closed/gone
+                pass
 
-    asyncio.create_task(_warm())
+    asyncio.create_task(_warm_and_notify())
 
     async def send(event: str, **payload) -> None:
         await websocket.send_json({"event": event, **payload})

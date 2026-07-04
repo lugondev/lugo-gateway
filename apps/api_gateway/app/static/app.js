@@ -1676,8 +1676,17 @@ async function startConversation() {
           const ttsPart = `TTS: ${d.tts_engine}${d.tts_detail ? ` → ${d.tts_detail}` : ""}`;
           info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
         }
+        // Engines may still be cold-loading — tell the user to hold off speaking
+        // instead of letting them talk into a pipeline that'll lose the start of
+        // their utterance. Cleared by the "engines_ready" event below.
+        if (d.stt_ready === false || d.tts_ready === false) {
+          setConvStatus("⏳ engines warming up, please wait…", "status-idle");
+        }
         break;
       }
+      case "engines_ready":
+        setConvStatus("● listening", "status-rec");
+        break;
       case "speech_start":
         setConvStatus("● you're speaking", "status-rec");
         break;

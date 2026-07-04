@@ -1,6 +1,7 @@
 import asyncio
 import os
 import tempfile
+import threading
 from pathlib import Path
 
 from app.core.settings import settings
@@ -9,6 +10,11 @@ from app.services.stt.base import STTProvider
 from app.services.stt.glossary import resolve_initial_prompt
 
 _MODEL_CACHE: dict[str, object] = {}
+# Guards the check-then-set on _MODEL_CACHE: the background warm() task and the
+# first real turn's transcribe can race on different threads (asyncio.to_thread
+# uses a pool), each building the same model concurrently and doubling first-turn
+# latency. A lock makes the build single-flight.
+_MODEL_LOCK = threading.Lock()
 
 # Runtime-selected whisper model size; falls back to settings when unset.
 # Reset on restart (not persisted).
@@ -73,11 +79,13 @@ class WhisperProvider(STTProvider):
         model_name = get_active_whisper_model()
         key = self._cache_key(model_name)
         if key not in _MODEL_CACHE:
-            _MODEL_CACHE[key] = WhisperModel(
-                resolve_whisper_model(model_name),
-                device=settings.whisper_local_device,
-                compute_type=settings.whisper_local_compute_type,
-            )
+            with _MODEL_LOCK:
+                if key not in _MODEL_CACHE:
+                    _MODEL_CACHE[key] = WhisperModel(
+                        resolve_whisper_model(model_name),
+                        device=settings.whisper_local_device,
+                        compute_type=settings.whisper_local_compute_type,
+                    )
         return _MODEL_CACHE[key]
 
     def warm(self) -> None:

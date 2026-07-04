@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -25,12 +27,35 @@ from app.services.artifacts import artifact_store
 
 setup_logging(settings.log_level)
 
+logger = logging.getLogger(__name__)
+
+
+async def _warm_default_engines() -> None:
+    """Load the STT/TTS engines that new conversations use by default, at process
+    boot instead of waiting for the first WebSocket connect. On a genuinely cold
+    start (server and device booting together) this gives the model a head start
+    while the device is still connecting, instead of racing the client's first
+    utterance against a cold model load (see app.services.warmup)."""
+    from app.core.errors import AppError
+    from app.services.stt.service import stt_service
+    from app.services.tts.service import tts_service
+    from app.services.warmup import warm_providers
+
+    try:
+        stt_provider = stt_service.get_provider(settings.conversation_stt_engine)
+        tts_provider = tts_service.get_provider(settings.conversation_tts_engine)
+    except AppError as exc:
+        logger.warning("default engine warm-up skipped: %s", exc)
+        return
+    await warm_providers(stt_provider, tts_provider)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.services.db.engine import init_db
 
     await init_db()
+    asyncio.create_task(_warm_default_engines())
     yield
 
 

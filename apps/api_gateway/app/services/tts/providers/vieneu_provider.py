@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 
 from app.core.audio import float_array_to_wav_bytes
 from app.core.deps import module_available
@@ -11,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 _SAMPLE_RATE = 48000  # VieNeu v3 turbo output rate.
 _CACHE: dict[str, object] = {}
+# Guards the check-then-set on _CACHE — see whisper_provider._MODEL_LOCK for why.
+_CACHE_LOCK = threading.Lock()
 
 # Runtime-selected VieNeu mode; falls back to settings/default. Reset on restart.
 _active_mode: str | None = None
@@ -41,9 +44,11 @@ class VieNeuProvider(MockFallbackTTSProvider):
     def _model(self):
         mode = get_active_vieneu_mode()
         if mode not in _CACHE:
-            from vieneu import Vieneu
+            with _CACHE_LOCK:
+                if mode not in _CACHE:
+                    from vieneu import Vieneu
 
-            _CACHE[mode] = Vieneu(mode=mode)
+                    _CACHE[mode] = Vieneu(mode=mode)
         return _CACHE[mode]
 
     def list_voices(self) -> list[dict]:

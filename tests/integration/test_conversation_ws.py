@@ -56,6 +56,17 @@ def _silence(ms: int) -> bytes:
     return (b"\x00\x00") * int(SR * ms / 1000)
 
 
+def _next_event(ws) -> dict:
+    """Read the next event, transparently skipping "engines_ready" — it fires
+    asynchronously whenever the engine finishes cold-loading and can land at any
+    point in the stream, same as a real client (which handles it by name, not
+    by position) would treat it."""
+    while True:
+        ev = ws.receive_json()
+        if ev["event"] != "engines_ready":
+            return ev
+
+
 def test_conversation_turn_end_to_end():
     client = TestClient(app)
     url = "/v1/conversation/stream?stt_engine=stub-conv&tts_engine=omnivoice&sample_rate=16000"
@@ -63,7 +74,7 @@ def test_conversation_turn_end_to_end():
         assert ws.receive_json()["event"] == "session_started"
 
         ws.send_bytes(_loud(500))
-        assert ws.receive_json()["event"] == "speech_start"
+        assert _next_event(ws)["event"] == "speech_start"
         ws.send_bytes(_loud(400))
         ws.send_bytes(_silence(500))
         ws.send_bytes(_silence(500))  # crosses 700ms silence -> endpoint
@@ -71,6 +82,8 @@ def test_conversation_turn_end_to_end():
         events = []
         for _ in range(30):
             ev = ws.receive_json()
+            if ev["event"] == "engines_ready":
+                continue
             events.append(ev)
             if ev["event"] == "turn_done":
                 break
@@ -94,7 +107,7 @@ def test_conversation_barge_in_aborts_turn():
     with client.websocket_connect(url) as ws:
         assert ws.receive_json()["event"] == "session_started"
         ws.send_bytes(_loud(500))
-        assert ws.receive_json()["event"] == "speech_start"
+        assert _next_event(ws)["event"] == "speech_start"
         ws.send_bytes(_loud(400))
         ws.send_bytes(_silence(500))
         ws.send_bytes(_silence(500))  # endpoint -> turn starts (slow TTS)
@@ -103,6 +116,8 @@ def test_conversation_barge_in_aborts_turn():
         seen = []
         for _ in range(12):
             ev = ws.receive_json()["event"]
+            if ev == "engines_ready":
+                continue
             seen.append(ev)
             if ev == "aborted":
                 break

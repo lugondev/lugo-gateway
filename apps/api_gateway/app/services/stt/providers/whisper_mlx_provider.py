@@ -10,6 +10,7 @@ directory exists; otherwise the engine is hidden and callers fall back to whispe
 """
 
 import asyncio
+import concurrent.futures
 import os
 import tempfile
 
@@ -17,6 +18,15 @@ from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.stt.base import STTProvider
 from app.services.stt.glossary import resolve_initial_prompt
+
+# mlx_whisper runs on MLX, which is not safe for concurrent cross-thread use (see
+# qwen3_asr_provider.py for the same hazard in detail). The conversation warms this
+# engine in the background while the user speaks their first turn, so turn-1
+# transcribe would otherwise race the warm's model build on a different thread.
+# Pinning all MLX work to one dedicated thread makes it single-flight.
+_INFER_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="whisper-mlx"
+)
 
 
 class WhisperMlxProvider(STTProvider):
@@ -58,7 +68,7 @@ class WhisperMlxProvider(STTProvider):
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 f.write(pcm16_to_wav_bytes(silence, sample_rate=16000))
                 tmp = f.name
-            self._transcribe(tmp, "vi")
+            _INFER_EXECUTOR.submit(self._transcribe, tmp, "vi").result()
         except Exception:  # noqa: BLE001 - warming is best-effort
             pass
         finally:
@@ -71,7 +81,8 @@ class WhisperMlxProvider(STTProvider):
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 f.write(audio_bytes)
                 tmp = f.name
-            text = await asyncio.to_thread(self._transcribe, tmp, language)
+            loop = asyncio.get_running_loop()
+            text = await loop.run_in_executor(_INFER_EXECUTOR, self._transcribe, tmp, language)
             return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
         finally:
             if tmp and os.path.isfile(tmp):
