@@ -568,6 +568,16 @@
                   URL
                   <input id="mcp-add-url" type="text" placeholder="http://localhost:8080/mcp" />
                 </label>
+              </div>
+              <div class="row tight">
+                <label>
+                  Header name (optional)
+                  <input id="mcp-add-header-name" type="text" placeholder="X-API-Key" />
+                </label>
+                <label>
+                  Header value (optional)
+                  <input id="mcp-add-header-value" type="text" placeholder="apikey" />
+                </label>
                 <div class="actions end">
                   <button id="mcp-add-btn">Add</button>
                 </div>
@@ -583,7 +593,7 @@
                 <h2>System status &amp; config</h2>
                 <button id="status-refresh" class="ghost mini">Refresh</button>
               </div>
-              <div id="system-status" class="status-grid"></div>
+              <div id="system-status" class="status-groups"></div>
               <p class="hint">Engines, devices and preprocessing come from environment config (see <code>.env</code>). Manage downloadable models in the <strong>Models</strong> section.</p>
             </section>
 

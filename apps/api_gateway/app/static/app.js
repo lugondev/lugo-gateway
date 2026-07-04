@@ -180,26 +180,34 @@ async function loadSystemStatus() {
   try {
     const body = await (await fetch("/v1/system/status")).json();
     const d = body.data;
-    const tiles = [];
     const tile = (label, value, ok) =>
-      tiles.push(
-        `<div class="stat ${ok === undefined ? "" : ok ? "ok" : "warn"}"><span>${label}</span><strong>${value}</strong></div>`
-      );
+      `<div class="stat ${ok === undefined ? "" : ok ? "ok" : "warn"}"><span>${label}</span><strong>${value}</strong></div>`;
 
-    tile("Env", d.app.env);
-    tile("TTS mode", d.tts.mock_enabled ? "mock" : "live", !d.tts.mock_enabled);
-    tile("OmniVoice", d.tts.omnivoice_present ? "found" : "missing", d.tts.omnivoice_present);
-    tile("Vosk model", d.vosk.active_model_present ? "ready" : "missing", d.vosk.active_model_present);
-    tile("Whisper cache", d.whisper_local.cached ? `${d.whisper_local.active_model} ✓` : `${d.whisper_local.active_model} (on demand)`, d.whisper_local.cached);
-    const remote = d.stt_engines.filter((e) => e.mode === "remote");
-    const remoteOk = remote.filter((e) => e.configured).length;
-    tile("Remote STT", `${remoteOk}/${remote.length} configured`, remoteOk > 0);
-    tile("Artifacts", `${d.artifacts.count} · ${fmtBytes(d.artifacts.total_bytes)}`);
-    host.innerHTML = tiles.join("");
+    const sttOk = (d.stt_engines || []).some((e) => e.available);
+    const ttsOk = !d.tts.mock_enabled;
+
+    const groups = [
+      {
+        title: "Environment",
+        tiles: [
+          tile("Env", d.app.env),
+          tile("Artifacts", `${d.artifacts.count} · ${fmtBytes(d.artifacts.total_bytes)}`),
+        ],
+      },
+      {
+        title: "TTS",
+        tiles: [tile("Status", ttsOk ? "ready" : "mock", ttsOk)],
+      },
+      {
+        title: "STT",
+        tiles: [tile("Status", sttOk ? "ready" : "not ready", sttOk)],
+      },
+    ];
+    host.innerHTML = groups
+      .map((g) => `<div class="status-group"><h3 class="sub">${g.title}</h3><div class="status-grid">${g.tiles.join("")}</div></div>`)
+      .join("");
 
     // Update header/footer status badges
-    const sttOk = (d.stt_engines || []).some(e => e.available);
-    const ttsOk = !d.tts.mock_enabled;
     setBadge("badge-stt", sttOk); setBadge("foot-stt", sttOk);
     setBadge("badge-tts", ttsOk); setBadge("foot-tts", ttsOk);
 
@@ -2297,10 +2305,12 @@ function renderMcpList() {
     return;
   }
   host.innerHTML = servers.map((s) => `
-    <div class="model-row">
+    <div class="model-row ${s.enabled ? "" : "dim"}">
       <div class="model-info">
+        <input type="checkbox" data-mcp-enabled="${s.name}" ${s.enabled ? "checked" : ""} title="Enabled" />
         <strong>${s.name}</strong>
         <code>${s.url}</code>
+        ${s.headers && Object.keys(s.headers).length ? `<span class="hint">headers: ${Object.keys(s.headers).join(", ")}</span>` : ""}
         <span class="mcp-row-status" id="mcp-test-${s.name}"></span>
       </div>
       <div class="model-action">
@@ -2308,8 +2318,14 @@ function renderMcpList() {
         <button class="mini danger" data-mcp-delete="${s.name}">Delete</button>
       </div>
     </div>
+    <div class="mcp-tool-list" id="mcp-tools-${s.name}"></div>
   `).join("");
 
+  document.querySelectorAll("[data-mcp-enabled]").forEach((cb) =>
+    cb.addEventListener("change", () =>
+      toggleMcpServerEnabled(cb.getAttribute("data-mcp-enabled"), cb.checked)
+    )
+  );
   document.querySelectorAll("[data-mcp-test]").forEach((btn) =>
     btn.addEventListener("click", () => testMcpServer(btn.getAttribute("data-mcp-test")))
   );
@@ -2318,22 +2334,48 @@ function renderMcpList() {
   );
 }
 
+async function toggleMcpServerEnabled(name, enabled) {
+  try {
+    const resp = await fetch(`/v1/mcp/servers/${encodeURIComponent(name)}/enabled`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json();
+      print(el("mcp-status"), body.detail || "Toggle failed", true);
+      await loadMcpServers();
+      return;
+    }
+    if (mcpServerData[name]) mcpServerData[name].enabled = enabled;
+    renderMcpList();
+  } catch (error) {
+    print(el("mcp-status"), String(error), true);
+    await loadMcpServers();
+  }
+}
+
 async function addMcpServer() {
   const name = el("mcp-add-name").value.trim();
   const url = el("mcp-add-url").value.trim();
+  const headerName = el("mcp-add-header-name").value.trim();
+  const headerValue = el("mcp-add-header-value").value.trim();
   const status = el("mcp-status");
   if (!name || !url) { print(status, "Enter both name and URL", true); return; }
+  const headers = headerName && headerValue ? { [headerName]: headerValue } : {};
   try {
     const resp = await fetch("/v1/mcp/servers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, url }),
+      body: JSON.stringify({ name, url, headers }),
     });
     const body = await resp.json();
     if (!resp.ok) { print(status, body.detail || JSON.stringify(body), true); return; }
     status.textContent = `Added "${name}" ✓`;
     el("mcp-add-name").value = "";
     el("mcp-add-url").value = "";
+    el("mcp-add-header-name").value = "";
+    el("mcp-add-header-value").value = "";
     await loadMcpServers();
     // Refresh profile panel MCP list if open
     if (el("profile-panel") && !el("profile-panel").classList.contains("hidden")) {
@@ -2345,9 +2387,17 @@ async function addMcpServer() {
   }
 }
 
+function _escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : String(str);
+  return div.innerHTML;
+}
+
 async function testMcpServer(name) {
   const statusEl = el(`mcp-test-${name}`);
+  const listEl = el(`mcp-tools-${name}`);
   if (statusEl) { statusEl.textContent = "testing…"; statusEl.className = "mcp-row-status"; }
+  if (listEl) listEl.innerHTML = "";
   try {
     const resp = await fetch(`/v1/mcp/servers/${encodeURIComponent(name)}/tools`);
     const body = await resp.json();
@@ -2357,6 +2407,14 @@ async function testMcpServer(name) {
     }
     const tools = body.data.tools || [];
     if (statusEl) { statusEl.textContent = `✓ ${tools.length} tool${tools.length !== 1 ? "s" : ""}`; statusEl.className = "mcp-row-status ok"; }
+    if (listEl) {
+      listEl.innerHTML = tools.map((t) => `
+        <div class="mcp-tool-item">
+          <code>${_escapeHtml(t.name)}</code>
+          <span>${_escapeHtml(t.description || "")}</span>
+        </div>
+      `).join("");
+    }
   } catch (error) {
     if (statusEl) { statusEl.textContent = `✗ ${error}`; statusEl.className = "mcp-row-status err"; }
   }

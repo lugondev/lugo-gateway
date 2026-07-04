@@ -799,6 +799,10 @@ input[type="radio"] {
    STATUS GRID
    ================================================================ */
 
+.status-groups .status-group:first-child h3.sub {
+  margin-top: 0;
+}
+
 .status-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
@@ -1110,6 +1114,26 @@ input[type="radio"] {
 }
 .mcp-row-status.ok { color: #5edb9a; }
 .mcp-row-status.err { color: var(--danger); }
+
+.mcp-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 10px 12px;
+}
+.mcp-tool-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+.mcp-tool-item code {
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--accent);
+}
+.mcp-tool-item span {
+  color: var(--muted);
+}
 
 /* ================================================================
    CHUNK LIST
