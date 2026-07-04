@@ -54,7 +54,9 @@ async def test_warm_default_engines_warms_configured_stt_and_tts(monkeypatch):
 
     stt_spy, tts_spy = _Spy(), _Spy()
     monkeypatch.setattr(settings, "conversation_stt_engine", "fake_stt")
+    monkeypatch.setattr(settings, "extra_warmup_stt_engines", "")
     monkeypatch.setattr(settings, "conversation_tts_engine", "fake_tts")
+    monkeypatch.setattr(settings, "extra_warmup_tts_engines", "")
     monkeypatch.setattr(stt_service, "get_provider", lambda engine: stt_spy)
     monkeypatch.setattr(tts_service, "get_provider", lambda engine: tts_spy)
 
@@ -122,10 +124,39 @@ async def test_is_ready_becomes_true_even_if_warm_raises():
 async def test_warm_default_engines_swallows_unknown_engine(monkeypatch):
     from app.main import _warm_default_engines
     from app.services.stt.service import stt_service
+    from app.services.tts.service import tts_service
+    from app.core.settings import settings
 
     def _raise(engine):
         raise AppError("Unsupported STT engine: nope")
 
+    tts_spy = _Spy()
+    monkeypatch.setattr(settings, "extra_warmup_tts_engines", "")
     monkeypatch.setattr(stt_service, "get_provider", _raise)
+    monkeypatch.setattr(tts_service, "get_provider", lambda engine: tts_spy)
 
     await _warm_default_engines()  # must not raise
+
+    assert tts_spy.calls == 1  # TTS still warms even though STT lookup failed
+
+
+@pytest.mark.asyncio
+async def test_warm_default_engines_warms_extra_stt_and_tts_engines_too(monkeypatch):
+    from app.main import _warm_default_engines
+    from app.services.stt.service import stt_service
+    from app.services.tts.service import tts_service
+    from app.core.settings import settings
+
+    spies = {"whisper": _Spy(), "qwen3_asr": _Spy(), "vieneu": _Spy()}
+    monkeypatch.setattr(settings, "conversation_stt_engine", "whisper")
+    monkeypatch.setattr(settings, "extra_warmup_stt_engines", "qwen3_asr")
+    monkeypatch.setattr(settings, "conversation_tts_engine", "vieneu")
+    monkeypatch.setattr(settings, "extra_warmup_tts_engines", "")
+    monkeypatch.setattr(stt_service, "get_provider", lambda engine: spies[engine])
+    monkeypatch.setattr(tts_service, "get_provider", lambda engine: spies[engine])
+
+    await _warm_default_engines()
+
+    assert spies["whisper"].calls == 1
+    assert spies["qwen3_asr"].calls == 1
+    assert spies["vieneu"].calls == 1

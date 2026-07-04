@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from contextlib import aclosing
 
@@ -416,7 +417,22 @@ async def conversation_stream(websocket: WebSocket) -> None:
     ) -> None:
         nonlocal turn
         turn += 1
+        turn_start = time.monotonic()
         await send("processing", turn=turn)
+
+        # Stage timing so a slow/cold first turn is diagnosable from server logs alone
+        # (STT vs LLM+TTS-to-first-chunk vs total) instead of guessing whether the
+        # delay is server-side or network/device-side.
+        def _elapsed_ms() -> float:
+            return (time.monotonic() - turn_start) * 1000
+
+        first_chunk_logged = False
+
+        def _log_first_chunk() -> None:
+            nonlocal first_chunk_logged
+            if not first_chunk_logged:
+                first_chunk_logged = True
+                logger.info("turn %d: first response chunk at +%.0fms", turn, _elapsed_ms())
 
         # Stream a sentence iterator through TTS. For audio output we synthesize up to
         # `conversation_tts_lookahead` sentences AHEAD of sending (prefetch_synthesis),
@@ -428,6 +444,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
             if not want_audio:
                 index = 0
                 async for sentence in sentence_aiter:
+                    _log_first_chunk()
                     parts.append(sentence)
                     if want_text:
                         await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
@@ -452,6 +469,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 )
             ) as pipeline:
                 async for index, sentence, (result, packets) in pipeline:
+                    _log_first_chunk()
                     parts.append(sentence)
                     if want_text:
                         await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
@@ -504,6 +522,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
             )
             history.append({"role": "assistant", "content": " ".join(parts)})
             await persist("assistant", " ".join(parts))
+            logger.info("turn %d: done at +%.0fms (text input)", turn, _elapsed_ms())
             await send("turn_done", turn=turn)
             return
 
@@ -526,6 +545,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
             except RuntimeError as exc:
                 await send("error", message=f"Qwen-Omni failed: {exc}")
                 return
+            logger.info("turn %d: audio-native STT+LLM done at +%.0fms", turn, _elapsed_ms())
             reply = (reply or "").strip()
             # The audio-native pass occasionally returns an empty reply on some clips
             # — fall back to the transcribe -> text-LLM cascade so the turn still answers.
@@ -542,6 +562,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 parts = await _stream_to_tts(_reply_sentences(), stt_engine)
                 history.append({"role": "assistant", "content": " ".join(parts)})
                 await persist("assistant", " ".join(parts))
+                logger.info("turn %d: done at +%.0fms (audio-native)", turn, _elapsed_ms())
                 await send("turn_done", turn=turn)
                 return
             logger.info("qwen_omni audio-native reply empty; falling back to transcribe + LLM")
@@ -568,6 +589,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
         except RuntimeError as exc:
             await send("error", message=f"STT failed: {exc}")
             return
+        logger.info("turn %d: stt (%s) done at +%.0fms", turn, turn_engine, _elapsed_ms())
         user_text = (stt_result.text or "").strip()
         await send("user_transcript", turn=turn, text=user_text, engine=turn_engine)
         if not user_text:
@@ -588,6 +610,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
         )
         history.append({"role": "assistant", "content": " ".join(parts)})
         await persist("assistant", " ".join(parts))
+        logger.info("turn %d: done at +%.0fms", turn, _elapsed_ms())
         await send("turn_done", turn=turn)
 
     current_turn: asyncio.Task | None = None

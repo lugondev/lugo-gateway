@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -31,23 +32,39 @@ logger = logging.getLogger(__name__)
 
 
 async def _warm_default_engines() -> None:
-    """Load the STT/TTS engines that new conversations use by default, at process
-    boot instead of waiting for the first WebSocket connect. On a genuinely cold
-    start (server and device booting together) this gives the model a head start
-    while the device is still connecting, instead of racing the client's first
-    utterance against a cold model load (see app.services.warmup)."""
+    """Load the STT/TTS engines conversations actually use, at process boot instead
+    of waiting for the first WebSocket connect. Covers conversation_stt_engine /
+    conversation_tts_engine PLUS any extra_warmup_stt_engines/extra_warmup_tts_engines
+    — a device that always pins a different engine via ?stt_engine=... (e.g. an RPi
+    client configured for qwen3_asr) never touches the settings default, so it must
+    be listed explicitly or this warm-up silently loads the wrong model and the
+    device still pays a full cold-load on its first-ever turn each boot (see
+    app.services.warmup)."""
     from app.core.errors import AppError
     from app.services.stt.service import stt_service
     from app.services.tts.service import tts_service
     from app.services.warmup import warm_providers
 
-    try:
-        stt_provider = stt_service.get_provider(settings.conversation_stt_engine)
-        tts_provider = tts_service.get_provider(settings.conversation_tts_engine)
-    except AppError as exc:
-        logger.warning("default engine warm-up skipped: %s", exc)
+    stt_engines = settings.warmup_stt_engines
+    tts_engines = settings.warmup_tts_engines
+    providers = []
+    for name in stt_engines:
+        try:
+            providers.append(stt_service.get_provider(name))
+        except AppError as exc:
+            logger.warning("stt warm-up skipped for %s: %s", name, exc)
+    for name in tts_engines:
+        try:
+            providers.append(tts_service.get_provider(name))
+        except AppError as exc:
+            logger.warning("tts warm-up skipped for %s: %s", name, exc)
+    if not providers:
         return
-    await warm_providers(stt_provider, tts_provider)
+
+    started = time.monotonic()
+    logger.info("boot warm-up starting: stt=%s tts=%s", stt_engines, tts_engines)
+    await warm_providers(*providers)
+    logger.info("boot warm-up finished in %.0fms", (time.monotonic() - started) * 1000)
 
 
 @asynccontextmanager
