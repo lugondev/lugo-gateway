@@ -128,6 +128,9 @@ body {
   color: var(--muted);
   letter-spacing: 0.06em;
   transition: color 300ms, border-color 300ms;
+  background: none;
+  box-shadow: none;
+  cursor: pointer;
 }
 .hdr-badge.ok {
   color: #5edb9a;
