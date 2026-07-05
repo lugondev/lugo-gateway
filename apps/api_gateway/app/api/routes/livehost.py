@@ -130,6 +130,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
     )
     livehost_registry.register(session_id, LivehostSession(scheduler=scheduler, ingestor=ingestor))
     try:
+        current_turn: asyncio.Task | None = None
         stt_ready = is_ready(stt_provider)
         tts_ready = is_ready(tts_provider)
         await websocket.send_json({
@@ -254,8 +255,6 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 logger.exception("livehost voice turn failed")
                 await send("error", message=str(exc))
                 await send("turn_done", turn=turn)
-
-        current_turn: asyncio.Task | None = None
 
         async def abort_turn(reason: str) -> None:
             nonlocal current_turn

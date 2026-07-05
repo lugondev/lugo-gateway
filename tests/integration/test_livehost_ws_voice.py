@@ -90,6 +90,48 @@ def test_livehost_voice_turn_end_to_end():
     assert livehost_registry.get(session_id) is None  # cleaned up on disconnect
 
 
+def test_livehost_session_started_send_failure_does_not_leak_registry(monkeypatch):
+    # Regression test: if the very first websocket.send_json (the "session_started"
+    # event) raises -- e.g. because the client already disconnected -- the finally
+    # block must still run ingestor.stop()/livehost_registry.unregister() cleanly,
+    # without an UnboundLocalError on `current_turn` masking the original exception
+    # and skipping cleanup.
+    from starlette.websockets import WebSocket
+
+    from app.services.livehost.registry import livehost_registry
+
+    original_send_json = WebSocket.send_json
+
+    async def flaky_send_json(self, data, mode="text"):
+        if isinstance(data, dict) and data.get("event") == "session_started":
+            raise RuntimeError("client disconnected before session_started could be sent")
+        return await original_send_json(self, data, mode=mode)
+
+    monkeypatch.setattr(WebSocket, "send_json", flaky_send_json)
+
+    client = TestClient(app)
+    session_id = "test-session-started-send-failure"
+    url = (
+        "/v1/livehost/stream?stt_engine=stub-livehost&tts_engine=stub-livehost-tts"
+        f"&sample_rate=16000&session_id={session_id}"
+    )
+    try:
+        with client.websocket_connect(url) as ws:
+            # Block until the server-side task actually reaches the send_json
+            # call and raises. Exiting the `with` block immediately would just
+            # send a disconnect before the server got that far, never
+            # exercising the fault we're injecting.
+            ws.receive()
+    except Exception:
+        # The server-side handler raises (in the buggy version, an
+        # UnboundLocalError masking the original RuntimeError); whether/how the
+        # test transport surfaces that to the client isn't the point of this
+        # test -- what matters is the registry cleanup below.
+        pass
+
+    assert livehost_registry.get(session_id) is None  # no leak from the masked-exception regression
+
+
 def test_livehost_voice_turn_stt_failure_still_sends_turn_done():
     client = TestClient(app)
     url = "/v1/livehost/stream?stt_engine=stub-livehost-failing&tts_engine=stub-livehost-tts&sample_rate=16000"
