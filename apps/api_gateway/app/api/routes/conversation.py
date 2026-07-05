@@ -21,6 +21,7 @@ from app.services.conversation.responder import (
     get_active_llm_base_url,
     get_active_llm_model,
     reset_active_llm_config,
+    resolve_system_prompt,
     set_active_llm_config,
 )
 from app.services.conversation.tools.mcp import McpToolSource
@@ -397,7 +398,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
     async def send(event: str, **payload) -> None:
         await websocket.send_json({"event": event, **payload})
 
-    base_system_prompt = system_prompt or settings.conversation_system_prompt
+    base_system_prompt = resolve_system_prompt(system_prompt)
 
     async def persist(role: str, content: str) -> None:
         if not session_ready:
@@ -560,7 +561,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
         if audio_native:
             try:
                 transcript, reply = await stt_provider.converse(
-                    wav, history, settings.conversation_system_prompt
+                    wav, history, resolve_system_prompt(system_prompt)
                 )
             except RuntimeError as exc:
                 await send("error", message=f"Qwen-Omni failed: {exc}")

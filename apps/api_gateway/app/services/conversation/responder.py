@@ -18,6 +18,7 @@ import httpx
 
 from app.core.errors import LLMUnavailableError
 from app.core.settings import settings
+from app.services.system_config import system_config_store
 from app.services.tts.segmenter import SentenceAggregator, segment_text
 
 if TYPE_CHECKING:
@@ -235,6 +236,15 @@ class OpenAICompatResponder(Responder):
             ) from exc
 
 
+def resolve_system_prompt(system_prompt: str | None) -> str:
+    """Resolve the persona prompt (explicit override or .env default) and always
+    prepend the user-configured base context (platform intro + guardrail rules),
+    if any, so it applies regardless of profile."""
+    persona = system_prompt if system_prompt is not None else settings.conversation_system_prompt
+    base_context = system_config_store.get().base_context
+    return f"{base_context}\n\n{persona}" if base_context else persona
+
+
 def build_responder() -> Responder:
     base_url = get_active_llm_base_url()
     if base_url:
@@ -242,7 +252,7 @@ def build_responder() -> Responder:
             base_url=base_url,
             api_key=get_active_llm_api_key(),
             model=get_active_llm_model(),
-            system_prompt=settings.conversation_system_prompt,
+            system_prompt=resolve_system_prompt(None),
             timeout=settings.conversation_llm_timeout_seconds,
         )
     return EchoResponder()
@@ -264,9 +274,7 @@ def build_responder_ex(
             base_url=effective_url,
             api_key=api_key if api_key is not None else get_active_llm_api_key(),
             model=model if model is not None else get_active_llm_model(),
-            system_prompt=(
-                system_prompt if system_prompt is not None else settings.conversation_system_prompt
-            ),
+            system_prompt=resolve_system_prompt(system_prompt),
             timeout=settings.conversation_llm_timeout_seconds,
         )
     return EchoResponder()

@@ -9,6 +9,7 @@ from app.services.models import model_manager
 from app.services.qwen_omni_models import qwen_omni_manager
 from app.services.stt.service import stt_service
 from app.services.llm_models import llm_manager
+from app.services.system_config import system_config_store
 from app.services.tts.service import tts_service
 from app.services.tts_models import tts_model_manager
 from app.services.vad import available_backends
@@ -35,6 +36,10 @@ class VieneuModeRequest(BaseModel):
 
 class LlmModelRequest(BaseModel):
     model: str
+
+
+class SystemConfigRequest(BaseModel):
+    base_context: str = ""
 
 
 def _artifacts_stats() -> dict:
@@ -80,6 +85,17 @@ async def system_status() -> dict:
         },
     }
     return {"success": True, "data": data}
+
+
+@router.get("/system/config")
+async def get_system_config() -> dict:
+    return {"success": True, "data": system_config_store.get().model_dump()}
+
+
+@router.put("/system/config")
+async def set_system_config(payload: SystemConfigRequest) -> dict:
+    config = system_config_store.set_base_context(payload.base_context)
+    return {"success": True, "data": config.model_dump()}
 
 
 @router.get("/models")

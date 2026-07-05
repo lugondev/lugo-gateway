@@ -104,3 +104,4 @@ Thumbs.db
 # JSON data files (profiles, MCP server configs)
 profiles.json
 mcp_servers.json
+system_config.json
