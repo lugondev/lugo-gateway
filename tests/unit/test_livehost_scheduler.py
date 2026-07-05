@@ -70,3 +70,20 @@ def test_queue_cap_drops_lowest_priority_before_gifts():
     remaining_ids = {s.event.id for s in scheduler._queue}  # noqa: SLF001 - white-box test
     assert "gift1" in remaining_ids
     assert len(remaining_ids) == 3
+
+
+def test_queue_never_drops_gift_even_when_full_of_gifts():
+    """Verify that gifts are never dropped, even when queue is entirely full of protected entries."""
+    scheduler = EventScheduler(max_queue_size=3, individual_threshold=0, batch_top_k=0)
+    # Fill the queue entirely with gifts (all are protected).
+    scheduler.enqueue(_event(id="gift1", kind="gift", gift_name="Rose", gift_value=10))
+    scheduler.enqueue(_event(id="gift2", kind="gift", gift_name="Crown", gift_value=20))
+    scheduler.enqueue(_event(id="gift3", kind="gift", gift_name="Heart", gift_value=15))
+    # Exceeds cap of 3 -> queue is full of only gifts (all protected),
+    # so no eviction should happen. Queue should temporarily exceed max_queue_size.
+    scheduler.enqueue(_event(id="gift4", kind="gift", gift_name="Rose", gift_value=5))
+
+    remaining_ids = {s.event.id for s in scheduler._queue}  # noqa: SLF001 - white-box test
+    assert remaining_ids == {"gift1", "gift2", "gift3", "gift4"}
+    # Queue exceeds cap because gifts were never dropped.
+    assert len(scheduler._queue) == 4

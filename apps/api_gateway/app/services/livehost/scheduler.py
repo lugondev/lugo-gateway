@@ -8,7 +8,7 @@ docs/superpowers/specs/2026-07-05-livehost-tiktok-cohost-design.md section 3.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from app.services.livehost.schemas import SocialEvent
 
@@ -81,9 +81,10 @@ class EventScheduler:
             if candidate.event.kind != "gift" and candidate.score < PROTECTED_SCORE_FLOOR:
                 del self._queue[i]
                 return
-        # Every pending entry is protected (gift/mention) but we're still over
-        # cap -> drop the lowest-scored one rather than growing unbounded.
-        self._queue.pop()
+        # Every pending entry is protected (gift/mention) — do nothing rather than
+        # drop one. The queue temporarily exceeds max_queue_size in this rare case
+        # (queue saturated entirely with gifts/mentions); "never drop a gift" wins
+        # over the size cap.
 
     def has_pending(self) -> bool:
         return bool(self._queue)
