@@ -18,6 +18,9 @@ _GUARDED_PREFIXES = (
 
 class AuthGuardMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         if not settings.admin_password:
             return await call_next(request)
 

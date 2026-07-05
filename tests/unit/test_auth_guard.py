@@ -47,3 +47,8 @@ def test_guard_allows_device_routes_without_login(client, _with_password):
 def test_guard_allows_auth_routes_without_login(client, _with_password):
     resp = client.get("/api/auth/status")
     assert resp.status_code != 401
+
+
+def test_guard_allows_options_preflight_without_login(client, _with_password):
+    resp = client.options("/v1/system/status")
+    assert resp.status_code != 401
