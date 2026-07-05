@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import secrets
 import time
 from contextlib import asynccontextmanager
 
@@ -7,8 +8,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from app.api.routes.agents_docs import router as agents_docs_router
+from app.api.routes.auth import router as auth_router
 from app.api.routes.conversation import router as conversation_router
 from app.api.routes.events import router as events_router
 from app.api.routes.health import router as health_router
@@ -72,6 +75,8 @@ async def lifespan(app: FastAPI):
     from app.services.db.engine import init_db
 
     await init_db()
+    if not settings.admin_password and settings.app_env != "dev":
+        logger.warning("auth disabled: ADMIN_PASSWORD not set (app_env=%s)", settings.app_env)
     asyncio.create_task(_warm_default_engines())
     yield
 
@@ -86,6 +91,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_session_secret = settings.session_secret or secrets.token_hex(32)
+app.add_middleware(SessionMiddleware, secret_key=_session_secret, same_site="lax")
+
 
 @app.exception_handler(AppError)
 async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
@@ -96,6 +104,7 @@ async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
 
 
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(stt_router)
 app.include_router(tts_router)
 app.include_router(events_router)

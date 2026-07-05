@@ -26,3 +26,9 @@ class LLMUnavailableError(AppError):
     """Raised when a configured conversation LLM is unreachable/offline."""
 
     status_code = 503
+
+
+class AuthError(AppError):
+    """Raised when login credentials are invalid or a session is required."""
+
+    status_code = 401

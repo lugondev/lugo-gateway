@@ -10,6 +10,12 @@ class Settings(BaseSettings):
 
     cors_allow_origins: str = "*"
 
+    # Browser control-panel login (single shared password). Empty = auth disabled.
+    admin_password: str = ""
+    # Cookie-signing secret for the login session. Empty (with admin_password set)
+    # -> a random secret is generated at process startup (sessions reset on restart).
+    session_secret: str = ""
+
     default_stt_engine: str = "vosk"
     default_tts_engine: str = "omnivoice"
 
@@ -202,6 +208,7 @@ class Settings(BaseSettings):
     # LLM profiles + MCP tooling
     profiles_path: str = "profiles.json"
     mcp_servers_path: str = "mcp_servers.json"
+    system_config_path: str = "system_config.json"
     database_url: str = "sqlite+aiosqlite:///data/app.db"
     mcp_tool_cache_ttl_seconds: int = 300
     mcp_connection_timeout_seconds: float = 10.0
