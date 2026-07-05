@@ -4,7 +4,8 @@ import logging
 import uuid
 from contextlib import aclosing
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
 from app.core.audio import pcm16_to_wav_bytes, wav_file_to_pcm16
 from app.core.errors import AppError
@@ -14,6 +15,7 @@ from app.services.conversation.endpointer import VadEndpointer
 from app.services.conversation.responder import build_responder_ex
 from app.services.history.store import session_store
 from app.services.livehost.ingestor import TikTokLiveIngestor
+from app.services.livehost.orchestrator import LiveHostOrchestrator
 from app.services.livehost.registry import LivehostSession, livehost_registry
 from app.services.livehost.scheduler import EventScheduler
 from app.services.profiles.store import profile_store
@@ -28,6 +30,43 @@ router = APIRouter(prefix="/v1/livehost", tags=["livehost"])
 
 def _mention_keywords() -> list[str]:
     return [k.strip() for k in settings.livehost_mention_keywords.split(",") if k.strip()]
+
+
+class TikTokConnectRequest(BaseModel):
+    unique_id: str
+
+
+@router.post("/{session_id}/connect")
+async def connect_tiktok(session_id: str, payload: TikTokConnectRequest) -> dict:
+    session = livehost_registry.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"livehost session '{session_id}' not found")
+    await session.ingestor.start(payload.unique_id)
+    return {"success": True, "data": {"state": session.ingestor.state.value, "unique_id": payload.unique_id}}
+
+
+@router.post("/{session_id}/disconnect")
+async def disconnect_tiktok(session_id: str) -> dict:
+    session = livehost_registry.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"livehost session '{session_id}' not found")
+    await session.ingestor.stop()
+    return {"success": True, "data": {"state": session.ingestor.state.value}}
+
+
+@router.get("/{session_id}/status")
+async def livehost_status(session_id: str) -> dict:
+    session = livehost_registry.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"livehost session '{session_id}' not found")
+    return {
+        "success": True,
+        "data": {
+            "state": session.ingestor.state.value,
+            "unique_id": session.ingestor.unique_id,
+            "pending_social_events": session.scheduler.pending_count(),
+        },
+    }
 
 
 @router.websocket("/stream")
@@ -129,8 +168,11 @@ async def livehost_stream(websocket: WebSocket) -> None:
         watchdog_idle_seconds=settings.livehost_watchdog_idle_seconds,
     )
     livehost_registry.register(session_id, LivehostSession(scheduler=scheduler, ingestor=ingestor))
+    orchestrator = LiveHostOrchestrator(scheduler)
     try:
         current_turn: asyncio.Task | None = None
+        drain_task: asyncio.Task | None = None
+        poll_task: asyncio.Task | None = None
         stt_ready = is_ready(stt_provider)
         tts_ready = is_ready(tts_provider)
         await websocket.send_json({
@@ -256,6 +298,28 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 await send("error", message=str(exc))
                 await send("turn_done", turn=turn)
 
+        async def _run_social_turn(social_turn, formatted_text: str) -> None:
+            nonlocal turn
+            turn += 1
+            await send(
+                "social_reply", turn=turn,
+                event_count=len(social_turn.events), overflow_count=social_turn.overflow_count,
+            )
+            history.append({"role": "user", "content": formatted_text})
+            await persist("user", formatted_text)
+            parts = await _stream_to_tts(responder.reply_stream(history), responder.name)
+            history.append({"role": "assistant", "content": " ".join(parts)})
+            await persist("assistant", " ".join(parts))
+            await send("turn_done", turn=turn)
+
+        async def run_social_turn(social_turn, formatted_text: str) -> None:
+            # Per the spec: a social-turn failure is logged and the event is dropped,
+            # never surfaced as a hard error to the streamer — unlike run_voice_turn.
+            try:
+                await _run_social_turn(social_turn, formatted_text)
+            except Exception:  # noqa: BLE001 - drop this social turn, keep the session alive
+                logger.exception("livehost social turn failed, dropping event")
+
         async def abort_turn(reason: str) -> None:
             nonlocal current_turn
             if current_turn and not current_turn.done():
@@ -266,6 +330,33 @@ async def livehost_stream(websocket: WebSocket) -> None:
                     pass
                 await send("aborted", reason=reason)
             current_turn = None
+
+        async def _drain_social_events() -> None:
+            while True:
+                event = await raw_social_queue.get()
+                scheduler.enqueue(event)
+                try:
+                    await send(
+                        "social_event", kind=event.kind, user_name=event.user_name,
+                        user_avatar_url=event.user_avatar_url, text=event.text,
+                        gift_name=event.gift_name, gift_value=event.gift_value,
+                    )
+                except Exception:  # noqa: BLE001 - socket may already be closed
+                    return
+
+        async def _poll_social_turns() -> None:
+            nonlocal current_turn
+            while True:
+                await asyncio.sleep(0.5)
+                voice_active = endpointer.speaking or (current_turn is not None and not current_turn.done())
+                result = orchestrator.poll_social_turn(voice_active=voice_active)
+                if result is None:
+                    continue
+                social_turn, formatted_text = result
+                current_turn = asyncio.create_task(run_social_turn(social_turn, formatted_text))
+
+        drain_task = asyncio.create_task(_drain_social_events())
+        poll_task = asyncio.create_task(_poll_social_turns())
 
         while True:
             message = await websocket.receive()
@@ -319,6 +410,10 @@ async def livehost_stream(websocket: WebSocket) -> None:
     finally:
         if current_turn and not current_turn.done():
             current_turn.cancel()
+        if drain_task:
+            drain_task.cancel()
+        if poll_task:
+            poll_task.cancel()
         await ingestor.stop()
         livehost_registry.unregister(session_id)
         if session_ready:
