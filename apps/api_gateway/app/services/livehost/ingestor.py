@@ -109,8 +109,13 @@ class TikTokLiveIngestor:
                 continue
 
             self.state = IngestorState.LIVE
-            backoff = self.backoff_initial
-            stale = await self._drain(client, generation)
+            stale, received_event = await self._drain(client, generation)
+            if received_event:
+                # Backoff only resets once the connection has proven itself by
+                # actually delivering an event, not merely completing the
+                # handshake (a connect() that succeeds but then immediately
+                # fails mid-stream must keep the exponential progression).
+                backoff = self.backoff_initial
 
             if self._stop_requested or generation != self._generation:
                 return
@@ -120,11 +125,14 @@ class TikTokLiveIngestor:
             await self._sleep_backoff(backoff)
             backoff = min(backoff * 2, self.backoff_max)
 
-    async def _drain(self, client: LiveClientProtocol, generation: int) -> bool:
+    async def _drain(self, client: LiveClientProtocol, generation: int) -> tuple[bool, bool]:
         """Pull events from *client* into self.queue until it disconnects, errors,
-        or goes stale. Returns True if it ended because of watchdog staleness."""
+        or goes stale. Returns (stale, received_event): stale is True if it ended
+        because of watchdog staleness; received_event is True if at least one
+        event was successfully pulled and queued during this connection."""
         events_iter = client.events().__aiter__()
         stale = False
+        received_event = False
         try:
             while True:
                 try:
@@ -138,6 +146,7 @@ class TikTokLiveIngestor:
                 if raw_event is None:  # adapter's clean-disconnect signal
                     break
                 await self.queue.put(raw_event)
+                received_event = True
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - transient mid-stream error
@@ -147,7 +156,7 @@ class TikTokLiveIngestor:
                 await client.close()
             except Exception:  # noqa: BLE001 - teardown must not raise
                 pass
-        return stale
+        return stale, received_event
 
     async def _sleep_backoff(self, backoff: float) -> None:
         jitter = random.uniform(0, backoff * 0.25)

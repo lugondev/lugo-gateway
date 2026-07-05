@@ -36,6 +36,8 @@ class FakeClient:
 
     async def _event_gen(self):
         for item in self._events:
+            if isinstance(item, Exception):
+                raise item
             yield item
         # Simulate a connection that just sits open with no more events, so the
         # watchdog (not StopAsyncIteration) is what ends it.
@@ -103,6 +105,29 @@ async def test_transient_error_backs_off_then_reconnects():
     await ingestor.start("alice")
     event = await asyncio.wait_for(queue.get(), timeout=1)
     assert event.text == "1"
+    await ingestor.stop()
+
+
+async def test_mid_stream_error_backs_off_then_reconnects():
+    # Distinct from test_transient_error_backs_off_then_reconnects: there the
+    # exception is raised by connect() itself. Here connect() succeeds and an
+    # event is delivered first, then events() raises mid-stream -- exercising
+    # the `except Exception` branch inside _drain rather than the one in _run.
+    scripts = [[_event(1), RuntimeError("mid-stream blip")], [_event(2)]]
+    factory = lambda uid: FakeClient(uid, [scripts.pop(0)])
+    queue: asyncio.Queue = asyncio.Queue()
+    ingestor = TikTokLiveIngestor(
+        client_factory=factory, queue=queue,
+        backoff_initial=0.01, backoff_max=0.02, watchdog_idle_seconds=3600,
+    )
+
+    await ingestor.start("alice")
+    first = await asyncio.wait_for(queue.get(), timeout=1)
+    second = await asyncio.wait_for(queue.get(), timeout=1)
+
+    assert [first.text, second.text] == ["1", "2"]
+    assert FakeClient.instances[0].closed is True
+    assert len(FakeClient.instances) == 2
     await ingestor.stop()
 
 
