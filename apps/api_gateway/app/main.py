@@ -24,6 +24,7 @@ from app.api.routes.stt import router as stt_router
 from app.api.routes.system import router as system_router
 from app.api.routes.tts import router as tts_router
 from app.api.routes.ui import router as ui_router
+from app.core.auth_guard import AuthGuardMiddleware
 from app.core.errors import AppError
 from app.core.logging import setup_logging
 from app.core.settings import settings
@@ -91,6 +92,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(AuthGuardMiddleware)
 _session_secret = settings.session_secret or secrets.token_hex(32)
 app.add_middleware(SessionMiddleware, secret_key=_session_secret, same_site="lax")
 
