@@ -25,8 +25,10 @@ export async function saveBaseContext() {
     print(status, String(error), true);
   }
 }
-el("sys-base-context-save").addEventListener("click", saveBaseContext);
-loadBaseContext();
+if (el("sys-base-context-save")) {
+  el("sys-base-context-save").addEventListener("click", saveBaseContext);
+  loadBaseContext();
+}
 
 // Shared STT preprocessing config (System tab) used by batch / streaming / conversation.
 export function getPreproc() {
