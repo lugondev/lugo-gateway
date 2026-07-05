@@ -323,7 +323,9 @@ async def livehost_stream(websocket: WebSocket) -> None:
 
         async def _abort_turn_locked(reason: str) -> None:
             # Cancel the in-flight turn and clear current_turn. Caller must
-            # already hold turn_lock.
+            # already hold turn_lock -- fail fast instead of silently
+            # reopening the exact race this lock exists to close.
+            assert turn_lock.locked(), "_abort_turn_locked requires turn_lock to be held"
             nonlocal current_turn
             if current_turn and not current_turn.done():
                 current_turn.cancel()
