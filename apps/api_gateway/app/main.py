@@ -94,7 +94,12 @@ app.add_middleware(
 
 app.add_middleware(AuthGuardMiddleware)
 _session_secret = settings.session_secret or secrets.token_hex(32)
-app.add_middleware(SessionMiddleware, secret_key=_session_secret, same_site="lax")
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_session_secret,
+    same_site="lax",
+    https_only=settings.app_env != "dev",
+)
 
 
 @app.exception_handler(AppError)
