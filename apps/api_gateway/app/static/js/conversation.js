@@ -1,0 +1,414 @@
+import { el, wsUrl, restoreAndBind } from "./helpers.js";
+import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
+import { getPreproc } from "./base-context.js";
+import { currentSessionId, setCurrentSessionId } from "./chat.js";
+
+export const conv = { ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null, assistantBubble: null, opusMode: false, opusDec: null, opusTs: 0, outRate: 24000 };
+
+export function setConvStatus(text, state) {
+  const node = el("conv-status");
+  node.textContent = text;
+  node.className = state;
+}
+export function convLog(line) {
+  conv.log.push(line);
+  if (conv.log.length > 60) conv.log.shift();
+  el("conv-log").textContent = conv.log.join("\n");
+}
+export function addBubble(role, text) {
+  const div = document.createElement("div");
+  div.className = `bubble ${role}`;
+  div.textContent = text;
+  el("chat-dialogue").appendChild(div);
+  el("chat-dialogue").scrollTop = el("chat-dialogue").scrollHeight;
+  return div;
+}
+export function convAudioCtx() {
+  if (!conv.ctx) conv.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  return conv.ctx;
+}
+// True while assistant audio is still scheduled/playing (+small tail).
+export function convIsSpeaking() {
+  return !!conv.ctx && (conv.nextTime || 0) > conv.ctx.currentTime + 0.15;
+}
+export function convStopAudio() {
+  (conv.sources || []).forEach((s) => {
+    try {
+      s.stop();
+    } catch {}
+  });
+  conv.sources = [];
+  conv.nextTime = 0;
+  conv.chain = Promise.resolve();
+  convResetOpus(); // flush any in-flight Opus decode so stale audio can't play
+}
+// Gapless playback: decode each chunk and schedule it back-to-back on the audio
+// timeline (no <audio> src-swap gaps, no queue underrun between sentences).
+export function convEnqueueAudio(url) {
+  conv.chain = (conv.chain || Promise.resolve())
+    .then(async () => {
+      const ctx = convAudioCtx();
+      if (ctx.state === "suspended") await ctx.resume();
+      const data = await (await fetch(url)).arrayBuffer();
+      const buf = await ctx.decodeAudioData(data);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      const start = Math.max(ctx.currentTime + 0.05, conv.nextTime || 0);
+      src.start(start);
+      conv.nextTime = start + buf.duration;
+      conv.sources.push(src);
+      src.onended = () => {
+        conv.sources = conv.sources.filter((s) => s !== src);
+      };
+    })
+    .catch((e) => convLog("audio error: " + e));
+}
+
+// ---- Opus downlink (WebCodecs): decode streamed Opus frames in-browser ----
+// Same gapless scheduling as convEnqueueAudio, but the audio arrives as raw 60ms
+// Opus packets (binary WS frames) decoded by AudioDecoder instead of fetched WAVs.
+export function convOpusSupported() {
+  return typeof window.AudioDecoder === "function" && typeof window.EncodedAudioChunk === "function";
+}
+export function convScheduleBuffer(buf) {
+  const ctx = convAudioCtx();
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(ctx.destination);
+  const start = Math.max(ctx.currentTime + 0.05, conv.nextTime || 0);
+  src.start(start);
+  conv.nextTime = start + buf.duration;
+  conv.sources.push(src);
+  src.onended = () => {
+    conv.sources = conv.sources.filter((s) => s !== src);
+  };
+}
+export function convInitOpusDecoder() {
+  if (conv.opusDec) {
+    try {
+      conv.opusDec.close();
+    } catch {}
+  }
+  conv.opusTs = 0;
+  const ctx = convAudioCtx();
+  const dec = new AudioDecoder({
+    output: (audioData) => {
+      try {
+        const frames = audioData.numberOfFrames;
+        const buf = ctx.createBuffer(1, frames, audioData.sampleRate);
+        const arr = new Float32Array(frames);
+        audioData.copyTo(arr, { planeIndex: 0, format: "f32-planar" });
+        buf.copyToChannel(arr, 0);
+        convScheduleBuffer(buf);
+      } catch (e) {
+        convLog("opus output error: " + e);
+      } finally {
+        audioData.close();
+      }
+    },
+    error: (e) => convLog("opus decoder error: " + e),
+  });
+  dec.configure({ codec: "opus", sampleRate: conv.outRate, numberOfChannels: 1 });
+  conv.opusDec = dec;
+}
+export function convFeedOpus(data) {
+  if (!conv.opusDec || conv.opusDec.state === "closed") convInitOpusDecoder();
+  try {
+    conv.opusDec.decode(new EncodedAudioChunk({ type: "key", timestamp: conv.opusTs, data }));
+    conv.opusTs += 60000; // 60ms frames (microseconds)
+  } catch (e) {
+    convLog("opus feed error: " + e);
+  }
+}
+export function convResetOpus() {
+  if (conv.opusDec) {
+    try {
+      conv.opusDec.close();
+    } catch {}
+    conv.opusDec = null;
+  }
+  conv.opusTs = 0;
+}
+
+export const convDetails = { stt: {}, tts: {}, llm: "" };
+
+export function updateConvEnginesInfo() {
+  const info = el("conv-engines-info");
+  if (!info) return;
+  const sttEng = el("conv-stt-engine")?.value || "";
+  const ttsEng = el("conv-tts-engine")?.value || "";
+  // Strip the " · cached" status suffix so the model name reads clearly.
+  const clean = (d) => (d || "").split(" · ")[0];
+  const sttDet = clean(convDetails.stt[sttEng]);
+  const ttsDet = clean(convDetails.tts[ttsEng]);
+  const llmPart = convDetails.llm ? `LLM: ${convDetails.llm}` : "LLM: echo (no LLM configured)";
+  const sttPart = `STT: ${sttEng}${sttDet ? ` → ${sttDet}` : ""}`;
+  const ttsPart = `TTS: ${ttsEng}${ttsDet ? ` → ${ttsDet}` : ""}`;
+  info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
+}
+
+export async function loadConversationEngines() {
+  try {
+    const [stt, tts, models] = await Promise.all([
+      (await fetch("/v1/stt/engines")).json(),
+      (await fetch("/v1/tts/engines")).json(),
+      (await fetch("/v1/models")).json().catch(() => null),
+    ]);
+    stt.data.forEach((e) => (convDetails.stt[e.engine] = e.detail));
+    tts.data.forEach((e) => (convDetails.tts[e.engine] = e.detail));
+    convDetails.llm = models?.data?.llm?.active || "";
+    const fill = (id, items, label) => {
+      const sel = el(id);
+      if (!sel) return;
+      sel.innerHTML = "";
+      items.forEach((e) => {
+        const opt = document.createElement("option");
+        opt.value = e.engine;
+        opt.textContent = label(e);
+        sel.appendChild(opt);
+      });
+    };
+    fill("conv-stt-engine", stt.data.filter((e) => e.available), (e) => `${e.engine}`);
+    fill("conv-tts-engine", tts.data.filter((e) => e.available), (e) => `${e.engine}`);
+    // Prefer the fast Apple-GPU engine when available, else whisper; VieNeu for TTS.
+    const sttSel = el("conv-stt-engine");
+    const sttPref = ["whisper_mlx", "whisper"].find((v) => [...(sttSel?.options || [])].some((o) => o.value === v));
+    if (sttSel && sttPref) sttSel.value = sttPref;
+    const ttsSel = el("conv-tts-engine");
+    if (ttsSel && [...ttsSel.options].some((o) => o.value === "vieneu")) ttsSel.value = "vieneu";
+    restoreAndBind("conv-stt-engine");
+    restoreAndBind("conv-tts-engine");
+    restoreAndBind("conv-language");
+    restoreAndBind("conv-opus");
+    el("conv-tts-engine").addEventListener("change", convVoiceToggle);
+    el("conv-stt-engine").addEventListener("change", updateConvEnginesInfo);
+    el("conv-tts-engine").addEventListener("change", updateConvEnginesInfo);
+    convVoiceToggle();
+    updateConvEnginesInfo();
+  } catch (error) {
+    convLog(`engines error: ${error}`);
+  }
+}
+
+export function convVoiceToggle() {
+  const isVieneu = el("conv-tts-engine").value === "vieneu";
+  el("conv-voice-wrap").classList.toggle("hidden", !isVieneu);
+  if (isVieneu && !el("conv-voice").dataset.loaded) {
+    fetch("/v1/tts/voices?engine=vieneu")
+      .then((r) => r.json())
+      .then((b) => {
+        const sel = el("conv-voice");
+        sel.innerHTML = '<option value="">(auto)</option>';
+        b.data.forEach((v) => {
+          const opt = document.createElement("option");
+          opt.value = v.voice;
+          opt.textContent = v.label;
+          sel.appendChild(opt);
+        });
+        sel.dataset.loaded = "1";
+        restoreAndBind("conv-voice");
+      })
+      .catch(() => {});
+  }
+}
+
+export function setConvUI(state) {
+  el("conv-start").disabled = state !== "idle";
+  el("conv-stop").disabled = state === "idle";
+}
+
+export async function startConversation() {
+  setConvUI("starting");
+  convStopAudio();
+  conv.assistantBubble = null;
+  el("chat-dialogue").innerHTML = "";
+  conv.log = [];
+  el("conv-log").textContent = "";
+
+  const sttEngine = el("conv-stt-engine").value;
+  if (!sttEngine) {
+    setConvStatus("Không có STT engine khả dụng", "status-error");
+    setConvUI("idle");
+    return;
+  }
+
+  // Warm up the STT engine so the first turn doesn't stall loading the model.
+  // The /warm endpoint is a fast no-op for engines with no warm() method.
+  setConvStatus("⏳ khởi động STT engine…", "status-idle");
+  try {
+    const warmRes = await fetch(`/v1/stt/warm?engine=${encodeURIComponent(sttEngine)}`, { method: "POST" });
+    if (!warmRes.ok) {
+      setConvStatus(`STT engine '${sttEngine}' chưa sẵn sàng`, "status-error");
+      setConvUI("idle");
+      return;
+    }
+  } catch {
+    setConvStatus("Không thể kết nối STT engine", "status-error");
+    setConvUI("idle");
+    return;
+  }
+
+  let params = `stt_engine=${encodeURIComponent(el("conv-stt-engine").value)}`;
+  params += `&tts_engine=${encodeURIComponent(el("conv-tts-engine").value)}&sample_rate=${STREAM_SAMPLE_RATE}`;
+  const activeProfile = el("profile-select")?.value;
+  if (activeProfile) params += `&profile=${encodeURIComponent(activeProfile)}`;
+  if (currentSessionId) params += `&session_id=${encodeURIComponent(currentSessionId)}`;
+  if (el("conv-voice").value) params += `&voice=${encodeURIComponent(el("conv-voice").value)}`;
+  if (el("conv-language").value.trim()) params += `&language=${encodeURIComponent(el("conv-language").value.trim())}`;
+  const cpp = getPreproc();
+  params += `&denoise=${cpp.denoise}&vad=${cpp.vad}&vad_backend=${encodeURIComponent(cpp.backend)}`;
+
+  // Opus downlink: stream reply audio as Opus frames decoded in-browser (WebCodecs).
+  // Falls back to the default URL/WAV path if unchecked or unsupported.
+  conv.opusMode = !!el("conv-opus")?.checked && convOpusSupported();
+  if (el("conv-opus")?.checked && !conv.opusMode) {
+    convLog("Opus downlink unsupported in this browser — using WAV/URL.");
+  }
+  if (conv.opusMode) {
+    conv.outRate = 24000;
+    params += `&output=audio,text&audio_out=opus&output_sample_rate=${conv.outRate}`;
+  }
+  convResetOpus();
+
+  let capture;
+  try {
+    capture = createMicCapture({
+      onframe: (pcm) => {
+        if (!conv.ws || conv.ws.readyState !== WebSocket.OPEN) return;
+        // Half-duplex: while the assistant is speaking, don't send mic audio —
+        // otherwise its own voice (speaker echo) is mistaken for the user
+        // barging in and the reply gets cut off after 1-2 words.
+        if (convIsSpeaking()) return;
+        conv.ws.send(pcm.buffer);
+      },
+    });
+  } catch (error) {
+    setConvStatus("mic error", "status-error");
+    setConvUI("idle");
+    return;
+  }
+
+  const ws = new WebSocket(wsUrl(`/v1/conversation/stream?${params}`));
+  conv.ws = ws;
+  if (conv.opusMode) ws.binaryType = "arraybuffer";
+
+  ws.onopen = async () => {
+    try {
+      await capture.start();
+      conv.capture = capture;
+      setConvStatus("● listening", "status-rec");
+      setConvUI("recording");
+    } catch (error) {
+      setConvStatus("mic denied", "status-error");
+      ws.close();
+    }
+  };
+
+  ws.onmessage = (event) => {
+    // Binary frames are Opus packets (audio_out=opus) — decode + play in-browser.
+    if (typeof event.data !== "string") {
+      convFeedOpus(event.data);
+      return;
+    }
+    let d;
+    try {
+      d = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    convLog(`${d.event}: ${d.text ? d.text.slice(0, 60) : JSON.stringify({ ...d, event: undefined })}`);
+    switch (d.event) {
+      case "session_started": {
+        if (d.session_id) setCurrentSessionId(d.session_id);
+        if (d.output_sample_rate) conv.outRate = d.output_sample_rate;
+        // Authoritative: show exactly which models this session is using.
+        const info = el("conv-engines-info");
+        if (info) {
+          const sttPart = `STT: ${d.stt_engine}${d.stt_detail ? ` → ${d.stt_detail}` : ""}`;
+          const llmPart = d.responder === "llm" ? `LLM: ${d.llm_model}` : "LLM: echo (no LLM configured)";
+          const ttsPart = `TTS: ${d.tts_engine}${d.tts_detail ? ` → ${d.tts_detail}` : ""}`;
+          info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
+        }
+        // Engines may still be cold-loading — tell the user to hold off speaking
+        // instead of letting them talk into a pipeline that'll lose the start of
+        // their utterance. Cleared by the "engines_ready" event below.
+        if (d.stt_ready === false || d.tts_ready === false) {
+          setConvStatus("⏳ engines warming up, please wait…", "status-idle");
+        }
+        break;
+      }
+      case "engines_ready":
+        setConvStatus("● listening", "status-rec");
+        break;
+      case "speech_start":
+        setConvStatus("● you're speaking", "status-rec");
+        break;
+      case "speech_end":
+        setConvStatus("… thinking", "status-idle");
+        break;
+      case "user_transcript":
+        if (d.text) addBubble("user", d.text);
+        break;
+      case "response_text":
+        // Sentences stream in; build one assistant bubble per turn.
+        if (d.chunk_index === 0 || !conv.assistantBubble) {
+          conv.assistantBubble = addBubble("assistant", d.text);
+        } else {
+          conv.assistantBubble.textContent += " " + d.text;
+          el("chat-dialogue").scrollTop = el("chat-dialogue").scrollHeight;
+        }
+        break;
+      case "audio_start":
+        // Opus stream chunk begins; ensure the decoder matches the server's rate.
+        if (d.codec === "opus" && d.sample_rate) conv.outRate = d.sample_rate;
+        break;
+      case "audio_chunk":
+        if (d.audio_url) convEnqueueAudio(d.audio_url); // URL/WAV mode (non-opus)
+        break;
+      case "turn_done":
+        setConvStatus("● listening", "status-rec");
+        break;
+      case "aborted":
+        convStopAudio();  // barge-in / interrupt: stop playback immediately
+        break;
+      case "error":
+        setConvStatus(`error: ${d.message || ""}`, "status-error");
+        break;
+    }
+  };
+
+  ws.onerror = () => setConvStatus("ws error", "status-error");
+  ws.onclose = () => {
+    setConvUI("idle");
+    if (el("conv-status").className !== "status-error") setConvStatus("idle", "status-idle");
+  };
+}
+
+export function stopConversation() {
+  if (conv.capture) {
+    conv.capture.stop();
+    conv.capture = null;
+  }
+  if (conv.ws) {
+    if (conv.ws.readyState === WebSocket.OPEN) conv.ws.send(JSON.stringify({ type: "end" }));
+    try {
+      conv.ws.close();
+    } catch {}
+    conv.ws = null;
+  }
+  setConvUI("idle");
+}
+
+el("conv-start").addEventListener("click", startConversation);
+el("conv-stop").addEventListener("click", () => {
+  convStopAudio();
+  stopConversation();
+});
+el("conv-reset").addEventListener("click", () => {
+  convStopAudio();
+  conv.assistantBubble = null;
+  el("chat-dialogue").innerHTML = "";
+  if (conv.ws && conv.ws.readyState === WebSocket.OPEN) conv.ws.send(JSON.stringify({ type: "reset" }));
+});
+

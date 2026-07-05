@@ -1,0 +1,36 @@
+import "./auth.js";
+import { restoreAndBind } from "./helpers.js";
+import { initSidebar } from "./sidebar-nav.js";
+import { loadSttEngines } from "./stt-engines.js";
+import { initSttMode } from "./stt-batch.js";
+import { initChatModes } from "./chat.js";
+import { setStreamUI } from "./stt-stream.js";
+import { setConvUI, loadConversationEngines } from "./conversation.js";
+import { loadTtsEngines } from "./tts-engines.js";
+import { loadSystemStatus } from "./system-status.js";
+import { loadModels } from "./model-manager.js";
+import { loadRecommend, loadLlmOnlineConfig } from "./model-recommender.js";
+import { loadProfiles } from "./profiles.js";
+import { loadMcpServers } from "./mcp-servers.js";
+// Side-effect-only modules: they register DOM event listeners at import time but
+// export nothing consumed above, so import them for their side effects.
+import "./tts-batch.js";
+import "./tts-stream.js";
+import "./sessions.js";
+
+initSidebar();
+initSttMode();
+initChatModes();
+setStreamUI("idle");
+setConvUI("idle");
+// Persist + restore free-text controls (selects/checkboxes are bound after they populate).
+["stt-language", "stt-stream-language"].forEach(restoreAndBind);
+loadSttEngines();
+loadTtsEngines();
+loadConversationEngines();
+loadSystemStatus();
+loadModels();
+loadRecommend();
+loadLlmOnlineConfig();
+loadProfiles();
+loadMcpServers();
