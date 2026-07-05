@@ -23,6 +23,13 @@ class _StubSTT(STTProvider):
         return STTResult(engine=self.name, text="chao ban", is_final=True)
 
 
+class _FailingSTT(STTProvider):
+    name = "stub-livehost-failing"
+
+    async def transcribe_bytes(self, audio_bytes, language=None) -> STTResult:
+        raise RuntimeError("boom")
+
+
 class _StubTTS(TTSProvider):
     name = "stub-livehost-tts"
 
@@ -38,9 +45,11 @@ def _register_stub(monkeypatch):
     monkeypatch.setattr(settings, "enable_mock_engines", True)
     monkeypatch.setattr(settings, "conversation_llm_base_url", "")
     stt_service.providers["stub-livehost"] = _StubSTT()
+    stt_service.providers["stub-livehost-failing"] = _FailingSTT()
     tts_service.providers["stub-livehost-tts"] = _StubTTS()
     yield
     stt_service.providers.pop("stub-livehost", None)
+    stt_service.providers.pop("stub-livehost-failing", None)
     tts_service.providers.pop("stub-livehost-tts", None)
 
 
@@ -79,3 +88,28 @@ def test_livehost_voice_turn_end_to_end():
 
     from app.services.livehost.registry import livehost_registry
     assert livehost_registry.get(session_id) is None  # cleaned up on disconnect
+
+
+def test_livehost_voice_turn_stt_failure_still_sends_turn_done():
+    client = TestClient(app)
+    url = "/v1/livehost/stream?stt_engine=stub-livehost-failing&tts_engine=stub-livehost-tts&sample_rate=16000"
+    with client.websocket_connect(url) as ws:
+        started = ws.receive_json()
+        assert started["event"] == "session_started"
+
+        ws.send_bytes(_loud(500))
+        ws.send_bytes(_silence(500))
+        ws.send_bytes(_silence(500))
+
+        events = []
+        for _ in range(20):
+            ev = ws.receive_json()
+            events.append(ev)
+            if ev["event"] == "turn_done":
+                break
+
+        kinds = [e["event"] for e in events]
+        assert "error" in kinds
+        assert "turn_done" in kinds
+        # the client must not be left hanging: error must arrive before turn_done
+        assert kinds.index("error") < kinds.index("turn_done")

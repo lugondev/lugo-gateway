@@ -129,145 +129,145 @@ async def livehost_stream(websocket: WebSocket) -> None:
         watchdog_idle_seconds=settings.livehost_watchdog_idle_seconds,
     )
     livehost_registry.register(session_id, LivehostSession(scheduler=scheduler, ingestor=ingestor))
+    try:
+        stt_ready = is_ready(stt_provider)
+        tts_ready = is_ready(tts_provider)
+        await websocket.send_json({
+            "event": "session_started",
+            "session_id": session_id,
+            "profile": profile_name,
+            "stt_engine": stt_engine,
+            "tts_engine": tts_engine,
+            "responder": responder.name,
+            "sample_rate": sample_rate,
+            "audio_codec": audio_codec,
+            "output": sorted(out_modalities),
+            "audio_out": audio_out,
+            "output_sample_rate": output_sample_rate if want_audio and audio_out != "url" else None,
+            "stt_ready": stt_ready,
+            "tts_ready": tts_ready,
+        })
 
-    stt_ready = is_ready(stt_provider)
-    tts_ready = is_ready(tts_provider)
-    await websocket.send_json({
-        "event": "session_started",
-        "session_id": session_id,
-        "profile": profile_name,
-        "stt_engine": stt_engine,
-        "tts_engine": tts_engine,
-        "responder": responder.name,
-        "sample_rate": sample_rate,
-        "audio_codec": audio_codec,
-        "output": sorted(out_modalities),
-        "audio_out": audio_out,
-        "output_sample_rate": output_sample_rate if want_audio and audio_out != "url" else None,
-        "stt_ready": stt_ready,
-        "tts_ready": tts_ready,
-    })
+        async def _warm_and_notify() -> None:
+            await warm_providers(tts_provider, stt_provider)
+            if not (stt_ready and tts_ready):
+                try:
+                    await websocket.send_json({"event": "engines_ready"})
+                except Exception:  # noqa: BLE001 - socket may already be closed/gone
+                    pass
 
-    async def _warm_and_notify() -> None:
-        await warm_providers(tts_provider, stt_provider)
-        if not (stt_ready and tts_ready):
+        asyncio.create_task(_warm_and_notify())
+
+        async def send(event: str, **payload) -> None:
+            await websocket.send_json({"event": event, **payload})
+
+        async def persist(role: str, content: str) -> None:
+            if not session_ready:
+                return
             try:
-                await websocket.send_json({"event": "engines_ready"})
-            except Exception:  # noqa: BLE001 - socket may already be closed/gone
-                pass
+                await session_store.append_message(session_id, turn, role, content)
+            except Exception as exc:  # noqa: BLE001 - persistence must not kill the turn
+                logger.warning("livehost history persist failed: %s", exc)
 
-    asyncio.create_task(_warm_and_notify())
+        async def _stream_to_tts(sentence_aiter, responder_name: str) -> list[str]:
+            parts: list[str] = []
+            if not want_audio:
+                index = 0
+                async for sentence in sentence_aiter:
+                    parts.append(sentence)
+                    if want_text:
+                        await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
+                    index += 1
+                return parts
 
-    async def send(event: str, **payload) -> None:
-        await websocket.send_json({"event": event, **payload})
+            async def _synth(sentence: str):
+                result = await tts_provider.synthesize(TTSRequest(text=sentence, engine=tts_engine, voice=voice))
+                if opus_encoder is not None:
+                    path = result.audio_url.lstrip("/")
+                    pcm = await asyncio.to_thread(wav_file_to_pcm16, path, output_sample_rate)
+                    packets = await asyncio.to_thread(opus_encoder.encode_pcm16, pcm)
+                    return result, packets
+                return result, None
 
-    async def persist(role: str, content: str) -> None:
-        if not session_ready:
-            return
-        try:
-            await session_store.append_message(session_id, turn, role, content)
-        except Exception as exc:  # noqa: BLE001 - persistence must not kill the turn
-            logger.warning("livehost history persist failed: %s", exc)
-
-    async def _stream_to_tts(sentence_aiter, responder_name: str) -> list[str]:
-        parts: list[str] = []
-        if not want_audio:
-            index = 0
-            async for sentence in sentence_aiter:
-                parts.append(sentence)
-                if want_text:
-                    await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
-                index += 1
+            async with aclosing(
+                prefetch_synthesis(sentence_aiter, _synth, lookahead=settings.conversation_tts_lookahead)
+            ) as pipeline:
+                async for index, sentence, (result, packets) in pipeline:
+                    parts.append(sentence)
+                    if want_text:
+                        await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
+                    if packets is not None:
+                        await send(
+                            "audio_start", turn=turn, chunk_index=index,
+                            text=sentence if want_text else None,
+                            codec="opus", sample_rate=output_sample_rate, frames=len(packets),
+                        )
+                        if settings.conversation_opus_pace and packets:
+                            frame_s = opus_encoder.frame / opus_encoder.sample_rate
+                            delays = pacing_delays(len(packets), settings.conversation_opus_prebuffer_frames, frame_s)
+                        else:
+                            delays = [0.0] * len(packets)
+                        for delay, pkt in zip(delays, packets):
+                            if delay:
+                                await asyncio.sleep(delay)
+                            await websocket.send_bytes(pkt)
+                        await send("audio_end", turn=turn, chunk_index=index)
+                    else:
+                        await send(
+                            "audio_chunk", turn=turn, chunk_index=index, text=sentence,
+                            audio_url=result.audio_url, sample_rate=result.sample_rate, mock=result.mock,
+                        )
             return parts
 
-        async def _synth(sentence: str):
-            result = await tts_provider.synthesize(TTSRequest(text=sentence, engine=tts_engine, voice=voice))
-            if opus_encoder is not None:
-                path = result.audio_url.lstrip("/")
-                pcm = await asyncio.to_thread(wav_file_to_pcm16, path, output_sample_rate)
-                packets = await asyncio.to_thread(opus_encoder.encode_pcm16, pcm)
-                return result, packets
-            return result, None
+        async def _run_voice_turn(audio_pcm: bytes) -> None:
+            nonlocal turn
+            turn += 1
+            await send("processing", turn=turn)
+            wav = pcm16_to_wav_bytes(audio_pcm, sample_rate=sample_rate)
+            try:
+                stt_result = await stt_provider.transcribe_bytes(wav, language)
+            except RuntimeError as exc:
+                await send("error", message=f"STT failed: {exc}")
+                await send("turn_done", turn=turn)
+                return
+            user_text = (stt_result.text or "").strip()
+            await send("user_transcript", turn=turn, text=user_text, engine=stt_engine)
+            if not user_text:
+                await send("turn_done", turn=turn, skipped="empty transcript")
+                return
 
-        async with aclosing(
-            prefetch_synthesis(sentence_aiter, _synth, lookahead=settings.conversation_tts_lookahead)
-        ) as pipeline:
-            async for index, sentence, (result, packets) in pipeline:
-                parts.append(sentence)
-                if want_text:
-                    await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
-                if packets is not None:
-                    await send(
-                        "audio_start", turn=turn, chunk_index=index,
-                        text=sentence if want_text else None,
-                        codec="opus", sample_rate=output_sample_rate, frames=len(packets),
-                    )
-                    if settings.conversation_opus_pace and packets:
-                        frame_s = opus_encoder.frame / opus_encoder.sample_rate
-                        delays = pacing_delays(len(packets), settings.conversation_opus_prebuffer_frames, frame_s)
-                    else:
-                        delays = [0.0] * len(packets)
-                    for delay, pkt in zip(delays, packets):
-                        if delay:
-                            await asyncio.sleep(delay)
-                        await websocket.send_bytes(pkt)
-                    await send("audio_end", turn=turn, chunk_index=index)
-                else:
-                    await send(
-                        "audio_chunk", turn=turn, chunk_index=index, text=sentence,
-                        audio_url=result.audio_url, sample_rate=result.sample_rate, mock=result.mock,
-                    )
-        return parts
-
-    async def _run_voice_turn(audio_pcm: bytes) -> None:
-        nonlocal turn
-        turn += 1
-        await send("processing", turn=turn)
-        wav = pcm16_to_wav_bytes(audio_pcm, sample_rate=sample_rate)
-        try:
-            stt_result = await stt_provider.transcribe_bytes(wav, language)
-        except RuntimeError as exc:
-            await send("error", message=f"STT failed: {exc}")
-            return
-        user_text = (stt_result.text or "").strip()
-        await send("user_transcript", turn=turn, text=user_text, engine=stt_engine)
-        if not user_text:
-            await send("turn_done", turn=turn, skipped="empty transcript")
-            return
-
-        history.append({"role": "user", "content": user_text})
-        await persist("user", user_text)
-        parts = await _stream_to_tts(responder.reply_stream(history), responder.name)
-        history.append({"role": "assistant", "content": " ".join(parts)})
-        await persist("assistant", " ".join(parts))
-        await send("turn_done", turn=turn)
-
-    async def run_voice_turn(audio_pcm: bytes) -> None:
-        # Per the spec, a voice-turn failure must surface to the streamer directly
-        # (unlike a social-turn failure, which is just logged and dropped — see
-        # run_social_turn) so the session never hangs waiting for a turn_done that
-        # was lost to an uncaught exception inside the background task.
-        try:
-            await _run_voice_turn(audio_pcm)
-        except Exception as exc:  # noqa: BLE001 - keep the session alive
-            logger.exception("livehost voice turn failed")
-            await send("error", message=str(exc))
+            history.append({"role": "user", "content": user_text})
+            await persist("user", user_text)
+            parts = await _stream_to_tts(responder.reply_stream(history), responder.name)
+            history.append({"role": "assistant", "content": " ".join(parts)})
+            await persist("assistant", " ".join(parts))
             await send("turn_done", turn=turn)
 
-    current_turn: asyncio.Task | None = None
-
-    async def abort_turn(reason: str) -> None:
-        nonlocal current_turn
-        if current_turn and not current_turn.done():
-            current_turn.cancel()
+        async def run_voice_turn(audio_pcm: bytes) -> None:
+            # Per the spec, a voice-turn failure must surface to the streamer directly
+            # (unlike a social-turn failure, which is just logged and dropped — see
+            # run_social_turn) so the session never hangs waiting for a turn_done that
+            # was lost to an uncaught exception inside the background task.
             try:
-                await current_turn
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-            await send("aborted", reason=reason)
-        current_turn = None
+                await _run_voice_turn(audio_pcm)
+            except Exception as exc:  # noqa: BLE001 - keep the session alive
+                logger.exception("livehost voice turn failed")
+                await send("error", message=str(exc))
+                await send("turn_done", turn=turn)
 
-    try:
+        current_turn: asyncio.Task | None = None
+
+        async def abort_turn(reason: str) -> None:
+            nonlocal current_turn
+            if current_turn and not current_turn.done():
+                current_turn.cancel()
+                try:
+                    await current_turn
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+                await send("aborted", reason=reason)
+            current_turn = None
+
         while True:
             message = await websocket.receive()
             if message.get("type") == "websocket.disconnect":
