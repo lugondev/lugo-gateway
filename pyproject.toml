@@ -52,6 +52,11 @@ qwen3-asr = [
 qwen3-asr-cuda = [
   "qwen-asr",
 ]
+# TikTok Live co-host ingestion (unofficial API). See
+# docs/superpowers/specs/2026-07-05-livehost-tiktok-cohost-design.md.
+tiktok = [
+  "TikTokLive>=6.6.0",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
