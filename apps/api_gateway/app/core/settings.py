@@ -217,6 +217,26 @@ class Settings(BaseSettings):
     conversation_tools_enabled: bool = False
     conversation_tool_max_iters: int = 3
 
+    # Livehost: TikTok Live AI co-host (see docs/superpowers/specs/2026-07-05-livehost-tiktok-cohost-design.md).
+    # Comma-separated keywords that boost a comment's reply priority (e.g. bot name).
+    livehost_mention_keywords: str = ""
+    # Backlog size at/under which the scheduler replies to events one at a time.
+    livehost_individual_threshold: int = 3
+    # Above the threshold, how many top-priority events to fold into one batch reply.
+    livehost_batch_top_k: int = 3
+    # Hard cap on pending events; lowest-priority non-gift/non-mention entries are
+    # dropped first once exceeded.
+    livehost_queue_max_size: int = 200
+    # TikTok ingestor reconnect backoff (transient errors): starts here, doubles up
+    # to the max, plus jitter.
+    livehost_backoff_initial_seconds: float = 1.0
+    livehost_backoff_max_seconds: float = 60.0
+    # How often to re-check whether an offline room has gone live again.
+    livehost_offline_poll_interval_seconds: float = 30.0
+    # Force-reconnect if no event arrives for this long while state is "live" (a
+    # connection that died without a clean disconnect signal).
+    livehost_watchdog_idle_seconds: float = 300.0
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
