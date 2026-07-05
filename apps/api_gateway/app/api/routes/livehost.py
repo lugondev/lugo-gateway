@@ -321,7 +321,9 @@ async def livehost_stream(websocket: WebSocket) -> None:
             except Exception:  # noqa: BLE001 - drop this social turn, keep the session alive
                 logger.exception("livehost social turn failed, dropping event")
 
-        async def abort_turn(reason: str) -> None:
+        async def _abort_turn_locked(reason: str) -> None:
+            # Cancel the in-flight turn and clear current_turn. Caller must
+            # already hold turn_lock.
             nonlocal current_turn
             if current_turn and not current_turn.done():
                 current_turn.cancel()
@@ -331,6 +333,14 @@ async def livehost_stream(websocket: WebSocket) -> None:
                     pass
                 await send("aborted", reason=reason)
             current_turn = None
+
+        async def abort_turn(reason: str) -> None:
+            # Public entry point: acquires turn_lock itself. Do not call this
+            # from a call site that already holds turn_lock (asyncio.Lock is
+            # not re-entrant -- it would deadlock). Call _abort_turn_locked
+            # directly instead in that case.
+            async with turn_lock:
+                await _abort_turn_locked(reason)
 
         async def _drain_social_events() -> None:
             while True:
@@ -383,7 +393,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
                     await send("speech_start")
                 elif event["event"] == "endpoint":
                     async with turn_lock:
-                        await abort_turn("superseded")
+                        await _abort_turn_locked("superseded")
                         await send("speech_end", speech_ms=round(event["speech_ms"]))
                         current_turn = asyncio.create_task(run_voice_turn(event["audio"]))
 
@@ -404,7 +414,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
                     audio = endpointer.flush()
                     if audio:
                         async with turn_lock:
-                            await abort_turn("superseded")
+                            await _abort_turn_locked("superseded")
                             await send("speech_end", speech_ms=0)
                             current_turn = asyncio.create_task(run_voice_turn(audio))
                     if ctype == "end":
