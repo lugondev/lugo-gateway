@@ -171,6 +171,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
     orchestrator = LiveHostOrchestrator(scheduler)
     try:
         current_turn: asyncio.Task | None = None
+        turn_lock = asyncio.Lock()
         drain_task: asyncio.Task | None = None
         poll_task: asyncio.Task | None = None
         stt_ready = is_ready(stt_provider)
@@ -348,12 +349,15 @@ async def livehost_stream(websocket: WebSocket) -> None:
             nonlocal current_turn
             while True:
                 await asyncio.sleep(0.5)
-                voice_active = endpointer.speaking or (current_turn is not None and not current_turn.done())
-                result = orchestrator.poll_social_turn(voice_active=voice_active)
-                if result is None:
-                    continue
-                social_turn, formatted_text = result
-                current_turn = asyncio.create_task(run_social_turn(social_turn, formatted_text))
+                async with turn_lock:
+                    voice_active = endpointer.speaking or (current_turn is not None and not current_turn.done())
+                    if voice_active:
+                        continue
+                    result = orchestrator.poll_social_turn(voice_active=False)
+                    if result is None:
+                        continue
+                    social_turn, formatted_text = result
+                    current_turn = asyncio.create_task(run_social_turn(social_turn, formatted_text))
 
         drain_task = asyncio.create_task(_drain_social_events())
         poll_task = asyncio.create_task(_poll_social_turns())
@@ -378,9 +382,10 @@ async def livehost_stream(websocket: WebSocket) -> None:
                     await abort_turn("barge-in")
                     await send("speech_start")
                 elif event["event"] == "endpoint":
-                    await abort_turn("superseded")
-                    await send("speech_end", speech_ms=round(event["speech_ms"]))
-                    current_turn = asyncio.create_task(run_voice_turn(event["audio"]))
+                    async with turn_lock:
+                        await abort_turn("superseded")
+                        await send("speech_end", speech_ms=round(event["speech_ms"]))
+                        current_turn = asyncio.create_task(run_voice_turn(event["audio"]))
 
             if message.get("text") is not None:
                 try:
@@ -398,9 +403,10 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 elif ctype in {"flush", "end"}:
                     audio = endpointer.flush()
                     if audio:
-                        await abort_turn("superseded")
-                        await send("speech_end", speech_ms=0)
-                        current_turn = asyncio.create_task(run_voice_turn(audio))
+                        async with turn_lock:
+                            await abort_turn("superseded")
+                            await send("speech_end", speech_ms=0)
+                            current_turn = asyncio.create_task(run_voice_turn(audio))
                     if ctype == "end":
                         await abort_turn("end")
                         await send("done")
