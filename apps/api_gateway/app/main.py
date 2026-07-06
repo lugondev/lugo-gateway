@@ -24,6 +24,7 @@ from app.api.routes.sessions import router as sessions_router
 from app.api.routes.stt import router as stt_router
 from app.api.routes.system import router as system_router
 from app.api.routes.tts import router as tts_router
+from app.api.routes.tts_profiles import router as tts_profiles_router
 from app.api.routes.ui import router as ui_router
 from app.core.auth_guard import AuthGuardMiddleware
 from app.core.errors import AppError
@@ -115,6 +116,7 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(stt_router)
 app.include_router(tts_router)
+app.include_router(tts_profiles_router)
 app.include_router(events_router)
 app.include_router(conversation_router)
 app.include_router(system_router)
