@@ -89,11 +89,11 @@ class TikTokLiveIngestor:
     async def _run(self, generation: int) -> None:
         backoff = self.backoff_initial
         while not self._stop_requested and generation == self._generation:
-            client = self._client_factory(self.unique_id)
             try:
                 self.state = (
                     IngestorState.CONNECTING if backoff == self.backoff_initial else IngestorState.RECONNECTING
                 )
+                client = self._client_factory(self.unique_id)
                 await client.connect()
             except RoomOfflineError:
                 self.state = IngestorState.OFFLINE_WAITING

@@ -162,6 +162,41 @@ async def test_stale_connection_forces_reconnect_via_watchdog():
     await ingestor.stop()
 
 
+async def test_client_factory_construction_failure_sets_error_state_and_recovers():
+    # Distinct from test_transient_error_backs_off_then_reconnects: there the
+    # factory succeeds and connect() raises. Here the factory call itself
+    # (client = self._client_factory(...)) raises before any FakeClient is
+    # even constructed -- exercising the exact failure point described in the
+    # "connect immediately dies" review finding: a constructor failure (e.g.
+    # the optional tiktok extra isn't installed) must be caught, surfaced via
+    # IngestorState.ERROR, and retried -- not escape _run as an orphaned task
+    # exception that leaves the ingestor stuck in CONNECTING forever.
+    scripts = [[_event(1)]]
+    attempts = {"n": 0}
+
+    def factory(uid):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise RuntimeError("client construction failed")
+        return FakeClient(uid, [scripts.pop(0)])
+
+    queue: asyncio.Queue = asyncio.Queue()
+    ingestor = TikTokLiveIngestor(
+        client_factory=factory, queue=queue,
+        backoff_initial=0.05, backoff_max=0.1, watchdog_idle_seconds=3600,
+    )
+
+    await ingestor.start("alice")
+    await asyncio.sleep(0.01)
+    assert ingestor.state == IngestorState.ERROR
+
+    event = await asyncio.wait_for(queue.get(), timeout=1)
+    assert event.text == "1"
+    assert ingestor.state == IngestorState.LIVE
+    assert attempts["n"] == 2
+    await ingestor.stop()
+
+
 async def test_starting_twice_stops_the_previous_connection():
     scripts = [[_event(1)], [_event(2)]]
     factory = lambda uid: FakeClient(uid, [scripts.pop(0)])
