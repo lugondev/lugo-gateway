@@ -193,6 +193,7 @@ class Settings(BaseSettings):
 
     # LLM profiles + MCP tooling
     profiles_path: str = "profiles.json"
+    tts_profiles_path: str = "tts_profiles.json"
     mcp_servers_path: str = "mcp_servers.json"
     system_config_path: str = "system_config.json"
     database_url: str = "sqlite+aiosqlite:///data/app.db"
