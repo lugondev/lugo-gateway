@@ -29,7 +29,7 @@ def test_create_profile(client):
         "name": "test",
         "system_prompt": "Be brief.",
         "llm": {"base_url": "http://localhost:11434/v1", "api_key": "", "model": "llama3.2"},
-        "tts": {"engine": "vieneu", "voice": ""},
+        "tts": {"profile_name": "cohost-voice"},
         "mcp_servers": [],
     }
     resp = client.post("/v1/profiles", json=payload)

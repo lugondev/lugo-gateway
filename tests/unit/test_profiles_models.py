@@ -5,7 +5,7 @@ from app.services.profiles.models import LlmConfig, Profile, TtsConfig
 def test_profile_defaults():
     p = Profile(name="x")
     assert p.llm.base_url == ""
-    assert p.tts.engine == ""
+    assert p.tts.profile_name == ""
     assert p.mcp_servers == []
     assert p.system_prompt == ""
 
@@ -15,7 +15,7 @@ def test_profile_full():
         name="home",
         llm=LlmConfig(base_url="http://localhost:11434/v1", api_key="", model="llama3.2"),
         system_prompt="You are a home assistant.",
-        tts=TtsConfig(engine="vieneu", voice=""),
+        tts=TtsConfig(profile_name="cohost-voice"),
         mcp_servers=[McpServer(name="ha", url="http://localhost:3001/mcp")],
     )
     assert p.name == "home"

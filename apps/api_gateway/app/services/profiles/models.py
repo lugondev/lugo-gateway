@@ -12,8 +12,7 @@ class LlmConfig(BaseModel):
 
 
 class TtsConfig(BaseModel):
-    engine: str = ""
-    voice: str = ""
+    profile_name: str = ""   # name of a TtsProfile (services/tts/profile_store.py); "" = server defaults
 
 
 class MemoryConfig(BaseModel):

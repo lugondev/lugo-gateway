@@ -65,10 +65,10 @@ def test_profile_with_llm_and_tts_roundtrips(store):
     p = Profile(
         name="full",
         llm=LlmConfig(base_url="http://localhost:11434/v1", model="llama3.2"),
-        tts=TtsConfig(engine="vieneu"),
+        tts=TtsConfig(profile_name="cohost-voice"),
         system_prompt="Be helpful.",
     )
     store.upsert(p)
     result = store.get("full")
     assert result.llm.model == "llama3.2"
-    assert result.tts.engine == "vieneu"
+    assert result.tts.profile_name == "cohost-voice"
