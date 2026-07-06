@@ -19,4 +19,3 @@ class TTSResult(BaseModel):
     duration_seconds: float | None = None
     job_id: str | None = None
     text: str | None = None
-    mock: bool = False

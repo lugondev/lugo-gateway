@@ -44,7 +44,6 @@ class Settings(BaseSettings):
     omnivoice_ref_text: str = "Xin chào, đây là giọng đọc tham chiếu để giữ giọng nhất quán."
 
     default_tts_engine_voice: str = ""  # optional VieNeu preset voice
-    enable_mock_engines: bool = True
 
     # Allow the /v1/models/install endpoint to pip-install engine packages at runtime.
     # OFF by default — keep it OFF on public deploys (it runs pip on the server). Turn
@@ -90,16 +89,6 @@ class Settings(BaseSettings):
     # scripts/convert_phowhisper_mlx.sh). Engine auto-hides when mlx_whisper is absent
     # (non-Mac) or the dir is missing -> callers fall back to the faster-whisper engine.
     whisper_mlx_model_path: str = "models/stt/phowhisper-medium-mlx"
-
-    # qwen_omni: audio-native LLM (Qwen3-Omni) via mlx-vlm on Apple GPU. Takes audio
-    # directly -> Vietnamese text (no separate Whisper step). Heavy (30B MoE); engine
-    # auto-hides when mlx-vlm or the model is absent. Pick a quant via the model manager.
-    qwen_omni_model: str = "mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit"
-    qwen_omni_max_tokens: int = 256
-    # NOTE: a restrictive "only return the text, nothing else" prompt makes Qwen3-Omni
-    # emit a degenerate empty turn on some clips. "Phiên âm … thành văn bản" is the
-    # reliable phrasing (6/6 clips transcribed correctly in testing).
-    qwen_omni_prompt: str = "Phiên âm đoạn âm thanh sau thành văn bản tiếng Việt."
 
     # Qwen3-ASR (engine "qwen3_asr"), multilingual incl. Vietnamese. Two GPU backends,
     # auto-selected: mlx-qwen3-asr (Apple, `qwen3-asr` extra) or qwen-asr (NVIDIA/CUDA,
@@ -155,9 +144,6 @@ class Settings(BaseSettings):
     # longer/harder ones stay on the accurate default. Empty engine = disabled.
     conversation_fast_stt_engine: str = ""
     conversation_fast_stt_max_ms: int = 1500
-    # When the conversation STT engine is audio-native (qwen_omni), let it answer the
-    # audio directly in one pass instead of transcribe -> separate text LLM (gemma).
-    conversation_audio_native: bool = True
     # Chunked streaming STT (see services/stt/streaming_chunked.py): emit partial
     # transcripts while the user is still speaking so ASR overlaps speech. Default OFF
     # — enabling it on the live device path needs on-device tuning (partial cadence vs

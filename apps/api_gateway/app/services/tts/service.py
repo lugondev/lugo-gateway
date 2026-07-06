@@ -30,7 +30,6 @@ class TTSService:
                     "available": provider.available(),
                     "detail": provider.detail(),
                     "install_hint": provider.install_hint(),
-                    "mock": settings.enable_mock_engines,
                     "default": name == settings.default_tts_engine,
                 }
             )

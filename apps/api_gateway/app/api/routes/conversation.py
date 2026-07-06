@@ -37,7 +37,6 @@ from app.services.stt.routing import select_stt_engine
 from app.services.stt.service import stt_service
 from app.services.warmup import is_ready, warm_providers
 from app.schemas.tts import TTSRequest
-from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
 
@@ -311,16 +310,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
         stt_detail = stt_engine
     tts_detail = tts_provider.detail() if hasattr(tts_provider, "detail") else tts_engine
 
-    # Audio-native: an STT engine that can answer the audio itself (Qwen-Omni) replies
-    # directly, skipping the separate text LLM.
-    audio_native = (
-        settings.conversation_audio_native
-        and stt_engine == "qwen_omni"
-        and hasattr(stt_provider, "converse")
-    )
-    llm_model = "qwen_omni (audio-native)" if audio_native else (
-        get_active_llm_model() if responder.name == "llm" else responder.name
-    )
+    llm_model = get_active_llm_model() if responder.name == "llm" else responder.name
 
     endpointer = VadEndpointer(
         sample_rate,
@@ -518,7 +508,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
                     else:
                         await send(
                             "audio_chunk", turn=turn, chunk_index=index, text=sentence,
-                            audio_url=result.audio_url, sample_rate=result.sample_rate, mock=result.mock,
+                            audio_url=result.audio_url, sample_rate=result.sample_rate,
                         )
             return parts
 
@@ -547,7 +537,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
             await send("turn_done", turn=turn)
             return
 
-        # Audio input: build the wav for STT / audio-native.
+        # Audio input: build the wav for STT.
         pcm = audio_pcm
         if denoise:
             pcm = preprocess_pcm16(
@@ -555,38 +545,6 @@ async def conversation_stream(websocket: WebSocket) -> None:
                 amount=settings.stt_noise_reduce_amount,
             )
         wav = pcm16_to_wav_bytes(pcm, sample_rate=sample_rate)
-
-        # Audio-native: Qwen-Omni answers the audio directly (one pass), no separate
-        # text LLM. Otherwise: transcribe -> text responder (gemma/online/echo).
-        if audio_native:
-            try:
-                transcript, reply = await stt_provider.converse(
-                    wav, history, resolve_system_prompt(system_prompt)
-                )
-            except RuntimeError as exc:
-                await send("error", message=f"Qwen-Omni failed: {exc}")
-                return
-            logger.info("turn %d: audio-native STT+LLM done at +%.0fms", turn, _elapsed_ms())
-            reply = (reply or "").strip()
-            # The audio-native pass occasionally returns an empty reply on some clips
-            # — fall back to the transcribe -> text-LLM cascade so the turn still answers.
-            if reply:
-                await send("user_transcript", turn=turn, text=transcript or "🎤", engine=stt_engine)
-                if transcript:
-                    history.append({"role": "user", "content": transcript})
-                    await persist("user", transcript)
-
-                async def _reply_sentences():
-                    for sentence in segment_text(reply):
-                        yield sentence
-
-                parts = await _stream_to_tts(_reply_sentences(), stt_engine)
-                history.append({"role": "assistant", "content": " ".join(parts)})
-                await persist("assistant", " ".join(parts))
-                logger.info("turn %d: done at +%.0fms (audio-native)", turn, _elapsed_ms())
-                await send("turn_done", turn=turn)
-                return
-            logger.info("qwen_omni audio-native reply empty; falling back to transcribe + LLM")
 
         # Fast-path routing: short commands can go to a lower-latency engine.
         turn_provider = stt_provider

@@ -43,13 +43,13 @@ List configured engines.
 ```
 
 `available` reflects whether the engine is usable now: Vosk needs its model on disk,
-whisper needs faster-whisper installed, `whisper_mlx`/`qwen_omni` need mlx + a built/
-downloaded model (Apple Silicon), remote engines need a base URL. `detail` is the
-specific model/version. Clients should list only `available` engines.
+whisper needs faster-whisper installed, `whisper_mlx` needs mlx + a built model
+(Apple Silicon), remote engines need a base URL. `detail` is the specific
+model/version. Clients should list only `available` engines.
 
 ### `POST /v1/stt/warm?engine=<engine>`
-Preload a heavy model into memory (e.g. `qwen_omni`, ~10–20s the first time; cached
-after). The UI calls this before the first conversation turn so it isn't a cold wait.
+Preload a heavy model into memory (~10–20s the first time; cached after). The UI
+calls this before the first conversation turn so it isn't a cold wait.
 
 ### `POST /v1/stt/transcribe`
 Batch transcription. `multipart/form-data`:
@@ -57,7 +57,7 @@ Batch transcription. `multipart/form-data`:
 | field | type | notes |
 |-------|------|-------|
 | `audio` | file | WAV PCM16 mono required for `vosk`; whisper accepts common formats |
-| `engine` | string | `vosk` \| `whisper` \| `whisper_local` \| `whisper_mlx` \| `qwen_omni` \| `whisper_gemma` \| `whisper_service` \| `eventlab` |
+| `engine` | string | `vosk` \| `whisper` \| `whisper_local` \| `whisper_mlx` \| `whisper_gemma` \| `whisper_service` \| `eventlab` |
 | `language` | string? | optional hint, e.g. `en`, `vi` |
 | `denoise` | bool? | spectral noise reduction (default `STT_NOISE_REDUCE_ENABLED`) |
 | `vad` | bool? | VAD gate (default `STT_VAD_ENABLED`) |
@@ -184,10 +184,6 @@ The reply comes from:
 - **Echo** — built-in, when no LLM is configured.
 - **Text LLM** (cascade) — any OpenAI-compatible chat endpoint (local Ollama or an
   online provider). `responder` = `"llm"`, `llm_model` = the active model.
-- **Audio-native** — when `stt_engine=qwen_omni` and `CONVERSATION_AUDIO_NATIVE` is on,
-  Qwen3-Omni answers the audio directly (transcribe + reply, both via Qwen, no separate
-  text LLM). `llm_model` = `"qwen_omni (audio-native)"`. Falls back to the cascade if
-  the one-pass reply is empty.
 
 ### Conversation LLM config
 
@@ -269,12 +265,11 @@ Response `data` (`TTSResult`):
   "audio_url": "/artifacts/<id>.wav",
   "duration_seconds": 1.6,
   "job_id": null,
-  "text": "Hello world",
-  "mock": true
+  "text": "Hello world"
 }
 ```
 
-`mock: true` means a silent placeholder was returned (see `ENABLE_MOCK_ENGINES`).
+A failed synthesis returns an error response (502) instead of a placeholder.
 
 ### `POST /v1/tts/stream`
 Start a pseudo-streaming synthesis job. Same body as `synthesize`.

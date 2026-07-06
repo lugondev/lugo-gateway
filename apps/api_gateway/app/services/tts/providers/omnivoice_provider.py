@@ -9,7 +9,7 @@ import httpx
 
 from app.core.settings import settings
 from app.schemas.tts import TTSRequest
-from app.services.tts.base import MockFallbackTTSProvider
+from app.services.tts.base import RenderingTTSProvider
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ def set_active_omnivoice_model(model_id: str) -> None:
     _active_model = model_id
 
 
-class OmniVoiceProvider(MockFallbackTTSProvider):
+class OmniVoiceProvider(RenderingTTSProvider):
     name = "omnivoice"
     sample_rate = _SAMPLE_RATE
 

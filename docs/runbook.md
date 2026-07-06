@@ -35,21 +35,6 @@ Set `VOSK_MODEL_PATH` to use a different model.
 Then set `CONVERSATION_STT_ENGINE=whisper_mlx` (or pick it in the UI). The engine
 auto-hides on non-Mac hosts, so callers fall back to the CPU `whisper` engine.
 
-### Audio-native STT/conversation (qwen_omni, Apple GPU)
-
-Qwen3-Omni (MLX) transcribes with punctuation/casing and can answer the audio
-directly in conversation (no separate text LLM).
-
-```bash
-.venv/bin/pip install -e ".[mlx]"     # mlx-vlm + torchvision, Apple Silicon only
-```
-Download a quant in the System tab ("Audio-native STT — Qwen3-Omni"), or
-`POST /v1/models/qwen-omni/download {"model":"mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit"}`.
-The first turn loads the 30B model (~10–20s) — the UI preloads via `POST /v1/stt/warm`.
-`CONVERSATION_AUDIO_NATIVE=true` (default) lets Qwen answer the audio directly; set it
-`false` to keep Qwen as STT-only and reply with the configured text LLM. Slower than
-`whisper_mlx` (~1s vs ~0.5s), so `whisper_mlx` stays the low-latency default.
-
 ### Conversation LLM (local Ollama or online)
 
 Local: run Ollama, set `CONVERSATION_LLM_BASE_URL=http://localhost:11434/v1` +
@@ -106,7 +91,6 @@ All settings are environment variables (or `.env`). See `.env.example` for the f
 | `WHISPER_CONDITION_ON_PREVIOUS_TEXT` | `false` | off avoids hallucination drift across silent gaps |
 | `WHISPER_INITIAL_PROMPT` | — | seed text to bias Vietnamese orthography (empty = off) |
 | `WHISPER_MLX_MODEL_PATH` | `models/stt/phowhisper-medium-mlx` | MLX model dir for the `whisper_mlx` engine (Apple-GPU, ~7x faster). Build with `scripts/convert_phowhisper_mlx.sh`; engine auto-hides if `mlx-whisper`/model absent |
-| `QWEN_OMNI_MODEL` | `mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit` | MLX model for the `qwen_omni` audio-native engine (needs `mlx-vlm`) |
 | `WHISPER_SERVICE_BASE_URL` / `_API_KEY` / `_MODEL` | — | remote OpenAI-compatible STT |
 | `EVENTLAB_BASE_URL` / `_API_KEY` / `_MODEL` | — | second remote STT provider |
 | `REMOTE_STT_TIMEOUT_SECONDS` | `60` | remote request timeout |
@@ -114,22 +98,19 @@ All settings are environment variables (or `.env`). See `.env.example` for the f
 | `OMNIVOICE_MODEL_ID` | `k2-fsa/OmniVoice` | HF model id |
 | `OMNIVOICE_DEVICE` | _(auto)_ | `cuda:0` \| `mps` \| `cpu` |
 | `OMNIVOICE_DTYPE` | `float16` | torch dtype |
-| `ENABLE_MOCK_ENGINES` | `true` | return silent placeholder TTS instead of real inference |
 | `ARTIFACTS_DIR` | `artifacts` | where generated WAVs are written |
-| `CONVERSATION_STT_ENGINE` | `whisper` | STT engine for the voice loop (`whisper_mlx`/`qwen_omni`/…) |
+| `CONVERSATION_STT_ENGINE` | `whisper` | STT engine for the voice loop (`whisper_mlx`/…) |
 | `CONVERSATION_TTS_ENGINE` | `vieneu` | TTS engine for the voice loop |
-| `CONVERSATION_AUDIO_NATIVE` | `true` | with `qwen_omni`, answer the audio directly (skip the text LLM) |
 | `CONVERSATION_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | — / — / `gpt-3.5-turbo` | OpenAI-compatible chat endpoint (Ollama / online); empty base url → echo responder |
 
 ## Enabling real TTS
 
 1. Ensure the OmniVoice checkout at `OMNIVOICE_PATH` is importable and its dependencies
    (torch, etc.) are installed in the active environment.
-2. Set `ENABLE_MOCK_ENGINES=false`.
-3. Pick a device via `OMNIVOICE_DEVICE` (Apple Silicon: `mps`; NVIDIA: `cuda:0`).
+2. Pick a device via `OMNIVOICE_DEVICE` (Apple Silicon: `mps`; NVIDIA: `cuda:0`).
 
-If the model fails to load, the provider logs a warning and falls back to mock audio so
-the pipeline stays up.
+Every request runs real synthesis. If the model fails to load, the provider returns
+a `ProviderError` (502) instead of placeholder audio.
 
 ## VAD backends (STT preprocessing)
 
@@ -168,7 +149,7 @@ HF gating. If a selected backend is unavailable it falls back to `energy`.
 |---------|-------------|
 | WS `error`: "Vosk model not found" | run `scripts/download_vosk_model.sh` |
 | `/transcribe` 400 "requires WAV PCM16 mono" | convert input, e.g. `ffmpeg -i in.mp3 -ar 16000 -ac 1 -c:a pcm_s16le out.wav` |
-| TTS chunks marked `"mock": true` | `ENABLE_MOCK_ENGINES=true`, or OmniVoice failed to load (check logs) |
+| TTS request fails with 502 | engine failed to load/run — check logs for the underlying error |
 | SSE never closes | fixed — streams close on the terminal `done` event |
 | Browser autoplay blocked | click a control once; chunk audio then plays |
 | Mic capture fails in browser | requires `https://` or `localhost`; grant mic permission |

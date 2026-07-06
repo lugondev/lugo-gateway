@@ -69,7 +69,6 @@ async def create_stream_job(payload: TTSRequest) -> dict:
                             "text": segment,
                             "audio_url": result.audio_url,
                             "duration_seconds": result.duration_seconds,
-                            "mock": result.mock,
                         },
                     ),
                 )

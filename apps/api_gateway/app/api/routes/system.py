@@ -6,7 +6,6 @@ from pydantic import BaseModel
 from app.core.settings import settings
 from app.services.artifacts import artifact_store
 from app.services.models import model_manager
-from app.services.qwen_omni_models import qwen_omni_manager
 from app.services.stt.service import stt_service
 from app.services.llm_models import llm_manager
 from app.services.system_config import system_config_store
@@ -60,7 +59,6 @@ async def system_status() -> dict:
         "stt_engines": stt_service.list_engines(),
         "tts_engines": [{"engine": name} for name in tts_service.providers],
         "tts": {
-            "mock_enabled": settings.enable_mock_engines,
             "omnivoice_path": settings.omnivoice_path,
             "omnivoice_present": os.path.isdir(settings.omnivoice_path),
         },
@@ -112,7 +110,6 @@ async def list_models() -> dict:
             "omnivoice": tts["omnivoice"],
             "vieneu": tts["vieneu"],
             "llm": llm_manager.snapshot(),
-            "qwen_omni": qwen_omni_manager.snapshot(),
             "tts_engines": tts_engines,
             "install_enabled": settings.allow_runtime_install,
         },
@@ -226,24 +223,4 @@ async def select_llm(payload: LlmModelRequest) -> dict:
 @router.post("/models/llm/delete")
 async def delete_llm(payload: LlmModelRequest) -> dict:
     await llm_manager.delete(payload.model)
-    return {"success": True, "data": {"model": payload.model, "state": "deleted"}}
-
-
-# ---- Qwen-Omni (audio-native STT, MLX) ----
-@router.post("/models/qwen-omni/download")
-async def download_qwen_omni(payload: LlmModelRequest, background: BackgroundTasks) -> dict:
-    qwen_omni_manager.validate(payload.model)
-    background.add_task(qwen_omni_manager.download, payload.model)
-    return {"success": True, "data": {"model": payload.model, "state": "queued"}}
-
-
-@router.post("/models/qwen-omni/select")
-async def select_qwen_omni(payload: LlmModelRequest) -> dict:
-    qwen_omni_manager.select(payload.model)
-    return {"success": True, "data": {"active": payload.model}}
-
-
-@router.post("/models/qwen-omni/delete")
-async def delete_qwen_omni(payload: LlmModelRequest) -> dict:
-    qwen_omni_manager.delete(payload.model)
     return {"success": True, "data": {"model": payload.model, "state": "deleted"}}

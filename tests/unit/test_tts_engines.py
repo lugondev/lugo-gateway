@@ -1,6 +1,8 @@
 import pytest
 
-from app.core.errors import EngineNotFoundError
+from app.core.errors import EngineNotFoundError, ProviderError
+from app.schemas.tts import TTSRequest
+from app.services.tts.base import RenderingTTSProvider
 from app.services.tts.service import tts_service
 
 
@@ -11,7 +13,7 @@ def test_lists_omnivoice_and_vieneu():
 
 def test_engine_entries_have_expected_keys():
     for e in tts_service.list_engines():
-        assert {"engine", "available", "detail", "mock", "default"} <= set(e)
+        assert {"engine", "available", "detail", "default"} <= set(e)
 
 
 def test_get_provider_resolves_and_rejects():
@@ -27,3 +29,27 @@ def test_vieneu_voices_shape():
     assert isinstance(voices, list)
     if voices:
         assert {"label", "voice"} <= set(voices[0])
+
+
+def test_lists_kokoro_vi():
+    engines = {e["engine"] for e in tts_service.list_engines()}
+    assert "kokoro_vi" in engines
+
+
+def test_kokoro_vi_voices_shape():
+    voices = tts_service.get_provider("kokoro_vi").list_voices()
+    # kokoro-vietnamese is installed in this env -> returns preset voicepacks
+    assert isinstance(voices, list)
+    if voices:
+        assert {"label", "voice"} <= set(voices[0])
+
+
+async def test_render_failure_raises_provider_error_no_silent_fallback():
+    class _BrokenTTS(RenderingTTSProvider):
+        name = "broken-tts"
+
+        async def _render_wav(self, payload: TTSRequest) -> bytes:
+            raise RuntimeError("model not loaded")
+
+    with pytest.raises(ProviderError):
+        await _BrokenTTS().synthesize(TTSRequest(text="hi"))

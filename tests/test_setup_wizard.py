@@ -59,7 +59,6 @@ def test_extra_tts_engines_are_pip_components():
 
 def test_build_env_picks_engines_and_omnivoice_python():
     env = setup.build_env({"qwen3_asr_cuda", "omnivoice"}, "nvidia")
-    assert env["ENABLE_MOCK_ENGINES"] == "false"
     assert env["CONVERSATION_STT_ENGINE"] == "qwen3_asr"
     assert env["OMNIVOICE_PYTHON"]  # set so OmniVoice resolves in the gateway's python
     assert env.get("OMNIVOICE_DEVICE") == "cuda:0"
@@ -71,11 +70,11 @@ def test_build_env_picks_engines_and_omnivoice_python():
 
 def test_write_env_merges_preserving_existing(tmp_path):
     p = tmp_path / ".env"
-    p.write_text("# comment\nFOO=1\nENABLE_MOCK_ENGINES=true\n")
-    setup.write_env({"ENABLE_MOCK_ENGINES": "false", "NEW_KEY": "x"}, str(p))
+    p.write_text("# comment\nFOO=1\nSOME_KEY=old\n")
+    setup.write_env({"SOME_KEY": "new", "NEW_KEY": "x"}, str(p))
     text = p.read_text()
-    assert "FOO=1" in text                      # untouched key preserved
-    assert "# comment" in text                  # comment preserved
-    assert "ENABLE_MOCK_ENGINES=false" in text  # updated in place
-    assert "ENABLE_MOCK_ENGINES=true" not in text
-    assert "NEW_KEY=x" in text                   # new key appended
+    assert "FOO=1" in text                # untouched key preserved
+    assert "# comment" in text            # comment preserved
+    assert "SOME_KEY=new" in text         # updated in place
+    assert "SOME_KEY=old" not in text
+    assert "NEW_KEY=x" in text            # new key appended

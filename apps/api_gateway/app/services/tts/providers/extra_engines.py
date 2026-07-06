@@ -1,11 +1,14 @@
 """Extra TTS engines ported from OmniVoice-Studio (CPU/MPS-reasonable).
 
 Each engine lazily imports its package and runs real inference following the
-OmniVoice-Studio adapter; if the package isn't installed it degrades to silent
-mock audio and reports an install hint. Engines:
+OmniVoice-Studio adapter; if the package isn't installed, ``available()``
+reports False and ``install_hint()`` explains how to enable it. Engines:
 
 - kokoro      — MLX-Audio / Kokoro 82M, Apple-Silicon, multilingual. pip install mlx-audio
 - voxcpm2     — 30 langs, CPU/MPS, 48 kHz, clone + voice design.   pip install voxcpm
+- kokoro_vi   — Kokoro-82M fine-tuned for Vietnamese, CPU, 24 kHz, fixed voicepacks
+                (no cloning). Not on PyPI — install from GitHub:
+                pip install "kokoro-vietnamese @ git+https://github.com/iamdinhthuan/Kokoro-Vietnamese.git"
 """
 
 import asyncio
@@ -19,7 +22,7 @@ import numpy as np
 from app.core.audio import float_array_to_wav_bytes
 from app.core.deps import module_available
 from app.schemas.tts import TTSRequest
-from app.services.tts.base import MockFallbackTTSProvider
+from app.services.tts.base import RenderingTTSProvider
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +40,7 @@ def _to_mono_f32(audio) -> np.ndarray:
     return arr.reshape(-1)
 
 
-class _ExtraTTSProvider(MockFallbackTTSProvider):
+class _ExtraTTSProvider(RenderingTTSProvider):
     """Shared base for ported engines; subclasses implement _generate_f32 + metadata."""
 
     _modules: tuple[str, ...] = ()
@@ -127,7 +130,50 @@ class VoxCPM2Provider(_ExtraTTSProvider):
         return _to_mono_f32(wav)
 
 
+class KokoroVietnameseProvider(_ExtraTTSProvider):
+    """Kokoro-82M fine-tuned for Vietnamese (fixed voicepacks, no ref-audio cloning)."""
+
+    name = "kokoro_vi"
+    sample_rate = 24000
+    _modules = ("kokoro_vietnamese",)
+    _hint = (
+        'pip install "kokoro-vietnamese @ '
+        'git+https://github.com/iamdinhthuan/Kokoro-Vietnamese.git"'
+    )
+
+    def detail(self) -> str:
+        return "Kokoro-Vietnamese fine-tune · 24kHz · fixed voicepacks"
+
+    def list_voices(self) -> list[dict]:
+        if not self.available():
+            return []
+        from kokoro_vietnamese import VOICES
+
+        return [{"label": v["label"], "voice": voice_id} for voice_id, v in VOICES.items()]
+
+    def _model(self, voice: str | None):
+        from kokoro_vietnamese import DEFAULT_VOICE
+
+        voice = voice or DEFAULT_VOICE
+        key = f"{self.name}:{voice}"
+        if key not in _CACHE:
+            from kokoro_vietnamese import KokoroVietnamese
+
+            _CACHE[key] = KokoroVietnamese(device="cpu", voice=voice)
+        return _CACHE[key]
+
+    def _generate_f32(self, payload: TTSRequest) -> np.ndarray:
+        model = self._model(payload.voice)
+        audio, _phonemes = model.synthesize(payload.text, speed=float(payload.speed or 1.0))
+        return _to_mono_f32(audio)
+
+    def warm(self) -> None:
+        if self.available():
+            self._model(None)  # load + cache the default voice so first call is fast
+
+
 EXTRA_TTS_PROVIDERS = [
     KokoroMLXProvider(),
     VoxCPM2Provider(),
+    KokoroVietnameseProvider(),
 ]

@@ -90,7 +90,7 @@ async def list_stt_engines() -> dict:
 
 @router.post("/warm")
 async def warm_engine(engine: str) -> dict:
-    """Load a heavy STT model into memory ahead of use (e.g. Qwen3-Omni ~20s).
+    """Load a heavy STT model into memory ahead of use (e.g. Whisper large ~20s).
 
     Lets the UI preload before the first conversation turn so it isn't a cold wait.
     """

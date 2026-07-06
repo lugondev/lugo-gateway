@@ -259,7 +259,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
                     else:
                         await send(
                             "audio_chunk", turn=turn, chunk_index=index, text=sentence,
-                            audio_url=result.audio_url, sample_rate=result.sample_rate, mock=result.mock,
+                            audio_url=result.audio_url, sample_rate=result.sample_rate,
                         )
             return parts
 

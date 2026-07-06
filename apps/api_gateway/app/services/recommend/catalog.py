@@ -23,11 +23,6 @@ _VOSK = "/v1/models/vosk/download"
 _OMNI = "/v1/models/omnivoice/download"
 _VIENEU = "/v1/models/vieneu/download"
 _LLM = "/v1/models/llm/download"
-_QWEN = "/v1/models/qwen-omni/download"
-
-_QWEN_4BIT = "mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit"
-_QWEN_6BIT = "mlx-community/Qwen3-Omni-30B-A3B-Instruct-6bit"
-_QWEN_8BIT = "mlx-community/Qwen3-Omni-30B-A3B-Instruct-8bit"
 
 
 CANDIDATES: list[Candidate] = [
@@ -73,15 +68,6 @@ CANDIDATES: list[Candidate] = [
     Candidate("stt", "phowhisper-medium-mlx", "whisper_mlx", "PhoWhisper Medium — MLX (Apple GPU, ~7×)",
               "apple_silicon", "high", True, 1.5, "~1.5 GB", 4.0, ["mlx"],
               _config("bash scripts/convert_phowhisper_mlx.sh (Apple Silicon only)")),
-    Candidate("stt", _QWEN_4BIT, "qwen_omni", "Qwen3-Omni 30B · 4-bit (audio-native)",
-              "apple_silicon", "high", True, 16.0, "~16 GB", 24.0, ["mlx"],
-              _dl(_QWEN, model=_QWEN_4BIT)),
-    Candidate("stt", _QWEN_6BIT, "qwen_omni", "Qwen3-Omni 30B · 6-bit (audio-native)",
-              "apple_silicon", "high", True, 24.0, "~24 GB", 32.0, ["mlx"],
-              _dl(_QWEN, model=_QWEN_6BIT)),
-    Candidate("stt", _QWEN_8BIT, "qwen_omni", "Qwen3-Omni 30B · 8-bit (audio-native)",
-              "apple_silicon", "high", True, 32.0, "~32 GB", 40.0, ["mlx"],
-              _dl(_QWEN, model=_QWEN_8BIT)),
     # ---- STT: Qwen3-ASR — multilingual incl. Vietnamese (Apple MLX or NVIDIA CUDA) ----
     Candidate("stt", "qwen3-asr-mlx", "qwen3_asr",
               "Qwen3-ASR — Apple GPU (MLX), multilingual incl. Vietnamese ⭐",
@@ -129,9 +115,6 @@ CANDIDATES: list[Candidate] = [
     Candidate("llm", "online", "online", "Online LLM (OpenAI-compatible API)",
               "cpu", "high", False, None, "remote API", None, ["online_llm"],
               _config("Set CONVERSATION_LLM_BASE_URL + CONVERSATION_LLM_API_KEY")),
-    Candidate("llm", _QWEN_4BIT, "qwen_omni", "Qwen3-Omni 30B · 4-bit (audio-native LLM)",
-              "apple_silicon", "high", True, 16.0, "~16 GB", 24.0, ["mlx"],
-              _dl(_QWEN, model=_QWEN_4BIT)),
 
     # ---- VAD ----
     Candidate("vad", "energy", "energy", "Energy gate (built-in)",
@@ -153,7 +136,6 @@ _SELECT_PATHS = {
     "omnivoice": "/v1/models/omnivoice/select",
     "vieneu": "/v1/models/vieneu/select",
     "ollama": "/v1/models/llm/select",
-    "qwen_omni": "/v1/models/qwen-omni/select",
 }
 
 for _c in CANDIDATES:

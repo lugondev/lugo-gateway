@@ -86,11 +86,9 @@ def is_installed(component: dict) -> bool:
 def build_env(selected_ids: set, host: str) -> dict:
     """Runtime config to persist to .env so the gateway needs no manual env vars."""
     env = {
-        "ENABLE_MOCK_ENGINES": "false",      # real audio, not silent placeholders
         "ALLOW_RUNTIME_INSTALL": "true",     # enable the Install buttons in the UI
         "DEFAULT_TTS_ENGINE": "vieneu",
         "CONVERSATION_TTS_ENGINE": "vieneu",
-        "CONVERSATION_AUDIO_NATIVE": "false",
     }
     if {"qwen3_asr_cuda", "qwen3_asr_mlx"} & selected_ids:
         env["CONVERSATION_STT_ENGINE"] = "qwen3_asr"

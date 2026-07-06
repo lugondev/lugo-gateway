@@ -36,13 +36,12 @@ class _StubTTS(TTSProvider):
     async def synthesize(self, payload) -> TTSResult:
         return TTSResult(
             engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
-            duration_seconds=0.1, text=payload.text, mock=True,
+            duration_seconds=0.1, text=payload.text,
         )
 
 
 @pytest.fixture(autouse=True)
 def _register_stub(monkeypatch):
-    monkeypatch.setattr(settings, "enable_mock_engines", True)
     monkeypatch.setattr(settings, "conversation_llm_base_url", "")
     stt_service.providers["stub-livehost"] = _StubSTT()
     stt_service.providers["stub-livehost-failing"] = _FailingSTT()

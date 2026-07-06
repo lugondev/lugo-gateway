@@ -21,7 +21,7 @@ Recommended params for a duplex voice device:
 
 | param | value | meaning |
 |-------|-------|---------|
-| `stt_engine` | `whisper_mlx` | server-side STT (Vietnamese). `qwen_omni` = audio-native (server answers audio directly) |
+| `stt_engine` | `whisper_mlx` | server-side STT (Vietnamese) |
 | `tts_engine` | `vieneu` | server-side Vietnamese TTS |
 | `language` | `vi` | STT language hint |
 | `sample_rate` | `16000` | **uplink** audio rate (Hz) |
@@ -225,8 +225,8 @@ ws.onmessage = (ev) => {
 
 ## 8. Notes for the device dev
 
-- The server's TTS/LLM run remotely; first use of a heavy STT (`qwen_omni`) loads a
-  model — call `POST /v1/stt/warm?engine=qwen_omni` once at boot if you use it.
+- The server's TTS/LLM run remotely; first use of a heavy STT model loads it — call
+  `POST /v1/stt/warm?engine=<engine>` once at boot if you use one.
 - libopus must be present on the device (`apt install libopus0`).
 - Reconnect with backoff on socket close; re-read `session_started` each time.
 - Keep ~100–200 ms of jitter buffer on playback for smooth audio over WiFi.

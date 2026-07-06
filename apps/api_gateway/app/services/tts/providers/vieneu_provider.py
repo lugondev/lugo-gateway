@@ -6,7 +6,7 @@ from app.core.audio import float_array_to_wav_bytes
 from app.core.deps import module_available
 from app.core.settings import settings
 from app.schemas.tts import TTSRequest
-from app.services.tts.base import MockFallbackTTSProvider
+from app.services.tts.base import RenderingTTSProvider
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def set_active_vieneu_mode(mode: str) -> None:
     _active_mode = mode
 
 
-class VieNeuProvider(MockFallbackTTSProvider):
+class VieNeuProvider(RenderingTTSProvider):
     name = "vieneu"
     sample_rate = _SAMPLE_RATE
 

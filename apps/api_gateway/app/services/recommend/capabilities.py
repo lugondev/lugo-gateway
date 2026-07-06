@@ -6,7 +6,6 @@ the machine the gateway runs on. Unknown values are ``None`` and are treated as
 model incompatible.
 """
 
-import importlib.metadata
 import os
 import platform
 import shutil
@@ -24,7 +23,6 @@ _PROBE_MODULES = [
     "silero_vad",
     "pyannote.audio",
     "mlx_whisper",
-    "mlx_vlm",
     "opuslib",
     "mlx_qwen3_asr",
     "qwen_asr",
@@ -40,7 +38,6 @@ class Capabilities:
     ram_total_gb: float | None
     disk_free_gb: float | None
     mlx: bool
-    mlx_vlm_version: str | None
     cuda: bool
     libopus: bool
     ollama: bool
@@ -84,13 +81,6 @@ def _disk_free_gb(path: str) -> float | None:
     try:
         target = path if os.path.isdir(path) else "."
         return round(shutil.disk_usage(target).free / (1024**3), 1)
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def _mlx_vlm_version() -> str | None:
-    try:
-        return importlib.metadata.version("mlx-vlm")
     except Exception:  # noqa: BLE001
         return None
 
@@ -154,7 +144,7 @@ def detect_capabilities() -> Capabilities:
     except Exception:  # noqa: BLE001
         modules["omnivoice"] = False
 
-    mlx = bool(modules.get("mlx_whisper") or modules.get("mlx_vlm"))
+    mlx = bool(modules.get("mlx_whisper"))
 
     return Capabilities(
         os=sys_os,
@@ -164,7 +154,6 @@ def detect_capabilities() -> Capabilities:
         ram_total_gb=_ram_total_gb(),
         disk_free_gb=_disk_free_gb(settings.stt_model_dir),
         mlx=mlx,
-        mlx_vlm_version=_mlx_vlm_version() if modules.get("mlx_vlm") else None,
         cuda=_cuda(),
         libopus=_libopus(),
         ollama=_ollama(),

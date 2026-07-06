@@ -70,12 +70,12 @@ print_menu() {
       echo "  STT : qwen3_asr (CUDA) ⭐, whisper/PhoWhisper (CPU), vosk"
       echo "  TTS : VieNeu v3turbo (CPU)  |  VieNeu GPU modes (--gpu-tts)"
       echo "  LLM : Ollama (--ollama MODEL)  |  online (UI)"
-      echo "  Skipped (incompatible): whisper_mlx, qwen3_asr MLX, qwen_omni  (Apple Silicon only)" ;;
+      echo "  Skipped (incompatible): whisper_mlx, qwen3_asr MLX  (Apple Silicon only)" ;;
     cpu)
       echo "  STT : whisper/PhoWhisper (CPU), vosk"
       echo "  TTS : VieNeu v3turbo (CPU)"
       echo "  LLM : online (UI)  |  Ollama (--ollama MODEL, slow on CPU)"
-      echo "  Skipped (incompatible): qwen3_asr (needs GPU), whisper_mlx/qwen_omni (Apple), VieNeu GPU modes" ;;
+      echo "  Skipped (incompatible): qwen3_asr (needs GPU), whisper_mlx (Apple), VieNeu GPU modes" ;;
   esac
   echo
 }
@@ -134,11 +134,9 @@ upsert_env() {  # upsert_env KEY VALUE
 
 echo
 echo "==> Writing runtime config to .env:"
-upsert_env ENABLE_MOCK_ENGINES false
 upsert_env ALLOW_RUNTIME_INSTALL true
 upsert_env DEFAULT_TTS_ENGINE vieneu
 upsert_env CONVERSATION_TTS_ENGINE vieneu
-upsert_env CONVERSATION_AUDIO_NATIVE false
 upsert_env CONVERSATION_STT_ENGINE "$([ "$HOST" = cpu ] && echo whisper || echo qwen3_asr)"
 if [ -n "$OLLAMA" ]; then
   upsert_env CONVERSATION_LLM_BASE_URL http://localhost:11434/v1

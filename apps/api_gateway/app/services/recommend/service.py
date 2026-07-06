@@ -70,18 +70,7 @@ def _collect_state() -> tuple[set, set]:
                 active.add(m.get("model"))
         active.add(snap.get("active"))
 
-    def qwen() -> None:
-        from app.services.qwen_omni_models import qwen_omni_manager
-
-        snap = qwen_omni_manager.snapshot()
-        for m in snap.get("models", []):
-            if m.get("cached"):
-                installed.add(m.get("model"))
-            if m.get("active"):
-                active.add(m.get("model"))
-        active.add(snap.get("active"))
-
-    for fn in (whisper, vosk, tts, llm, qwen):
+    for fn in (whisper, vosk, tts, llm):
         _safe(fn, None)
 
     # Built-in VAD is always available.

@@ -13,7 +13,6 @@ def caps(**over) -> Capabilities:
         ram_total_gb=8.0,
         disk_free_gb=100.0,
         mlx=False,
-        mlx_vlm_version=None,
         cuda=False,
         libopus=False,
         ollama=False,
@@ -60,7 +59,7 @@ def test_installed_model_gets_installed_status_and_bonus():
 
 
 def test_apple_only_engine_is_incompatible_on_linux():
-    c = cand(id="qwen-4bit", engine="qwen_omni", chip="apple_silicon",
+    c = cand(id="qwen-4bit", engine="whisper_mlx", chip="apple_silicon",
              requires=["mlx"], min_ram_gb=24.0)
     r = evaluate(c, caps(), installed_ids=set())
     assert r["status"] == "incompatible:apple_silicon"
@@ -69,7 +68,7 @@ def test_apple_only_engine_is_incompatible_on_linux():
 
 
 def test_apple_engine_runnable_on_apple_silicon_with_mlx():
-    c = cand(id="qwen-4bit", engine="qwen_omni", chip="apple_silicon",
+    c = cand(id="qwen-4bit", engine="whisper_mlx", chip="apple_silicon",
              requires=["mlx"], min_ram_gb=24.0)
     r = evaluate(c, caps(os="darwin", arch="arm64", apple_silicon=True, mlx=True,
                          ram_total_gb=32.0), installed_ids=set())
@@ -78,7 +77,7 @@ def test_apple_engine_runnable_on_apple_silicon_with_mlx():
 
 
 def test_apple_engine_without_mlx_needs_mlx():
-    c = cand(id="qwen-4bit", engine="qwen_omni", chip="apple_silicon",
+    c = cand(id="qwen-4bit", engine="whisper_mlx", chip="apple_silicon",
              requires=["mlx"], min_ram_gb=24.0)
     r = evaluate(c, caps(os="darwin", arch="arm64", apple_silicon=True, mlx=False,
                          ram_total_gb=32.0), installed_ids=set())

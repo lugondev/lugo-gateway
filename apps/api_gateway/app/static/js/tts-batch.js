@@ -27,7 +27,7 @@ el("tts-submit").addEventListener("click", async () => {
     if (response.ok && body.data?.audio_url) {
       ttsAudio.src = body.data.audio_url;
       ttsAudio.classList.remove("hidden");
-      ttsMeta.textContent = `${body.data.duration_seconds ?? "?"}s @ ${body.data.sample_rate}Hz${body.data.mock ? " · mock audio" : ""}`;
+      ttsMeta.textContent = `${body.data.duration_seconds ?? "?"}s @ ${body.data.sample_rate}Hz`;
     }
   } catch (error) {
     print(ttsResult, { error: String(error) }, true);

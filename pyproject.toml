@@ -24,12 +24,9 @@ dev = [
   "pytest-asyncio>=0.23.0",
   "ruff>=0.6.0",
 ]
-# Apple-Silicon GPU STT (whisper_mlx ~7x faster; qwen_omni audio-native). Mac only.
-# torchvision is needed by the Qwen3-Omni processor (mlx-vlm).
+# Apple-Silicon GPU STT (whisper_mlx ~7x faster). Mac only.
 mlx = [
   "mlx-whisper>=0.4.0",
-  "mlx-vlm>=0.6.3",
-  "torchvision",
 ]
 # Opus audio transport (ESP32/RPi/browser). Needs system libopus
 # (apt-get install libopus0 / brew install opus).
@@ -40,7 +37,7 @@ opus = [
 # onnxruntime (torch-free); the heavy GPU modes live in vieneu's own [gpu] extra.
 # soundfile needs system libsndfile1 (apt-get install libsndfile1).
 tts = [
-  "vieneu>=3.0.7",
+  "vieneu>=3.0.12",
 ]
 # Qwen3-ASR on Apple Silicon via MLX (multilingual incl. Vietnamese, torch-free,
 # Metal GPU). Mac-only — the engine auto-hides where mlx-qwen3-asr is absent.

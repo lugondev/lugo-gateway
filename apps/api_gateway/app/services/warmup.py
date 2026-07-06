@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 _ready_ids: set[int] = set()
 
 # TTSProvider.warm() defaults to a no-op for engines with nothing to preload
-# (mocks, remote APIs) — those must never be reported as "cold".
+# (e.g. remote APIs) — those must never be reported as "cold".
 _NOOP_TTS_WARM = TTSProvider.warm
 
 

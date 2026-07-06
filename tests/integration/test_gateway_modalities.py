@@ -7,8 +7,11 @@ from fastapi.testclient import TestClient
 from app.core.settings import settings
 from app.main import app
 from app.schemas.stt import STTResult
+from app.schemas.tts import TTSResult
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
+from app.services.tts.base import TTSProvider
+from app.services.tts.service import tts_service
 
 SR = 16000
 
@@ -20,13 +23,24 @@ class _StubSTT(STTProvider):
         return STTResult(engine=self.name, text="xin chào", is_final=True)
 
 
+class _StubTTS(TTSProvider):
+    name = "stub-gw-tts"
+
+    async def synthesize(self, payload) -> TTSResult:
+        return TTSResult(
+            engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
+            duration_seconds=0.1, text=payload.text,
+        )
+
+
 @pytest.fixture(autouse=True)
 def _stub(monkeypatch):
-    monkeypatch.setattr(settings, "enable_mock_engines", True)
     monkeypatch.setattr(settings, "conversation_llm_base_url", "")  # echo responder
     stt_service.providers["stub-gw"] = _StubSTT()
+    tts_service.providers["stub-gw-tts"] = _StubTTS()
     yield
     stt_service.providers.pop("stub-gw", None)
+    tts_service.providers.pop("stub-gw-tts", None)
 
 
 def _loud(ms):
@@ -46,7 +60,7 @@ def _drain(ws, stop="turn_done", n=40):
 
 def test_text_to_text():
     c = TestClient(app)
-    with c.websocket_connect("/v1/conversation/stream?stt_engine=stub-gw&tts_engine=omnivoice&output=text") as ws:
+    with c.websocket_connect("/v1/conversation/stream?stt_engine=stub-gw&tts_engine=stub-gw-tts&output=text") as ws:
         started = ws.receive_json()
         assert started["event"] == "session_started" and started["output"] == ["text"]
         ws.send_json({"type": "text", "text": "xin chào"})
@@ -59,7 +73,7 @@ def test_text_to_text():
 
 def test_text_to_audio_url():
     c = TestClient(app)
-    with c.websocket_connect("/v1/conversation/stream?stt_engine=stub-gw&tts_engine=omnivoice&output=audio") as ws:
+    with c.websocket_connect("/v1/conversation/stream?stt_engine=stub-gw&tts_engine=stub-gw-tts&output=audio") as ws:
         assert ws.receive_json()["event"] == "session_started"
         ws.send_json({"type": "text", "text": "xin chào"})
         evs = _drain(ws)
@@ -81,12 +95,12 @@ def _opus_ok():
 @pytest.mark.skipif(not _opus_ok(), reason="libopus not loadable")
 def test_text_to_opus_frames(monkeypatch):
     # Verify Opus framing only; disable real-time pacing so the test doesn't sleep
-    # through the (multi-second) mock reply audio. Pacing schedule is unit-tested.
+    # through the reply audio. Pacing schedule is unit-tested.
     from app.core.settings import settings
 
     monkeypatch.setattr(settings, "conversation_opus_pace", False)
     c = TestClient(app)
-    url = "/v1/conversation/stream?stt_engine=stub-gw&tts_engine=omnivoice&output=audio&audio_out=opus&output_sample_rate=24000"
+    url = "/v1/conversation/stream?stt_engine=stub-gw&tts_engine=stub-gw-tts&output=audio&audio_out=opus&output_sample_rate=24000"
     with c.websocket_connect(url) as ws:
         started = ws.receive_json()
         assert started["audio_out"] == "opus" and started["output_sample_rate"] == 24000
@@ -112,7 +126,7 @@ def test_text_to_opus_frames(monkeypatch):
 
 def test_audio_to_text():
     c = TestClient(app)
-    url = "/v1/conversation/stream?stt_engine=stub-gw&tts_engine=omnivoice&output=text&sample_rate=16000"
+    url = "/v1/conversation/stream?stt_engine=stub-gw&tts_engine=stub-gw-tts&output=text&sample_rate=16000"
     with c.websocket_connect(url) as ws:
         assert ws.receive_json()["event"] == "session_started"
         ws.send_bytes(_loud(500))

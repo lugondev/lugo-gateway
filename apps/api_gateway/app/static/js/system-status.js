@@ -9,7 +9,7 @@ export async function loadSystemStatus() {
       `<div class="stat ${ok === undefined ? "" : ok ? "ok" : "warn"}"><span>${label}</span><strong>${value}</strong></div>`;
 
     const sttOk = (d.stt_engines || []).some((e) => e.available);
-    const ttsOk = !d.tts.mock_enabled;
+    const ttsOk = Boolean(d.tts.omnivoice_present);
 
     const groups = [
       {
@@ -21,7 +21,7 @@ export async function loadSystemStatus() {
       },
       {
         title: "TTS",
-        tiles: [tile("Status", ttsOk ? "ready" : "mock", ttsOk)],
+        tiles: [tile("Status", ttsOk ? "ready" : "not ready", ttsOk)],
       },
       {
         title: "STT",

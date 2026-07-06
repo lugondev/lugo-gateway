@@ -97,12 +97,6 @@ export function renderChunkItem(payload) {
   text.className = "chunk-text";
   text.textContent = payload.text || "(chunk)";
   li.appendChild(text);
-  if (payload.mock) {
-    const badge = document.createElement("span");
-    badge.className = "badge mock";
-    badge.textContent = "mock";
-    li.appendChild(badge);
-  }
   if (payload.audio_url) {
     const play = document.createElement("button");
     play.className = "mini";

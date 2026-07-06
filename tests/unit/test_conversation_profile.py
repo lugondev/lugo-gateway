@@ -13,7 +13,6 @@ from app.services.profiles.store import ProfileStore
 
 @pytest.fixture(autouse=True)
 def _hermetic(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "enable_mock_engines", True)
     monkeypatch.setattr(settings, "conversation_llm_base_url", "")
     monkeypatch.setattr(settings, "omnivoice_use_server", False)
 
@@ -35,8 +34,7 @@ def test_chat_without_profile_uses_echo(client):
     assert resp.json()["data"]["responder"] == "echo"
 
 
-def test_chat_unknown_profile_falls_back(client, monkeypatch):
-    monkeypatch.setattr(settings, "enable_mock_engines", True)
+def test_chat_unknown_profile_falls_back(client):
     resp = client.post(
         "/v1/conversation/chat?profile=ghost",
         json={"messages": [{"role": "user", "content": "hi"}]},

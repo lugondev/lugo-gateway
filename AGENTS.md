@@ -30,7 +30,7 @@ apps/api_gateway/app/
     stt/{service.py, base.py, providers/}    # STTService registry + providers
     tts/{service.py, base.py, providers/}    # TTSService registry + providers
     conversation/          # endpointer (VAD), responder (LLM / echo)
-    *_models.py            # download/select/delete managers (whisper, qwen_omni, llm, tts, vosk)
+    *_models.py            # download/select/delete managers (whisper, llm, tts, vosk)
   static/                  # index.html + app.js (playground UI)
 docs/                      # api.md, architecture.md, runbook.md, device-integration.md
 scripts/                   # setup + convert_phowhisper_mlx.sh + rpi_voice_client.py
@@ -62,21 +62,19 @@ scripts/                   # setup + convert_phowhisper_mlx.sh + rpi_voice_clien
 
 `WS /v1/conversation/stream` is a **text/audio → text/audio** gateway. Pipeline:
 input (audio frames or `{"type":"text"}`) → optional STT → reply (echo / OpenAI-compat
-LLM / audio-native Qwen-Omni) → per-sentence TTS → output (text events + audio as
-`audio_url` or pushed Opus frames). VAD endpointer + barge-in. See `docs/api.md` and
-`docs/device-integration.md` for the wire protocol.
+LLM) → per-sentence TTS → output (text events + audio as `audio_url` or pushed Opus
+frames). VAD endpointer + barge-in. See `docs/api.md` and `docs/device-integration.md`
+for the wire protocol.
 
 ## Platform gotchas (read before touching audio/STT)
 
-- **MLX engines** (`whisper_mlx`, `qwen_omni`) are **Apple-Silicon only** (mlx-whisper /
-  mlx-vlm, Metal GPU). They auto-hide off Mac → callers fall back to `whisper` (CPU).
-  CTranslate2/faster-whisper has **no GPU on macOS** (CPU only).
+- **MLX engines** (`whisper_mlx`) are **Apple-Silicon only** (mlx-whisper, Metal GPU).
+  They auto-hide off Mac → callers fall back to `whisper` (CPU). CTranslate2/faster-whisper
+  has **no GPU on macOS** (CPU only).
 - **libopus** is a system lib. opuslib can't find Homebrew's on macOS unless
   `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` is set — the Makefile exports it. Opus
   code degrades gracefully (falls back to PCM16) when libopus is absent.
 - **Vietnamese STT**: default is **PhoWhisper** (VinAI fine-tune), not vanilla Whisper.
-  Prompt phrasing matters for `qwen_omni` (a restrictive "only output text" prompt makes
-  it emit a degenerate empty turn — use a plain "Phiên âm…" instruction).
 - TTS engines output different sample rates (VieNeu 48k, OmniVoice 24k) — resample when
   re-encoding (`core/audio.py: wav_file_to_pcm16`).
 

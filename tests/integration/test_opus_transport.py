@@ -10,8 +10,11 @@ from fastapi.testclient import TestClient
 from app.core.settings import settings
 from app.main import app
 from app.schemas.stt import STTResult
+from app.schemas.tts import TTSResult
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
+from app.services.tts.base import TTSProvider
+from app.services.tts.service import tts_service
 
 try:
     # opuslib raises a bare Exception (not ImportError) when libopus can't be
@@ -33,13 +36,24 @@ class _StubSTT(STTProvider):
         return STTResult(engine=self.name, text="xin chào", is_final=True)
 
 
+class _StubTTS(TTSProvider):
+    name = "stub-opus-tts"
+
+    async def synthesize(self, payload) -> TTSResult:
+        return TTSResult(
+            engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
+            duration_seconds=0.1, text=payload.text,
+        )
+
+
 @pytest.fixture(autouse=True)
 def _stub(monkeypatch):
-    monkeypatch.setattr(settings, "enable_mock_engines", True)
     monkeypatch.setattr(settings, "conversation_llm_base_url", "")
     stt_service.providers["stub-opus"] = _StubSTT()
+    tts_service.providers["stub-opus-tts"] = _StubTTS()
     yield
     stt_service.providers.pop("stub-opus", None)
+    tts_service.providers.pop("stub-opus-tts", None)
 
 
 def _opus_frames(samples: np.ndarray) -> list[bytes]:
@@ -62,7 +76,7 @@ def test_opus_roundtrip_decodes_to_pcm():
 
 def test_conversation_opus_transport_turn():
     client = TestClient(app)
-    url = "/v1/conversation/stream?stt_engine=stub-opus&tts_engine=omnivoice&audio_codec=opus&sample_rate=16000"
+    url = "/v1/conversation/stream?stt_engine=stub-opus&tts_engine=stub-opus-tts&audio_codec=opus&sample_rate=16000"
     with client.websocket_connect(url) as ws:
         started = ws.receive_json()
         assert started["event"] == "session_started"
