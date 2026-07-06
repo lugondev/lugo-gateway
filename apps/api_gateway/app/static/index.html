@@ -168,15 +168,9 @@
                     <input id="pf-llm-key" type="password" placeholder="sk-&#8230; (leave blank to keep existing)" autocomplete="off" />
                   </label>
                   <label>
-                    TTS Engine
-                    <select id="pf-tts-engine">
+                    TTS Profile
+                    <select id="pf-tts-profile">
                       <option value="">(inherit global)</option>
-                    </select>
-                  </label>
-                  <label id="pf-tts-voice-wrap" class="hidden">
-                    TTS Voice
-                    <select id="pf-tts-voice">
-                      <option value="">(auto)</option>
                     </select>
                   </label>
                   <div class="pf-foot">
@@ -425,6 +419,66 @@
               <audio id="tts-stream-audio" class="player hidden" controls></audio>
               <ol id="tts-stream-chunks" class="chunk-list"></ol>
               <pre id="tts-stream-events" class="output small"></pre>
+            </section>
+
+            <section class="card">
+              <h2>TTS Profiles</h2>
+              <p class="hint">Bundle an engine, a voice (preset or cloned), and style/speed/language into a reusable named profile. Reference it from an LLM Profile's "TTS Profile" field, or pin one per-session with <code>?tts_profile=&lt;name&gt;</code>.</p>
+              <div id="tts-profile-list" class="model-list"></div>
+
+              <h3 class="sub" id="tp-form-title">New TTS Profile</h3>
+              <div class="row tight">
+                <label>
+                  Name <span class="hint" style="display:inline;margin:0">(slug, no spaces)</span>
+                  <input id="tp-name" type="text" placeholder="cohost-voice" />
+                </label>
+                <label>
+                  Engine
+                  <select id="tp-engine"></select>
+                </label>
+              </div>
+              <div class="row tight">
+                <label class="check">
+                  <input type="radio" name="tp-voice-mode" id="tp-mode-preset" value="preset" checked /> Preset voice
+                </label>
+                <label class="check">
+                  <input type="radio" name="tp-voice-mode" id="tp-mode-clone" value="clone" /> Clone from reference audio
+                </label>
+              </div>
+              <label id="tp-preset-wrap">
+                Voice
+                <select id="tp-voice"><option value="">(auto)</option></select>
+              </label>
+              <div id="tp-clone-wrap" class="hidden">
+                <label>
+                  Reference audio path <span class="hint" style="display:inline;margin:0">(server-side path)</span>
+                  <input id="tp-ref-audio" type="text" placeholder="artifacts/refs/host.wav" />
+                </label>
+                <label>
+                  Reference transcript
+                  <textarea id="tp-ref-text" rows="2" placeholder="Exact words spoken in the reference audio…"></textarea>
+                </label>
+              </div>
+              <div class="row tight">
+                <label>
+                  Instruct <span class="hint" style="display:inline;margin:0">(style/emotion, engine-dependent)</span>
+                  <input id="tp-instruct" type="text" placeholder="cheerful, fast-paced…" />
+                </label>
+                <label>
+                  Speed
+                  <input id="tp-speed" type="number" step="0.1" placeholder="1.0" />
+                </label>
+                <label>
+                  Language
+                  <input id="tp-language" type="text" placeholder="vi" />
+                </label>
+              </div>
+              <div class="actions">
+                <button id="tp-save-btn">Save Profile</button>
+                <button id="tp-cancel-btn" class="ghost">Cancel</button>
+                <button id="tp-delete-btn" class="danger hidden">Delete</button>
+              </div>
+              <p id="tp-status" class="meta"></p>
             </section>
           </div>
 

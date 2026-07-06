@@ -13,7 +13,7 @@ export async function loadTtsEngines() {
 
     renderTtsEnginesStatus(body.data);
 
-    [["tts-engine", "tts-engine-detail"], ["tts-stream-engine", "tts-stream-engine-detail"], ["t2v-tts-engine", "t2v-engine-detail"], ["pf-tts-engine", null]].forEach(
+    [["tts-engine", "tts-engine-detail"], ["tts-stream-engine", "tts-stream-engine-detail"], ["t2v-tts-engine", "t2v-engine-detail"], ["tp-engine", null]].forEach(
       ([selId, detId]) => {
         const select = el(selId);
         if (!select) return;
@@ -74,19 +74,6 @@ export function updateTtsEngine(selId, detId) {
     if (isVieneu) {
       fetch("/v1/tts/voices?engine=vieneu").then(r => r.json()).then(b => {
         const sel = el("t2v-tts-voice");
-        if (!sel) return;
-        sel.innerHTML = '<option value="">(auto)</option>';
-        b.data.forEach(v => { const o = document.createElement("option"); o.value = v.voice; o.textContent = v.label; sel.appendChild(o); });
-      }).catch(() => {});
-    }
-  }
-  if (selId === "pf-tts-engine") {
-    const isVieneu = engine === "vieneu";
-    const wrap = el("pf-tts-voice-wrap");
-    if (wrap) wrap.classList.toggle("hidden", !isVieneu);
-    if (isVieneu) {
-      fetch("/v1/tts/voices?engine=vieneu").then(r => r.json()).then(b => {
-        const sel = el("pf-tts-voice");
         if (!sel) return;
         sel.innerHTML = '<option value="">(auto)</option>';
         b.data.forEach(v => { const o = document.createElement("option"); o.value = v.voice; o.textContent = v.label; sel.appendChild(o); });

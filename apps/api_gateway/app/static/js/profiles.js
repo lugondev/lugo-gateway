@@ -1,5 +1,6 @@
 import { el, print } from "./helpers.js";
 import { mcpServerData } from "./mcp-servers.js";
+import { ttsProfileData } from "./tts-profiles.js";
 import { setCurrentSessionId } from "./chat.js";
 
 export let profileData = {};
@@ -29,12 +30,27 @@ export function renderProfileSelect() {
   if (profileData[prev]) sel.value = prev;
 }
 
+export function renderProfileTtsSelect() {
+  const sel = el("pf-tts-profile");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">(inherit global)</option>';
+  Object.keys(ttsProfileData).sort().forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  });
+  if (ttsProfileData[prev]) sel.value = prev;
+}
+
 export function openProfilePanel(mode, name) {
   profileEditMode = mode === "new" ? "new" : name;
   const panel = el("profile-panel");
   if (!panel) return;
 
   let selectedMcpServers = [];
+  renderProfileTtsSelect();
 
   if (mode === "new") {
     el("pf-name").value = "";
@@ -44,7 +60,7 @@ export function openProfilePanel(mode, name) {
     el("pf-llm-url").value = "";
     el("pf-llm-model").value = "";
     el("pf-llm-key").value = "";
-    if (el("pf-tts-engine")) el("pf-tts-engine").value = "";
+    if (el("pf-tts-profile")) el("pf-tts-profile").value = "";
     el("pf-delete-btn").classList.add("hidden");
     el("pf-mem-enabled").checked = true;
     el("pf-mem-mode").value = "all";
@@ -59,7 +75,7 @@ export function openProfilePanel(mode, name) {
     el("pf-llm-url").value = p.llm?.base_url || "";
     el("pf-llm-model").value = p.llm?.model || "";
     el("pf-llm-key").value = "";
-    if (el("pf-tts-engine")) el("pf-tts-engine").value = p.tts?.engine || "";
+    if (el("pf-tts-profile")) el("pf-tts-profile").value = p.tts?.profile_name || "";
     el("pf-delete-btn").classList.remove("hidden");
     selectedMcpServers = p.mcp_servers || [];
     el("pf-mem-enabled").checked = p.memory?.enabled ?? true;
@@ -69,7 +85,6 @@ export function openProfilePanel(mode, name) {
 
   el("pf-status").textContent = "";
   panel.classList.remove("hidden");
-  pfUpdateTtsVoice();
   renderProfileMcpList(selectedMcpServers);
 }
 
@@ -77,13 +92,6 @@ export function closeProfilePanel() {
   profileEditMode = null;
   const panel = el("profile-panel");
   if (panel) panel.classList.add("hidden");
-}
-
-export function pfUpdateTtsVoice() {
-  const eng = el("pf-tts-engine");
-  const wrap = el("pf-tts-voice-wrap");
-  if (!eng || !wrap) return;
-  wrap.classList.toggle("hidden", eng.value !== "vieneu");
 }
 
 export function renderProfileMcpList(selectedServers) {
@@ -128,8 +136,7 @@ export async function saveProfile() {
     },
     system_prompt: el("pf-system-prompt").value,
     tts: {
-      engine: el("pf-tts-engine")?.value || "",
-      voice: el("pf-tts-voice")?.value || "",
+      profile_name: el("pf-tts-profile")?.value || "",
     },
     mcp_servers: selectedMcpServers,
     memory: {
@@ -278,7 +285,6 @@ if (el("profile-close-btn")) el("profile-close-btn").addEventListener("click", c
 if (el("pf-cancel-btn")) el("pf-cancel-btn").addEventListener("click", closeProfilePanel);
 if (el("pf-save-btn")) el("pf-save-btn").addEventListener("click", saveProfile);
 if (el("pf-delete-btn")) el("pf-delete-btn").addEventListener("click", deleteProfile);
-if (el("pf-tts-engine")) el("pf-tts-engine").addEventListener("change", pfUpdateTtsVoice);
 if (el("profile-select")) {
   el("profile-select").addEventListener("change", () => {
     setCurrentSessionId(null);
