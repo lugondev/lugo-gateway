@@ -20,6 +20,7 @@ from app.services.livehost.registry import LivehostSession, livehost_registry
 from app.services.livehost.scheduler import EventScheduler
 from app.services.profiles.store import profile_store
 from app.services.stt.service import stt_service
+from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
 from app.services.warmup import is_ready, warm_providers
@@ -84,12 +85,23 @@ async def livehost_stream(websocket: WebSocket) -> None:
 
     stt_engine = q.get("stt_engine") or settings.conversation_stt_engine or settings.default_stt_engine
     language = q.get("language") or settings.conversation_language or None
-    if profile and profile.tts.engine:
-        tts_engine = profile.tts.engine
-        voice = profile.tts.voice or q.get("voice") or None
+    # TTS profile resolution: ?tts_profile= (explicit pin) > the active LLM
+    # profile's linked TTS profile > legacy tts_engine/voice query params.
+    tts_profile_name = q.get("tts_profile") or (profile.tts.profile_name if profile else "") or None
+    tts_profile = tts_profile_store.get(tts_profile_name) if tts_profile_name else None
+    if tts_profile and tts_profile.engine:
+        tts_engine = tts_profile.engine
+        voice = tts_profile.voice or q.get("voice") or None
+        ref_audio_path = tts_profile.ref_audio_path or None
+        ref_text = tts_profile.ref_text or None
+        tts_instruct = tts_profile.instruct or None
+        tts_speed = tts_profile.speed
+        tts_language = tts_profile.language
     else:
         tts_engine = q.get("tts_engine") or settings.conversation_tts_engine or settings.default_tts_engine
         voice = q.get("voice") or None
+        ref_audio_path = ref_text = tts_instruct = None
+        tts_speed = tts_language = None
     sample_rate = int(q.get("sample_rate", settings.stt_stream_sample_rate))
     audio_codec = (q.get("audio_codec") or "pcm16").lower()
     out_modalities = {m.strip() for m in (q.get("output") or "audio,text").lower().split(",") if m.strip()}
@@ -225,7 +237,13 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 return parts
 
             async def _synth(sentence: str):
-                result = await tts_provider.synthesize(TTSRequest(text=sentence, engine=tts_engine, voice=voice))
+                result = await tts_provider.synthesize(
+                    TTSRequest(
+                        text=sentence, engine=tts_engine, voice=voice,
+                        ref_audio_path=ref_audio_path, ref_text=ref_text,
+                        instruct=tts_instruct, speed=tts_speed, language=tts_language,
+                    )
+                )
                 if opus_encoder is not None:
                     path = result.audio_url.lstrip("/")
                     pcm = await asyncio.to_thread(wav_file_to_pcm16, path, output_sample_rate)
