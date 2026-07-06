@@ -12,6 +12,16 @@ def _hermetic(monkeypatch):
     monkeypatch.setattr(settings, "conversation_llm_base_url", "")
     monkeypatch.setattr(settings, "omnivoice_use_server", False)
 
+    # warmup._ready_ids tracks readiness by id(provider), which is safe in
+    # production (providers are long-lived process-wide singletons) but not
+    # across a test run: many tests register short-lived stub provider
+    # instances, and CPython can reuse a freed object's id() for a later one,
+    # making an unrelated test's provider spuriously read back as "ready".
+    # Reset it per test so no test starts with another test's stale ids.
+    from app.services import warmup as warmup_module
+
+    monkeypatch.setattr(warmup_module, "_ready_ids", set())
+
 
 @pytest.fixture(autouse=True)
 def _tmp_db(tmp_path):
