@@ -31,6 +31,7 @@ from app.services.mcp.server_store import mcp_server_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
 from app.services.profiles.store import profile_store
+from app.services.tts.profile_store import tts_profile_store
 from app.services.stt.profile import resolve_stt_profile
 from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.stt.routing import select_stt_engine
@@ -236,12 +237,23 @@ async def conversation_stream(websocket: WebSocket) -> None:
     else:
         stt_engine = q.get("stt_engine") or settings.conversation_stt_engine or settings.default_stt_engine
         language = q.get("language") or settings.conversation_language or None
-    if profile and profile.tts.engine:
-        tts_engine = profile.tts.engine
-        voice = profile.tts.voice or q.get("voice") or None
+    # TTS profile resolution: ?tts_profile= (explicit pin) > the active LLM
+    # profile's linked TTS profile > legacy tts_engine/voice query params.
+    tts_profile_name = q.get("tts_profile") or (profile.tts.profile_name if profile else "") or None
+    tts_profile = tts_profile_store.get(tts_profile_name) if tts_profile_name else None
+    if tts_profile and tts_profile.engine:
+        tts_engine = tts_profile.engine
+        voice = tts_profile.voice or q.get("voice") or None
+        ref_audio_path = tts_profile.ref_audio_path or None
+        ref_text = tts_profile.ref_text or None
+        tts_instruct = tts_profile.instruct or None
+        tts_speed = tts_profile.speed
+        tts_language = tts_profile.language
     else:
         tts_engine = q.get("tts_engine") or settings.conversation_tts_engine or settings.default_tts_engine
         voice = q.get("voice") or None
+        ref_audio_path = ref_text = tts_instruct = None
+        tts_speed = tts_language = None
     sample_rate = int(q.get("sample_rate", settings.stt_stream_sample_rate))
     # Audio transport: pcm16 (default) or opus (embedded ESP32/RPi + browser WebCodecs;
     # ~10x less bandwidth). Server decodes Opus packets -> PCM16 for the endpointer.
@@ -464,7 +476,11 @@ async def conversation_stream(websocket: WebSocket) -> None:
 
             async def _synth(sentence: str):
                 result = await tts_provider.synthesize(
-                    TTSRequest(text=sentence, engine=tts_engine, voice=voice)
+                    TTSRequest(
+                        text=sentence, engine=tts_engine, voice=voice,
+                        ref_audio_path=ref_audio_path, ref_text=ref_text,
+                        instruct=tts_instruct, speed=tts_speed, language=tts_language,
+                    )
                 )
                 if opus_encoder is not None:
                     # Decode the TTS wav -> PCM16 @ output_sr -> Opus packets (off-loop).
