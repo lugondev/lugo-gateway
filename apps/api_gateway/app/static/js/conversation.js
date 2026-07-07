@@ -131,32 +131,29 @@ export function convResetOpus() {
   conv.opusTs = 0;
 }
 
-export const convDetails = { stt: {}, tts: {}, llm: "" };
+export const convDetails = { stt: {}, llm: "" };
 
 export function updateConvEnginesInfo() {
   const info = el("conv-engines-info");
   if (!info) return;
   const sttEng = el("conv-stt-engine")?.value || "";
-  const ttsEng = el("conv-tts-engine")?.value || "";
   // Strip the " · cached" status suffix so the model name reads clearly.
   const clean = (d) => (d || "").split(" · ")[0];
   const sttDet = clean(convDetails.stt[sttEng]);
-  const ttsDet = clean(convDetails.tts[ttsEng]);
+  const ttsProfileName = el("conv-tts-profile")?.value || "";
   const llmPart = convDetails.llm ? `LLM: ${convDetails.llm}` : "LLM: echo (no LLM configured)";
   const sttPart = `STT: ${sttEng}${sttDet ? ` → ${sttDet}` : ""}`;
-  const ttsPart = `TTS: ${ttsEng}${ttsDet ? ` → ${ttsDet}` : ""}`;
+  const ttsPart = `TTS: ${ttsProfileName || "server default"}`;
   info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
 }
 
 export async function loadConversationEngines() {
   try {
-    const [stt, tts, models] = await Promise.all([
+    const [stt, models] = await Promise.all([
       (await fetch("/v1/stt/engines")).json(),
-      (await fetch("/v1/tts/engines")).json(),
       (await fetch("/v1/models")).json().catch(() => null),
     ]);
     stt.data.forEach((e) => (convDetails.stt[e.engine] = e.detail));
-    tts.data.forEach((e) => (convDetails.tts[e.engine] = e.detail));
     convDetails.llm = models?.data?.llm?.active || "";
     const fill = (id, items, label) => {
       const sel = el(id);
@@ -170,46 +167,19 @@ export async function loadConversationEngines() {
       });
     };
     fill("conv-stt-engine", stt.data.filter((e) => e.available), (e) => `${e.engine}`);
-    fill("conv-tts-engine", tts.data.filter((e) => e.available), (e) => `${e.engine}`);
-    // Prefer the fast Apple-GPU engine when available, else whisper; VieNeu for TTS.
+    // Prefer the fast Apple-GPU engine when available, else whisper.
     const sttSel = el("conv-stt-engine");
     const sttPref = ["whisper_mlx", "whisper"].find((v) => [...(sttSel?.options || [])].some((o) => o.value === v));
     if (sttSel && sttPref) sttSel.value = sttPref;
-    const ttsSel = el("conv-tts-engine");
-    if (ttsSel && [...ttsSel.options].some((o) => o.value === "vieneu")) ttsSel.value = "vieneu";
     restoreAndBind("conv-stt-engine");
-    restoreAndBind("conv-tts-engine");
     restoreAndBind("conv-language");
     restoreAndBind("conv-opus");
-    el("conv-tts-engine").addEventListener("change", convVoiceToggle);
+    restoreAndBind("conv-tts-profile");
     el("conv-stt-engine").addEventListener("change", updateConvEnginesInfo);
-    el("conv-tts-engine").addEventListener("change", updateConvEnginesInfo);
-    convVoiceToggle();
+    el("conv-tts-profile")?.addEventListener("change", updateConvEnginesInfo);
     updateConvEnginesInfo();
   } catch (error) {
     convLog(`engines error: ${error}`);
-  }
-}
-
-export function convVoiceToggle() {
-  const isVieneu = el("conv-tts-engine").value === "vieneu";
-  el("conv-voice-wrap").classList.toggle("hidden", !isVieneu);
-  if (isVieneu && !el("conv-voice").dataset.loaded) {
-    fetch("/v1/tts/voices?engine=vieneu")
-      .then((r) => r.json())
-      .then((b) => {
-        const sel = el("conv-voice");
-        sel.innerHTML = '<option value="">(auto)</option>';
-        b.data.forEach((v) => {
-          const opt = document.createElement("option");
-          opt.value = v.voice;
-          opt.textContent = v.label;
-          sel.appendChild(opt);
-        });
-        sel.dataset.loaded = "1";
-        restoreAndBind("conv-voice");
-      })
-      .catch(() => {});
   }
 }
 
@@ -250,11 +220,12 @@ export async function startConversation() {
   }
 
   let params = `stt_engine=${encodeURIComponent(el("conv-stt-engine").value)}`;
-  params += `&tts_engine=${encodeURIComponent(el("conv-tts-engine").value)}&sample_rate=${STREAM_SAMPLE_RATE}`;
+  params += `&sample_rate=${STREAM_SAMPLE_RATE}`;
   const activeProfile = el("profile-select")?.value;
   if (activeProfile) params += `&profile=${encodeURIComponent(activeProfile)}`;
+  const ttsProfile = el("conv-tts-profile")?.value;
+  if (ttsProfile) params += `&tts_profile=${encodeURIComponent(ttsProfile)}`;
   if (currentSessionId) params += `&session_id=${encodeURIComponent(currentSessionId)}`;
-  if (el("conv-voice").value) params += `&voice=${encodeURIComponent(el("conv-voice").value)}`;
   if (el("conv-language").value.trim()) params += `&language=${encodeURIComponent(el("conv-language").value.trim())}`;
   const cpp = getPreproc();
   params += `&denoise=${cpp.denoise}&vad=${cpp.vad}&vad_backend=${encodeURIComponent(cpp.backend)}`;

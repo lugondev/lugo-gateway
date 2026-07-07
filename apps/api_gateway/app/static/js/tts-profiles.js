@@ -1,4 +1,4 @@
-import { el, print } from "./helpers.js";
+import { el, print, restoreAndBind } from "./helpers.js";
 import { renderProfileTtsSelect } from "./profiles.js";
 
 export let ttsProfileData = {};
@@ -10,9 +10,25 @@ export async function loadTtsProfiles() {
     ttsProfileData = body.data || {};
     renderTtsProfileList();
     renderProfileTtsSelect();
+    renderConvTtsProfileSelect();
   } catch {
     /* ignore */
   }
+}
+
+export function renderConvTtsProfileSelect() {
+  const sel = el("conv-tts-profile");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">(server default)</option>';
+  Object.keys(ttsProfileData).sort().forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  });
+  if (ttsProfileData[prev]) sel.value = prev;
+  restoreAndBind("conv-tts-profile");
 }
 
 export function renderTtsProfileList() {
