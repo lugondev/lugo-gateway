@@ -1,4 +1,4 @@
-import { el, print } from "./helpers.js";
+import { el, print, restoreAndBind } from "./helpers.js";
 import { mcpServerData } from "./mcp-servers.js";
 import { ttsProfileData } from "./tts-profiles.js";
 import { setCurrentSessionId } from "./chat.js";
@@ -11,6 +11,7 @@ export async function loadProfiles() {
     const body = await (await fetch("/v1/profiles")).json();
     profileData = body.data || {};
     renderProfileSelect();
+    renderLivehostProfileSelect();
   } catch {
     /* ignore */
   }
@@ -28,6 +29,21 @@ export function renderProfileSelect() {
     sel.appendChild(opt);
   });
   if (profileData[prev]) sel.value = prev;
+}
+
+export function renderLivehostProfileSelect() {
+  const sel = el("lh-profile");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">(none — server defaults)</option>';
+  Object.keys(profileData).sort().forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  });
+  if (profileData[prev]) sel.value = prev;
+  restoreAndBind("lh-profile");
 }
 
 export function renderProfileTtsSelect() {

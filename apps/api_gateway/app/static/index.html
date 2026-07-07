@@ -312,6 +312,20 @@
               <p class="hint">AI co-host for TikTok Live: answers viewer comments/gifts by voice and handles your own spoken input, same as Voice&#8594;Voice chat.</p>
 
               <div class="row">
+                <label class="check">
+                  <input type="radio" name="lh-mode" id="lh-mode-cohost" value="cohost" checked /> Co-host (with your mic)
+                </label>
+                <label class="check">
+                  <input type="radio" name="lh-mode" id="lh-mode-solo" value="solo" /> Solo host (chat only, no mic)
+                </label>
+              </div>
+              <div class="row">
+                <label>
+                  LLM Profile
+                  <select id="lh-profile">
+                    <option value="">(none — server defaults)</option>
+                  </select>
+                </label>
                 <label>
                   STT engine
                   <select id="lh-stt-engine"></select>

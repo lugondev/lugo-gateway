@@ -243,9 +243,13 @@ export async function startLhSession() {
     return;
   }
 
+  const soloMode = !!el("lh-mode-solo")?.checked;
+
   lh.sessionId = crypto.randomUUID();
   let params = `stt_engine=${encodeURIComponent(sttEngine)}&session_id=${encodeURIComponent(lh.sessionId)}`;
   params += `&sample_rate=${STREAM_SAMPLE_RATE}`;
+  const profile = el("lh-profile")?.value;
+  if (profile) params += `&profile=${encodeURIComponent(profile)}`;
   const ttsProfile = el("lh-tts-profile")?.value;
   if (ttsProfile) params += `&tts_profile=${encodeURIComponent(ttsProfile)}`;
   if (el("lh-language").value.trim()) params += `&language=${encodeURIComponent(el("lh-language").value.trim())}`;
@@ -262,19 +266,24 @@ export async function startLhSession() {
   }
   lhResetOpus();
 
-  let capture;
-  try {
-    capture = createMicCapture({
-      onframe: (pcm) => {
-        if (!lh.ws || lh.ws.readyState !== WebSocket.OPEN) return;
-        if (lhIsSpeaking()) return;
-        lh.ws.send(pcm.buffer);
-      },
-    });
-  } catch (error) {
-    setLhStatus("mic error", "status-error");
-    setLhSessionUI("idle");
-    return;
+  // Solo host: no streamer mic at all — the co-host runs purely off TikTok
+  // chat/gifts (the backend's social-turn poll already fires freely whenever
+  // no voice turn is active, so simply never sending audio is sufficient).
+  let capture = null;
+  if (!soloMode) {
+    try {
+      capture = createMicCapture({
+        onframe: (pcm) => {
+          if (!lh.ws || lh.ws.readyState !== WebSocket.OPEN) return;
+          if (lhIsSpeaking()) return;
+          lh.ws.send(pcm.buffer);
+        },
+      });
+    } catch (error) {
+      setLhStatus("mic error", "status-error");
+      setLhSessionUI("idle");
+      return;
+    }
   }
 
   const ws = new WebSocket(wsUrl(`/v1/livehost/stream?${params}`));
@@ -282,6 +291,11 @@ export async function startLhSession() {
   if (lh.opusMode) ws.binaryType = "arraybuffer";
 
   ws.onopen = async () => {
+    if (soloMode) {
+      setLhStatus("● solo host (chat only)", "status-rec");
+      setLhSessionUI("recording");
+      return;
+    }
     try {
       await capture.start();
       lh.capture = capture;
