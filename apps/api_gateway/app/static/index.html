@@ -41,6 +41,12 @@
               </button>
             </li>
             <li>
+              <button class="nav-item" data-section="livehost">
+                <span class="nav-icon">◎</span>
+                <span class="nav-label">Livehost</span>
+              </button>
+            </li>
+            <li>
               <button class="nav-item" data-section="stt">
                 <span class="nav-icon">◉</span>
                 <span class="nav-label">STT</span>
@@ -294,6 +300,60 @@
                 <audio id="t2v-audio" class="player hidden" controls></audio>
                 <p id="t2v-meta" class="meta"></p>
               </div>
+            </section>
+          </div>
+
+          <!-- ============================== LIVEHOST ============================== -->
+          <div class="section" id="section-livehost">
+            <section class="card">
+              <div class="card-head">
+                <h2>TikTok Co-host</h2>
+              </div>
+              <p class="hint">AI co-host for TikTok Live: answers viewer comments/gifts by voice and handles your own spoken input, same as Voice&#8594;Voice chat.</p>
+
+              <div class="row">
+                <label>
+                  STT engine
+                  <select id="lh-stt-engine"></select>
+                </label>
+                <label>
+                  TTS Profile
+                  <select id="lh-tts-profile">
+                    <option value="">(server default)</option>
+                  </select>
+                </label>
+              </div>
+              <div class="row">
+                <label>
+                  Language (STT hint)
+                  <input id="lh-language" type="text" value="vi" placeholder="vi, en, ja&#8230; (vi recommended)" />
+                </label>
+                <label class="check" title="Receive reply audio as streamed Opus frames decoded in-browser instead of fetching WAV files.">
+                  <input type="checkbox" id="lh-opus" /> Opus downlink (low bandwidth)
+                </label>
+              </div>
+              <div class="actions">
+                <button id="lh-session-start">Start Session</button>
+                <button id="lh-session-stop" class="ghost" disabled>Stop Session</button>
+                <span id="lh-status" class="status-idle">idle</span>
+              </div>
+
+              <div class="row" style="margin-top:1rem">
+                <label>
+                  TikTok username
+                  <input id="lh-tiktok-username" type="text" placeholder="unique_id (e.g. therock)" disabled />
+                </label>
+                <div class="actions end">
+                  <button id="lh-tiktok-connect" disabled>Connect</button>
+                  <button id="lh-tiktok-disconnect" class="ghost" disabled>Disconnect</button>
+                </div>
+              </div>
+              <p class="hint">TikTok: <span id="lh-tiktok-status" class="status-idle">idle</span></p>
+              <p id="lh-tiktok-error" class="meta error hidden"></p>
+
+              <div id="lh-dialogue" class="dialogue"></div>
+              <audio id="lh-audio" class="player hidden" controls></audio>
+              <pre id="lh-log" class="output small"></pre>
             </section>
           </div>
 

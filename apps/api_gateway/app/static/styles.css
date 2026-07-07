@@ -766,6 +766,15 @@ input[type="radio"] {
   color: var(--text);
   border-bottom-left-radius: 3px;
 }
+.bubble.social {
+  align-self: center;
+  max-width: 95%;
+  background: transparent;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 10px;
+}
 
 .player {
   width: 100%;
