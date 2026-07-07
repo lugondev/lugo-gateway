@@ -150,7 +150,7 @@ class Settings(BaseSettings):
     # barge-in responsiveness); the component itself is tested and ready.
     conversation_streaming_stt: bool = False
     conversation_streaming_chunk_ms: int = 1000
-    conversation_tts_engine: str = "vieneu"  # in-process & warm (~0.4s); OmniVoice CLI reloads per call (~7s)
+    conversation_tts_engine: str = "omnivoice"  # sidecar server mode (omnivoice_use_server) keeps it warm/in-process
     # Extra TTS engine(s) to eagerly warm at boot, same reasoning as
     # extra_warmup_stt_engines above.
     extra_warmup_tts_engines: str = ""
