@@ -78,6 +78,7 @@ export function openProfilePanel(mode, name) {
     el("pf-llm-key").value = "";
     if (el("pf-stt-profile")) el("pf-stt-profile").value = "";
     if (el("pf-tts-profile")) el("pf-tts-profile").value = "";
+    if (el("pf-idle-timeout")) el("pf-idle-timeout").value = 30;
     el("pf-delete-btn").classList.add("hidden");
     el("pf-mem-enabled").checked = true;
     el("pf-mem-mode").value = "all";
@@ -94,6 +95,7 @@ export function openProfilePanel(mode, name) {
     el("pf-llm-key").value = "";
     if (el("pf-stt-profile")) el("pf-stt-profile").value = p.stt?.profile || "";
     if (el("pf-tts-profile")) el("pf-tts-profile").value = p.tts?.profile_name || "";
+    if (el("pf-idle-timeout")) el("pf-idle-timeout").value = p.session?.idle_timeout_s ?? 30;
     el("pf-delete-btn").classList.remove("hidden");
     selectedMcpServers = p.mcp_servers || [];
     el("pf-mem-enabled").checked = p.memory?.enabled ?? true;
@@ -158,6 +160,14 @@ export async function saveProfile() {
     },
     tts: {
       profile_name: el("pf-tts-profile")?.value || "",
+    },
+    session: {
+      // Include session so a UI save doesn't reset idle_timeout_s to the server
+      // default. Blank/invalid falls back to 30; 0 = never disconnect.
+      idle_timeout_s: (() => {
+        const v = parseInt(el("pf-idle-timeout")?.value, 10);
+        return Number.isNaN(v) ? 30 : Math.max(0, v);
+      })(),
     },
     mcp_servers: selectedMcpServers,
     memory: {
