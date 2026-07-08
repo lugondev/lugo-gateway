@@ -76,6 +76,7 @@ export function openProfilePanel(mode, name) {
     el("pf-llm-url").value = "";
     el("pf-llm-model").value = "";
     el("pf-llm-key").value = "";
+    if (el("pf-stt-profile")) el("pf-stt-profile").value = "";
     if (el("pf-tts-profile")) el("pf-tts-profile").value = "";
     el("pf-delete-btn").classList.add("hidden");
     el("pf-mem-enabled").checked = true;
@@ -91,6 +92,7 @@ export function openProfilePanel(mode, name) {
     el("pf-llm-url").value = p.llm?.base_url || "";
     el("pf-llm-model").value = p.llm?.model || "";
     el("pf-llm-key").value = "";
+    if (el("pf-stt-profile")) el("pf-stt-profile").value = p.stt?.profile || "";
     if (el("pf-tts-profile")) el("pf-tts-profile").value = p.tts?.profile_name || "";
     el("pf-delete-btn").classList.remove("hidden");
     selectedMcpServers = p.mcp_servers || [];
@@ -151,6 +153,9 @@ export async function saveProfile() {
       model: el("pf-llm-model").value.trim(),
     },
     system_prompt: el("pf-system-prompt").value,
+    stt: {
+      profile: el("pf-stt-profile")?.value || "",
+    },
     tts: {
       profile_name: el("pf-tts-profile")?.value || "",
     },

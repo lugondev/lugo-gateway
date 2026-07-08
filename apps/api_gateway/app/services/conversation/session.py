@@ -247,6 +247,7 @@ class ConversationSession:
             active_tools=active_tools,
             stt_engine=cfg.stt_engine,
             stt_detail=stt_detail,
+            language=cfg.language,
             tts_engine=cfg.tts_engine,
             tts_detail=tts_detail,
             responder=self.responder.name,

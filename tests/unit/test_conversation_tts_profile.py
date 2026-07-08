@@ -6,7 +6,7 @@ from app.core.settings import settings
 from app.main import app
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
-from app.services.profiles.models import Profile, TtsConfig
+from app.services.profiles.models import Profile, SttConfig, TtsConfig
 from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
@@ -124,6 +124,30 @@ def test_query_param_tts_profile_overrides_llm_profile(client, _hermetic):
     payload = stub_tts.calls[0]
     assert payload.ref_audio_path == "ref.wav"
     assert payload.ref_text == "pinned voice"
+
+
+def test_profile_only_connection_resolves_stt_from_profile(client, _hermetic):
+    # A device connecting with just ?profile=<name> (no stt_engine/tts query params)
+    # must resolve STT + TTS entirely from the profile — the whole point of the
+    # profile-driven device config.
+    stub_tts, profiles, tts_profiles = _hermetic
+    tts_profiles.upsert(TtsProfile(name="host-voice", engine="stub-conv-ttsp-tts", voice="v1"))
+    profiles.upsert(Profile(
+        name="device",
+        stt=SttConfig(engine="stub-conv-ttsp", language="vi"),
+        tts=TtsConfig(profile_name="host-voice"),
+    ))
+
+    url = "/v1/conversation/stream?profile=device&sample_rate=16000"
+    with client.websocket_connect(url) as ws:
+        ready = ws.receive_json()
+        assert ready["event"] == "session_started"
+        assert ready["stt_engine"] == "stub-conv-ttsp"
+        assert ready["language"] == "vi"
+        assert ready["tts_engine"] == "stub-conv-ttsp-tts"
+        _run_one_turn(ws)
+
+    assert stub_tts.calls, "TTS provider was never invoked"
 
 
 def test_no_tts_profile_falls_back_to_legacy_query_params(client, _hermetic):

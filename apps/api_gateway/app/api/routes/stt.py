@@ -89,13 +89,23 @@ async def list_stt_engines() -> dict:
 
 
 @router.post("/warm")
-async def warm_engine(engine: str) -> dict:
+async def warm_engine(engine: str | None = None, profile: str | None = None) -> dict:
     """Load a heavy STT model into memory ahead of use (e.g. Whisper large ~20s).
 
     Lets the UI preload before the first conversation turn so it isn't a cold wait.
+    Pass ?engine= to warm a specific engine, or ?profile= to warm whichever engine
+    that profile resolves to (so a device that only knows its profile can pre-warm
+    the right model, using the same resolution as the conversation stream). With
+    neither, the server-wide default engine is warmed.
     """
     import asyncio
 
+    from app.services.profiles.store import profile_store
+    from app.services.stt.profile import resolve_stt
+
+    if not engine:
+        prof = profile_store.get(profile) if profile else None
+        engine, _ = resolve_stt(prof)
     provider = stt_service.get_provider(engine)
     warm = getattr(provider, "warm", None)
     if callable(warm):

@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.services.mcp.models import McpServer
-from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, SessionConfig, TtsConfig
+from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, SessionConfig, SttConfig, TtsConfig
 from app.services.profiles.store import profile_store
 
 router = APIRouter(prefix="/v1/profiles", tags=["profiles"])
@@ -20,6 +20,7 @@ class ProfileRequest(BaseModel):
     nickname: str = ""
     llm: LlmConfig = LlmConfig()
     system_prompt: str = ""
+    stt: SttConfig = SttConfig()
     tts: TtsConfig = TtsConfig()
     mcp_servers: list[McpServer] = []
     memory: MemoryConfig = MemoryConfig()

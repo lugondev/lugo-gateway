@@ -26,7 +26,7 @@ from app.services.history.store import session_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
 from app.services.profiles.store import profile_store
-from app.services.stt.profile import resolve_stt_profile
+from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
@@ -177,16 +177,10 @@ async def conversation_stream(websocket: WebSocket) -> None:
             "message": f"profile '{profile_name}' not found, using defaults",
         })
 
-    # Language profile (vi|en|multi|en_vi) sets the engine + language default; an
-    # explicit stt_engine/language query param still wins over it.
-    stt_profile_res = resolve_stt_profile(q.get("profile") or settings.stt_profile)
-    if stt_profile_res:
-        prof_engine, prof_lang = stt_profile_res
-        stt_engine = q.get("stt_engine") or prof_engine
-        language = q.get("language") or prof_lang
-    else:
-        stt_engine = q.get("stt_engine") or settings.conversation_stt_engine or settings.default_stt_engine
-        language = q.get("language") or settings.conversation_language or None
+    # STT engine + language: explicit query param > the active profile's STT config
+    # > server default. Devices can connect with just ?profile=<name> and inherit
+    # the profile's STT, exactly as LLM/TTS already resolve. (See resolve_stt.)
+    stt_engine, language = resolve_stt(profile, q.get("stt_engine"), q.get("language"))
     # TTS profile resolution: ?tts_profile= (explicit pin) > the active LLM
     # profile's linked TTS profile > legacy tts_engine/voice query params.
     tts_profile_name = q.get("tts_profile") or (profile.tts.profile_name if profile else "") or None

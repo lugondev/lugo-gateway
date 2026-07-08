@@ -19,6 +19,7 @@ from app.services.livehost.orchestrator import LiveHostOrchestrator
 from app.services.livehost.registry import LivehostSession, livehost_registry
 from app.services.livehost.scheduler import EventScheduler
 from app.services.profiles.store import profile_store
+from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
@@ -83,8 +84,8 @@ async def livehost_stream(websocket: WebSocket) -> None:
     llm_model = (profile.llm.model or None) if (profile and profile.llm.model) else None
     system_prompt = (profile.system_prompt or None) if (profile and profile.system_prompt) else None
 
-    stt_engine = q.get("stt_engine") or settings.conversation_stt_engine or settings.default_stt_engine
-    language = q.get("language") or settings.conversation_language or None
+    # STT resolves from the profile (else server default), same as TTS/LLM above.
+    stt_engine, language = resolve_stt(profile, q.get("stt_engine"), q.get("language"))
     # TTS profile resolution: ?tts_profile= (explicit pin) > the active LLM
     # profile's linked TTS profile > legacy tts_engine/voice query params.
     tts_profile_name = q.get("tts_profile") or (profile.tts.profile_name if profile else "") or None

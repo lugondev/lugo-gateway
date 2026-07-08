@@ -15,6 +15,17 @@ class TtsConfig(BaseModel):
     profile_name: str = ""   # name of a TtsProfile (services/tts/profile_store.py); "" = server defaults
 
 
+class SttConfig(BaseModel):
+    # Language preset (services/stt/profile.py: vi|en|multi|en_vi) — sets engine +
+    # language together. "" = inherit the server-wide default (settings.stt_profile).
+    profile: str = ""
+    # Explicit overrides, for when the preset isn't enough. "" = derive from the
+    # preset / server default. engine is a registered STT engine name; language is
+    # a hint ("" = auto-detect via the preset).
+    engine: str = ""
+    language: str = ""
+
+
 class MemoryConfig(BaseModel):
     enabled: bool = True        # auto-extract memories after a session ends
     mode: str = "all"           # "all" | "semantic"
@@ -32,6 +43,7 @@ class Profile(BaseModel):
     nickname: str = ""
     llm: LlmConfig = LlmConfig()
     system_prompt: str = ""
+    stt: SttConfig = SttConfig()
     tts: TtsConfig = TtsConfig()
     mcp_servers: list[McpServer] = []
     memory: MemoryConfig = MemoryConfig()
