@@ -102,7 +102,18 @@ async def lifespan(app: FastAPI):
 
     if not settings.admin_password and settings.app_env != "dev":
         logger.warning("auth disabled: ADMIN_PASSWORD not set (app_env=%s)", settings.app_env)
-    asyncio.create_task(_warm_default_engines())
+    # Warm engines BEFORE the app starts serving so the very first device turn is
+    # instant instead of paying a cold model load (worse with connect-on-wake,
+    # where the session starts the moment the user wakes). Capped so a stuck/slow
+    # warm can't block startup forever (health checks); on timeout we serve cold.
+    if settings.warmup_on_startup:
+        try:
+            await asyncio.wait_for(_warm_default_engines(), timeout=settings.warmup_startup_timeout_s)
+        except TimeoutError:
+            logger.warning(
+                "boot warm-up exceeded %ss — serving anyway; the first turn may be cold",
+                settings.warmup_startup_timeout_s,
+            )
     yield
 
 

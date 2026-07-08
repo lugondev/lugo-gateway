@@ -11,6 +11,8 @@ def _hermetic(monkeypatch):
     """
     monkeypatch.setattr(settings, "conversation_llm_base_url", "")
     monkeypatch.setattr(settings, "omnivoice_use_server", False)
+    # Don't load real STT/TTS models when TestClient(app) runs the app lifespan.
+    monkeypatch.setattr(settings, "warmup_on_startup", False)
 
     # warmup._ready_ids tracks readiness by id(provider), which is safe in
     # production (providers are long-lived process-wide singletons) but not

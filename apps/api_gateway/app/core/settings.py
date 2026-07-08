@@ -148,6 +148,13 @@ class Settings(BaseSettings):
     # the default, so without listing it here its first-ever use each boot always
     # pays the full cold-load cost regardless of how early boot warm-up starts.
     extra_warmup_stt_engines: str = ""
+    # Boot warm-up is awaited before the app serves (so the first device turn isn't
+    # cold). Capped here so a slow/stuck model load can't block startup — and the
+    # health check — forever; on timeout the app serves and the first turn is cold.
+    warmup_startup_timeout_s: int = 180
+    # Await boot warm-up before serving. Tests turn this off so TestClient(app)
+    # doesn't load real models on every lifespan.
+    warmup_on_startup: bool = True
     # Fast-path routing: short utterances (<= max_ms) go to a low-latency engine,
     # longer/harder ones stay on the accurate default. Empty engine = disabled.
     conversation_fast_stt_engine: str = ""
