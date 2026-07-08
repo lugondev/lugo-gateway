@@ -103,3 +103,18 @@ def test_non_json_first_frame_errors():
         ws.send_text("not json")
         msg = ws.receive_json()
         assert msg["type"] == "error"
+
+
+def test_non_dict_json_first_frame_errors():
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_text("42")
+        msg = ws.receive_json()
+        assert msg["type"] == "error"
+
+
+def test_non_numeric_sample_rate_falls_back():
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "sample_rate": "fast"}})
+        msg = ws.receive_json()
+        assert msg["type"] == "welcome"

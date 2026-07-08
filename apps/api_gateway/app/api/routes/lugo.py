@@ -69,6 +69,10 @@ async def lugo_stream(websocket: WebSocket) -> None:
         await websocket.send_json({"type": "error", "message": "expected wakeup"})
         await websocket.close()
         return
+    if not isinstance(hello, dict):
+        await websocket.send_json({"type": "error", "message": "expected wakeup"})
+        await websocket.close()
+        return
     if hello.get("type") != "wakeup":
         await websocket.send_json({"type": "error", "message": "expected wakeup"})
         await websocket.close()
@@ -82,7 +86,10 @@ async def lugo_stream(websocket: WebSocket) -> None:
         return
 
     session_id = str(uuid.uuid4())
-    in_sr = int((hello.get("audio_params") or {}).get("sample_rate", settings.stt_stream_sample_rate))
+    try:
+        in_sr = int((hello.get("audio_params") or {}).get("sample_rate", settings.stt_stream_sample_rate))
+    except (TypeError, ValueError):
+        in_sr = settings.stt_stream_sample_rate
     out_sr = 24000
     cfg = SessionRuntimeConfig(
         session_id=session_id, profile_name=profile_name, stt_engine=stt_engine, language=language,
