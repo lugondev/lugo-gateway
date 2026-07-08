@@ -132,6 +132,11 @@ class Settings(BaseSettings):
     conversation_adaptive_full_ms: int = 3000
     conversation_min_speech_ms: int = 300    # ignore utterances shorter than this
     conversation_rms_threshold: float = 0.015  # speech vs silence (float RMS)
+    # Lead-in kept before speech is detected, prepended to the utterance so a soft
+    # word onset (unvoiced consonant, quiet start) isn't clipped. Raise if the
+    # start of speech is being cut off; the endpointer only holds this much
+    # pre-speech audio in its rolling buffer.
+    conversation_preroll_ms: int = 600
     conversation_max_utterance_ms: int = 30000
     conversation_stt_engine: str = "whisper"  # better than vosk for Vietnamese
     # Extra STT engine(s) to eagerly warm at boot alongside conversation_stt_engine

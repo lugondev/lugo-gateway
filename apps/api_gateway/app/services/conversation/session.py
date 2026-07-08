@@ -211,6 +211,7 @@ class ConversationSession:
             max_utterance_ms=settings.conversation_max_utterance_ms,
             min_silence_ms=settings.conversation_min_silence_ms,
             adaptive_full_ms=settings.conversation_adaptive_full_ms,
+            preroll_ms=settings.conversation_preroll_ms,
         )
         # Session persistence: resume seeds history from the DB; new sessions are recorded.
         self.history = []

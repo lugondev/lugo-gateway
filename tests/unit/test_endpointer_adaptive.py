@@ -47,3 +47,23 @@ def test_non_adaptive_by_default_uses_full_silence():
     assert ep.accept(_loud(5000))["event"] == "speech_start"
     assert ep.accept(_silence(400)) is None  # 400 < 500, no early cut despite long speech
     assert ep.accept(_silence(100))["event"] == "endpoint"  # 500
+
+
+def _captured_ms(preroll_ms: int) -> float:
+    """Total audio (ms) the endpointer hands to STT for one utterance, given a
+    pre-roll of `preroll_ms`. Feeds a long lead-in of near-silence (fills the
+    pre-roll buffer past any window) then a fixed loud utterance."""
+    ep = VadEndpointer(SR, silence_ms=300, min_speech_ms=100, preroll_ms=preroll_ms)
+    for _ in range(25):                             # 25 x 60ms = 1.5s of lead-in,
+        ep.accept(_silence(60))                     # fed as real-sized frames so the
+                                                    # rolling buffer trims to preroll_ms
+    assert ep.accept(_loud(500))["event"] == "speech_start"
+    end = ep.accept(_silence(400))                  # 400 >= 300 -> endpoint
+    assert end["event"] == "endpoint"
+    return len(end["audio"]) / 2 / SR * 1000        # int16 mono -> ms
+
+
+def test_larger_preroll_retains_more_onset():
+    # The onset a device loses is exactly what falls outside the pre-roll window,
+    # so a bigger pre-roll must keep proportionally more lead-in audio.
+    assert _captured_ms(600) - _captured_ms(300) >= 250

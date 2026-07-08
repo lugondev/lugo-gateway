@@ -151,6 +151,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
         max_utterance_ms=settings.conversation_max_utterance_ms,
         min_silence_ms=settings.conversation_min_silence_ms,
         adaptive_full_ms=settings.conversation_adaptive_full_ms,
+        preroll_ms=settings.conversation_preroll_ms,
     )
 
     history: list[dict] = []
