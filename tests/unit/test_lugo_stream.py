@@ -118,3 +118,15 @@ def test_non_numeric_sample_rate_falls_back():
                       "audio_params": {"format": "opus", "sample_rate": "fast"}})
         msg = ws.receive_json()
         assert msg["type"] == "welcome"
+
+
+def test_welcome_honors_requested_output_sample_rate():
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({
+            "type": "wakeup",
+            "profile": None,
+            "audio_params": {"sample_rate": 16000, "output_sample_rate": 16000},
+        })
+        welcome = ws.receive_json()
+        assert welcome["type"] == "welcome"
+        assert welcome["audio_params"]["sample_rate"] == 16000

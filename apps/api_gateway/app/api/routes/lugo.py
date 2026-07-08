@@ -94,7 +94,10 @@ async def lugo_stream(websocket: WebSocket) -> None:
         in_sr = int((hello.get("audio_params") or {}).get("sample_rate", settings.stt_stream_sample_rate))
     except (TypeError, ValueError):
         in_sr = settings.stt_stream_sample_rate
-    out_sr = 24000
+    try:
+        out_sr = int((hello.get("audio_params") or {}).get("output_sample_rate", 24000))
+    except (TypeError, ValueError):
+        out_sr = 24000
     cfg = SessionRuntimeConfig(
         session_id=session_id, profile_name=profile_name, stt_engine=stt_engine, language=language,
         tts_engine=tts["engine"], voice=tts["voice"], ref_audio_path=tts["ref_audio_path"],
