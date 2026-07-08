@@ -1,19 +1,12 @@
-import asyncio
 import json
 import logging
-import time
 import uuid
-from contextlib import aclosing
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from app.core.audio import pcm16_to_wav_bytes, preprocess_pcm16, wav_file_to_pcm16
 from app.core.errors import AppError
 from app.core.settings import settings
-from app.services.conversation.endpointer import VadEndpointer
-from app.services.conversation.tools.base import ToolContext, ToolRegistry
-from app.services.conversation.tools.local import LocalToolSource
 from app.services.conversation.responder import (
     build_responder,
     build_responder_ex,
@@ -21,62 +14,25 @@ from app.services.conversation.responder import (
     get_active_llm_base_url,
     get_active_llm_model,
     reset_active_llm_config,
-    resolve_system_prompt,
     set_active_llm_config,
 )
-from app.services.conversation.tools.mcp import McpToolSource
+from app.services.conversation.session import (
+    ConversationSession,
+    SessionRuntimeConfig,
+    _build_tool_registry,
+    _spawn_background,
+)
 from app.services.history.store import session_store
-from app.services.mcp.pool import mcp_pool
-from app.services.mcp.server_store import mcp_server_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
 from app.services.profiles.store import profile_store
-from app.services.tts.profile_store import tts_profile_store
 from app.services.stt.profile import resolve_stt_profile
-from app.services.stt.providers.whisper_provider import get_active_whisper_model
-from app.services.stt.routing import select_stt_engine
 from app.services.stt.service import stt_service
-from app.services.warmup import is_ready, warm_providers
-from app.schemas.tts import TTSRequest
+from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
-from app.services.tts.streaming import pacing_delays, prefetch_synthesis
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/conversation", tags=["conversation"])
-
-# Fire-and-forget background tasks (e.g. memory extraction) must be retained
-# somewhere or CPython may garbage-collect them mid-flight.
-_background_tasks: set[asyncio.Task] = set()
-
-
-async def _build_tool_registry(profile) -> ToolRegistry | None:
-    """Merge global + per-profile MCP servers (profile wins on name collision),
-    skip disabled entries, and fetch each enabled server's tools."""
-    global_servers = mcp_server_store.list()
-    profile_specific = {s.name: s for s in (profile.mcp_servers if profile else [])}
-    merged_servers = {**global_servers, **profile_specific}
-
-    tool_sources: list = []
-    if settings.conversation_tools_enabled:
-        tool_sources.append(LocalToolSource())
-    for srv in merged_servers.values():
-        if not srv.enabled:
-            continue
-        tools = await mcp_pool.get_tools(srv.url, headers=srv.headers)
-        if tools:
-            tool_sources.append(
-                McpToolSource(
-                    tools,
-                    invoker=lambda n, a, u=srv.url, h=srv.headers: mcp_pool.invoke(u, n, a, headers=h),
-                )
-            )
-    return ToolRegistry(tool_sources) if tool_sources else None
-
-
-def _spawn_background(coro) -> None:
-    task = asyncio.create_task(coro)
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
 
 
 def _truthy(value: str | None, default: bool) -> bool:
@@ -221,12 +177,6 @@ async def conversation_stream(websocket: WebSocket) -> None:
             "message": f"profile '{profile_name}' not found, using defaults",
         })
 
-    # LLM config: profile overrides global state / .env
-    llm_base_url = (profile.llm.base_url or None) if (profile and profile.llm.base_url) else None
-    llm_api_key = profile.llm.api_key if (profile and profile.llm.base_url) else None
-    llm_model = (profile.llm.model or None) if (profile and profile.llm.model) else None
-    system_prompt = (profile.system_prompt or None) if (profile and profile.system_prompt) else None
-
     # Language profile (vi|en|multi|en_vi) sets the engine + language default; an
     # explicit stt_engine/language query param still wins over it.
     stt_profile_res = resolve_stt_profile(q.get("profile") or settings.stt_profile)
@@ -274,381 +224,38 @@ async def conversation_stream(websocket: WebSocket) -> None:
     denoise = _truthy(q.get("denoise"), settings.stt_noise_reduce_enabled)
 
     try:
-        stt_provider = stt_service.get_provider(stt_engine)
-        tts_provider = tts_service.get_provider(tts_engine)
+        stt_service.get_provider(stt_engine)
+        tts_service.get_provider(tts_engine)
     except AppError as exc:
         await websocket.send_json({"event": "error", "message": str(exc)})
         await websocket.close()
         return
 
-    # Set up Opus decoding if the client negotiated it; fall back to PCM16 with a
-    # warning if the server lacks libopus (so the connection still works).
-    opus_decoder = None
-    if audio_codec == "opus":
-        from app.core.opus import OpusFrameDecoder, opus_available
-
-        if opus_available():
-            opus_decoder = OpusFrameDecoder(sample_rate=sample_rate, channels=1)
-        else:
-            audio_codec = "pcm16"
-            logger.warning("client requested opus but server has no libopus; using pcm16")
-
-    # Set up Opus encoding for pushed audio output (devices). Fall back to url.
-    opus_encoder = None
-    if want_audio and audio_out == "opus":
-        from app.core.opus import OpusFrameEncoder, opus_available
-
-        if opus_available():
-            opus_encoder = OpusFrameEncoder(sample_rate=output_sample_rate, channels=1)
-        else:
-            audio_out = "url"
-            logger.warning("client requested opus output but server has no libopus; using url")
-
-    responder = build_responder_ex(
-        base_url=llm_base_url,
-        api_key=llm_api_key,
-        model=llm_model,
-        system_prompt=system_prompt,
+    cfg = SessionRuntimeConfig(
+        session_id=session_id, profile_name=profile_name, stt_engine=stt_engine,
+        language=language, tts_engine=tts_engine, voice=voice,
+        ref_audio_path=ref_audio_path, ref_text=ref_text, tts_instruct=tts_instruct,
+        tts_speed=tts_speed, tts_language=tts_language, sample_rate=sample_rate,
+        output_sample_rate=output_sample_rate, audio_codec=audio_codec,
+        want_audio=want_audio, want_text=want_text, audio_out=audio_out,
+        denoise=denoise, resume_sid=requested_sid,
     )
 
-    tool_registry = await _build_tool_registry(profile)
-
-    # Detail strings so the UI can show exactly WHICH models are active this session.
-    if hasattr(stt_provider, "detail"):
-        stt_detail = stt_provider.detail()  # whisper_mlx / whisper_gemma expose this
-    elif stt_engine in {"whisper", "whisper_local"}:
-        stt_detail = get_active_whisper_model()
-    else:
-        stt_detail = stt_engine
-    tts_detail = tts_provider.detail() if hasattr(tts_provider, "detail") else tts_engine
-
-    llm_model = get_active_llm_model() if responder.name == "llm" else responder.name
-
-    endpointer = VadEndpointer(
-        sample_rate,
-        silence_ms=settings.conversation_silence_ms,
-        min_speech_ms=settings.conversation_min_speech_ms,
-        rms_threshold=settings.conversation_rms_threshold,
-        max_utterance_ms=settings.conversation_max_utterance_ms,
-        min_silence_ms=settings.conversation_min_silence_ms,
-        adaptive_full_ms=settings.conversation_adaptive_full_ms,
-    )
-    # Session persistence: resume seeds history from the DB; new sessions are recorded.
-    history: list[dict] = []
-    session_ready = True
-    try:
-        if requested_sid and await session_store.exists(requested_sid):
-            history = [
-                {"role": m["role"], "content": m["content"]}
-                for m in await session_store.get_messages(requested_sid)
-            ]
-        else:
-            await session_store.create(
-                session_id,
-                profile_id=profile_name or "",
-                meta={"stt_engine": stt_engine, "tts_engine": tts_engine},
-            )
-    except Exception as exc:  # noqa: BLE001 - session setup must not drop the connection
-        logger.warning("session setup failed for %s: %s", session_id, exc)
-        history = []
-        session_ready = False
-    turn = 0
-
-    active_tools = list(tool_registry._tools.keys()) if tool_registry else []
-    # Tell the client up front whether the models it's about to use are still
-    # loading, so it can show "warming up, please wait" instead of the user
-    # speaking into a cold pipeline and losing the start of their utterance.
-    stt_ready = is_ready(stt_provider)
-    tts_ready = is_ready(tts_provider)
-    await websocket.send_json(
-        {
-            "event": "session_started",
-            "session_id": session_id,
-            "profile": profile_name,
-            "active_tools": active_tools,
-            "stt_engine": stt_engine,
-            "stt_detail": stt_detail,
-            "tts_engine": tts_engine,
-            "tts_detail": tts_detail,
-            "responder": responder.name,
-            "llm_model": llm_model,
-            "sample_rate": sample_rate,
-            "audio_codec": audio_codec,
-            "output": sorted(out_modalities),
-            "audio_out": audio_out,
-            "output_sample_rate": output_sample_rate if want_audio and audio_out != "url" else None,
-            "stt_ready": stt_ready,
-            "tts_ready": tts_ready,
-        }
-    )
-
-    # Warm TTS (and STT if it supports it, e.g. MLX graph compile) in the background
-    # while the user speaks their first turn, so the first turn isn't delayed by a
-    # cold model load / compile. Usually a no-op by now: the gateway already warms
-    # the default engines eagerly at boot (see app.main.lifespan) — this covers
-    # non-default engines picked via query params.
-    async def _warm_and_notify() -> None:
-        await warm_providers(tts_provider, stt_provider)
-        if not (stt_ready and tts_ready):
-            try:
-                await websocket.send_json({"event": "engines_ready"})
-            except Exception:  # noqa: BLE001 - socket may already be closed/gone
-                pass
-
-    asyncio.create_task(_warm_and_notify())
-
-    async def send(event: str, **payload) -> None:
+    async def emit(event: str, **payload) -> None:
         await websocket.send_json({"event": event, **payload})
 
-    base_system_prompt = resolve_system_prompt(system_prompt)
+    async def emit_audio(packet: bytes) -> None:
+        await websocket.send_bytes(packet)
 
-    async def persist(role: str, content: str) -> None:
-        if not session_ready:
-            return
-        try:
-            await session_store.append_message(session_id, turn, role, content)
-        except Exception as exc:  # noqa: BLE001 - persistence must not kill the turn
-            logger.warning("history persist failed: %s", exc)
-
-    async def refresh_memory(query: str) -> None:
-        """Per-turn memory injection (mutates the responder's system prompt)."""
-        if not hasattr(responder, "system_prompt"):
-            return
-        try:
-            block = await memory_retriever.get_context(profile, query=query)
-            responder.system_prompt = inject_memories(base_system_prompt, block)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("memory retrieval failed: %s", exc)
-
-    async def _emit_command(cmd_payload: dict) -> None:
-        await websocket.send_json(cmd_payload)
-
-    tool_ctx = ToolContext(emit_command=_emit_command, language=language or None)
-
-    async def handle_turn(
-        audio_pcm: bytes | None = None, text_input: str | None = None, speech_ms: float = 0.0
-    ) -> None:
-        try:
-            await _run_turn(audio_pcm=audio_pcm, text_input=text_input, speech_ms=speech_ms)
-        except Exception as exc:  # noqa: BLE001 - keep the conversation alive
-            logger.exception("conversation turn failed")
-            await send("error", message=str(exc))
-            await send("turn_done", turn=turn)
-
-    async def _run_turn(
-        audio_pcm: bytes | None = None, text_input: str | None = None, speech_ms: float = 0.0
-    ) -> None:
-        nonlocal turn
-        turn += 1
-        turn_start = time.monotonic()
-        await send("processing", turn=turn)
-
-        # Stage timing so a slow/cold first turn is diagnosable from server logs alone
-        # (STT vs LLM+TTS-to-first-chunk vs total) instead of guessing whether the
-        # delay is server-side or network/device-side.
-        def _elapsed_ms() -> float:
-            return (time.monotonic() - turn_start) * 1000
-
-        first_chunk_logged = False
-
-        def _log_first_chunk() -> None:
-            nonlocal first_chunk_logged
-            if not first_chunk_logged:
-                first_chunk_logged = True
-                logger.info("turn %d: first response chunk at +%.0fms", turn, _elapsed_ms())
-
-        # Stream a sentence iterator through TTS. For audio output we synthesize up to
-        # `conversation_tts_lookahead` sentences AHEAD of sending (prefetch_synthesis),
-        # so the next sentence's audio is usually ready before the current finishes ->
-        # gapless playback. Text-only just emits sentences as the LLM streams them.
-        async def _stream_to_tts(sentence_aiter, responder_name: str) -> list[str]:
-            parts: list[str] = []
-
-            if not want_audio:
-                index = 0
-                async for sentence in sentence_aiter:
-                    _log_first_chunk()
-                    parts.append(sentence)
-                    if want_text:
-                        await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
-                    index += 1
-                return parts
-
-            async def _synth(sentence: str):
-                result = await tts_provider.synthesize(
-                    TTSRequest(
-                        text=sentence, engine=tts_engine, voice=voice,
-                        ref_audio_path=ref_audio_path, ref_text=ref_text,
-                        instruct=tts_instruct, speed=tts_speed, language=tts_language,
-                    )
-                )
-                if opus_encoder is not None:
-                    # Decode the TTS wav -> PCM16 @ output_sr -> Opus packets (off-loop).
-                    path = result.audio_url.lstrip("/")
-                    pcm = await asyncio.to_thread(wav_file_to_pcm16, path, output_sample_rate)
-                    packets = await asyncio.to_thread(opus_encoder.encode_pcm16, pcm)
-                    return result, packets
-                return result, None
-
-            async with aclosing(
-                prefetch_synthesis(
-                    sentence_aiter, _synth, lookahead=settings.conversation_tts_lookahead
-                )
-            ) as pipeline:
-                async for index, sentence, (result, packets) in pipeline:
-                    _log_first_chunk()
-                    parts.append(sentence)
-                    if want_text:
-                        await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
-                    if packets is not None:
-                        # Push Opus binary frames bracketed by audio_start/audio_end (devices).
-                        await send(
-                            "audio_start", turn=turn, chunk_index=index,
-                            text=sentence if want_text else None,
-                            codec="opus", sample_rate=output_sample_rate, frames=len(packets),
-                        )
-                        # Pace packets at real-time after an initial burst so the
-                        # device buffer isn't flooded on long replies (xiaozhi-style).
-                        if settings.conversation_opus_pace and packets:
-                            frame_s = opus_encoder.frame / opus_encoder.sample_rate
-                            delays = pacing_delays(
-                                len(packets), settings.conversation_opus_prebuffer_frames, frame_s
-                            )
-                        else:
-                            delays = [0.0] * len(packets)
-                        for delay, pkt in zip(delays, packets):
-                            if delay:
-                                await asyncio.sleep(delay)
-                            await websocket.send_bytes(pkt)
-                        await send("audio_end", turn=turn, chunk_index=index)
-                    else:
-                        await send(
-                            "audio_chunk", turn=turn, chunk_index=index, text=sentence,
-                            audio_url=result.audio_url, sample_rate=result.sample_rate,
-                        )
-            return parts
-
-        # Text input: skip STT, reply via the text responder (text→text / text→audio).
-        if text_input is not None:
-            user_text = (text_input or "").strip()
-            await send("user_transcript", turn=turn, text=user_text, engine="text")
-            if not user_text:
-                await send("turn_done", turn=turn, skipped="empty text")
-                return
-            history.append({"role": "user", "content": user_text})
-            await persist("user", user_text)
-            await refresh_memory(user_text)
-            parts = await _stream_to_tts(
-                responder.reply_stream(
-                    history,
-                    registry=tool_registry,
-                    ctx=tool_ctx,
-                    max_iters=settings.conversation_tool_max_iters,
-                ),
-                responder.name,
-            )
-            history.append({"role": "assistant", "content": " ".join(parts)})
-            await persist("assistant", " ".join(parts))
-            logger.info("turn %d: done at +%.0fms (text input)", turn, _elapsed_ms())
-            await send("turn_done", turn=turn)
-            return
-
-        # Audio input: build the wav for STT.
-        pcm = audio_pcm
-        if denoise:
-            pcm = preprocess_pcm16(
-                audio_pcm, sample_rate, denoise=True, vad=False,
-                amount=settings.stt_noise_reduce_amount,
-            )
-        wav = pcm16_to_wav_bytes(pcm, sample_rate=sample_rate)
-
-        # Fast-path routing: short commands can go to a lower-latency engine.
-        turn_provider = stt_provider
-        turn_engine = stt_engine
-        if speech_ms and settings.conversation_fast_stt_engine:
-            chosen = select_stt_engine(
-                speech_ms,
-                stt_engine,
-                settings.conversation_fast_stt_engine,
-                settings.conversation_fast_stt_max_ms,
-            )
-            if chosen != stt_engine:
-                try:
-                    turn_provider = stt_service.get_provider(chosen)
-                    turn_engine = chosen
-                except AppError:
-                    logger.info("fast STT engine %s unavailable; using %s", chosen, stt_engine)
-
-        try:
-            stt_result = await turn_provider.transcribe_bytes(wav, language)
-        except RuntimeError as exc:
-            await send("error", message=f"STT failed: {exc}")
-            return
-        logger.info("turn %d: stt (%s) done at +%.0fms", turn, turn_engine, _elapsed_ms())
-        user_text = (stt_result.text or "").strip()
-        await send("user_transcript", turn=turn, text=user_text, engine=turn_engine)
-        if not user_text:
-            await send("turn_done", turn=turn, skipped="empty transcript")
-            return
-
-        history.append({"role": "user", "content": user_text})
-        await persist("user", user_text)
-        await refresh_memory(user_text)
-        parts = await _stream_to_tts(
-            responder.reply_stream(
-                history,
-                registry=tool_registry,
-                ctx=tool_ctx,
-                max_iters=settings.conversation_tool_max_iters,
-            ),
-            responder.name,
-        )
-        history.append({"role": "assistant", "content": " ".join(parts)})
-        await persist("assistant", " ".join(parts))
-        logger.info("turn %d: done at +%.0fms", turn, _elapsed_ms())
-        await send("turn_done", turn=turn)
-
-    current_turn: asyncio.Task | None = None
-
-    async def abort_turn(reason: str) -> None:
-        nonlocal current_turn
-        if current_turn and not current_turn.done():
-            current_turn.cancel()
-            try:
-                await current_turn
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-            await send("aborted", reason=reason)
-        current_turn = None
-
+    session = ConversationSession(cfg, emit, emit_audio)
     try:
+        await session.start()
         while True:
             message = await websocket.receive()
             if message.get("type") == "websocket.disconnect":
                 break
-
             if message.get("bytes") is not None:
-                frame = message["bytes"]
-                if opus_decoder is not None:
-                    try:
-                        frame = opus_decoder.decode(frame)
-                    except Exception as exc:  # noqa: BLE001 - skip a bad packet, keep going
-                        logger.warning("opus decode failed: %s", exc)
-                        continue
-                event = endpointer.accept(frame)
-                if not event:
-                    continue
-                if event["event"] == "speech_start":
-                    # Barge-in: user starts talking -> cancel the assistant's turn.
-                    await abort_turn("barge-in")
-                    await send("speech_start")
-                elif event["event"] == "endpoint":
-                    await abort_turn("superseded")
-                    await send("speech_end", speech_ms=round(event["speech_ms"]))
-                    current_turn = asyncio.create_task(
-                        handle_turn(event["audio"], speech_ms=event["speech_ms"])
-                    )
-
+                await session.feed_audio(message["bytes"])
             if message.get("text") is not None:
                 try:
                     control = json.loads(message["text"])
@@ -656,38 +263,20 @@ async def conversation_stream(websocket: WebSocket) -> None:
                     control = {}
                 ctype = control.get("type")
                 if ctype == "text":
-                    # Text input turn (text→text / text→audio). Supersedes any current turn.
-                    await abort_turn("superseded")
-                    current_turn = asyncio.create_task(handle_turn(text_input=control.get("text") or ""))
+                    await session.feed_text(control.get("text") or "")
                 elif ctype == "abort":
-                    await abort_turn("user")
+                    await session.abort("user")
                 elif ctype == "reset":
-                    await abort_turn("reset")
-                    history.clear()
-                    endpointer.reset()
-                    await send("reset")
+                    await session.reset()
                 elif ctype in {"flush", "end"}:
-                    audio = endpointer.flush()
-                    if audio:
-                        await abort_turn("superseded")
-                        await send("speech_end", speech_ms=0)
-                        current_turn = asyncio.create_task(handle_turn(audio))
+                    await session.flush()
                     if ctype == "end":
-                        await abort_turn("end")
-                        await send("done")
+                        await emit("done")
                         break
     except WebSocketDisconnect:
         pass
     finally:
-        if current_turn and not current_turn.done():
-            current_turn.cancel()
-        if session_ready:
-            try:
-                await session_store.mark_ended(session_id)
-            except Exception as exc:  # noqa: BLE001 - teardown must not fail
-                logger.warning("mark_ended failed for %s: %s", session_id, exc)
-            if profile is not None:
-                _spawn_background(memory_extractor.extract_and_upsert(session_id, profile))
+        await session.close()
         try:
             await websocket.close()
         except RuntimeError:
