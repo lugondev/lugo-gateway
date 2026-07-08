@@ -8,8 +8,10 @@ core events are translated to the Lugo wire format and Opus audio packets are
 wrapped with the v3 binary frame header.
 """
 
+import asyncio
 import json
 import logging
+import time
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -22,6 +24,9 @@ from app.services.tts.profile_store import tts_profile_store
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/lugo", tags=["lugo"])
+
+# How often the idle watchdog wakes to check for inactivity (test-tunable).
+_IDLE_TICK_S = 1.0
 
 # neutral event -> lugo tts state
 _TTS_STATE = {"audio_start": "start", "audio_end": "stop", "response_text": "sentence_start"}
@@ -111,9 +116,37 @@ async def lugo_stream(websocket: WebSocket) -> None:
         "audio_params": {"sample_rate": out_sr}, "idle_timeout_s": idle,
     })
 
+    last_activity = time.monotonic()
+
+    async def _watchdog() -> None:
+        while True:
+            await asyncio.sleep(_IDLE_TICK_S)
+            if session.is_turn_active():
+                continue
+            if time.monotonic() - last_activity >= idle:
+                try:
+                    await websocket.send_json({"type": "goodbye", "reason": "idle_timeout"})
+                except RuntimeError:
+                    pass
+                return
+
+    # idle <= 0 means "never disconnect": skip scheduling the watchdog task
+    # entirely rather than having it return immediately, since a completed
+    # task would make `wd.done()` true on the very next loop check below and
+    # tear down the connection mid-turn.
+    wd = asyncio.create_task(_watchdog()) if idle > 0 else None
     try:
         while True:
-            message = await websocket.receive()
+            if wd is not None and wd.done():
+                break
+            recv = asyncio.create_task(websocket.receive())
+            waitables = {recv, wd} if wd is not None else {recv}
+            done, _pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED)
+            if wd is not None and wd in done:
+                recv.cancel()
+                break
+            message = recv.result()
+            last_activity = time.monotonic()
             if message.get("type") == "websocket.disconnect":
                 break
             if message.get("bytes") is not None:
@@ -134,6 +167,8 @@ async def lugo_stream(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        if wd is not None:
+            wd.cancel()
         await session.close()
         try:
             await websocket.close()

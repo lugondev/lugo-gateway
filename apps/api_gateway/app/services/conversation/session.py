@@ -138,6 +138,9 @@ class ConversationSession:
         self.turn = 0
         self.current_turn: asyncio.Task | None = None
 
+    def is_turn_active(self) -> bool:
+        return bool(self.current_turn and not self.current_turn.done())
+
     @property
     def output_sample_rate_effective(self) -> int | None:
         """The output sample rate advertised in session_started (None for url mode)."""
