@@ -21,6 +21,7 @@ from app.core.settings import settings
 from app.services.conversation.lugo_frame import LUGO_FRAME_OPUS, encode_frame
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
 from app.services.profiles.store import profile_store
+from app.services.stt.profile import resolve_stt
 from app.services.tts.profile_store import tts_profile_store
 
 logger = logging.getLogger(__name__)
@@ -36,8 +37,11 @@ _TTS_STATE = {"audio_start": "start", "audio_end": "stop", "response_text": "sen
 def _resolve(profile_name: str | None):
     """Resolve engines/tts params from a profile (server owns everything)."""
     profile = profile_store.get(profile_name) if profile_name else None
-    stt_engine = settings.conversation_stt_engine or settings.default_stt_engine
-    language = settings.conversation_language or None
+    # Resolve STT from the profile's SttConfig (engine/language or a language
+    # preset), falling back to server defaults — same single source of truth the
+    # conversation stream uses, so a device that sends only a profile id streams
+    # against that profile's STT. No query params on the Lugo wire.
+    stt_engine, language = resolve_stt(profile)
     tts_name = (profile.tts.profile_name if profile else "") or None
     tts_profile = tts_profile_store.get(tts_name) if tts_name else None
     if tts_profile and tts_profile.engine:
