@@ -23,6 +23,10 @@ class MemoryConfig(BaseModel):
     embed_model: str = ""       # semantic mode: OpenAI-compatible embedding model
 
 
+class SessionConfig(BaseModel):
+    idle_timeout_s: int = 30    # seconds of inactivity before the server disconnects; 0 = never
+
+
 class Profile(BaseModel):
     name: str
     nickname: str = ""
@@ -31,3 +35,4 @@ class Profile(BaseModel):
     tts: TtsConfig = TtsConfig()
     mcp_servers: list[McpServer] = []
     memory: MemoryConfig = MemoryConfig()
+    session: SessionConfig = SessionConfig()

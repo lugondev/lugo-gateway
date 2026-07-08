@@ -224,6 +224,88 @@ curl -X POST http://localhost:8000/v1/profiles \
 Then point the device at `?profile=kitchen` instead of setting `tts_engine`/LLM config
 per-request.
 
+### `WS /v1/lugo/stream`
+
+The **Lugo** device protocol — a connect-on-wake WebSocket for ESP32/RPi-class voice
+devices (and future agent/browser clients). Unlike `/v1/conversation/stream`
+(always-streaming, query-param config), a Lugo device stays disconnected while idle,
+opens the socket only on a wake trigger, identifies itself with a **profile name**
+instead of raw engine/voice choices, and the **server** owns the idle-disconnect
+timer.
+
+```
+ws://localhost:8000/v1/lugo/stream
+```
+
+**Lifecycle:** SLEEP (no WS, radio idle) → wake trigger (button / local command —
+on-device **wake word is Phase 2**) → open WS → client sends `wakeup` → server
+resolves the profile and replies `welcome` → LISTENING (streaming mic, server VAD
+endpoints the turn) ⇄ SPEAKING (server pushes `tts` + audio) → after
+`idle_timeout_s` of inactivity the **server** sends `goodbye` and closes the socket
+→ device returns to SLEEP.
+
+**Handshake** — the first frame must be a `wakeup` text frame:
+```json
+{"type": "wakeup", "profile": "kitchen", "audio_params": {"format": "opus", "sample_rate": 16000, "frame_duration": 60}}
+```
+The server resolves LLM / TTS / system prompt / MCP tools / memory from the named
+profile — the device never sends raw engine/voice choices (STT still comes from
+server defaults, not the profile; see "Profiles" above) — and replies:
+```json
+{"type": "welcome", "session_id": "…", "transport": "websocket", "audio_params": {"sample_rate": 24000}, "idle_timeout_s": 30}
+```
+`idle_timeout_s` echoes the profile's `session.idle_timeout_s` (default 30; `0` =
+never auto-disconnect), so the device arms its watchdog from server truth instead
+of a hardcoded value. If `profile` is set but unknown, the server replies
+`{"type":"error","message":"profile '<name>' not found"}` and closes the socket —
+a `wakeup` always resolves or fails loudly, never a silent fallback. Any other
+message, or a binary frame, as the first frame is also an `error` + close.
+
+**Binary framing (v3):** audio travels on WebSocket binary frames wrapped in a
+4-byte header — `struct { uint8 type; uint8 reserved; uint16 payload_size
+(big-endian); } + payload`. `type` 0 = Opus audio; `type` 1 = JSON is reserved for
+a future JSON-over-binary path (Phase 1 sends all JSON control on **text** frames
+only). Reply audio (server → client) is always v3-wrapped; Opus packets from the
+device on the way up are decoded directly and don't require the v3 header.
+
+Client → server:
+
+| `type` | payload | meaning |
+|--------|---------|---------|
+| `wakeup` | `{profile, audio_params:{format,sample_rate,frame_duration}}` | handshake (first frame only) |
+| `text` | `{text}` | text-input turn (no mic) |
+| `abort` | `{reason}` | **barge-in** — cancel the bot's in-flight turn; the connection stays open |
+| `listen` | `{state, mode}` | turn/listen control; Phase 1 no-op — server VAD drives turn segmentation in `auto` mode |
+| *(binary)* | Opus packets | mic audio up (v3 wrapping optional on uplink) |
+
+Server → client:
+
+| `type` | payload | when |
+|--------|---------|------|
+| `welcome` | `{session_id, transport, audio_params, idle_timeout_s}` | reply to a valid `wakeup` |
+| `stt` | `{text, final}` | transcription result for the turn |
+| `tts` | `{state:"start"\|"sentence_start"\|"stop", text?}` | brackets the reply; `sentence_start` carries the sentence text as it's synthesized |
+| `mcp` | `{...}` | tool/command output |
+| `error` | `{message}` | handshake failure or mid-session error |
+| `goodbye` | `{reason:"idle_timeout"}` | server-initiated idle disconnect; the socket closes right after |
+| *(binary)* | v3 `type=0` Opus packets | reply audio down |
+
+**Barge-in:** sending `abort` while the bot is speaking cancels the in-flight turn
+(stops the `tts`/audio stream) without dropping the connection — the device can
+immediately start a new turn (`text` or mic audio). `abort` with no active turn is
+a safe no-op.
+
+**Idle timeout:** the server tracks last activity (speech, a turn, or audio
+playing) and, once `idle_timeout_s` elapses with the connection otherwise idle,
+sends `goodbye{reason:"idle_timeout"}` and closes the WebSocket. Setting a
+profile's `session.idle_timeout_s` to `0` disables this (the connection is only
+closed by the client or a transport drop).
+
+**Not yet implemented (Phase 2):** on-device wake-word detection (the `wakeup`
+trigger is button/local-command only in Phase 1), a live `listen{detect}` mode,
+and remote-call (server-initiated wake over an always-on channel). The `listen`
+message and `wakeup` shape already reserve room for these.
+
 ---
 
 ## TTS — Text to Speech
