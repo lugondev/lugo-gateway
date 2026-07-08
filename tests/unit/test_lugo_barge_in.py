@@ -1,4 +1,5 @@
 # tests/unit/test_lugo_barge_in.py
+import json
 import pytest
 from fastapi.testclient import TestClient
 from app.core.audio import pcm16_to_wav_bytes
@@ -55,9 +56,21 @@ def test_abort_then_still_usable():
         # a subsequent text turn still works -> connection was not closed
         ws.send_json({"type": "text", "text": "hi"})
         seen_stt = False
-        for _ in range(6):
-            m = ws.receive_json()
+        seen_tts_stop = False
+        # Drain the turn to its terminal state before leaving the `with` block,
+        # mirroring test_lugo_stream.py's pattern: exiting early (right after
+        # the `stt` frame) leaves in-flight LLM/TTS/opus-encode work running,
+        # which hangs the TestClient's blocking portal on teardown.
+        for _ in range(20):
+            message = ws.receive()
+            if message.get("bytes") is not None:
+                # Binary downlink opus packets; not JSON, just skip them.
+                continue
+            m = json.loads(message["text"])
             if m["type"] == "stt":
                 seen_stt = True
+            if m["type"] == "tts" and m.get("state") == "stop":
+                seen_tts_stop = True
                 break
         assert seen_stt
+        assert seen_tts_stop
