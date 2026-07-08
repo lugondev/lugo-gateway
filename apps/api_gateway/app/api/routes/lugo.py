@@ -9,6 +9,7 @@ wrapped with the v3 binary frame header.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -117,13 +118,20 @@ async def lugo_stream(websocket: WebSocket) -> None:
     })
 
     last_activity = time.monotonic()
+    closing = False
 
     async def _watchdog() -> None:
+        nonlocal closing
         while True:
             await asyncio.sleep(_IDLE_TICK_S)
             if session.is_turn_active():
                 continue
             if time.monotonic() - last_activity >= idle:
+                # Commit to closing synchronously, before the await below, so
+                # the main loop cannot process/emit a message that raced in
+                # concurrently with this goodbye send (ASGI sends aren't
+                # mutually exclusive across concurrent awaits).
+                closing = True
                 try:
                     await websocket.send_json({"type": "goodbye", "reason": "idle_timeout"})
                 except RuntimeError:
@@ -142,8 +150,18 @@ async def lugo_stream(websocket: WebSocket) -> None:
             recv = asyncio.create_task(websocket.receive())
             waitables = {recv, wd} if wd is not None else {recv}
             done, _pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED)
+            if closing:
+                # Watchdog has already committed to (or sent) goodbye; do not
+                # process or emit on this connection even if `recv` also
+                # completed concurrently with the goodbye send.
+                recv.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await recv
+                break
             if wd is not None and wd in done:
                 recv.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await recv
                 break
             message = recv.result()
             last_activity = time.monotonic()
@@ -169,6 +187,8 @@ async def lugo_stream(websocket: WebSocket) -> None:
     finally:
         if wd is not None:
             wd.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await wd
         await session.close()
         try:
             await websocket.close()
