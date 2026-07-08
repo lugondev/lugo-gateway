@@ -156,8 +156,9 @@ class Settings(BaseSettings):
     extra_warmup_tts_engines: str = ""
     # How many reply sentences to synthesize ahead of sending (gapless playback). The
     # next sentence's audio is prepared while the current is being sent. 0/1 = no
-    # prefetch. Bounds memory/in-flight synth per turn.
-    conversation_tts_lookahead: int = 2
+    # prefetch. Bounds memory/in-flight synth per turn. 3 keeps the pipeline a sentence
+    # deeper so a slow synth on one chunk doesn't starve the device buffer between chunks.
+    conversation_tts_lookahead: int = 3
     # Opus push (audio_out=opus): pace outgoing packets at real-time after an initial
     # burst. DEFAULT OFF — clients with their own jitter buffer (the RPi client, browser
     # WebCodecs) play smoothest when the server sends frames as fast as possible and the
@@ -179,7 +180,13 @@ class Settings(BaseSettings):
         "in 2-4 short sentences suitable for being spoken aloud. "
         "Your reply is read aloud by text-to-speech, so write plain speakable prose only: "
         "do NOT use emojis, emoticons, kaomoji, or decorative/pictographic symbols, "
-        "and avoid markdown, bullet points, or code blocks."
+        "and avoid markdown, bullet points, or code blocks. "
+        # Keep each sentence whole so it synthesizes as one continuous utterance: the
+        # TTS pipeline splits on sentence-final punctuation, ellipses and line breaks,
+        # so these fragment the audio into choppy pieces.
+        "Write in complete, flowing sentences ending with a normal period. "
+        "Do NOT use ellipses (…) or trailing dots for dramatic pauses, and do NOT put "
+        "line breaks inside a thought or split dialogue across multiple lines."
     )
 
     whisper_service_base_url: str = ""

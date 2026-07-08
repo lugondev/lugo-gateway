@@ -70,11 +70,77 @@ def segment_text(text: str, max_chars: int = 200) -> list[str]:
     return chunks
 
 
-_SENTENCE_END = re.compile(r".*?[.!?…。！？\n]+", re.S)
 # Clause-level boundaries used ONLY for the first chunk of a reply, so TTS can start
 # on the opening clause instead of waiting for the first full stop (lower time-to-
 # first-audio). Borrowed from xiaozhi-server's expanded first-segment punctuation.
 _CLAUSE_BOUNDARY = re.compile(r"[.!?…。！？\n,;:，；：、]")
+
+_HARD_END = ".!?。！？"          # always sentence-final (given a following space / EOT)
+_CLOSERS = "\"'”’»)]}"          # closing quotes/brackets that attach to the punctuation
+_WS_RUN = re.compile(r"\s+")
+
+
+def _take_sentence(buf: str) -> tuple[str, str] | None:
+    """Return ``(sentence, rest)`` for the first complete sentence in ``buf``.
+
+    Returns ``None`` when the buffer holds no *confirmed* boundary yet — i.e. more
+    streamed text is needed. Boundary rules (tuned for spoken storytelling output):
+
+    - ``.!?。！？`` end a sentence, swallowing any trailing closing quotes/brackets,
+      but only once a following whitespace (or more text) confirms it — so a closing
+      ``"`` streamed after the ``?`` stays attached instead of becoming a lone chunk.
+      A period between digits (``3.14``) is not a boundary.
+    - ``…`` ends a sentence only when followed by whitespace + a capital (a real new
+      sentence); a lowercase continuation is a dramatic pause, not a full stop.
+    - A blank line (``\\n`` + optional spaces + ``\\n``) is a paragraph boundary; a
+      lone ``\\n`` is treated as a space (dialogue wrapped across lines).
+    """
+    i = 0
+    n = len(buf)
+    while i < n:
+        ch = buf[i]
+        if ch in _HARD_END:
+            j = i + 1
+            while j < n and buf[j] in _HARD_END:
+                j += 1
+            while j < n and buf[j] in _CLOSERS:
+                j += 1
+            if j >= n:
+                return None  # punctuation at buffer end — wait for a closer/space
+            if buf[j].isdigit() and ch == ".":
+                i = j  # decimal like "3.14", not a boundary
+                continue
+            return buf[:j], buf[j:]
+        if ch == "…":
+            j = i + 1
+            while j < n and buf[j] in _CLOSERS:
+                j += 1
+            k = j
+            while k < n and buf[k].isspace():
+                k += 1
+            if k >= n:
+                return None  # need to see what follows the ellipsis
+            if buf[k].isupper():
+                return buf[:j], buf[j:]
+            i = j  # mid-sentence pause
+            continue
+        if ch == "\n":
+            j = i + 1
+            while j < n and buf[j] in " \t":
+                j += 1
+            if j >= n:
+                return None  # trailing newline — could still become a blank line
+            if buf[j] == "\n":
+                return buf[:i], buf[j + 1 :]  # blank line = paragraph boundary
+            i = j  # lone newline: treat as whitespace, keep scanning
+            continue
+        i += 1
+    return None
+
+
+def _normalize(text: str) -> str:
+    """Collapse internal whitespace (incl. newlines) so TTS gets clean prose."""
+    return _WS_RUN.sub(" ", text).strip()
 
 
 class SentenceAggregator:
@@ -98,7 +164,7 @@ class SentenceAggregator:
         """Cut at the earliest clause boundary at/after the min length; else None."""
         for m in _CLAUSE_BOUNDARY.finditer(self._buf):
             if m.end() >= self.first_chunk_min_chars:
-                chunk = strip_emoji(self._buf[: m.end()].strip())
+                chunk = _normalize(strip_emoji(self._buf[: m.end()]))
                 self._buf = self._buf[m.end() :]
                 return chunk or None
         return None
@@ -113,16 +179,16 @@ class SentenceAggregator:
                 self._first_done = True
         if self._first_done:
             while True:
-                match = _SENTENCE_END.match(self._buf)
-                if not match:
+                res = _take_sentence(self._buf)
+                if res is None:
                     break
-                sentence = strip_emoji(match.group().strip())
-                self._buf = self._buf[match.end() :]
+                sentence, self._buf = res
+                sentence = _normalize(strip_emoji(sentence))
                 if sentence:
                     out.append(sentence)
         # Force-flush an overly long run with no punctuation.
         if len(self._buf) >= self.max_chars:
-            chunk = strip_emoji(self._buf.strip())
+            chunk = _normalize(strip_emoji(self._buf))
             self._buf = ""
             self._first_done = True
             if chunk:
@@ -130,7 +196,7 @@ class SentenceAggregator:
         return out
 
     def flush(self) -> list[str]:
-        rest = strip_emoji(self._buf.strip())
+        rest = _normalize(strip_emoji(self._buf))
         self._buf = ""
         self._first_done = True
         return [rest] if rest else []

@@ -84,3 +84,46 @@ def test_first_chunk_falls_back_to_sentence_end_when_no_clause_boundary():
     out = _stream(SentenceAggregator(first_chunk_min_chars=10), "Xin chào thế giới này. Tạm biệt.")
     assert out[0] == "Xin chào thế giới này."
     assert out[1] == "Tạm biệt."
+
+
+# --- Regression: over-splitting seen on ESP32 storytelling output ------------
+# Symptoms from a live log: dramatic mid-sentence "…" split the sentence, a lone
+# closing quote " was emitted as its own chunk, and every dialogue newline forced
+# a cut. Each tiny chunk becomes a separate TTS utterance -> choppy playback.
+
+
+def test_closing_quote_stays_with_its_sentence():
+    # Streaming: the '?' arrives before the closing quote, but the quote must NOT
+    # be emitted as a lone chunk — it belongs to the question it closes.
+    out = _stream(SentenceAggregator(first_chunk_min_chars=3), 'Nghe nè, Khách nói: "Ủa gì vậy?" xong rồi.')
+    assert out == ["Nghe nè,", 'Khách nói: "Ủa gì vậy?"', "xong rồi."]
+
+
+def test_ellipsis_midsentence_is_not_a_boundary():
+    # "…" followed by a lowercase continuation is a dramatic pause, not a full stop.
+    out = _stream(SentenceAggregator(first_chunk_min_chars=3), "Nghe nè, thấy cô dâu… đội mũ lạ hoắc.")
+    assert out == ["Nghe nè,", "thấy cô dâu… đội mũ lạ hoắc."]
+
+
+def test_ellipsis_before_capital_is_a_boundary():
+    # "…" followed by whitespace + a capital letter still ends the sentence.
+    out = _stream(SentenceAggregator(first_chunk_min_chars=3), "Nghe nè, thôi vậy… Chào bạn.")
+    assert out == ["Nghe nè,", "thôi vậy…", "Chào bạn."]
+
+
+def test_single_newline_is_not_a_boundary():
+    # Dialogue formatted across lines must not be chopped at every newline.
+    out = _stream(SentenceAggregator(first_chunk_min_chars=3), "Nghe nè, cô dâu nói:\nEm hứa rồi.")
+    assert out == ["Nghe nè,", "cô dâu nói: Em hứa rồi."]
+
+
+def test_blank_line_is_a_boundary():
+    # A paragraph break (blank line) IS a boundary even without terminal punctuation.
+    out = _stream(SentenceAggregator(first_chunk_min_chars=3), "Nghe nè, câu một\n\ncâu hai")
+    assert out == ["Nghe nè,", "câu một", "câu hai"]
+
+
+def test_decimal_number_is_not_split():
+    # A period between digits is not a sentence boundary.
+    out = _stream(SentenceAggregator(first_chunk_min_chars=3), "Giá là, 3.14 đô thôi.")
+    assert out == ["Giá là,", "3.14 đô thôi."]
