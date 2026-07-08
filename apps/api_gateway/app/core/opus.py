@@ -18,11 +18,42 @@ logger = logging.getLogger(__name__)
 _decoder_cls = None  # None = untried, False = unavailable, else opuslib.Decoder
 
 
+def _ensure_libopus_findable() -> None:
+    """opuslib locates libopus via ctypes.util.find_library('opus'). On macOS
+    that ignores Homebrew's /opt/homebrew/lib, and SIP strips the
+    DYLD_FALLBACK_LIBRARY_PATH the Makefile exports the moment a recipe runs
+    through the (SIP-protected) /bin/sh — so opus loaded fine from an
+    interactive shell yet vanished under `make start`. Preload the dylib by
+    absolute path and shim find_library so opuslib resolves it regardless of how
+    the gateway was launched."""
+    import ctypes.util
+
+    if ctypes.util.find_library("opus"):
+        return
+    import ctypes
+
+    for path in (
+        "/opt/homebrew/lib/libopus.dylib",  # macOS arm64 (Homebrew)
+        "/usr/local/lib/libopus.dylib",     # macOS x86_64 (Homebrew)
+        "libopus.so.0",                     # Linux
+    ):
+        try:
+            ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
+        except OSError:
+            continue
+        _orig = ctypes.util.find_library
+        ctypes.util.find_library = (
+            lambda name, _p=path, _o=_orig: _p if name in ("opus", "libopus") else _o(name)
+        )
+        return
+
+
 def _load():
     global _decoder_cls
     if _decoder_cls is not None:
         return _decoder_cls or None
     try:
+        _ensure_libopus_findable()
         import opuslib
 
         _decoder_cls = opuslib.Decoder
