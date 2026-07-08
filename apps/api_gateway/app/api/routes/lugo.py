@@ -30,10 +30,6 @@ router = APIRouter(prefix="/v1/lugo", tags=["lugo"])
 # How often the idle watchdog wakes to check for inactivity (test-tunable).
 _IDLE_TICK_S = 1.0
 
-# neutral event -> lugo tts state
-_TTS_STATE = {"audio_start": "start", "audio_end": "stop", "response_text": "sentence_start"}
-
-
 def _resolve(profile_name: str | None):
     """Resolve engines/tts params from a profile (server owns everything)."""
     profile = profile_store.get(profile_name) if profile_name else None
@@ -94,7 +90,10 @@ async def lugo_stream(websocket: WebSocket) -> None:
         in_sr = int((hello.get("audio_params") or {}).get("sample_rate", settings.stt_stream_sample_rate))
     except (TypeError, ValueError):
         in_sr = settings.stt_stream_sample_rate
-    out_sr = 24000
+    try:
+        out_sr = int((hello.get("audio_params") or {}).get("output_sample_rate", 24000))
+    except (TypeError, ValueError):
+        out_sr = 24000
     cfg = SessionRuntimeConfig(
         session_id=session_id, profile_name=profile_name, stt_engine=stt_engine, language=language,
         tts_engine=tts["engine"], voice=tts["voice"], ref_audio_path=tts["ref_audio_path"],
@@ -104,19 +103,31 @@ async def lugo_stream(websocket: WebSocket) -> None:
         denoise=False, resume_sid=None,
     )
 
+    speaking = False  # one tts{start} on first response/audio, one tts{stop} at turn end/abort
+
     async def emit(event: str, **payload) -> None:
+        nonlocal speaking
         if event == "user_transcript":
             await websocket.send_json({"type": "stt", "text": payload.get("text", ""), "final": True})
-        elif event in _TTS_STATE:
-            msg = {"type": "tts", "state": _TTS_STATE[event]}
-            if payload.get("text"):
-                msg["text"] = payload["text"]
-            await websocket.send_json(msg)
+        elif event in ("response_text", "audio_start"):
+            # First sign the bot is responding (text or audio) opens the turn.
+            # response_text always precedes audio_start in the core, so tts{start}
+            # is the first tts frame; this also works in the no-opus fallback
+            # path where audio_start never fires (only response_text/audio_chunk).
+            if not speaking:
+                speaking = True
+                await websocket.send_json({"type": "tts", "state": "start"})
+            if event == "response_text":
+                await websocket.send_json({"type": "tts", "state": "sentence_start", "text": payload.get("text", "")})
+        elif event in ("turn_done", "aborted"):
+            if speaking:
+                speaking = False
+                await websocket.send_json({"type": "tts", "state": "stop"})
         elif event == "command":
             await websocket.send_json({"type": "mcp", **payload})
         elif event == "error":
             await websocket.send_json({"type": "error", "message": payload.get("message", "")})
-        # session_started / processing / turn_done / audio_chunk / engines_ready: not on the wire
+        # session_started / processing / engines_ready / speech_* / audio_end / reset: not on the wire
 
     async def emit_audio(packet: bytes) -> None:
         await websocket.send_bytes(encode_frame(LUGO_FRAME_OPUS, packet))
