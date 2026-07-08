@@ -143,6 +143,37 @@ def test_tts_start_and_stop_bracket_a_turn():
         assert "sentence_start" in states
 
 
+def test_tts_bracket_without_opus_encoder(monkeypatch):
+    # When the opus encoder is unavailable the core emits audio_chunk instead of
+    # audio_start; the device must still get a turn-level start/stop bracket.
+    # session.py imports `opus_available` locally (`from app.core.opus import
+    # ... opus_available`) inside ConversationSession.start(), so patching the
+    # function on its defining module (app.core.opus) is what actually takes
+    # effect at call time -- patching a same-named attribute on the session
+    # module would be a no-op since session.py never binds it at module scope.
+    monkeypatch.setattr("app.core.opus.opus_available", lambda: False)
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "text", "text": "hi"})
+        states = []
+        for _ in range(30):
+            message = ws.receive()
+            if message.get("bytes") is not None:
+                continue
+            m = json.loads(message["text"])
+            if m["type"] == "tts":
+                states.append(m["state"])
+                if m["state"] == "stop":
+                    break
+        assert states[0] == "start"
+        assert states[-1] == "stop"
+        assert states.count("start") == 1
+        assert states.count("stop") == 1
+        assert "sentence_start" in states
+
+
 def test_welcome_honors_requested_output_sample_rate():
     with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
         ws.send_json({

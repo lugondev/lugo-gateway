@@ -103,30 +103,22 @@ async def lugo_stream(websocket: WebSocket) -> None:
         denoise=False, resume_sid=None,
     )
 
-    speaking = False  # one tts{start} per turn, one tts{stop} at turn end/abort
-    # The core emits response_text (sentence text) before audio_start for the
-    # same chunk, but the wire contract needs tts{start} to be the FIRST tts
-    # frame of a turn (device opens its audio pipeline on start). Buffer a
-    # response_text that arrives before speaking has begun and flush it right
-    # after start goes out; once speaking, forward response_text immediately.
-    pending_sentence_text: str | None = None
+    speaking = False  # one tts{start} on first response/audio, one tts{stop} at turn end/abort
 
     async def emit(event: str, **payload) -> None:
-        nonlocal speaking, pending_sentence_text
+        nonlocal speaking
         if event == "user_transcript":
             await websocket.send_json({"type": "stt", "text": payload.get("text", ""), "final": True})
-        elif event == "response_text":
-            if speaking:
-                await websocket.send_json({"type": "tts", "state": "sentence_start", "text": payload.get("text", "")})
-            else:
-                pending_sentence_text = payload.get("text", "")
-        elif event == "audio_start":
+        elif event in ("response_text", "audio_start"):
+            # First sign the bot is responding (text or audio) opens the turn.
+            # response_text always precedes audio_start in the core, so tts{start}
+            # is the first tts frame; this also works in the no-opus fallback
+            # path where audio_start never fires (only response_text/audio_chunk).
             if not speaking:
                 speaking = True
                 await websocket.send_json({"type": "tts", "state": "start"})
-                if pending_sentence_text is not None:
-                    await websocket.send_json({"type": "tts", "state": "sentence_start", "text": pending_sentence_text})
-                    pending_sentence_text = None
+            if event == "response_text":
+                await websocket.send_json({"type": "tts", "state": "sentence_start", "text": payload.get("text", "")})
         elif event in ("turn_done", "aborted"):
             if speaking:
                 speaking = False
