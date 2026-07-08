@@ -87,12 +87,18 @@ async def lifespan(app: FastAPI):
     from app.services.tts.profile_store import tts_profile_store
     from app.services.system_config import system_config_store
     from app.services.mcp.server_store import mcp_server_store
+    from app.services.mcp.presets import seed_default_servers
 
     init_config_tables()
     profile_store.list()
     tts_profile_store.list()
     system_config_store.get()
     mcp_server_store.list()
+    # Seeded here (app startup), not at module-import time: import happens
+    # during test collection too, before any tmp-DB fixture is in effect,
+    # so seeding there would write the preset server straight into whatever
+    # DB is configured at that moment -- in practice, the real data/app.db.
+    seed_default_servers(mcp_server_store)
 
     if not settings.admin_password and settings.app_env != "dev":
         logger.warning("auth disabled: ADMIN_PASSWORD not set (app_env=%s)", settings.app_env)
