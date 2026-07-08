@@ -57,6 +57,9 @@ async def test_warm_default_engines_warms_configured_stt_and_tts(monkeypatch):
     monkeypatch.setattr(settings, "extra_warmup_stt_engines", "")
     monkeypatch.setattr(settings, "conversation_tts_engine", "fake_tts")
     monkeypatch.setattr(settings, "extra_warmup_tts_engines", "")
+    _empty = type("E", (), {"list": lambda self: {}})()
+    monkeypatch.setattr("app.services.profiles.store.profile_store", _empty)
+    monkeypatch.setattr("app.services.tts.profile_store.tts_profile_store", _empty)
     monkeypatch.setattr(stt_service, "get_provider", lambda engine: stt_spy)
     monkeypatch.setattr(tts_service, "get_provider", lambda engine: tts_spy)
 
@@ -132,6 +135,10 @@ async def test_warm_default_engines_swallows_unknown_engine(monkeypatch):
 
     tts_spy = _Spy()
     monkeypatch.setattr(settings, "extra_warmup_tts_engines", "")
+    # Isolate from profiles.json: warm only the settings-derived engines here.
+    _empty = type("E", (), {"list": lambda self: {}})()
+    monkeypatch.setattr("app.services.profiles.store.profile_store", _empty)
+    monkeypatch.setattr("app.services.tts.profile_store.tts_profile_store", _empty)
     monkeypatch.setattr(stt_service, "get_provider", _raise)
     monkeypatch.setattr(tts_service, "get_provider", lambda engine: tts_spy)
 
@@ -152,6 +159,10 @@ async def test_warm_default_engines_warms_extra_stt_and_tts_engines_too(monkeypa
     monkeypatch.setattr(settings, "extra_warmup_stt_engines", "qwen3_asr")
     monkeypatch.setattr(settings, "conversation_tts_engine", "vieneu")
     monkeypatch.setattr(settings, "extra_warmup_tts_engines", "")
+    # Isolate from profiles.json so only the settings engines are enumerated.
+    _empty = type("E", (), {"list": lambda self: {}})()
+    monkeypatch.setattr("app.services.profiles.store.profile_store", _empty)
+    monkeypatch.setattr("app.services.tts.profile_store.tts_profile_store", _empty)
     monkeypatch.setattr(stt_service, "get_provider", lambda engine: spies[engine])
     monkeypatch.setattr(tts_service, "get_provider", lambda engine: spies[engine])
 

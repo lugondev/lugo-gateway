@@ -15,6 +15,50 @@ _ready_ids: set[int] = set()
 _NOOP_TTS_WARM = TTSProvider.warm
 
 
+def engines_for_boot_warmup() -> tuple[list[str], list[str]]:
+    """Every STT and TTS engine that any chatllm profile or TTS profile can
+    select, merged with the configured warmup lists.
+
+    Warming these at boot means a device connecting with any profile never pays a
+    cold model load on its first turn (the delay the user hits when an engine is
+    loaded lazily on first use). Returns (stt_engines, tts_engines), de-duplicated
+    and order-preserving. LLM engines are remote APIs (no local model to warm), so
+    they're intentionally excluded.
+    """
+    from app.core.settings import settings
+    from app.services.profiles.store import profile_store
+    from app.services.stt.profile import resolve_stt
+    from app.services.tts.profile_store import tts_profile_store
+
+    stt: list[str] = []
+    tts: list[str] = []
+
+    def _add(lst: list[str], name: str | None) -> None:
+        if name and name not in lst:
+            lst.append(name)
+
+    for e in settings.warmup_stt_engines:
+        _add(stt, e)
+    for e in settings.warmup_tts_engines:
+        _add(tts, e)
+
+    # Any engine a profile resolves to (STT via resolve_stt; TTS via the TTS
+    # profile it points at — covered by iterating every TTS profile below).
+    try:
+        for prof in profile_store.list().values():
+            engine, _lang = resolve_stt(prof)
+            _add(stt, engine)
+    except Exception as exc:  # noqa: BLE001 - warm-up must never break boot
+        logger.warning("profile STT enumeration for warm-up failed: %s", exc)
+    try:
+        for tp in tts_profile_store.list().values():
+            _add(tts, getattr(tp, "engine", "") or None)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("TTS profile enumeration for warm-up failed: %s", exc)
+
+    return stt, tts
+
+
 def _needs_warming(provider: object) -> bool:
     warm = getattr(provider, "warm", None)
     if not callable(warm):
