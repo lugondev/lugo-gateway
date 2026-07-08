@@ -40,12 +40,18 @@ def test_idle_timeout_emits_goodbye():
         assert msg["reason"] == "idle_timeout"
 
 
-def test_slow_turn_is_not_cut_by_idle(monkeypatch):
-    """A turn that takes longer than idle_timeout_s (slow LLM/TTS/network) must
-    complete — idle only starts counting AFTER the bot finishes, never during the
-    turn. Guards the last_activity-refresh-on-turn-end fix."""
+def test_idle_countdown_starts_after_the_bot_finishes(monkeypatch):
+    """The idle countdown must start when the bot FINISHES replying, not before —
+    a slow turn's think/response time must NOT be counted toward idle.
+
+    Drives a turn that takes ~1.5s (> idle_timeout_s=1) with the client sitting
+    silent (no uplink), then measures the gap between the turn's tts-stop and the
+    idle goodbye. If the think time were counted (the bug), goodbye fires almost
+    immediately after tts-stop (~one 0.1s tick); with the fix it fires ~idle (1s)
+    later. Asserting the gap is close to idle catches the regression."""
     import asyncio
     import json as _json
+    import time as _time
     from app.core.audio import pcm16_to_wav_bytes
     from app.schemas.tts import TTSResult
     from app.services.artifacts import artifact_store
@@ -55,7 +61,7 @@ def test_slow_turn_is_not_cut_by_idle(monkeypatch):
     class _SlowTTS(TTSProvider):
         name = "stub-slow-tts"
         async def synthesize(self, payload) -> TTSResult:
-            await asyncio.sleep(1.5)  # longer than idle_timeout_s=1
+            await asyncio.sleep(1.5)  # turn takes longer than idle_timeout_s=1
             wav = pcm16_to_wav_bytes(b"\x00\x00" * 2400, sample_rate=24000)
             _, url = artifact_store.save_wav(wav)
             return TTSResult(engine=self.name, sample_rate=24000, audio_url=url,
@@ -69,17 +75,26 @@ def test_slow_turn_is_not_cut_by_idle(monkeypatch):
                           "audio_params": {"format": "opus", "sample_rate": 16000}})
             assert ws.receive_json()["type"] == "welcome"
             ws.send_json({"type": "text", "text": "hi"})  # echo responder -> slow TTS
-            saw_stop = False
-            for _ in range(40):
+            # Consume the turn up to and including its tts stop.
+            for _ in range(60):
                 m = ws.receive()
                 if m.get("bytes") is not None:
                     continue
                 d = _json.loads(m["text"])
-                # The turn must finish before any idle goodbye interrupts it.
-                assert d.get("type") != "goodbye", "idle fired during/after a slow turn's think time"
                 if d.get("type") == "tts" and d.get("state") == "stop":
-                    saw_stop = True
                     break
-            assert saw_stop
+            bot_done = _time.monotonic()
+            # Now sit silent and wait for the idle goodbye; time how long it takes.
+            for _ in range(60):
+                m = ws.receive()
+                if m.get("bytes") is not None:
+                    continue
+                d = _json.loads(m["text"])
+                if d.get("type") == "goodbye":
+                    break
+            gap = _time.monotonic() - bot_done
+            assert d["type"] == "goodbye"
+            # Countdown restarted at turn end -> ~idle (1s). The bug fires ~immediately.
+            assert gap >= 0.6, f"idle fired {gap:.2f}s after the bot finished (think time was counted)"
     finally:
         tts_service.providers.pop("stub-slow-tts", None)
