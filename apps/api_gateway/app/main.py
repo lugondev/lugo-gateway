@@ -16,6 +16,7 @@ from app.api.routes.conversation import router as conversation_router
 from app.api.routes.events import router as events_router
 from app.api.routes.health import router as health_router
 from app.api.routes.livehost import router as livehost_router
+from app.api.routes.lugo import router as lugo_router
 from app.api.routes.mcp import router as mcp_router
 from app.api.routes.memories import router as memories_router
 from app.api.routes.profiles import router as profiles_router
@@ -121,6 +122,7 @@ app.include_router(events_router)
 app.include_router(conversation_router)
 app.include_router(system_router)
 app.include_router(livehost_router)
+app.include_router(lugo_router)
 app.include_router(recommend_router)
 app.include_router(ui_router)
 app.include_router(agents_docs_router)
