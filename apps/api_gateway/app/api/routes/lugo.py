@@ -49,10 +49,18 @@ def _resolve(profile_name: str | None):
 async def lugo_stream(websocket: WebSocket) -> None:
     await websocket.accept()
     # Handshake: first frame must be a `wakeup`.
+    message = await websocket.receive()
+    if message.get("type") == "websocket.disconnect":
+        return
+    if message.get("bytes") is not None:
+        # Binary first frame is not a valid wakeup.
+        await websocket.send_json({"type": "error", "message": "expected wakeup"})
+        await websocket.close()
+        return
     try:
-        first = await websocket.receive_text()
-        hello = json.loads(first)
-    except (WebSocketDisconnect, json.JSONDecodeError):
+        hello = json.loads(message.get("text") or "")
+    except json.JSONDecodeError:
+        await websocket.send_json({"type": "error", "message": "expected wakeup"})
         await websocket.close()
         return
     if hello.get("type") != "wakeup":

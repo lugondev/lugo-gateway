@@ -9,6 +9,7 @@ from app.schemas.tts import TTSResult
 from app.services.artifacts import artifact_store
 from app.services.profiles.models import Profile, SessionConfig
 from app.services.profiles.store import ProfileStore
+from app.services.conversation.lugo_frame import LUGO_FRAME_OPUS
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
 from app.services.tts.base import TTSProvider
@@ -69,12 +70,16 @@ def test_text_turn_yields_stt_and_tts():
         assert ws.receive_json()["type"] == "welcome"
         ws.send_json({"type": "text", "text": "hi"})
         types = []
+        first_binary_frame = None
         # Real opus packets are pushed as binary frames interleaved with the
         # JSON wire events (tts start -> N binary packets -> tts stop); skip
-        # them here since this loop only asserts on the JSON event sequence.
+        # them here (aside from capturing the first one) since this loop
+        # otherwise only asserts on the JSON event sequence.
         for _ in range(20):
             message = ws.receive()
             if message.get("bytes") is not None:
+                if first_binary_frame is None:
+                    first_binary_frame = message["bytes"]
                 continue
             m = json.loads(message["text"])
             types.append((m["type"], m.get("state")))
@@ -82,3 +87,19 @@ def test_text_turn_yields_stt_and_tts():
                 break
         assert ("stt", None) in types
         assert any(t == "tts" for t, _ in types)
+        assert first_binary_frame is not None
+        assert first_binary_frame[0] == LUGO_FRAME_OPUS
+
+
+def test_binary_first_frame_errors_not_crashes():
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_bytes(b"\x00\x00")
+        msg = ws.receive_json()
+        assert msg["type"] == "error"
+
+
+def test_non_json_first_frame_errors():
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_text("not json")
+        msg = ws.receive_json()
+        assert msg["type"] == "error"
