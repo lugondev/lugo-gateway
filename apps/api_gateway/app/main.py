@@ -81,6 +81,19 @@ async def lifespan(app: FastAPI):
     from app.services.db.engine import init_db
 
     await init_db()
+
+    from app.services.db.sync_engine import init_config_tables
+    from app.services.profiles.store import profile_store
+    from app.services.tts.profile_store import tts_profile_store
+    from app.services.system_config import system_config_store
+    from app.services.mcp.server_store import mcp_server_store
+
+    init_config_tables()
+    profile_store.list()
+    tts_profile_store.list()
+    system_config_store.get()
+    mcp_server_store.list()
+
     if not settings.admin_password and settings.app_env != "dev":
         logger.warning("auth disabled: ADMIN_PASSWORD not set (app_env=%s)", settings.app_env)
     asyncio.create_task(_warm_default_engines())
