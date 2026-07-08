@@ -76,3 +76,33 @@ def test_list_shows_created_profile(client):
     client.post("/v1/profiles", json={"name": "visible"})
     resp = client.get("/v1/profiles")
     assert "visible" in resp.json()["data"]
+
+
+def test_update_preserves_api_key_when_blank(client):
+    # Create with a real key, then update with a BLANK key (as the UI does on edit,
+    # where the password field is empty = "keep existing"). The key must survive.
+    client.post("/v1/profiles", json={
+        "name": "keyed",
+        "llm": {"base_url": "https://api.openai.com/v1", "api_key": "sk-secret-123", "model": "gpt-x"},
+    })
+    resp = client.put("/v1/profiles/keyed", json={
+        "name": "keyed",
+        "system_prompt": "changed",
+        "llm": {"base_url": "https://api.openai.com/v1", "api_key": "", "model": "gpt-x"},
+    })
+    assert resp.status_code == 200
+    from app.services.profiles.store import profile_store as ps
+    assert ps.get("keyed").llm.api_key == "sk-secret-123"  # preserved, not wiped
+
+
+def test_update_replaces_api_key_when_provided(client):
+    client.post("/v1/profiles", json={
+        "name": "keyed2",
+        "llm": {"base_url": "u", "api_key": "old-key", "model": "m"},
+    })
+    client.put("/v1/profiles/keyed2", json={
+        "name": "keyed2",
+        "llm": {"base_url": "u", "api_key": "new-key", "model": "m"},
+    })
+    from app.services.profiles.store import profile_store as ps
+    assert ps.get("keyed2").llm.api_key == "new-key"

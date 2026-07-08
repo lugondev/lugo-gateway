@@ -37,7 +37,7 @@ async def list_profiles() -> dict:
 async def create_profile(payload: ProfileRequest) -> dict:
     profile = Profile(**payload.model_dump())
     profile_store.upsert(profile)
-    return {"success": True, "data": profile.model_dump()}
+    return {"success": True, "data": _mask(profile)}
 
 
 @router.get("/{name}")
@@ -52,9 +52,16 @@ async def get_profile(name: str) -> dict:
 async def update_profile(name: str, payload: ProfileRequest) -> dict:
     data = payload.model_dump()
     data["name"] = name
+    # Preserve the stored API key when the client sends a blank one: the UI's
+    # password field is empty on edit ("leave blank to keep existing"), so a save
+    # that doesn't re-enter the key must NOT wipe it.
+    if not data.get("llm", {}).get("api_key"):
+        existing = profile_store.get(name)
+        if existing and existing.llm.api_key:
+            data.setdefault("llm", {})["api_key"] = existing.llm.api_key
     profile = Profile(**data)
     profile_store.upsert(profile)
-    return {"success": True, "data": profile.model_dump()}
+    return {"success": True, "data": _mask(profile)}
 
 
 @router.delete("/{name}")

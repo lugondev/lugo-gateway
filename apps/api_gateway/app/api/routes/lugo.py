@@ -104,9 +104,15 @@ async def lugo_stream(websocket: WebSocket) -> None:
     )
 
     speaking = False  # one tts{start} on first response/audio, one tts{stop} at turn end/abort
+    # Idle countdown baseline. Refreshed on every server-side event (esp. the
+    # turn's final turn_done/aborted) so the idle timer only starts AFTER the bot
+    # finishes replying — a slow LLM/TTS or slow network never counts toward idle
+    # (that window is also covered by session.is_turn_active() in the watchdog).
+    last_activity = time.monotonic()
 
     async def emit(event: str, **payload) -> None:
-        nonlocal speaking
+        nonlocal speaking, last_activity
+        last_activity = time.monotonic()  # any turn progress/end = activity
         if event == "user_transcript":
             await websocket.send_json({"type": "stt", "text": payload.get("text", ""), "final": True})
         elif event in ("response_text", "audio_start"):
@@ -139,7 +145,6 @@ async def lugo_stream(websocket: WebSocket) -> None:
         "audio_params": {"sample_rate": out_sr}, "idle_timeout_s": idle,
     })
 
-    last_activity = time.monotonic()
     closing = False
 
     async def _watchdog() -> None:
