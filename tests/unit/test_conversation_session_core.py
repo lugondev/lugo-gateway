@@ -55,6 +55,7 @@ async def test_text_turn_emits_transcript_and_reply():
     sess = ConversationSession(_cfg(), emit, emit_audio)
     await sess.start()
     await sess.feed_text("hello")
+    await sess.wait_current_turn()
     await sess.close()
 
     names = [n for n, _ in events]

@@ -514,16 +514,20 @@ class ConversationSession:
             )
 
     async def feed_text(self, text: str) -> None:
-        # Text input turn (text→text / text→audio). Supersedes any current turn.
-        # Unlike audio turns, a text turn runs to completion here: it arrives as a
-        # single discrete control message, so there is no in-flight audio stream that
-        # needs the caller's receive loop kept free for barge-in mid-turn.
+        # Text input turn (text→text / text→audio). Supersedes any current turn,
+        # then runs fire-and-forget (like the audio endpoint path) so the caller's
+        # receive loop stays free to process an abort/barge-in while the turn runs.
         await self._abort_turn("superseded")
         self.current_turn = asyncio.create_task(self._handle_turn(text_input=text or ""))
-        try:
-            await self.current_turn
-        except asyncio.CancelledError:  # pragma: no cover - external cancel
-            pass
+
+    async def wait_current_turn(self) -> None:
+        """Await the in-flight turn (if any) to completion. For tests/tools that
+        need a deterministic point after a fire-and-forget feed_*/flush call."""
+        if self.current_turn and not self.current_turn.done():
+            try:
+                await self.current_turn
+            except asyncio.CancelledError:
+                pass
 
     async def abort(self, reason: str) -> None:
         await self._abort_turn(reason)
