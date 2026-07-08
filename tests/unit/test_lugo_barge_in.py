@@ -1,4 +1,5 @@
 # tests/unit/test_lugo_barge_in.py
+import asyncio
 import json
 import pytest
 from fastapi.testclient import TestClient
@@ -74,3 +75,42 @@ def test_abort_then_still_usable():
                 break
         assert seen_stt
         assert seen_tts_stop
+
+
+def test_abort_emits_tts_stop(monkeypatch):
+    # Make TTS slow so the turn is still in-flight when we send abort, so the
+    # abort (not the natural turn_done) is what produces the tts stop.
+    slow = tts_service.providers["stub-bi-tts"]
+    orig = slow.synthesize
+    async def slow_synth(payload):
+        await asyncio.sleep(0.3)
+        return await orig(payload)
+    monkeypatch.setattr(slow, "synthesize", slow_synth)
+
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "text", "text": "kể một câu chuyện"})
+        # Wait until the bot has started speaking (tts start).
+        started = False
+        for _ in range(30):
+            message = ws.receive()
+            if message.get("bytes") is not None:
+                continue
+            m = json.loads(message["text"])
+            if m["type"] == "tts" and m["state"] == "start":
+                started = True
+                break
+        assert started
+        ws.send_json({"type": "abort", "reason": "user"})
+        saw_stop = False
+        for _ in range(30):
+            message = ws.receive()
+            if message.get("bytes") is not None:
+                continue
+            m = json.loads(message["text"])
+            if m["type"] == "tts" and m["state"] == "stop":
+                saw_stop = True
+                break
+        assert saw_stop

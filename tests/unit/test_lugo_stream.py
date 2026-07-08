@@ -120,6 +120,29 @@ def test_non_numeric_sample_rate_falls_back():
         assert msg["type"] == "welcome"
 
 
+def test_tts_start_and_stop_bracket_a_turn():
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "text", "text": "hi"})
+        states = []
+        for _ in range(30):
+            message = ws.receive()
+            if message.get("bytes") is not None:
+                continue
+            m = json.loads(message["text"])
+            if m["type"] == "tts":
+                states.append(m["state"])
+                if m["state"] == "stop":
+                    break
+        assert states[0] == "start"
+        assert states[-1] == "stop"
+        assert states.count("start") == 1
+        assert states.count("stop") == 1
+        assert "sentence_start" in states
+
+
 def test_welcome_honors_requested_output_sample_rate():
     with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
         ws.send_json({
