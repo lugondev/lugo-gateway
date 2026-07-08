@@ -160,6 +160,12 @@ async def lugo_stream(websocket: WebSocket) -> None:
                 # mutually exclusive across concurrent awaits).
                 closing = True
                 try:
+                    # Say a short farewell (in the bot's voice) before disconnecting.
+                    # Paced in real time; give the device a moment to finish playing
+                    # it out of its jitter buffer before the goodbye/close.
+                    if settings.conversation_goodbye_text:
+                        await session.speak(settings.conversation_goodbye_text)
+                        await asyncio.sleep(0.5)
                     await websocket.send_json({"type": "goodbye", "reason": "idle_timeout"})
                 except RuntimeError:
                     pass

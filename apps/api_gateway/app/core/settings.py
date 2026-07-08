@@ -138,6 +138,9 @@ class Settings(BaseSettings):
     # pre-speech audio in its rolling buffer.
     conversation_preroll_ms: int = 600
     conversation_max_utterance_ms: int = 30000
+    # Spoken farewell the bot says right before an idle-timeout disconnect
+    # (Lugo route). Empty disables it (disconnect silently).
+    conversation_goodbye_text: str = "Hẹn gặp lại nha!"
     conversation_stt_engine: str = "whisper"  # better than vosk for Vietnamese
     # Extra STT engine(s) to eagerly warm at boot alongside conversation_stt_engine
     # (comma-separated). A device that always pins a different engine via

@@ -25,6 +25,9 @@ def _hermetic(monkeypatch, tmp_path):
     monkeypatch.setattr("app.api.routes.lugo.profile_store", fresh)
     # Make the watchdog tick fast so the test is quick.
     monkeypatch.setattr("app.api.routes.lugo._IDLE_TICK_S", 0.1, raising=False)
+    # Default: no spoken farewell (tests that want it opt in). Keeps the plain
+    # idle tests from depending on a TTS provider.
+    monkeypatch.setattr(settings, "conversation_goodbye_text", "")
     yield
     stt_service.providers.pop("stub-idle-stt", None)
 
@@ -98,3 +101,45 @@ def test_idle_countdown_starts_after_the_bot_finishes(monkeypatch):
             assert gap >= 0.6, f"idle fired {gap:.2f}s after the bot finished (think time was counted)"
     finally:
         tts_service.providers.pop("stub-slow-tts", None)
+
+
+def test_idle_speaks_farewell_before_goodbye(monkeypatch):
+    """On idle timeout the bot says a spoken farewell (TTS) right before the
+    goodbye/disconnect."""
+    import json as _json
+    from app.core.audio import pcm16_to_wav_bytes
+    from app.schemas.tts import TTSResult
+    from app.services.artifacts import artifact_store
+    from app.services.tts.base import TTSProvider
+    from app.services.tts.service import tts_service
+
+    class _FarewellTTS(TTSProvider):
+        name = "stub-fw-tts"
+        async def synthesize(self, payload) -> TTSResult:
+            wav = pcm16_to_wav_bytes(b"\x00\x00" * 2400, sample_rate=24000)
+            _, url = artifact_store.save_wav(wav)
+            return TTSResult(engine=self.name, sample_rate=24000, audio_url=url,
+                             duration_seconds=0.1, text=payload.text)
+
+    monkeypatch.setattr(settings, "conversation_tts_engine", "stub-fw-tts")
+    monkeypatch.setattr(settings, "conversation_goodbye_text", "Tạm biệt nha")
+    tts_service.providers["stub-fw-tts"] = _FarewellTTS()
+    try:
+        with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+            ws.send_json({"type": "wakeup", "profile": "fast",
+                          "audio_params": {"format": "opus", "sample_rate": 16000}})
+            assert ws.receive_json()["type"] == "welcome"
+            saw_farewell = False
+            for _ in range(60):
+                m = ws.receive()
+                if m.get("bytes") is not None:
+                    continue  # farewell opus audio
+                d = _json.loads(m["text"])
+                if d.get("type") == "tts" and d.get("text") and "biệt" in d["text"]:
+                    saw_farewell = True
+                if d.get("type") == "goodbye":
+                    break
+            assert d["type"] == "goodbye" and d["reason"] == "idle_timeout"
+            assert saw_farewell, "no spoken farewell was sent before the idle goodbye"
+    finally:
+        tts_service.providers.pop("stub-fw-tts", None)

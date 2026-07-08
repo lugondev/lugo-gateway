@@ -537,6 +537,44 @@ class ConversationSession:
     async def abort(self, reason: str) -> None:
         await self._abort_turn(reason)
 
+    async def speak(self, text: str) -> None:
+        """One-off spoken utterance with no STT/LLM (e.g. an idle farewell):
+        synthesize `text` and stream it as a normal speaking turn
+        (tts start -> audio -> stop). Best-effort; never raises. Paced in
+        real time so a device's small jitter buffer doesn't overflow."""
+        text = (text or "").strip()
+        cfg = self.cfg
+        if not text or not cfg.want_audio:
+            return
+        try:
+            if cfg.want_text:
+                await self.emit("response_text", turn=self.turn, chunk_index=0, text=text, responder="system")
+            result = await self.tts_provider.synthesize(
+                TTSRequest(
+                    text=text, engine=cfg.tts_engine, voice=cfg.voice,
+                    ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
+                    instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
+                )
+            )
+            if self.opus_encoder is not None:
+                pcm = await asyncio.to_thread(wav_file_to_pcm16, result.audio_url.lstrip("/"), cfg.output_sample_rate)
+                packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
+                await self.emit("audio_start", turn=self.turn, chunk_index=0, codec="opus",
+                                sample_rate=cfg.output_sample_rate, frames=len(packets))
+                frame_s = self.opus_encoder.frame / self.opus_encoder.sample_rate
+                delays = pacing_delays(len(packets), settings.conversation_opus_prebuffer_frames, frame_s)
+                for delay, pkt in zip(delays, packets):
+                    if delay:
+                        await asyncio.sleep(delay)
+                    await self.emit_audio(pkt)
+                await self.emit("audio_end", turn=self.turn, chunk_index=0)
+            else:
+                await self.emit("audio_chunk", turn=self.turn, chunk_index=0, text=text,
+                                audio_url=result.audio_url, sample_rate=result.sample_rate)
+            await self.emit("turn_done", turn=self.turn)
+        except Exception as exc:  # noqa: BLE001 - farewell is best-effort
+            logger.warning("speak() failed: %s", exc)
+
     async def reset(self) -> None:
         await self._abort_turn("reset")
         self.history.clear()
