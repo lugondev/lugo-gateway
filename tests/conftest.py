@@ -29,7 +29,10 @@ def _tmp_db(tmp_path):
     the real data/app.db, even tests that only indirectly hit routes
     backed by the DB (chat/session/memory endpoints, conversation WS)."""
     from app.services.db import engine as db_engine
+    from app.services.db import sync_engine as cfg_engine
 
     db_engine.configure(f"sqlite+aiosqlite:///{tmp_path}/test.db")
+    cfg_engine.configure(f"sqlite:///{tmp_path}/test.db")
     yield
     db_engine.configure()
+    cfg_engine.configure()
