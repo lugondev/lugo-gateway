@@ -54,3 +54,43 @@ def test_delete_session(client, seeded):
 
 def test_delete_missing_404(client):
     assert client.delete("/v1/sessions/ghost").status_code == 404
+
+
+def test_bulk_delete(client, seeded):
+    resp = client.post("/v1/sessions/bulk_delete", json={"ids": ["s1", "s2", "ghost"]})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["deleted"] == 2
+    assert client.get("/v1/sessions/s1").status_code == 404
+    assert client.get("/v1/sessions/s2").status_code == 404
+
+
+def test_bulk_delete_empty_list(client, seeded):
+    resp = client.post("/v1/sessions/bulk_delete", json={"ids": []})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["deleted"] == 0
+    assert client.get("/v1/sessions/s1").status_code == 200
+
+
+def test_clear_only_empty_in_scope(client, seeded):
+    # s1 (profile "pet") has messages; s2 (profile "other") is empty.
+    resp = client.delete("/v1/sessions", params={"only_empty": "true"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["deleted"] == 1
+    assert client.get("/v1/sessions/s1").status_code == 200
+    assert client.get("/v1/sessions/s2").status_code == 404
+
+
+def test_clear_all_scoped_to_profile(client, seeded):
+    resp = client.delete("/v1/sessions", params={"profile": "pet"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["deleted"] == 1
+    assert client.get("/v1/sessions/s1").status_code == 404
+    # other profile untouched
+    assert client.get("/v1/sessions/s2").status_code == 200
+
+
+def test_clear_all_no_profile_clears_everything(client, seeded):
+    resp = client.delete("/v1/sessions")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["deleted"] == 2
+    assert client.get("/v1/sessions").json()["data"] == []

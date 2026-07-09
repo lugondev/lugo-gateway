@@ -93,5 +93,44 @@ class SessionStore:
             await s.commit()
             return True
 
+    async def delete_many(self, ids: list[str]) -> int:
+        """Delete the given sessions (and their messages). Missing IDs are skipped.
+        Returns the number of sessions actually deleted."""
+        if not ids:
+            return 0
+        async with db_session() as s:
+            existing = (
+                await s.execute(select(ChatSession.id).where(ChatSession.id.in_(ids)))
+            ).scalars().all()
+            if not existing:
+                return 0
+            await s.execute(sa_delete(ChatMessage).where(ChatMessage.session_id.in_(existing)))
+            await s.execute(sa_delete(ChatSession).where(ChatSession.id.in_(existing)))
+            await s.commit()
+            return len(existing)
+
+    async def clear(self, profile_id: str | None = None, only_empty: bool = False) -> int:
+        """Delete sessions in scope (and their messages). Returns the count deleted.
+
+        profile_id None => all profiles; otherwise only that profile. only_empty
+        restricts to sessions that have zero messages."""
+        async with db_session() as s:
+            q = select(ChatSession.id)
+            if profile_id is not None:
+                q = q.where(ChatSession.profile_id == profile_id)
+            if only_empty:
+                q = q.where(
+                    ~select(ChatMessage.id)
+                    .where(ChatMessage.session_id == ChatSession.id)
+                    .exists()
+                )
+            ids = (await s.execute(q)).scalars().all()
+            if not ids:
+                return 0
+            await s.execute(sa_delete(ChatMessage).where(ChatMessage.session_id.in_(ids)))
+            await s.execute(sa_delete(ChatSession).where(ChatSession.id.in_(ids)))
+            await s.commit()
+            return len(ids)
+
 
 session_store = SessionStore()

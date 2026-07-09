@@ -1104,6 +1104,31 @@ input[type="radio"] {
   white-space: nowrap;
   color: var(--text);
 }
+.session-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.session-row .sess-check {
+  flex: none;
+  cursor: pointer;
+  align-self: center;
+}
+.session-row .sess-del {
+  flex: none;
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
+}
+.session-row .sess-del:hover {
+  color: var(--danger, #ff6b6b);
+}
 
 /* ================================================================
    MODE PANE (chat card)
