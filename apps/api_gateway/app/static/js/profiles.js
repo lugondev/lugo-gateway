@@ -73,6 +73,7 @@ export function openProfilePanel(mode, name) {
     el("pf-name").disabled = false;
     el("pf-nickname").value = "";
     el("pf-system-prompt").value = "";
+    if (el("pf-voice-optimized")) el("pf-voice-optimized").checked = false;
     el("pf-llm-url").value = "";
     el("pf-llm-model").value = "";
     el("pf-llm-key").value = "";
@@ -90,6 +91,7 @@ export function openProfilePanel(mode, name) {
     el("pf-name").disabled = true;
     el("pf-nickname").value = p.nickname || "";
     el("pf-system-prompt").value = p.system_prompt || "";
+    if (el("pf-voice-optimized")) el("pf-voice-optimized").checked = p.voice_optimized ?? false;
     el("pf-llm-url").value = p.llm?.base_url || "";
     el("pf-llm-model").value = p.llm?.model || "";
     el("pf-llm-key").value = "";
@@ -155,6 +157,7 @@ export async function saveProfile() {
       model: el("pf-llm-model").value.trim(),
     },
     system_prompt: el("pf-system-prompt").value,
+    voice_optimized: el("pf-voice-optimized")?.checked ?? false,
     stt: {
       profile: el("pf-stt-profile")?.value || "",
     },

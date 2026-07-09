@@ -11,6 +11,20 @@ def test_profile_defaults():
     assert p.stt.language == ""
     assert p.mcp_servers == []
     assert p.system_prompt == ""
+    assert p.voice_optimized is False
+
+
+def test_profile_voice_optimized_round_trip():
+    p = Profile(name="x", voice_optimized=True)
+    assert p.voice_optimized is True
+    p2 = Profile.model_validate(p.model_dump())
+    assert p2.voice_optimized is True
+
+
+def test_profile_voice_optimized_back_compat_old_json():
+    # a profile saved before the flag existed still validates, defaulting to False
+    p = Profile.model_validate({"name": "legacy"})
+    assert p.voice_optimized is False
 
 
 def test_profile_stt_config():

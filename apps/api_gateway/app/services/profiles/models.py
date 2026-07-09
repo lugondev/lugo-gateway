@@ -43,6 +43,9 @@ class Profile(BaseModel):
     nickname: str = ""
     llm: LlmConfig = LlmConfig()
     system_prompt: str = ""
+    # When true, append a built-in directive telling the LLM to emit plain,
+    # speakable text (no markdown/emoji/symbols/URLs) so TTS reads it cleanly.
+    voice_optimized: bool = False
     stt: SttConfig = SttConfig()
     tts: TtsConfig = TtsConfig()
     mcp_servers: list[McpServer] = []

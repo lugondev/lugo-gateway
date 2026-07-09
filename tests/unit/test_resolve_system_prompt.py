@@ -1,7 +1,10 @@
 import pytest
 
 from app.core.settings import settings
-from app.services.conversation.responder import resolve_system_prompt
+from app.services.conversation.responder import (
+    VOICE_OPTIMIZATION_DIRECTIVE,
+    resolve_system_prompt,
+)
 from app.services.system_config import SystemConfigStore
 
 
@@ -30,3 +33,22 @@ def test_base_context_prepended_to_default_persona(_fresh_store):
     _fresh_store.set_base_context("Platform: TeguVoice.")
     result = resolve_system_prompt(None)
     assert result == f"Platform: TeguVoice.\n\n{settings.conversation_system_prompt}"
+
+
+def test_voice_optimized_off_by_default(_fresh_store):
+    result = resolve_system_prompt("You are a pirate.")
+    assert VOICE_OPTIMIZATION_DIRECTIVE not in result
+
+
+def test_voice_optimized_appends_directive_at_end(_fresh_store):
+    result = resolve_system_prompt("You are a pirate.", voice_optimized=True)
+    assert result == f"You are a pirate.\n\n{VOICE_OPTIMIZATION_DIRECTIVE}"
+    assert result.endswith(VOICE_OPTIMIZATION_DIRECTIVE)
+
+
+def test_voice_optimized_stays_last_after_base_context(_fresh_store):
+    _fresh_store.set_base_context("Platform: TeguVoice.")
+    result = resolve_system_prompt("You are a pirate.", voice_optimized=True)
+    assert result == (
+        f"Platform: TeguVoice.\n\nYou are a pirate.\n\n{VOICE_OPTIMIZATION_DIRECTIVE}"
+    )

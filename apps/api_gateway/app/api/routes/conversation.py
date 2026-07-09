@@ -125,6 +125,7 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
         api_key=llm_api_key,
         model=llm_model,
         system_prompt=system_prompt,
+        voice_optimized=bool(active_profile and active_profile.voice_optimized),
     )
     tool_registry = await _build_tool_registry(active_profile)
     if tool_registry:

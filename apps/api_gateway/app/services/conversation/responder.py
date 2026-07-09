@@ -236,13 +236,34 @@ class OpenAICompatResponder(Responder):
             ) from exc
 
 
-def resolve_system_prompt(system_prompt: str | None) -> str:
+VOICE_OPTIMIZATION_DIRECTIVE = (
+    "Câu trả lời của bạn sẽ được đọc thành giọng nói (text-to-speech), nên hãy "
+    "viết ở dạng văn nói tự nhiên, thuần văn bản, dễ đọc thành tiếng:\n"
+    "- Không dùng markdown hay ký tự định dạng (* _ # ` ~ | > -), không in đậm, "
+    "in nghiêng, tiêu đề hay khối mã.\n"
+    "- Không dùng emoji, biểu tượng hay ký hiệu đặc biệt.\n"
+    "- Không dùng gạch đầu dòng hay danh sách đánh số; nếu cần liệt kê thì viết "
+    "thành câu, dùng từ nối như 'thứ nhất', 'thứ hai', hoặc ngăn cách bằng dấu phẩy.\n"
+    "- Viết số, đơn vị, ngày giờ và ký hiệu bằng chữ dễ đọc (ví dụ '50 phần trăm' "
+    "thay vì '50%', 'đô la' thay vì '$').\n"
+    "- Không chèn URL hay đường link dài; nếu cần thì mô tả bằng lời.\n"
+    "- Giữ câu ngắn gọn, tự nhiên như đang trò chuyện."
+)
+
+
+def resolve_system_prompt(system_prompt: str | None, voice_optimized: bool = False) -> str:
     """Resolve the persona prompt (explicit override or .env default) and always
     prepend the user-configured base context (platform intro + guardrail rules),
-    if any, so it applies regardless of profile."""
+    if any, so it applies regardless of profile.
+
+    When voice_optimized is set, append the speakable-text directive to the very
+    end so it survives memory injection (which prepends) and stays most salient."""
     persona = system_prompt if system_prompt is not None else settings.conversation_system_prompt
     base_context = system_config_store.get().base_context
-    return f"{base_context}\n\n{persona}" if base_context else persona
+    prompt = f"{base_context}\n\n{persona}" if base_context else persona
+    if voice_optimized:
+        prompt = f"{prompt}\n\n{VOICE_OPTIMIZATION_DIRECTIVE}"
+    return prompt
 
 
 def build_responder() -> Responder:
@@ -263,6 +284,7 @@ def build_responder_ex(
     api_key: str | None = None,
     model: str | None = None,
     system_prompt: str | None = None,
+    voice_optimized: bool = False,
 ) -> Responder:
     """Build a responder with optional overrides; falls back to .env defaults.
 
@@ -274,7 +296,7 @@ def build_responder_ex(
             base_url=effective_url,
             api_key=api_key if api_key is not None else get_active_llm_api_key(),
             model=model if model is not None else get_active_llm_model(),
-            system_prompt=resolve_system_prompt(system_prompt),
+            system_prompt=resolve_system_prompt(system_prompt, voice_optimized),
             timeout=settings.conversation_llm_timeout_seconds,
         )
     return EchoResponder()

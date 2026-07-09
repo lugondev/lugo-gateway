@@ -76,6 +76,39 @@ def test_chat_with_profile_uses_profile_system_prompt(client, monkeypatch, tmp_p
     assert any("howdy" in sp for sp in captured)
 
 
+def test_chat_with_voice_optimized_profile_appends_directive(client, monkeypatch, tmp_path):
+    from app.services.conversation.responder import VOICE_OPTIMIZATION_DIRECTIVE
+    from app.services.profiles.store import ProfileStore
+    fresh = ProfileStore(str(tmp_path / "p3.json"))
+    fresh.upsert(Profile(
+        name="voice",
+        llm=LlmConfig(base_url="http://localhost:11434/v1", model="llama3"),
+        system_prompt="Always say howdy.",
+        voice_optimized=True,
+    ))
+    monkeypatch.setattr("app.api.routes.conversation.profile_store", fresh)
+
+    captured = []
+    original_init = __import__(
+        "app.services.conversation.responder", fromlist=["OpenAICompatResponder"]
+    ).OpenAICompatResponder.__init__
+
+    def _patched_init(self, base_url, api_key, model, system_prompt, timeout):
+        captured.append(system_prompt)
+        original_init(self, base_url, api_key, model, system_prompt, timeout)
+
+    with patch(
+        "app.services.conversation.responder.OpenAICompatResponder.__init__",
+        _patched_init,
+    ):
+        client.post(
+            "/v1/conversation/chat?profile=voice",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        )
+
+    assert any(VOICE_OPTIMIZATION_DIRECTIVE in sp for sp in captured)
+
+
 def test_disabled_mcp_server_tools_not_fetched(client, monkeypatch, _hermetic):
     _, servers = _hermetic
     servers.upsert(McpServer(name="off", url="http://off.test", enabled=False))
