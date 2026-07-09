@@ -14,6 +14,7 @@ import httpx
 
 from app.core.settings import settings
 from app.services.history.store import session_store
+from app.services.memory.embedder import cosine, embed_texts
 from app.services.memory.store import memory_store
 from app.services.profiles.models import Profile
 
@@ -83,6 +84,21 @@ class MemoryExtractor:
             return []
         return _parse_facts(str(content))
 
+    async def _maybe_embed(
+        self, profile: Profile, texts: list[str]
+    ) -> list[list[float] | None]:
+        """Embed texts when an embed_model is configured; else all None. Best-effort."""
+        if not texts or not profile.memory.embed_model or not profile.llm.base_url:
+            return [None] * len(texts)
+        try:
+            return await embed_texts(
+                texts, profile.llm.base_url, profile.llm.api_key,
+                profile.memory.embed_model,
+            )
+        except Exception as exc:  # noqa: BLE001 - embedding is best-effort
+            logger.warning("memory embed failed: %s", exc)
+            return [None] * len(texts)
+
     async def extract_and_upsert(self, session_id: str, profile: Profile) -> int:
         """Extract facts from a finished session into the profile's memory."""
         try:
@@ -97,15 +113,28 @@ class MemoryExtractor:
             )
             if not facts:
                 return 0
-            existing = {
-                m["content"].strip().lower() for m in await memory_store.list(profile.name)
-            }
+            existing_items = await memory_store.list(profile.name)
+            existing_norm = {m["content"].strip().lower() for m in existing_items}
+            existing_vecs = [
+                m["embedding"] for m in existing_items if m.get("embedding")
+            ]
+            new_vecs = await self._maybe_embed(profile, facts)
+            threshold = profile.memory.dedup_threshold
             added = 0
-            for fact in facts:
-                if fact.strip().lower() in existing:
+            for fact, vec in zip(facts, new_vecs):
+                norm = fact.strip().lower()
+                if norm in existing_norm:
                     continue
-                await memory_store.add(profile.name, fact, source_session_id=session_id)
-                existing.add(fact.strip().lower())
+                if vec is not None and any(
+                    cosine(vec, ev) >= threshold for ev in existing_vecs
+                ):
+                    continue
+                await memory_store.add(
+                    profile.name, fact, source_session_id=session_id, embedding=vec
+                )
+                existing_norm.add(norm)
+                if vec is not None:
+                    existing_vecs.append(vec)
                 added += 1
             if added:
                 logger.info("memory: added %d facts for profile %s", added, profile.name)

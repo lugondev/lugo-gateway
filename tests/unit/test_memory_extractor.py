@@ -86,3 +86,53 @@ async def test_extract_and_upsert_skips_short_or_no_llm():
     assert await MemoryExtractor().extract_and_upsert("s2", profile) == 0  # <2 messages
     no_llm = Profile(name="pet")
     assert await MemoryExtractor().extract_and_upsert("s1", no_llm) == 0
+
+
+@pytest.mark.asyncio
+async def test_extract_and_upsert_stores_embedding(monkeypatch):
+    await session_store.create("s3", profile_id="emb")
+    await session_store.append_message("s3", 1, "user", "tôi thích trà")
+    await session_store.append_message("s3", 1, "assistant", "ok")
+
+    async def fake_extract(self, messages, base_url, api_key, model):
+        return ["User likes tea"]
+
+    async def fake_embed(texts, base_url, api_key, model):
+        return [[1.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr(MemoryExtractor, "extract", fake_extract)
+    monkeypatch.setattr("app.services.memory.extractor.embed_texts", fake_embed)
+    profile = Profile(
+        name="emb",
+        llm={"base_url": "http://llm.local/v1", "model": "m"},
+        memory={"embed_model": "e"},
+    )
+    added = await MemoryExtractor().extract_and_upsert("s3", profile)
+    assert added == 1
+    rows = await memory_store.list("emb")
+    assert rows[0]["embedding"] == [1.0, 0.0]
+
+
+@pytest.mark.asyncio
+async def test_extract_and_upsert_cosine_dedup(monkeypatch):
+    await memory_store.add("emb2", "User enjoys tea", embedding=[1.0, 0.0])
+    await session_store.create("s4", profile_id="emb2")
+    await session_store.append_message("s4", 1, "user", "x")
+    await session_store.append_message("s4", 1, "assistant", "y")
+
+    async def fake_extract(self, messages, base_url, api_key, model):
+        return ["User loves tea"]  # different string, near-identical meaning
+
+    async def fake_embed(texts, base_url, api_key, model):
+        return [[1.0, 0.02] for _ in texts]  # cosine ~1.0 vs stored
+
+    monkeypatch.setattr(MemoryExtractor, "extract", fake_extract)
+    monkeypatch.setattr("app.services.memory.extractor.embed_texts", fake_embed)
+    profile = Profile(
+        name="emb2",
+        llm={"base_url": "http://llm.local/v1", "model": "m"},
+        memory={"embed_model": "e", "dedup_threshold": 0.9},
+    )
+    added = await MemoryExtractor().extract_and_upsert("s4", profile)
+    assert added == 0  # dropped as a semantic duplicate
+    assert len(await memory_store.list("emb2")) == 1
