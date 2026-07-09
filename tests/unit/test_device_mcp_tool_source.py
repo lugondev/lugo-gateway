@@ -56,6 +56,19 @@ async def test_confirm_required_without_confirm_blocks_and_does_not_call():
 
 
 @pytest.mark.asyncio
+async def test_confirm_string_false_is_not_treated_as_confirmed():
+    """A truthy-but-wrong-typed value like confirm="false" (a non-empty string)
+    must NOT bypass the confirmation gate; only the literal boolean True does."""
+    ft = _FakeTransport({"content": [{"type": "text", "text": "off"}]})
+    defs = [{"name": "self.device.shutdown", "description": "Power off",
+             "annotations": {"requiresConfirm": True}}]
+    tool = DeviceMcpToolSource(defs, ft).list_tools()[0]
+    out = await tool.run({"confirm": "false"}, ToolContext())
+    assert "CONFIRMATION_REQUIRED" in out
+    assert ft.calls == []
+
+
+@pytest.mark.asyncio
 async def test_confirm_true_relays_with_real_name_and_strips_confirm():
     ft = _FakeTransport({"content": [{"type": "text", "text": "powered off"}]})
     defs = [{"name": "self.device.shutdown", "description": "Power off",

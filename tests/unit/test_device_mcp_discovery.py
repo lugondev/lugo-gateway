@@ -67,3 +67,41 @@ async def test_discovery_returns_empty_on_timeout():
     t = DeviceMcpTransport(send_json, request_timeout=0.01)
     tools = await discover_device_tools(t, discovery_timeout=0.01)
     assert tools == []
+
+
+class _NeverEndingDevice:
+    """Always responds with a truthy nextCursor - never terminates naturally."""
+    def __init__(self, transport):
+        self.t = transport
+        self.page_num = 0
+    async def pump(self, sent):
+        while True:
+            await asyncio.sleep(0)
+            if not sent:
+                continue
+            payload = sent[-1]["payload"]
+            mid = payload["id"]
+            if payload["method"] == "initialize":
+                self.t.on_message({"jsonrpc": "2.0", "id": mid,
+                                   "result": {"serverInfo": {"name": "dev"}}})
+            elif payload["method"] == "tools/list":
+                self.page_num += 1
+                self.t.on_message({"jsonrpc": "2.0", "id": mid, "result": {
+                    "tools": [{"name": f"tool_{self.page_num}"}],
+                    "nextCursor": f"c{self.page_num}",
+                }})
+
+
+@pytest.mark.asyncio
+async def test_discovery_bounded_against_infinite_cursor():
+    sent = []
+    async def send_json(m): sent.append(m)
+    t = DeviceMcpTransport(send_json)
+    dev = _NeverEndingDevice(t)
+    pump = asyncio.create_task(dev.pump(sent))
+    tools = await asyncio.wait_for(discover_device_tools(t), timeout=5.0)
+    pump.cancel()
+    # Terminates (didn't hang) and returns a bounded, non-empty list even though
+    # the device never sends a falsy nextCursor.
+    assert isinstance(tools, list)
+    assert 0 < len(tools) <= 64

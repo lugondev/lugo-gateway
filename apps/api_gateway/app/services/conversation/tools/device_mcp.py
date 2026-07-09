@@ -94,6 +94,9 @@ _INIT_PARAMS = {
 }
 
 
+_MAX_DISCOVERY_PAGES = 64  # generous cap; v1 devices ship ~7 tools total
+
+
 async def discover_device_tools(
     transport: DeviceMcpTransport, *, discovery_timeout: float = 10.0
 ) -> list[dict]:
@@ -102,7 +105,7 @@ async def discover_device_tools(
         await transport.call("initialize", _INIT_PARAMS, msg_id=1, timeout=discovery_timeout)
         tools: list[dict] = []
         cursor: str | None = None
-        while True:
+        for _ in range(_MAX_DISCOVERY_PAGES):
             params = {"cursor": cursor} if cursor else None
             result = await transport.call(
                 "tools/list", params, msg_id=2, timeout=discovery_timeout
@@ -113,6 +116,13 @@ async def discover_device_tools(
             cursor = result.get("nextCursor") if isinstance(result, dict) else None
             if not cursor:
                 return tools
+        logger.warning(
+            "device mcp discovery: hit %d-page cap with nextCursor still set; "
+            "returning %d tools accumulated so far",
+            _MAX_DISCOVERY_PAGES,
+            len(tools),
+        )
+        return tools
     except DeviceMcpError as exc:
         logger.warning("device mcp discovery failed: %s", exc)
         return []
@@ -164,7 +174,7 @@ class DeviceMcpToolSource(ToolSource):
 
         async def run(args: dict, ctx: ToolContext) -> str:
             args = args or {}
-            if requires_confirm and not args.get("confirm"):
+            if requires_confirm and args.get("confirm") is not True:
                 return (
                     f"CONFIRMATION_REQUIRED: This will {description or real_name}. "
                     "Ask the user to confirm out loud, then call again with confirm=true."
@@ -175,6 +185,7 @@ class DeviceMcpToolSource(ToolSource):
                     "tools/call", {"name": real_name, "arguments": call_args}
                 )
             except DeviceMcpError as exc:
+                logger.warning("device mcp tool %s failed: %s", real_name, exc)
                 return f"Error: {exc}"
             if isinstance(result, dict) and result.get("isError"):
                 return f"Error: {result.get('error') or result}"

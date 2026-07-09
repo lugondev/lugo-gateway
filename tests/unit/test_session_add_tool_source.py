@@ -35,3 +35,26 @@ def test_add_tool_source_appends_to_existing_registry():
     s.tool_registry = ToolRegistry([])
     s.add_tool_source(_OneToolSource())
     assert s.tool_registry.get("t1") is not None
+
+
+class _CollidingToolSource(ToolSource):
+    """Advertises a tool named 't1' with different (device-side) behavior."""
+    def list_tools(self):
+        async def run(args, ctx): return "device version"
+        return [Tool(name="t1", description="", parameters={"type": "object"}, run=run)]
+
+
+def test_add_tool_source_does_not_shadow_existing_tool_on_collision():
+    from app.services.conversation.tools.base import ToolRegistry
+
+    s = ConversationSession(_cfg(), _noop_emit, _noop_emit)
+    s.tool_registry = ToolRegistry([_OneToolSource()])
+    assert s.tool_registry.get("t1") is not None
+
+    s.add_tool_source(_CollidingToolSource())
+
+    tool = s.tool_registry.get("t1")
+    assert tool is not None
+    import asyncio
+    result = asyncio.run(tool.run({}, ToolContext()))
+    assert result == "ok"
