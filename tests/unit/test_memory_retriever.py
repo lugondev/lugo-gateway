@@ -21,13 +21,46 @@ def test_inject_memories():
 
 
 @pytest.mark.asyncio
-async def test_get_context_all_mode():
+async def test_get_context_buffer_only():
     await memory_store.add("pet", "likes tea")
     await memory_store.add("pet", "from Hanoi")
     profile = Profile(name="pet")
     block = await MemoryRetriever().get_context(profile)
-    assert block.startswith("## User Memories")
+    assert "## Recent notes" in block
     assert "- likes tea" in block and "- from Hanoi" in block
+
+
+@pytest.mark.asyncio
+async def test_get_context_includes_profile_doc():
+    from app.services.memory.store import profile_doc_store
+
+    await profile_doc_store.upsert("pet", "## User Profile\n### Danh tính\n- Toan")
+    await memory_store.add("pet", "just mentioned guitar")
+    profile = Profile(name="pet")
+    block = await MemoryRetriever().get_context(profile)
+    assert block.startswith("## User Profile")
+    assert "- Toan" in block
+    assert "## Recent notes" in block
+    assert "- just mentioned guitar" in block
+
+
+@pytest.mark.asyncio
+async def test_get_context_doc_only_no_buffer():
+    from app.services.memory.store import profile_doc_store
+
+    await profile_doc_store.upsert("pet", "## User Profile\n- Toan")
+    block = await MemoryRetriever().get_context(Profile(name="pet"))
+    assert block == "## User Profile\n- Toan"
+
+
+@pytest.mark.asyncio
+async def test_get_context_truncates_to_max_chars():
+    from app.services.memory import retriever as r
+
+    for i in range(200):
+        await memory_store.add("pet", f"fact number {i} " + "x" * 20)
+    block = await MemoryRetriever().get_context(Profile(name="pet"))
+    assert len(block) <= r.MAX_CHARS + len("## Recent notes\n")
 
 
 @pytest.mark.asyncio

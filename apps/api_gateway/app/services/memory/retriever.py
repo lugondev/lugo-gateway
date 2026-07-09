@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from app.services.memory.embedder import cosine, embed_texts
-from app.services.memory.store import memory_store
+from app.services.memory.store import memory_store, profile_doc_store
 from app.services.profiles.models import Profile
 
 logger = logging.getLogger(__name__)
@@ -26,22 +26,25 @@ class MemoryRetriever:
     async def get_context(self, profile: Profile | None, query: str = "") -> str:
         if profile is None or not profile.memory.enabled:
             return ""
+        doc = await profile_doc_store.get(profile.name)
+        doc_block = doc["content"].strip() if doc and doc["content"] else ""
         items = await memory_store.list(profile.name)
-        if not items:
-            return ""
-        if profile.memory.mode == "semantic" and query:
+        if profile.memory.mode == "semantic" and query and items:
             items = await self._semantic_filter(items, query, profile)
-        contents: list[str] = []
-        total = 0
+        buffer_lines: list[str] = []
+        total = len(doc_block)
         for item in items[:MAX_ITEMS]:
             content = item["content"]
             if total + len(content) > MAX_CHARS:
                 break
-            contents.append(content)
+            buffer_lines.append(f"- {content}")
             total += len(content)
-        if not contents:
-            return ""
-        return "## User Memories\n" + "\n".join(f"- {c}" for c in contents)
+        parts: list[str] = []
+        if doc_block:
+            parts.append(doc_block)
+        if buffer_lines:
+            parts.append("## Recent notes\n" + "\n".join(buffer_lines))
+        return "\n\n".join(parts)
 
     async def _semantic_filter(
         self, items: list[dict], query: str, profile: Profile
