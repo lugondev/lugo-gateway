@@ -1,7 +1,7 @@
 import asyncio
 import pytest
 from app.services.conversation.tools.device_mcp import (
-    DeviceMcpTransport, discover_device_tools, DeviceMcpError,
+    DeviceMcpTransport, discover_device_tools,
 )
 
 
