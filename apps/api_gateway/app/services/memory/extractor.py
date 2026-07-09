@@ -14,6 +14,7 @@ import httpx
 
 from app.core.settings import settings
 from app.services.history.store import session_store
+from app.services.memory.compactor import memory_compactor
 from app.services.memory.embedder import cosine, embed_texts
 from app.services.memory.store import memory_store
 from app.services.profiles.models import Profile
@@ -138,6 +139,7 @@ class MemoryExtractor:
                 added += 1
             if added:
                 logger.info("memory: added %d facts for profile %s", added, profile.name)
+            await memory_compactor.maybe_compact(profile)
             return added
         except Exception as exc:  # noqa: BLE001 - never break session teardown
             logger.warning("extract_and_upsert failed for %s: %s", session_id, exc)
