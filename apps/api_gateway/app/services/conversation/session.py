@@ -30,7 +30,7 @@ from app.services.conversation.responder import (
     get_active_llm_model,
     resolve_system_prompt,
 )
-from app.services.conversation.tools.base import ToolContext, ToolRegistry
+from app.services.conversation.tools.base import ToolContext, ToolRegistry, ToolSource
 from app.services.conversation.tools.local import LocalToolSource
 from app.services.conversation.tools.mcp import McpToolSource
 from app.services.history.store import session_store
@@ -140,6 +140,26 @@ class ConversationSession:
 
     def is_turn_active(self) -> bool:
         return bool(self.current_turn and not self.current_turn.done())
+
+    def add_tool_source(self, source: ToolSource) -> None:
+        """Add a ToolSource after start(); used to register device MCP tools
+        discovered over the WS. Creates the registry if none exists yet.
+
+        Device tools must never be able to clobber a tool the gateway itself
+        configured (local/HTTP-MCP): when a registry already exists, any
+        device tool whose name collides with an already-registered tool is
+        skipped (the pre-existing tool wins) and logged."""
+        if self.tool_registry is None:
+            self.tool_registry = ToolRegistry([source])
+            return
+        for tool in source.list_tools():
+            if self.tool_registry.get(tool.name) is not None:
+                logger.warning(
+                    "device mcp: tool '%s' collides with an existing tool, skipping",
+                    tool.name,
+                )
+                continue
+            self.tool_registry.add(tool)
 
     @property
     def output_sample_rate_effective(self) -> int | None:
