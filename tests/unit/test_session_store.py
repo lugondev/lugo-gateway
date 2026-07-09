@@ -54,3 +54,67 @@ async def test_mark_ended_and_delete(store):
     assert await store.get("s1") is None
     assert await store.get_messages("s1") == []
     assert await store.delete("s1") is False
+
+
+@pytest.mark.asyncio
+async def test_delete_many_counts_only_existing(store):
+    await store.create("a")
+    await store.append_message("a", 1, "user", "hi")
+    await store.create("b")
+    deleted = await store.delete_many(["a", "b", "ghost"])
+    assert deleted == 2
+    assert await store.get("a") is None
+    assert await store.get("b") is None
+    assert await store.get_messages("a") == []
+
+
+@pytest.mark.asyncio
+async def test_delete_many_empty_list_is_noop(store):
+    await store.create("a")
+    assert await store.delete_many([]) == 0
+    assert await store.exists("a") is True
+
+
+@pytest.mark.asyncio
+async def test_clear_only_empty_keeps_non_empty(store):
+    await store.create("full")
+    await store.append_message("full", 1, "user", "x")
+    await store.create("empty1")
+    await store.create("empty2")
+    deleted = await store.clear(profile_id=None, only_empty=True)
+    assert deleted == 2
+    assert await store.exists("full") is True
+    assert await store.exists("empty1") is False
+    assert await store.exists("empty2") is False
+
+
+@pytest.mark.asyncio
+async def test_clear_all_respects_profile_scope(store):
+    await store.create("p1a", profile_id="p1")
+    await store.append_message("p1a", 1, "user", "x")
+    await store.create("p1b", profile_id="p1")
+    await store.create("p2a", profile_id="p2")
+    deleted = await store.clear(profile_id="p1", only_empty=False)
+    assert deleted == 2
+    assert await store.exists("p1a") is False
+    assert await store.exists("p1b") is False
+    assert await store.exists("p2a") is True
+
+
+@pytest.mark.asyncio
+async def test_clear_all_none_profile_clears_everything(store):
+    await store.create("a", profile_id="p1")
+    await store.create("b", profile_id="p2")
+    deleted = await store.clear(profile_id=None, only_empty=False)
+    assert deleted == 2
+    assert len(await store.list()) == 0
+
+
+@pytest.mark.asyncio
+async def test_clear_only_empty_scoped_to_profile(store):
+    await store.create("p1empty", profile_id="p1")
+    await store.create("p2empty", profile_id="p2")
+    deleted = await store.clear(profile_id="p1", only_empty=True)
+    assert deleted == 1
+    assert await store.exists("p1empty") is False
+    assert await store.exists("p2empty") is True
