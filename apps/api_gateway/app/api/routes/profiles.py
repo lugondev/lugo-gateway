@@ -20,6 +20,7 @@ class ProfileRequest(BaseModel):
     nickname: str = ""
     llm: LlmConfig = LlmConfig()
     system_prompt: str = ""
+    voice_optimized: bool = False
     stt: SttConfig = SttConfig()
     tts: TtsConfig = TtsConfig()
     mcp_servers: list[McpServer] = []

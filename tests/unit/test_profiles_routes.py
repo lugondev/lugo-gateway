@@ -39,6 +39,14 @@ def test_create_profile(client):
     assert data["system_prompt"] == "Be brief."
 
 
+def test_voice_optimized_defaults_false_and_round_trips(client):
+    client.post("/v1/profiles", json={"name": "plain"})
+    assert client.get("/v1/profiles/plain").json()["data"]["voice_optimized"] is False
+
+    client.post("/v1/profiles", json={"name": "voice", "voice_optimized": True})
+    assert client.get("/v1/profiles/voice").json()["data"]["voice_optimized"] is True
+
+
 def test_get_profile(client):
     client.post("/v1/profiles", json={"name": "x", "system_prompt": "hello"})
     resp = client.get("/v1/profiles/x")

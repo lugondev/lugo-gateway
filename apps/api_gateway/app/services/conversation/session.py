@@ -158,6 +158,7 @@ class ConversationSession:
         llm_api_key = profile.llm.api_key if (profile and profile.llm.base_url) else None
         llm_model = (profile.llm.model or None) if (profile and profile.llm.model) else None
         system_prompt = (profile.system_prompt or None) if (profile and profile.system_prompt) else None
+        voice_optimized = bool(profile and profile.voice_optimized)
 
         self.stt_provider = stt_service.get_provider(cfg.stt_engine)
         self.tts_provider = tts_service.get_provider(cfg.tts_engine)
@@ -188,6 +189,7 @@ class ConversationSession:
             api_key=llm_api_key,
             model=llm_model,
             system_prompt=system_prompt,
+            voice_optimized=voice_optimized,
         )
 
         self.tool_registry = await _build_tool_registry(profile)
@@ -262,7 +264,7 @@ class ConversationSession:
             tts_ready=tts_ready,
         )
 
-        self.base_system_prompt = resolve_system_prompt(system_prompt)
+        self.base_system_prompt = resolve_system_prompt(system_prompt, voice_optimized)
         self.tool_ctx = ToolContext(emit_command=self._emit_command, language=cfg.language or None)
 
         # Warm TTS (and STT if it supports it, e.g. MLX graph compile) in the background

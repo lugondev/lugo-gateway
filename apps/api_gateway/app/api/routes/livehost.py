@@ -141,6 +141,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
 
     responder = build_responder_ex(
         base_url=llm_base_url, api_key=llm_api_key, model=llm_model, system_prompt=system_prompt,
+        voice_optimized=bool(profile and profile.voice_optimized),
     )
 
     endpointer = VadEndpointer(
