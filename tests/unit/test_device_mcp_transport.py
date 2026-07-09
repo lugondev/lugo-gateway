@@ -75,6 +75,18 @@ async def test_timeout_raises_and_cleans_up():
 
 
 @pytest.mark.asyncio
+async def test_send_exception_wrapped_in_device_mcp_error():
+    async def send_json(msg):
+        raise ConnectionResetError("closed")
+
+    t = DeviceMcpTransport(send_json)
+    with pytest.raises(DeviceMcpError) as exc_info:
+        await t.call("tools/call", {"name": "x"})
+    assert not isinstance(exc_info.value, ConnectionResetError)
+    assert t._pending == {}
+
+
+@pytest.mark.asyncio
 async def test_unknown_id_is_dropped_not_raised():
     _, send_json = _collector()
     t = DeviceMcpTransport(send_json)

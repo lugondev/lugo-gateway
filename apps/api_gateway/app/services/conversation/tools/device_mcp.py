@@ -56,6 +56,10 @@ class DeviceMcpTransport:
             return await asyncio.wait_for(fut, timeout or self._timeout)
         except asyncio.TimeoutError as exc:
             raise DeviceMcpError(f"{method} timed out") from exc
+        except DeviceMcpError:
+            raise
+        except Exception as exc:
+            raise DeviceMcpError(str(exc)) from exc
         finally:
             self._pending.pop(mid, None)
 
@@ -66,7 +70,9 @@ class DeviceMcpTransport:
             logger.warning("device mcp: dropping response for unknown/stale id %r", mid)
             return
         if "error" in payload:
-            fut.set_exception(DeviceMcpError(str(payload["error"])))
+            err = payload["error"]
+            msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+            fut.set_exception(DeviceMcpError(msg))
         else:
             fut.set_result(payload.get("result", {}))
 
