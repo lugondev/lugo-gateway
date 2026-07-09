@@ -160,11 +160,11 @@ const board_t *board_select(const board_t *const *boards, int n,
 
 ```cmake
 idf_component_register(
-    SRCS "board.c" "board_active.c" "board_select.c"
+    SRCS "board_active.c" "board_select.c"
     INCLUDE_DIRS "include")
 ```
 
-Note: `board.c` is created in Task 5. Until then this build target is only exercised by the host tests below (which compile the `.c` files directly, not via CMake). If you run `idf.py build` before Task 5, temporarily omit `"board.c"` — but the normal flow reaches `idf.py build` at Task 5, so leave it listed.
+Note: `board.c` (the target-only registry gather) is created and added to this `SRCS` list in Task 5. Until then the board layer is exercised only by the host tests below (which compile the `.c` files directly, not via CMake), so leaving it out keeps any intermediate `idf.py build` green.
 
 - [ ] **Step 6: Move `button_id_t` out of `components/buttons/include/buttons.h`**
 
@@ -710,6 +710,7 @@ Brings the framework to life on hardware. Verified by `idf.py build` + an on-tar
 
 **Files:**
 - Create: `components/board/board.c`
+- Modify: `components/board/CMakeLists.txt` (add `board.c` to `SRCS`)
 - Create: `components/boards/lugo_s3_st7789/board_def.c`
 - Create: `components/boards/CMakeLists.txt`
 - Create: `components/boards/linker.lf`
@@ -751,6 +752,14 @@ esp_err_t board_detect_and_select(void) {
     ESP_LOGI(TAG, "board: %s (registered=%d)", b->name, n);
     return ESP_OK;
 }
+```
+
+- [ ] **Step 1b: Add `board.c` to `components/board/CMakeLists.txt`**
+
+```cmake
+idf_component_register(
+    SRCS "board_active.c" "board_select.c" "board.c"
+    INCLUDE_DIRS "include")
 ```
 
 - [ ] **Step 2: Create `components/boards/linker.lf`** (keep the registry section under `--gc-sections`)
