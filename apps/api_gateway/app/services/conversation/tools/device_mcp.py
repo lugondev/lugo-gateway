@@ -87,6 +87,37 @@ class DeviceMcpTransport:
         self._pending.clear()
 
 
+_INIT_PARAMS = {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {},
+    "clientInfo": {"name": "LugoGateway", "version": "1.0.0"},
+}
+
+
+async def discover_device_tools(
+    transport: DeviceMcpTransport, *, discovery_timeout: float = 10.0
+) -> list[dict]:
+    """Run initialize + paginated tools/list. Returns [] on any error."""
+    try:
+        await transport.call("initialize", _INIT_PARAMS, msg_id=1, timeout=discovery_timeout)
+        tools: list[dict] = []
+        cursor: str | None = None
+        while True:
+            params = {"cursor": cursor} if cursor else None
+            result = await transport.call(
+                "tools/list", params, msg_id=2, timeout=discovery_timeout
+            )
+            page = result.get("tools") if isinstance(result, dict) else None
+            if isinstance(page, list):
+                tools.extend(t for t in page if isinstance(t, dict) and t.get("name"))
+            cursor = result.get("nextCursor") if isinstance(result, dict) else None
+            if not cursor:
+                return tools
+    except DeviceMcpError as exc:
+        logger.warning("device mcp discovery failed: %s", exc)
+        return []
+
+
 def sanitize_tool_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]", "_", name)
 
