@@ -44,3 +44,15 @@ async def test_embedding_persists(store):
     m = await store.add("pet", "fact", embedding=[0.5, 0.5])
     rows = await store.list("pet")
     assert rows[0]["embedding"] == [0.5, 0.5]
+
+
+@pytest.mark.asyncio
+async def test_delete_many(store):
+    a = await store.add("pet", "a")
+    b = await store.add("pet", "b")
+    c = await store.add("pet", "c")
+    assert await store.delete_many([a["id"], b["id"]]) == 2
+    remaining = {m["content"] for m in await store.list("pet")}
+    assert remaining == {"c"}
+    assert await store.delete_many([]) == 0
+    _ = c

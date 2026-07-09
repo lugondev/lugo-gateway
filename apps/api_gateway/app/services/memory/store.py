@@ -6,7 +6,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 
 from app.services.db.engine import db_session
-from app.services.db.models import MemoryItem, utcnow
+from app.services.db.models import MemoryItem, MemoryProfileDoc, utcnow
 
 
 def _mem_dict(m: MemoryItem) -> dict:
@@ -79,5 +79,52 @@ class MemoryStore:
             await s.commit()
             return result.rowcount or 0
 
+    async def delete_many(self, ids: list[str]) -> int:
+        if not ids:
+            return 0
+        async with db_session() as s:
+            result = await s.execute(sa_delete(MemoryItem).where(MemoryItem.id.in_(ids)))
+            await s.commit()
+            return result.rowcount or 0
+
 
 memory_store = MemoryStore()
+
+
+def _doc_dict(d: MemoryProfileDoc) -> dict:
+    return {
+        "profile_id": d.profile_id,
+        "content": d.content,
+        "updated_at": d.updated_at.isoformat() if d.updated_at else None,
+    }
+
+
+class ProfileDocStore:
+    async def get(self, profile_id: str) -> dict | None:
+        async with db_session() as s:
+            row = await s.get(MemoryProfileDoc, profile_id)
+            return _doc_dict(row) if row else None
+
+    async def upsert(self, profile_id: str, content: str) -> dict:
+        async with db_session() as s:
+            row = await s.get(MemoryProfileDoc, profile_id)
+            if row is None:
+                row = MemoryProfileDoc(profile_id=profile_id, content=content)
+                s.add(row)
+            else:
+                row.content = content
+                row.updated_at = utcnow()
+            await s.commit()
+            return _doc_dict(row)
+
+    async def delete(self, profile_id: str) -> bool:
+        async with db_session() as s:
+            row = await s.get(MemoryProfileDoc, profile_id)
+            if row is None:
+                return False
+            await s.delete(row)
+            await s.commit()
+            return True
+
+
+profile_doc_store = ProfileDocStore()

@@ -49,3 +49,13 @@ class MemoryItem(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+class MemoryProfileDoc(Base):
+    __tablename__ = "memory_profile_docs"
+
+    profile_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    content: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )

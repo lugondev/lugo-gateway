@@ -32,6 +32,9 @@ class MemoryConfig(BaseModel):
     top_k: int = 5              # semantic mode: how many memories to inject
     extractor_model: str = ""   # "" = use the profile's own LLM model
     embed_model: str = ""       # semantic mode: OpenAI-compatible embedding model
+    compaction_threshold: int = 20  # raw buffer facts that trigger compaction
+    max_facts: int = 200            # hard cap; also forces compaction
+    dedup_threshold: float = 0.92   # cosine >= this => treat new fact as duplicate
 
 
 class SessionConfig(BaseModel):
