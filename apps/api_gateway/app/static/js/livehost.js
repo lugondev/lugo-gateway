@@ -224,21 +224,21 @@ export async function startLhSession() {
 
   const sttEngine = el("lh-stt-engine").value;
   if (!sttEngine) {
-    setLhStatus("Không có STT engine khả dụng", "status-error");
+    setLhStatus("No STT engine available", "status-error");
     setLhSessionUI("idle");
     return;
   }
 
-  setLhStatus("⏳ khởi động STT engine…", "status-idle");
+  setLhStatus("⏳ starting STT engine…", "status-idle");
   try {
     const warmRes = await fetch(`/v1/stt/warm?engine=${encodeURIComponent(sttEngine)}`, { method: "POST" });
     if (!warmRes.ok) {
-      setLhStatus(`STT engine '${sttEngine}' chưa sẵn sàng`, "status-error");
+      setLhStatus(`STT engine '${sttEngine}' not ready`, "status-error");
       setLhSessionUI("idle");
       return;
     }
   } catch {
-    setLhStatus("Không thể kết nối STT engine", "status-error");
+    setLhStatus("Could not connect to STT engine", "status-error");
     setLhSessionUI("idle");
     return;
   }

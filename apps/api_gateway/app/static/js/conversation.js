@@ -198,23 +198,23 @@ export async function startConversation() {
 
   const sttEngine = el("conv-stt-engine").value;
   if (!sttEngine) {
-    setConvStatus("Không có STT engine khả dụng", "status-error");
+    setConvStatus("No STT engine available", "status-error");
     setConvUI("idle");
     return;
   }
 
   // Warm up the STT engine so the first turn doesn't stall loading the model.
   // The /warm endpoint is a fast no-op for engines with no warm() method.
-  setConvStatus("⏳ khởi động STT engine…", "status-idle");
+  setConvStatus("⏳ starting STT engine…", "status-idle");
   try {
     const warmRes = await fetch(`/v1/stt/warm?engine=${encodeURIComponent(sttEngine)}`, { method: "POST" });
     if (!warmRes.ok) {
-      setConvStatus(`STT engine '${sttEngine}' chưa sẵn sàng`, "status-error");
+      setConvStatus(`STT engine '${sttEngine}' not ready`, "status-error");
       setConvUI("idle");
       return;
     }
   } catch {
-    setConvStatus("Không thể kết nối STT engine", "status-error");
+    setConvStatus("Could not connect to STT engine", "status-error");
     setConvUI("idle");
     return;
   }
