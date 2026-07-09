@@ -141,6 +141,14 @@ class ConversationSession:
     def is_turn_active(self) -> bool:
         return bool(self.current_turn and not self.current_turn.done())
 
+    def add_tool_source(self, source) -> None:
+        """Add a ToolSource after start(); used to register device MCP tools
+        discovered over the WS. Creates the registry if none exists yet."""
+        if self.tool_registry is None:
+            self.tool_registry = ToolRegistry([source])
+        else:
+            self.tool_registry.add_source(source)
+
     @property
     def output_sample_rate_effective(self) -> int | None:
         """The output sample rate advertised in session_started (None for url mode)."""
