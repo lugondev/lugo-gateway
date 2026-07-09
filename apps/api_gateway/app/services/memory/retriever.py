@@ -28,6 +28,7 @@ class MemoryRetriever:
             return ""
         doc = await profile_doc_store.get(profile.name)
         doc_block = doc["content"].strip() if doc and doc["content"] else ""
+        doc_block = doc_block[:MAX_CHARS]
         items = await memory_store.list(profile.name)
         if profile.memory.mode == "semantic" and query and items:
             items = await self._semantic_filter(items, query, profile)

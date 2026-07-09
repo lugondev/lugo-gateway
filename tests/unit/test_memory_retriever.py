@@ -64,6 +64,19 @@ async def test_get_context_truncates_to_max_chars():
 
 
 @pytest.mark.asyncio
+async def test_get_context_caps_oversized_doc():
+    from app.services.memory import retriever as r
+    from app.services.memory.store import profile_doc_store
+
+    await profile_doc_store.upsert("pet", "## User Profile\n" + "x" * 5000)
+    await memory_store.add("pet", "likes tea")
+    block = await MemoryRetriever().get_context(Profile(name="pet"))
+    assert len(block) <= r.MAX_CHARS
+    assert "## Recent notes" not in block
+    assert "likes tea" not in block
+
+
+@pytest.mark.asyncio
 async def test_get_context_empty_cases():
     r = MemoryRetriever()
     assert await r.get_context(None) == ""
