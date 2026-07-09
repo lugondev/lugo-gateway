@@ -226,6 +226,13 @@ class Settings(BaseSettings):
     conversation_tools_enabled: bool = False
     conversation_tool_max_iters: int = 3
 
+    # Device MCP: gateway acts as an MCP client to a device advertising
+    # features.mcp in its wakeup, discovering + relaying tool calls over the
+    # Lugo WS (see apps/api_gateway/app/services/conversation/tools/device_mcp.py).
+    device_mcp_enabled: bool = True
+    device_mcp_request_timeout_s: float = 10.0
+    device_mcp_discovery_timeout_s: float = 10.0
+
     # Livehost: TikTok Live AI co-host (see docs/superpowers/specs/2026-07-05-livehost-tiktok-cohost-design.md).
     # Comma-separated keywords that boost a comment's reply priority (e.g. bot name).
     livehost_mention_keywords: str = ""

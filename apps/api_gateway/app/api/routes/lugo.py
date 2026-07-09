@@ -20,6 +20,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.settings import settings
 from app.services.conversation.lugo_frame import LUGO_FRAME_OPUS, encode_frame
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
+from app.services.conversation.tools.device_mcp import (
+    DeviceMcpToolSource, DeviceMcpTransport, discover_device_tools,
+)
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
 from app.services.tts.profile_store import tts_profile_store
@@ -130,7 +133,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
                 speaking = False
                 await websocket.send_json({"type": "tts", "state": "stop"})
         elif event == "command":
-            await websocket.send_json({"type": "mcp", **payload})
+            await websocket.send_json({"type": "command", **payload})
         elif event == "error":
             await websocket.send_json({"type": "error", "message": payload.get("message", "")})
         # session_started / processing / engines_ready / speech_* / audio_end / reset: not on the wire
@@ -144,6 +147,25 @@ async def lugo_stream(websocket: WebSocket) -> None:
         "type": "welcome", "session_id": session_id, "transport": "websocket",
         "audio_params": {"sample_rate": out_sr}, "idle_timeout_s": idle,
     })
+
+    device_mcp = bool((hello.get("features") or {}).get("mcp"))
+    transport: DeviceMcpTransport | None = None
+    discovery_task: asyncio.Task | None = None
+    if device_mcp and settings.device_mcp_enabled:
+        transport = DeviceMcpTransport(
+            websocket.send_json,
+            request_timeout=settings.device_mcp_request_timeout_s,
+        )
+
+        async def _discover() -> None:
+            defs = await discover_device_tools(
+                transport, discovery_timeout=settings.device_mcp_discovery_timeout_s
+            )
+            if defs:
+                session.add_tool_source(DeviceMcpToolSource(defs, transport))
+                logger.info("device mcp: registered %d tool(s)", len(defs))
+
+        discovery_task = asyncio.create_task(_discover())
 
     closing = False
 
@@ -215,6 +237,9 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     await session.abort("barge-in")
                 elif ctype == "listen":
                     pass  # Phase 1 auto mode: server VAD drives turns
+                elif ctype == "mcp":
+                    if transport is not None:
+                        transport.on_message(control.get("payload") or {})
     except WebSocketDisconnect:
         pass
     finally:
@@ -222,6 +247,12 @@ async def lugo_stream(websocket: WebSocket) -> None:
             wd.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await wd
+        if discovery_task is not None:
+            discovery_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await discovery_task
+        if transport is not None:
+            transport.close()
         await session.close()
         try:
             await websocket.close()
