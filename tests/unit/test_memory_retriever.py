@@ -72,8 +72,28 @@ async def test_get_context_caps_oversized_doc():
     await memory_store.add("pet", "likes tea")
     block = await MemoryRetriever().get_context(Profile(name="pet"))
     assert len(block) <= r.MAX_CHARS
-    assert "## Recent notes" not in block
-    assert "likes tea" not in block
+    doc_part = block.split("\n\n## Recent notes")[0]
+    assert len(doc_part) <= r.MAX_DOC_CHARS
+    # doc no longer starves the buffer: with the doc capped, there's room
+    # left over for the short recent-notes fact to appear.
+    assert "## Recent notes" in block
+    assert "- likes tea" in block
+
+
+@pytest.mark.asyncio
+async def test_get_context_doc_truncated_at_line_boundary():
+    from app.services.memory import retriever as r
+    from app.services.memory.store import profile_doc_store
+
+    lines = [f"line {i} of the profile doc padding text" for i in range(200)]
+    doc = "\n".join(lines)
+    await profile_doc_store.upsert("pet", doc)
+    block = await MemoryRetriever().get_context(Profile(name="pet"))
+    # no memory items were added, so the block is exactly the truncated doc
+    assert len(block) <= r.MAX_DOC_CHARS
+    assert len(doc) > r.MAX_DOC_CHARS  # sanity: truncation actually happened
+    last_line = block.rstrip("\n").split("\n")[-1]
+    assert last_line in lines  # ends on a complete original line, never mid-line
 
 
 @pytest.mark.asyncio

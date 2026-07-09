@@ -92,13 +92,21 @@ class MemoryExtractor:
         if not texts or not profile.memory.embed_model or not profile.llm.base_url:
             return [None] * len(texts)
         try:
-            return await embed_texts(
+            vecs = await embed_texts(
                 texts, profile.llm.base_url, profile.llm.api_key,
                 profile.memory.embed_model,
             )
         except Exception as exc:  # noqa: BLE001 - embedding is best-effort
             logger.warning("memory embed failed: %s", exc)
             return [None] * len(texts)
+        if len(vecs) != len(texts):
+            logger.warning(
+                "memory embed length mismatch: got %d vectors for %d texts; "
+                "storing facts without embeddings instead of dropping any",
+                len(vecs), len(texts),
+            )
+            return [None] * len(texts)
+        return vecs
 
     async def extract_and_upsert(self, session_id: str, profile: Profile) -> int:
         """Extract facts from a finished session into the profile's memory."""

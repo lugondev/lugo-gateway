@@ -15,6 +15,7 @@ import logging
 import httpx
 
 from app.core.settings import settings
+from app.services.memory.retriever import MAX_DOC_CHARS, _truncate_at_boundary
 from app.services.memory.store import memory_store, profile_doc_store
 from app.services.profiles.models import Profile
 
@@ -27,7 +28,8 @@ COMPACTION_PROMPT = (
     "using these sub-sections, omitting any that would be empty:\n"
     "### Danh tính\n### Dự án\n### Sở thích\n### Ràng buộc\n### Quan hệ\n"
     "Merge duplicates, keep bullets short, and when two facts conflict prefer the "
-    "more recent one (facts are listed oldest first). Return ONLY the Markdown."
+    "more recent one (facts are listed oldest first). Keep the ENTIRE profile "
+    "under about 1500 characters total. Return ONLY the Markdown."
 )
 
 
@@ -98,6 +100,7 @@ class MemoryCompactor:
                 "compaction produced empty doc for %s; keeping facts", profile.name
             )
             return False
+        new_doc = _truncate_at_boundary(new_doc, MAX_DOC_CHARS)
         await profile_doc_store.upsert(profile.name, new_doc)
         await memory_store.delete_many(fact_ids)
         logger.info(

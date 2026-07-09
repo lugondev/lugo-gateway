@@ -114,6 +114,33 @@ async def test_extract_and_upsert_stores_embedding(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_extract_and_upsert_embed_length_mismatch_drops_no_facts(monkeypatch, caplog):
+    await session_store.create("s5", profile_id="emb3")
+    await session_store.append_message("s5", 1, "user", "x")
+    await session_store.append_message("s5", 1, "assistant", "y")
+
+    async def fake_extract(self, messages, base_url, api_key, model):
+        return ["fact one", "fact two", "fact three"]
+
+    async def short_embed(texts, base_url, api_key, model):
+        return [[1.0, 0.0]]  # shorter than the 3 input texts
+
+    monkeypatch.setattr(MemoryExtractor, "extract", fake_extract)
+    monkeypatch.setattr("app.services.memory.extractor.embed_texts", short_embed)
+    profile = Profile(
+        name="emb3",
+        llm={"base_url": "http://llm.local/v1", "model": "m"},
+        memory={"embed_model": "e"},
+    )
+    with caplog.at_level("WARNING"):
+        added = await MemoryExtractor().extract_and_upsert("s5", profile)
+    assert added == 3  # no facts silently dropped by a truncating zip
+    contents = {m["content"] for m in await memory_store.list("emb3")}
+    assert contents == {"fact one", "fact two", "fact three"}
+    assert any("mismatch" in r.message.lower() for r in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_extract_and_upsert_cosine_dedup(monkeypatch):
     await memory_store.add("emb2", "User enjoys tea", embedding=[1.0, 0.0])
     await session_store.create("s4", profile_id="emb2")

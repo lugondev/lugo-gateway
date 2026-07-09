@@ -76,6 +76,29 @@ async def test_compact_llm_failure_keeps_facts(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_compact_stores_doc_capped_at_max_doc_chars(monkeypatch):
+    from app.services.memory.retriever import MAX_DOC_CHARS
+
+    await memory_store.add("pet", "a")
+    await memory_store.add("pet", "b")
+    await memory_store.add("pet", "c")
+
+    long_doc = "## User Profile\n" + "\n".join(
+        f"- fact {i} with some padding text to inflate length" for i in range(200)
+    )
+
+    async def fake_call(self, profile, current_doc, facts):
+        return long_doc
+
+    monkeypatch.setattr(MemoryCompactor, "_call_llm", fake_call)
+    did = await MemoryCompactor().maybe_compact(_profile(compaction_threshold=3))
+    assert did is True
+    assert len(long_doc) > MAX_DOC_CHARS  # sanity: the fake LLM reply is oversized
+    doc = await profile_doc_store.get("pet")
+    assert len(doc["content"]) <= MAX_DOC_CHARS
+
+
+@pytest.mark.asyncio
 async def test_compact_empty_doc_keeps_facts(monkeypatch):
     await memory_store.add("pet", "a")
     await memory_store.add("pet", "b")

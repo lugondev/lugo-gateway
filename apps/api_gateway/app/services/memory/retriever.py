@@ -12,6 +12,18 @@ logger = logging.getLogger(__name__)
 
 MAX_ITEMS = 50
 MAX_CHARS = 2000
+MAX_DOC_CHARS = 1500  # leaves >=500 of MAX_CHARS for recent notes
+
+
+def _truncate_at_boundary(text: str, limit: int) -> str:
+    """Truncate `text` to at most `limit` chars without cutting mid-line."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    head = cut.rsplit("\n", 1)[0]
+    if head:
+        cut = head
+    return cut.rstrip()
 
 
 def inject_memories(system_prompt: str, block: str) -> str:
@@ -28,23 +40,30 @@ class MemoryRetriever:
             return ""
         doc = await profile_doc_store.get(profile.name)
         doc_block = doc["content"].strip() if doc and doc["content"] else ""
-        doc_block = doc_block[:MAX_CHARS]
+        doc_block = _truncate_at_boundary(doc_block, MAX_DOC_CHARS)
         items = await memory_store.list(profile.name)
         if profile.memory.mode == "semantic" and query and items:
             items = await self._semantic_filter(items, query, profile)
         buffer_lines: list[str] = []
         total = len(doc_block)
+        header = "## Recent notes\n"
         for item in items[:MAX_ITEMS]:
             content = item["content"]
-            if total + len(content) > MAX_CHARS:
+            line = f"- {content}"
+            extra = len(line) + 1  # joining newline between buffer lines
+            if not buffer_lines:
+                extra += len(header)
+                if doc_block:
+                    extra += 2  # "\n\n" separator joining the doc and notes parts
+            if total + extra > MAX_CHARS:
                 break
-            buffer_lines.append(f"- {content}")
-            total += len(content)
+            buffer_lines.append(line)
+            total += extra
         parts: list[str] = []
         if doc_block:
             parts.append(doc_block)
         if buffer_lines:
-            parts.append("## Recent notes\n" + "\n".join(buffer_lines))
+            parts.append(header + "\n".join(buffer_lines))
         return "\n\n".join(parts)
 
     async def _semantic_filter(
