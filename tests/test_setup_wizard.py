@@ -53,8 +53,8 @@ def test_extra_tts_engines_are_pip_components():
     by_id = {c["id"]: c for c in setup.COMPONENTS}
     assert by_id["voxcpm2"]["install"] == ("pip", "voxcpm") and by_id["voxcpm2"]["module"] == "voxcpm"
     assert "kittentts" not in by_id and "sherpa_onnx" not in by_id  # removed
-    # Kokoro is MLX -> Apple only
-    assert by_id["kokoro"]["hosts"] == {"apple"}
+    # Kokoro-Vietnamese is CPU -> runs everywhere
+    assert by_id["kokoro_vi"]["hosts"] == {"apple", "nvidia", "cpu"}
 
 
 def test_build_env_picks_engines_and_omnivoice_python():

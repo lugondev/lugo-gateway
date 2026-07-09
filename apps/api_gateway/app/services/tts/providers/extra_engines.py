@@ -4,7 +4,6 @@ Each engine lazily imports its package and runs real inference following the
 OmniVoice-Studio adapter; if the package isn't installed, ``available()``
 reports False and ``install_hint()`` explains how to enable it. Engines:
 
-- kokoro      — MLX-Audio / Kokoro 82M, Apple-Silicon, multilingual. pip install mlx-audio
 - voxcpm2     — 30 langs, CPU/MPS, 48 kHz, clone + voice design.   pip install voxcpm
 - kokoro_vi   — Kokoro-82M fine-tuned for Vietnamese, CPU, 24 kHz, fixed voicepacks
                 (no cloning). Not on PyPI — install from GitHub:
@@ -14,8 +13,6 @@ reports False and ``install_hint()`` explains how to enable it. Engines:
 import asyncio
 import logging
 import os
-import platform
-import sys
 
 import numpy as np
 
@@ -58,45 +55,6 @@ class _ExtraTTSProvider(RenderingTTSProvider):
     async def _render_wav(self, payload: TTSRequest) -> bytes:
         audio = await asyncio.to_thread(self._generate_f32, payload)
         return float_array_to_wav_bytes(audio, sample_rate=self.sample_rate)
-
-
-class KokoroMLXProvider(_ExtraTTSProvider):
-    name = "kokoro"
-    sample_rate = 24000
-    _modules = ("mlx_audio",)
-    _hint = "pip install mlx-audio  (Apple Silicon only)"
-
-    def available(self) -> bool:
-        if not (sys.platform == "darwin" and platform.machine() == "arm64"):
-            return False
-        return super().available()
-
-    def detail(self) -> str:
-        return os.environ.get("OMNIVOICE_MLX_AUDIO_MODEL", "mlx-community/Kokoro-82M-bf16")
-
-    def _model(self):
-        if self.name not in _CACHE:
-            from mlx_audio.tts.utils import load_model
-
-            _CACHE[self.name] = load_model(self.detail())
-        return _CACHE[self.name]
-
-    def _generate_f32(self, payload: TTSRequest) -> np.ndarray:
-        kwargs = {"text": payload.text, "speed": float(payload.speed or 1.0)}
-        if payload.voice:
-            kwargs["voice"] = payload.voice
-        if payload.language:
-            kwargs["lang_code"] = payload.language[:2].lower()
-        pieces = []
-        try:
-            results = self._model().generate(**kwargs)
-        except TypeError:
-            results = self._model().generate(text=payload.text, speed=kwargs["speed"])
-        for result in results:
-            pieces.append(_to_mono_f32(getattr(result, "audio", result)))
-        if not pieces:
-            raise RuntimeError("mlx-audio produced no audio")
-        return np.concatenate(pieces, axis=-1)
 
 
 class VoxCPM2Provider(_ExtraTTSProvider):
@@ -173,7 +131,6 @@ class KokoroVietnameseProvider(_ExtraTTSProvider):
 
 
 EXTRA_TTS_PROVIDERS = [
-    KokoroMLXProvider(),
     VoxCPM2Provider(),
     KokoroVietnameseProvider(),
 ]
