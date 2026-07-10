@@ -84,6 +84,14 @@ class WhisperManager:
             )
         return {"models": models, "active": active}
 
+    def list_models(self) -> list[dict]:
+        """Common STT model-registry shape (see app.services.stt.model_registry)."""
+        snap = self.snapshot()
+        return [
+            {"id": m["size"], "label": m["label"], "cached": m["cached"], "active": m["active"]}
+            for m in snap["models"]
+        ]
+
     async def download(self, size: str) -> None:
         self.validate(size)
         if self._jobs.get(size, {}).get("state") == "downloading":
