@@ -22,6 +22,9 @@ def _validate_stt_model(profile: Profile) -> None:
     if not profile.stt.model:
         return
     preset = resolve_stt_profile(profile.stt.profile)
+    # Validation scope is intentionally narrowed to explicit stt.engine or stt.profile preset:
+    # profiles must be self-contained and not depend on mutable settings.conversation_stt_engine/
+    # default_stt_engine, so a profile's validity is independent of deploy-time config.
     engine = profile.stt.engine or (preset[0] if preset else "")
     if not engine:
         raise AppError("stt.model requires stt.engine or a resolvable stt.profile preset")
