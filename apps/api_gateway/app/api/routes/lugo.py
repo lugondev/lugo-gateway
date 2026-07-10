@@ -40,7 +40,9 @@ def _resolve(profile_name: str | None):
     # preset), falling back to server defaults — same single source of truth the
     # conversation stream uses, so a device that sends only a profile id streams
     # against that profile's STT. No query params on the Lugo wire.
-    stt_engine, language = resolve_stt(profile)
+    # stt_model is resolved but not yet threaded into _resolve()'s return tuple —
+    # that's Task 6's job (SessionRuntimeConfig wiring).
+    stt_engine, language, _stt_model = resolve_stt(profile)
     tts_name = (profile.tts.profile_name if profile else "") or None
     tts_profile = tts_profile_store.get(tts_name) if tts_name else None
     if tts_profile and tts_profile.engine:

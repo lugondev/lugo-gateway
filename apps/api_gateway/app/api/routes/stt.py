@@ -105,7 +105,7 @@ async def warm_engine(engine: str | None = None, profile: str | None = None) -> 
 
     if not engine:
         prof = profile_store.get(profile) if profile else None
-        engine, _ = resolve_stt(prof)
+        engine, _, _model = resolve_stt(prof)
     provider = stt_service.get_provider(engine)
     warm = getattr(provider, "warm", None)
     if callable(warm):

@@ -46,7 +46,7 @@ def engines_for_boot_warmup() -> tuple[list[str], list[str]]:
     # profile it points at — covered by iterating every TTS profile below).
     try:
         for prof in profile_store.list().values():
-            engine, _lang = resolve_stt(prof)
+            engine, _lang, _model = resolve_stt(prof)
             _add(stt, engine)
     except Exception as exc:  # noqa: BLE001 - warm-up must never break boot
         logger.warning("profile STT enumeration for warm-up failed: %s", exc)

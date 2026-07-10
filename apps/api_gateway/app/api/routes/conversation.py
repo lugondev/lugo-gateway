@@ -181,7 +181,9 @@ async def conversation_stream(websocket: WebSocket) -> None:
     # STT engine + language: explicit query param > the active profile's STT config
     # > server default. Devices can connect with just ?profile=<name> and inherit
     # the profile's STT, exactly as LLM/TTS already resolve. (See resolve_stt.)
-    stt_engine, language = resolve_stt(profile, q.get("stt_engine"), q.get("language"))
+    stt_engine, language, stt_model = resolve_stt(
+        profile, q.get("stt_engine"), q.get("language"), q.get("stt_model")
+    )
     # TTS profile resolution: ?tts_profile= (explicit pin) > the active LLM
     # profile's linked TTS profile > legacy tts_engine/voice query params.
     tts_profile_name = q.get("tts_profile") or (profile.tts.profile_name if profile else "") or None
