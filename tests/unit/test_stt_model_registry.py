@@ -60,8 +60,9 @@ def test_registries_dict_covers_whisper_family_and_qwen3():
 
 
 def test_apply_stt_model_noop_for_empty_model():
+    before = q.get_active_qwen3_asr_model()
     apply_stt_model("qwen3_asr", "")  # must not raise
-    assert q.get_active_qwen3_asr_model() != "Qwen/Qwen3-ASR-1.7B" or True  # unchanged either way
+    assert q.get_active_qwen3_asr_model() == before
 
 
 def test_apply_stt_model_noop_for_engine_without_registry():
