@@ -88,6 +88,17 @@ async def list_stt_engines() -> dict:
     return {"success": True, "data": stt_service.list_engines()}
 
 
+@router.get("/models")
+async def list_stt_models(engine: str) -> dict:
+    from app.services.stt.model_registry import STT_MODEL_REGISTRIES
+
+    registry = STT_MODEL_REGISTRIES.get(engine)
+    if registry is None:
+        return {"success": True, "data": {"engine": engine, "supports_variants": False, "models": []}}
+    models = [{**m, "valid": True} for m in registry.list_models()]
+    return {"success": True, "data": {"engine": engine, "supports_variants": True, "models": models}}
+
+
 @router.post("/warm")
 async def warm_engine(engine: str | None = None, profile: str | None = None) -> dict:
     """Load a heavy STT model into memory ahead of use (e.g. Whisper large ~20s).
