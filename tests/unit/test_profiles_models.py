@@ -42,6 +42,28 @@ def test_profile_stt_back_compat_old_json():
     assert p.stt.profile == ""
 
 
+def test_profile_stt_model_defaults_empty():
+    from app.services.profiles.models import SttConfig
+
+    p = Profile(name="x")
+    assert p.stt.model == ""
+
+
+def test_profile_stt_model_round_trip():
+    from app.services.profiles.models import SttConfig
+
+    p = Profile(name="x", stt=SttConfig(engine="qwen3_asr", model="0.6b"))
+    assert p.stt.model == "0.6b"
+    p2 = Profile.model_validate(p.model_dump())
+    assert p2.stt.model == "0.6b"
+
+
+def test_profile_stt_model_back_compat_old_json():
+    # a profile saved before the model field existed still validates, defaulting to ""
+    p = Profile.model_validate({"name": "legacy", "stt": {"engine": "whisper"}})
+    assert p.stt.model == ""
+
+
 def test_profile_full():
     p = Profile(
         name="home",
