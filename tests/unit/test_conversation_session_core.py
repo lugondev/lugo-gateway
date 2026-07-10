@@ -62,3 +62,31 @@ async def test_text_turn_emits_transcript_and_reply():
     assert "session_started" in names
     assert "user_transcript" in names
     assert "turn_done" in names
+
+
+@pytest.mark.asyncio
+async def test_session_start_applies_profile_stt_model(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "app.services.conversation.session.apply_stt_model",
+        lambda engine, model: calls.append((engine, model)),
+    )
+
+    async def emit(name, **p): pass
+    async def emit_audio(pkt): pass
+
+    sess = ConversationSession(_cfg(stt_model="1.7b"), emit, emit_audio)
+    await sess.start()
+    await sess.close()
+
+    assert calls == [("stub-core-stt", "1.7b")]
+
+
+@pytest.mark.asyncio
+async def test_session_start_skips_apply_when_no_model_set():
+    async def emit(name, **p): pass
+    async def emit_audio(pkt): pass
+
+    sess = ConversationSession(_cfg(), emit, emit_audio)  # stt_model defaults to ""
+    await sess.start()  # must not raise
+    await sess.close()

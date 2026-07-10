@@ -19,6 +19,7 @@ from app.services.livehost.orchestrator import LiveHostOrchestrator
 from app.services.livehost.registry import LivehostSession, livehost_registry
 from app.services.livehost.scheduler import EventScheduler
 from app.services.profiles.store import profile_store
+from app.services.stt.model_registry import apply_stt_model
 from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
 from app.services.tts.profile_store import tts_profile_store
@@ -112,6 +113,12 @@ async def livehost_stream(websocket: WebSocket) -> None:
     want_text = "text" in out_modalities
     audio_out = (q.get("audio_out") or "url").lower()
     output_sample_rate = int(q.get("output_sample_rate", 24000))
+
+    if stt_model:
+        try:
+            apply_stt_model(stt_engine, stt_model)
+        except AppError as exc:
+            logger.warning("stt model override skipped (%s/%s): %s", stt_engine, stt_model, exc)
 
     try:
         stt_provider = stt_service.get_provider(stt_engine)

@@ -40,9 +40,7 @@ def _resolve(profile_name: str | None):
     # preset), falling back to server defaults — same single source of truth the
     # conversation stream uses, so a device that sends only a profile id streams
     # against that profile's STT. No query params on the Lugo wire.
-    # stt_model is resolved but not yet threaded into _resolve()'s return tuple —
-    # that's Task 6's job (SessionRuntimeConfig wiring).
-    stt_engine, language, _stt_model = resolve_stt(profile)
+    stt_engine, language, stt_model = resolve_stt(profile)
     tts_name = (profile.tts.profile_name if profile else "") or None
     tts_profile = tts_profile_store.get(tts_name) if tts_name else None
     if tts_profile and tts_profile.engine:
@@ -53,7 +51,7 @@ def _resolve(profile_name: str | None):
         tts = dict(engine=settings.conversation_tts_engine or settings.default_tts_engine,
                    voice=None, ref_audio_path=None, ref_text=None, instruct=None, speed=None, language=None)
     idle = profile.session.idle_timeout_s if profile else 30
-    return profile, stt_engine, language, tts, idle
+    return profile, stt_engine, language, stt_model, tts, idle
 
 
 @router.websocket("/stream")
@@ -84,7 +82,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
         return
 
     profile_name = hello.get("profile")
-    profile, stt_engine, language, tts, idle = _resolve(profile_name)
+    profile, stt_engine, language, stt_model, tts, idle = _resolve(profile_name)
     if profile_name and not profile:
         await websocket.send_json({"type": "error", "message": f"profile '{profile_name}' not found"})
         await websocket.close()
@@ -105,7 +103,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
         ref_text=tts["ref_text"], tts_instruct=tts["instruct"], tts_speed=tts["speed"],
         tts_language=tts["language"], sample_rate=in_sr, output_sample_rate=out_sr,
         audio_codec="opus", want_audio=True, want_text=True, audio_out="opus",
-        denoise=False, resume_sid=None,
+        denoise=False, resume_sid=None, stt_model=stt_model,
     )
 
     speaking = False  # one tts{start} on first response/audio, one tts{stop} at turn end/abort

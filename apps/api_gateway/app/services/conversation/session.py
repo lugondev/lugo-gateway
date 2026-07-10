@@ -39,6 +39,7 @@ from app.services.mcp.server_store import mcp_server_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
 from app.services.profiles.store import profile_store
+from app.services.stt.model_registry import apply_stt_model
 from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.stt.routing import select_stt_engine
 from app.services.stt.service import stt_service
@@ -108,6 +109,7 @@ class SessionRuntimeConfig:
     audio_out: str  # "url" | "opus"
     denoise: bool
     resume_sid: str | None  # requested_sid, for history resume
+    stt_model: str = ""  # optional model-variant override (SttConfig.model, resolve_stt's 3rd value)
 
 
 class ConversationSession:
@@ -180,6 +182,13 @@ class ConversationSession:
         system_prompt = (profile.system_prompt or None) if (profile and profile.system_prompt) else None
         voice_optimized = bool(profile and profile.voice_optimized)
 
+        if cfg.stt_model:
+            try:
+                apply_stt_model(cfg.stt_engine, cfg.stt_model)
+            except AppError as exc:
+                logger.warning(
+                    "stt model override skipped (%s/%s): %s", cfg.stt_engine, cfg.stt_model, exc
+                )
         self.stt_provider = stt_service.get_provider(cfg.stt_engine)
         self.tts_provider = tts_service.get_provider(cfg.tts_engine)
 
