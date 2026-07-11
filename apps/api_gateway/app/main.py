@@ -27,6 +27,7 @@ from app.api.routes.system import router as system_router
 from app.api.routes.tts import router as tts_router
 from app.api.routes.tts_profiles import router as tts_profiles_router
 from app.api.routes.ui import router as ui_router
+from app.api.routes.users import router as users_router
 from app.core.auth_guard import AuthGuardMiddleware
 from app.core.errors import AppError
 from app.core.logging import setup_logging
@@ -171,6 +172,7 @@ async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
 
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(users_router)
 app.include_router(stt_router)
 app.include_router(tts_router)
 app.include_router(tts_profiles_router)
