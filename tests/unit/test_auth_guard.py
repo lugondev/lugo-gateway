@@ -23,21 +23,56 @@ def _with_password(monkeypatch):
     monkeypatch.setattr(settings, "admin_password", "")
 
 
-def test_guard_blocks_system_route_when_logged_out(client, _with_password):
+def _login_as(client, username: str, password: str, role: str = "user") -> None:
+    client.post("/api/auth/signup", json={"username": username, "password": password})
+    if role == "admin":
+        import asyncio
+
+        from app.services.auth.users import user_store
+
+        user = asyncio.run(user_store.get_by_username(username))
+        asyncio.run(user_store.set_fields(user.id, role="admin"))
+    client.post("/api/auth/login", json={"username": username, "password": password})
+
+
+def test_guard_blocks_admin_route_when_logged_out(client, _with_password):
     resp = client.get("/v1/system/status")
     assert resp.status_code == 401
 
 
-def test_guard_blocks_models_route_when_logged_out(client, _with_password):
-    resp = client.get("/v1/models")
-    assert resp.status_code == 401
+def test_guard_403s_admin_route_for_regular_user(client, _with_password):
+    _login_as(client, "toan", "s3cret", role="user")
+    resp = client.get("/v1/system/status")
+    assert resp.status_code == 403
 
 
-def test_guard_allows_system_route_after_login(client, _with_password):
-    client.post("/api/auth/signup", json={"username": "toan", "password": "s3cret"})
-    client.post("/api/auth/login", json={"username": "toan", "password": "s3cret"})
+def test_guard_allows_admin_route_for_admin(client, _with_password):
+    _login_as(client, "root", "s3cret", role="admin")
     resp = client.get("/v1/system/status")
     assert resp.status_code != 401
+    assert resp.status_code != 403
+
+
+def test_guard_allows_user_route_for_regular_user(client, _with_password):
+    _login_as(client, "toan", "s3cret", role="user")
+    resp = client.get("/v1/profiles")
+    assert resp.status_code != 401
+    assert resp.status_code != 403
+
+
+def test_guard_blocks_user_route_when_logged_out(client, _with_password):
+    resp = client.get("/v1/profiles")
+    assert resp.status_code == 401
+
+
+def test_guard_allows_device_pairing_init_without_login(client, _with_password):
+    resp = client.post("/v1/devices/pair/init", json={"serial": "AA:BB:CC"})
+    assert resp.status_code != 401
+
+
+def test_guard_blocks_pair_claim_when_logged_out(client, _with_password):
+    resp = client.post("/v1/devices/pair/claim", json={"code": "000000", "name": "x"})
+    assert resp.status_code == 401
 
 
 def test_guard_allows_device_routes_without_login(client, _with_password):
