@@ -32,7 +32,7 @@ FRAME = 960  # 60 ms @ 16 kHz
 class _StubSTT(STTProvider):
     name = "stub-opus"
 
-    async def transcribe_bytes(self, audio_bytes, language=None) -> STTResult:
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
         return STTResult(engine=self.name, text="xin chào", is_final=True)
 
 

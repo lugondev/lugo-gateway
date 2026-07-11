@@ -12,7 +12,7 @@ from app.services.stt.service import stt_service
 
 class _StubSTT(STTProvider):
     name = "stub-mcp-stt"
-    async def transcribe_bytes(self, audio_bytes, language=None):
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None):
         return STTResult(engine=self.name, text="louder please", is_final=True)
 
 

@@ -11,7 +11,7 @@ from app.services.stt.service import stt_service
 
 class _StubSTT(STTProvider):
     name = "stub-idle-stt"
-    async def transcribe_bytes(self, audio_bytes, language=None) -> STTResult:
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
         return STTResult(engine=self.name, text="", is_final=True)
 
 

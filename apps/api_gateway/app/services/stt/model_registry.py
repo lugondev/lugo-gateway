@@ -69,3 +69,14 @@ def apply_stt_model(engine: str, model: str) -> None:
     registry = STT_MODEL_REGISTRIES.get(engine)
     if registry is not None:
         registry.select(model)
+
+
+def resolve_default_stt_model(engine: str) -> str | None:
+    """The model id a session should snapshot when its profile/query didn't pin
+    one — whatever this engine's process-global default currently is. None for
+    engines with no variant registry (single fixed model, e.g. vosk/whisper_mlx)."""
+    if engine in ("whisper", "whisper_local", "whisper_gemma"):
+        return whisper_manager.snapshot()["active"]
+    if engine == "qwen3_asr":
+        return get_active_qwen3_asr_model()
+    return None

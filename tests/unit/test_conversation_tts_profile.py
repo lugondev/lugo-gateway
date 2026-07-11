@@ -21,7 +21,7 @@ SR = 16000
 class _StubSTT(STTProvider):
     name = "stub-conv-ttsp"
 
-    async def transcribe_bytes(self, audio_bytes, language=None) -> STTResult:
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
         return STTResult(engine=self.name, text="xin chao", is_final=True)
 
 

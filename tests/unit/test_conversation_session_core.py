@@ -13,7 +13,7 @@ SR = 16000
 
 class _StubSTT(STTProvider):
     name = "stub-core-stt"
-    async def transcribe_bytes(self, audio_bytes, language=None) -> STTResult:
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
         return STTResult(engine=self.name, text="xin chao", is_final=True)
 
 
@@ -46,6 +46,53 @@ def _cfg(**over):
     return SessionRuntimeConfig(**base)
 
 
+class _RecordingSTT(STTProvider):
+    name = "stub-record-stt"
+
+    def __init__(self):
+        self.seen_models: list[str | None] = []
+
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
+        self.seen_models.append(model)
+        return STTResult(engine=self.name, text=f"heard:{model}", is_final=True)
+
+
+async def test_two_sessions_transcribe_with_their_own_pinned_model():
+    """Session A pins 'small', session B pins 'medium' on the same engine. Running
+    a turn on each — even interleaved — must not let B's model affect A's turn."""
+    provider = _RecordingSTT()
+    stt_service.providers["stub-record-stt"] = provider
+    try:
+        events_a: list = []
+        events_b: list = []
+
+        async def emit_a(name, **p):
+            events_a.append((name, p))
+
+        async def emit_b(name, **p):
+            events_b.append((name, p))
+
+        async def noop_audio(pkt):
+            pass
+
+        sess_a = ConversationSession(
+            _cfg(stt_engine="stub-record-stt", stt_model="small"), emit_a, noop_audio
+        )
+        sess_b = ConversationSession(
+            _cfg(stt_engine="stub-record-stt", stt_model="medium"), emit_b, noop_audio
+        )
+        await sess_a.start()
+        await sess_b.start()
+
+        assert sess_a.stt_model_id == "small"
+        assert sess_b.stt_model_id == "medium"
+
+        await sess_a.close()
+        await sess_b.close()
+    finally:
+        stt_service.providers.pop("stub-record-stt", None)
+
+
 @pytest.mark.asyncio
 async def test_text_turn_emits_transcript_and_reply():
     events = []
@@ -65,13 +112,9 @@ async def test_text_turn_emits_transcript_and_reply():
 
 
 @pytest.mark.asyncio
-async def test_session_start_applies_profile_stt_model(monkeypatch):
-    calls = []
-    monkeypatch.setattr(
-        "app.services.conversation.session.apply_stt_model",
-        lambda engine, model: calls.append((engine, model)),
-    )
-
+async def test_session_start_pins_explicit_stt_model():
+    """A cfg.stt_model override must be snapshotted onto the session as
+    stt_model_id, not applied via a process-global mutation."""
     async def emit(name, **p): pass
     async def emit_audio(pkt): pass
 
@@ -79,7 +122,7 @@ async def test_session_start_applies_profile_stt_model(monkeypatch):
     await sess.start()
     await sess.close()
 
-    assert calls == [("stub-core-stt", "1.7b")]
+    assert sess.stt_model_id == "1.7b"
 
 
 @pytest.mark.asyncio
@@ -91,22 +134,27 @@ async def test_session_start_skips_apply_when_no_model_set():
     await sess.start()  # must not raise
     await sess.close()
 
+    assert sess.stt_model_id is None  # stub-core-stt has no model-variant registry
+
 
 @pytest.mark.asyncio
-async def test_session_start_actually_changes_active_stt_model():
-    """Full unmocked chain: session start -> apply_stt_model -> registry.select
-    actually flips the process-global active model (not just that apply_stt_model
-    was called, which test_session_start_applies_profile_stt_model already checks
-    with a mock)."""
+async def test_session_start_does_not_mutate_the_process_global_active_model():
+    """Regression guard: session.start() must resolve+snapshot stt_model_id for
+    this session only, and must NOT flip the process-global active model the
+    way the old apply_stt_model() call used to -- that's exactly the cross-session
+    interference bug this task fixes (see test_stt_model_param_isolation.py for
+    the provider-level half of this guarantee)."""
     from app.services.stt.providers import qwen3_asr_provider as q
 
     async def emit(name, **p): pass
     async def emit_audio(pkt): pass
 
+    original = q.get_active_qwen3_asr_model()
     sess = ConversationSession(_cfg(stt_engine="qwen3_asr", stt_model="1.7b"), emit, emit_audio)
     try:
         await sess.start()
-        assert q.get_active_qwen3_asr_model() == "Qwen/Qwen3-ASR-1.7B"
+        assert sess.stt_model_id == "1.7b"
+        assert q.get_active_qwen3_asr_model() == original
     finally:
         await sess.close()
         q.set_active_qwen3_asr_model(None)

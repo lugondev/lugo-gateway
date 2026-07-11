@@ -18,7 +18,7 @@ from app.services.tts.service import tts_service
 class _StubSTT(STTProvider):
     name = "stub-livehost-social"
 
-    async def transcribe_bytes(self, audio_bytes, language=None) -> STTResult:
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
         return STTResult(engine=self.name, text="", is_final=True)
 
 

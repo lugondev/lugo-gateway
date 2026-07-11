@@ -9,7 +9,7 @@ class _StubProvider(STTProvider):
     def __init__(self) -> None:
         self.received_wav: bytes | None = None
 
-    async def transcribe_bytes(self, audio_bytes, language=None) -> STTResult:
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
         self.received_wav = audio_bytes
         return STTResult(engine=self.name, text="stub transcript", is_final=True)
 

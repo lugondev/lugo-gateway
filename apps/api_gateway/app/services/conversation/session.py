@@ -39,7 +39,7 @@ from app.services.mcp.server_store import mcp_server_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
 from app.services.profiles.store import profile_store
-from app.services.stt.model_registry import apply_stt_model
+from app.services.stt.model_registry import resolve_default_stt_model
 from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.stt.routing import select_stt_engine
 from app.services.stt.service import stt_service
@@ -126,6 +126,7 @@ class ConversationSession:
         # Set in start().
         self.profile = None
         self.stt_provider = None
+        self.stt_model_id: str | None = None
         self.tts_provider = None
         self.opus_decoder = None
         self.opus_encoder = None
@@ -182,13 +183,7 @@ class ConversationSession:
         system_prompt = (profile.system_prompt or None) if (profile and profile.system_prompt) else None
         voice_optimized = bool(profile and profile.voice_optimized)
 
-        if cfg.stt_model:
-            try:
-                apply_stt_model(cfg.stt_engine, cfg.stt_model)
-            except AppError as exc:
-                logger.warning(
-                    "stt model override skipped (%s/%s): %s", cfg.stt_engine, cfg.stt_model, exc
-                )
+        self.stt_model_id = cfg.stt_model or resolve_default_stt_model(cfg.stt_engine)
         self.stt_provider = stt_service.get_provider(cfg.stt_engine)
         self.tts_provider = tts_service.get_provider(cfg.tts_engine)
 
@@ -479,6 +474,7 @@ class ConversationSession:
         # Fast-path routing: short commands can go to a lower-latency engine.
         turn_provider = self.stt_provider
         turn_engine = cfg.stt_engine
+        turn_model = self.stt_model_id
         if speech_ms and settings.conversation_fast_stt_engine:
             chosen = select_stt_engine(
                 speech_ms,
@@ -490,11 +486,12 @@ class ConversationSession:
                 try:
                     turn_provider = stt_service.get_provider(chosen)
                     turn_engine = chosen
+                    turn_model = None  # different engine — this session's model pin doesn't apply
                 except AppError:
                     logger.info("fast STT engine %s unavailable; using %s", chosen, cfg.stt_engine)
 
         try:
-            stt_result = await turn_provider.transcribe_bytes(wav, cfg.language)
+            stt_result = await turn_provider.transcribe_bytes(wav, cfg.language, model=turn_model)
         except RuntimeError as exc:
             await self.emit("error", message=f"STT failed: {exc}")
             return

@@ -19,7 +19,7 @@ from app.services.livehost.orchestrator import LiveHostOrchestrator
 from app.services.livehost.registry import LivehostSession, livehost_registry
 from app.services.livehost.scheduler import EventScheduler
 from app.services.profiles.store import profile_store
-from app.services.stt.model_registry import apply_stt_model
+from app.services.stt.model_registry import resolve_default_stt_model
 from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
 from app.services.tts.profile_store import tts_profile_store
@@ -114,11 +114,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
     audio_out = (q.get("audio_out") or "url").lower()
     output_sample_rate = int(q.get("output_sample_rate", 24000))
 
-    if stt_model:
-        try:
-            apply_stt_model(stt_engine, stt_model)
-        except AppError as exc:
-            logger.warning("stt model override skipped (%s/%s): %s", stt_engine, stt_model, exc)
+    resolved_stt_model = stt_model or resolve_default_stt_model(stt_engine)
 
     try:
         stt_provider = stt_service.get_provider(stt_engine)
@@ -299,7 +295,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
             await send("processing", turn=turn)
             wav = pcm16_to_wav_bytes(audio_pcm, sample_rate=sample_rate)
             try:
-                stt_result = await stt_provider.transcribe_bytes(wav, language)
+                stt_result = await stt_provider.transcribe_bytes(wav, language, model=resolved_stt_model)
             except RuntimeError as exc:
                 await send("error", message=f"STT failed: {exc}")
                 await send("turn_done", turn=turn)

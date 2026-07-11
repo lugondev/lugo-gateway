@@ -19,14 +19,14 @@ SR = 16000
 class _StubSTT(STTProvider):
     name = "stub-livehost"
 
-    async def transcribe_bytes(self, audio_bytes, language=None) -> STTResult:
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
         return STTResult(engine=self.name, text="chao ban", is_final=True)
 
 
 class _FailingSTT(STTProvider):
     name = "stub-livehost-failing"
 
-    async def transcribe_bytes(self, audio_bytes, language=None) -> STTResult:
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
         raise RuntimeError("boom")
 
 
@@ -129,6 +129,46 @@ def test_livehost_session_started_send_failure_does_not_leak_registry(monkeypatc
         pass
 
     assert livehost_registry.get(session_id) is None  # no leak from the masked-exception regression
+
+
+def test_livehost_stream_passes_resolved_model_to_stt(monkeypatch):
+    monkeypatch.setattr(
+        "app.api.routes.livehost.resolve_default_stt_model",
+        lambda engine: "sentinel-model",
+    )
+
+    seen: list = []
+
+    class _RecordingStub(STTProvider):
+        name = "stub-livehost-record"
+
+        async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
+            seen.append(model)
+            return STTResult(engine=self.name, text="ok", is_final=True)
+
+    stt_service.providers["stub-livehost-record"] = _RecordingStub()
+    try:
+        client = TestClient(app)
+        url = (
+            "/v1/livehost/stream?stt_engine=stub-livehost-record"
+            "&tts_engine=stub-livehost-tts&sample_rate=16000"
+        )
+        with client.websocket_connect(url) as ws:
+            started = ws.receive_json()
+            assert started["event"] == "session_started"
+
+            ws.send_bytes(_loud(500))
+            ws.send_bytes(_silence(500))
+            ws.send_bytes(_silence(500))
+
+            for _ in range(20):
+                ev = ws.receive_json()
+                if ev["event"] == "turn_done":
+                    break
+    finally:
+        stt_service.providers.pop("stub-livehost-record", None)
+
+    assert seen == ["sentinel-model"]
 
 
 def test_livehost_voice_turn_stt_failure_still_sends_turn_done():

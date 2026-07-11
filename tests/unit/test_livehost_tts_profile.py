@@ -21,7 +21,7 @@ SR = 16000
 class _StubSTT(STTProvider):
     name = "stub-livehost-ttsp"
 
-    async def transcribe_bytes(self, audio_bytes, language=None) -> STTResult:
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
         return STTResult(engine=self.name, text="chao ban", is_final=True)
 
 

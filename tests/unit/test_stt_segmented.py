@@ -69,7 +69,7 @@ class FakeProvider(STTProvider):
 
     name = "fake"
 
-    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None) -> STTResult:
+    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None, model: str | None = None) -> STTResult:
         pcm, _, _, _ = read_wav(audio_bytes)
         amp = float(np.mean(np.abs(pcm16_to_float_array(pcm))))
         # Threshold well clear of any padding-diluted mean (0.1 vs 0.4 tones).

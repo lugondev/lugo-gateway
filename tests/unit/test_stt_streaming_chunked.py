@@ -31,7 +31,7 @@ class CountingProvider(STTProvider):
     def __init__(self) -> None:
         self.calls = 0
 
-    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None) -> STTResult:
+    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None, model: str | None = None) -> STTResult:
         self.calls += 1
         pcm, _, _, _ = read_wav(audio_bytes)
         n = pcm16_to_float_array(pcm).size
