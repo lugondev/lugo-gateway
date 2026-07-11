@@ -125,3 +125,48 @@ async def test_edge_tts_synthesize_raises_on_no_audio_received(monkeypatch):
 
     with pytest.raises(ProviderError, match="no audio received"):
         await EdgeTTSProvider().synthesize(TTSRequest(text="hi"))
+
+
+async def test_edge_tts_synthesize_retries_and_succeeds_after_transient_failure(monkeypatch):
+    from app.services.tts.providers import edge_tts_provider
+
+    monkeypatch.setattr(edge_tts_provider, "_RETRY_DELAY_SECONDS", 0)
+    attempts = []
+
+    class _FlakyCommunicate:
+        def __init__(self, *args, **kwargs):
+            attempts.append(1)
+
+        async def stream(self):
+            if len(attempts) == 1:
+                raise RuntimeError("connection reset")
+            yield {"type": "audio", "data": b"x" * 100}
+
+    _install_fake_edge_tts(monkeypatch, _FlakyCommunicate)
+
+    result = await EdgeTTSProvider().synthesize(TTSRequest(text="hi"))
+
+    assert len(attempts) == 2
+    assert result.engine == "edge_tts"
+
+
+async def test_edge_tts_synthesize_gives_up_after_max_attempts(monkeypatch):
+    from app.services.tts.providers import edge_tts_provider
+
+    monkeypatch.setattr(edge_tts_provider, "_RETRY_DELAY_SECONDS", 0)
+    attempts = []
+
+    class _AlwaysBrokenCommunicate:
+        def __init__(self, *args, **kwargs):
+            attempts.append(1)
+
+        async def stream(self):
+            raise RuntimeError("connection reset")
+            yield {}  # pragma: no cover - makes this an async generator
+
+    _install_fake_edge_tts(monkeypatch, _AlwaysBrokenCommunicate)
+
+    with pytest.raises(ProviderError, match="connection reset"):
+        await EdgeTTSProvider().synthesize(TTSRequest(text="hi"))
+
+    assert len(attempts) == edge_tts_provider._MAX_ATTEMPTS

@@ -6,6 +6,8 @@ conversation pipeline (see docs/superpowers/specs/2026-07-11-edge-tts-provider-d
 for why: the live path needs real WAV/PCM, this engine's native output is MP3).
 """
 
+import asyncio
+
 from app.core.deps import module_available
 from app.core.errors import ProviderError
 from app.schemas.tts import TTSRequest, TTSResult
@@ -14,6 +16,10 @@ from app.services.tts.base import TTSProvider
 
 _SAMPLE_RATE = 24000
 _BITRATE_BPS = 48000  # fixed edge-tts output format: audio-24khz-48kbitrate-mono-mp3
+_MAX_ATTEMPTS = 3  # edge-tts's unofficial API intermittently drops the audio stream; retry before failing
+# Back-to-back retries with no gap were observed to fail in a row (likely brief
+# throttling); a short pause between attempts made the very next call succeed.
+_RETRY_DELAY_SECONDS = 0.6
 
 
 def _estimate_duration_seconds(mp3_bytes: bytes) -> float:
@@ -58,18 +64,30 @@ class EdgeTTSProvider(TTSProvider):
 
         voice = payload.voice or self.DEFAULT_VOICE
         rate = self._rate_str(payload.speed)
-        communicate = edge_tts.Communicate(payload.text, voice=voice, rate=rate)
 
+        last_error: Exception | None = None
         chunks = bytearray()
-        try:
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    chunks.extend(chunk["data"])
-        except Exception as exc:  # noqa: BLE001 - surface as a clean provider error
-            raise ProviderError(f"{self.name} synthesis failed: {exc}") from exc
-
-        if not chunks:
-            raise ProviderError(f"{self.name} synthesis failed: no audio received")
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            chunks = bytearray()
+            try:
+                communicate = edge_tts.Communicate(payload.text, voice=voice, rate=rate)
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        chunks.extend(chunk["data"])
+            except Exception as exc:  # noqa: BLE001 - retried below, surfaced as ProviderError if exhausted
+                last_error = exc
+            else:
+                if chunks:
+                    break
+                last_error = None
+            if attempt < _MAX_ATTEMPTS:
+                await asyncio.sleep(_RETRY_DELAY_SECONDS)
+        else:
+            if last_error is not None:
+                raise ProviderError(
+                    f"{self.name} synthesis failed after {_MAX_ATTEMPTS} attempts: {last_error}"
+                ) from last_error
+            raise ProviderError(f"{self.name} synthesis failed after {_MAX_ATTEMPTS} attempts: no audio received")
 
         mp3_bytes = bytes(chunks)
         _, audio_url = artifact_store.save_mp3(mp3_bytes)
