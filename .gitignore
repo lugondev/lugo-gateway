@@ -106,3 +106,4 @@ profiles.json
 tts_profiles.json
 mcp_servers.json
 system_config.json
+.worktrees/
