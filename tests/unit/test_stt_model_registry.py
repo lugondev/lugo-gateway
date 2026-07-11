@@ -5,8 +5,10 @@ from app.services.stt.model_registry import (
     STT_MODEL_REGISTRIES,
     apply_stt_model,
     qwen3_asr_model_registry,
+    resolve_default_stt_model,
 )
 from app.services.stt.providers import qwen3_asr_provider as q
+from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.whisper_models import whisper_manager
 
 
@@ -77,3 +79,16 @@ def test_apply_stt_model_selects_for_known_engine():
 def test_apply_stt_model_raises_for_invalid_model_on_known_engine():
     with pytest.raises(AppError):
         apply_stt_model("qwen3_asr", "not-a-real-size")
+
+
+def test_resolve_default_stt_model_whisper_family_matches_active_global():
+    for engine in ("whisper", "whisper_local", "whisper_gemma"):
+        assert resolve_default_stt_model(engine) == get_active_whisper_model()
+
+
+def test_resolve_default_stt_model_qwen3_asr_matches_active_global():
+    assert resolve_default_stt_model("qwen3_asr") == q.get_active_qwen3_asr_model()
+
+
+def test_resolve_default_stt_model_returns_none_for_engine_without_registry():
+    assert resolve_default_stt_model("vosk") is None

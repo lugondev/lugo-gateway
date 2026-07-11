@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Shared secret for ESP32/RPi device WS clients, which can't do a browser
     # cookie login. Empty = device WS connections are rejected while
     # admin_password is set (browsers still work via cookie session).
+    # NOTE: sent as a WS URL query param (not a header), so it will appear in
+    # plaintext in standard reverse-proxy/uvicorn access logs -- account for
+    # that in log handling/retention if you enable this.
     device_auth_token: str = ""
 
     default_stt_engine: str = "vosk"

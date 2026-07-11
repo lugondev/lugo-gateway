@@ -16,6 +16,7 @@ from app.services.stt.providers.qwen3_asr_provider import (
     resolve_qwen3_asr_model,
     set_active_qwen3_asr_model,
 )
+from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.whisper_models import whisper_manager
 
 _QWEN3_LABELS = {
@@ -76,7 +77,7 @@ def resolve_default_stt_model(engine: str) -> str | None:
     one — whatever this engine's process-global default currently is. None for
     engines with no variant registry (single fixed model, e.g. vosk/whisper_mlx)."""
     if engine in ("whisper", "whisper_local", "whisper_gemma"):
-        return whisper_manager.snapshot()["active"]
+        return get_active_whisper_model()
     if engine == "qwen3_asr":
         return get_active_qwen3_asr_model()
     return None

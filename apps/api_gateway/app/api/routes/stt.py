@@ -73,6 +73,8 @@ async def transcribe(
                 concurrency=settings.stt_segment_concurrency,
             )
         else:
+            # no per-session model here -- falls back to this engine's process-global
+            # default by design (see app.services.stt.model_registry)
             result = await provider.transcribe_bytes(audio_bytes, payload.language)
     except AppError:
         raise  # handled globally -> clean JSON
