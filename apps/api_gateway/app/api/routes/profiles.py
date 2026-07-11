@@ -1,9 +1,12 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.core.errors import AppError
 from app.services.mcp.models import McpServer
 from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, SessionConfig, SttConfig, TtsConfig
 from app.services.profiles.store import profile_store
+from app.services.stt.model_registry import STT_MODEL_REGISTRIES
+from app.services.stt.profile import resolve_stt_profile
 
 router = APIRouter(prefix="/v1/profiles", tags=["profiles"])
 
@@ -13,6 +16,22 @@ def _mask(profile: Profile) -> dict:
     if data.get("llm", {}).get("api_key"):
         data["llm"]["api_key"] = "***"
     return data
+
+
+def _validate_stt_model(profile: Profile) -> None:
+    if not profile.stt.model:
+        return
+    preset = resolve_stt_profile(profile.stt.profile)
+    # Validation scope is intentionally narrowed to explicit stt.engine or stt.profile preset:
+    # profiles must be self-contained and not depend on mutable settings.conversation_stt_engine/
+    # default_stt_engine, so a profile's validity is independent of deploy-time config.
+    engine = profile.stt.engine or (preset[0] if preset else "")
+    if not engine:
+        raise AppError("stt.model requires stt.engine or a resolvable stt.profile preset")
+    registry = STT_MODEL_REGISTRIES.get(engine)
+    if registry is None:
+        raise AppError(f"engine '{engine}' has no selectable model variants")
+    registry.validate(profile.stt.model)
 
 
 class ProfileRequest(BaseModel):
@@ -37,6 +56,7 @@ async def list_profiles() -> dict:
 @router.post("")
 async def create_profile(payload: ProfileRequest) -> dict:
     profile = Profile(**payload.model_dump())
+    _validate_stt_model(profile)
     profile_store.upsert(profile)
     return {"success": True, "data": _mask(profile)}
 
@@ -61,6 +81,7 @@ async def update_profile(name: str, payload: ProfileRequest) -> dict:
         if existing and existing.llm.api_key:
             data.setdefault("llm", {})["api_key"] = existing.llm.api_key
     profile = Profile(**data)
+    _validate_stt_model(profile)
     profile_store.upsert(profile)
     return {"success": True, "data": _mask(profile)}
 

@@ -31,22 +31,25 @@ def resolve_stt(
     profile: object | None,
     q_engine: str | None = None,
     q_language: str | None = None,
-) -> tuple[str, str | None]:
-    """Resolve (engine, language|None) for a conversation.
+    q_model: str | None = None,
+) -> tuple[str, str | None, str]:
+    """Resolve (engine, language|None, model) for a conversation.
 
     Single source of truth shared by the conversation WS stream and the /stt/warm
     endpoint so a device that only sends a profile id warms and streams against the
     same STT model. Priority, highest first:
 
-      1. explicit query param (stt_engine / language) — debugging / manual override
-      2. the chatllm profile's SttConfig (engine/language, or a language preset)
+      1. explicit query param (stt_engine / language / stt_model) — debugging / manual override
+      2. the chatllm profile's SttConfig (engine/language/model, or a language preset)
       3. the server-wide default (settings.stt_profile preset, then
-         conversation_stt_engine / conversation_language)
+         conversation_stt_engine / conversation_language); model has no server-wide
+         default — "" means "whatever's currently active for the resolved engine".
 
     `profile` is a services.profiles Profile (or None); accessed duck-typed to avoid
     a circular import. A language preset (vi|en|multi|en_vi) sets engine+language
     together; language None means auto-detect and is authoritative when a preset
-    resolves (it is not overridden by conversation_language).
+    resolves (it is not overridden by conversation_language). model is independent
+    of the preset system — a preset never implies a model variant.
     """
     from app.core.settings import settings
 
@@ -70,4 +73,5 @@ def resolve_stt(
         language = preset_lang  # may be None (auto-detect) — authoritative
     else:
         language = settings.conversation_language or None
-    return engine, language
+    model = q_model or (getattr(stt_cfg, "model", "") or "")
+    return engine, language, model

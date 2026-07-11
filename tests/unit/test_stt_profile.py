@@ -48,32 +48,49 @@ def _server_default(monkeypatch):
 
 
 def test_resolve_stt_no_profile_uses_server_default(_server_default):
-    assert resolve_stt(None) == ("whisper", "vi")
+    assert resolve_stt(None) == ("whisper", "vi", "")
 
 
 def test_resolve_stt_profile_preset_wins_over_server_default(_server_default):
     p = Profile(name="p", stt=SttConfig(profile="vi"))
-    assert resolve_stt(p) == ("qwen3_asr", "vi")
+    assert resolve_stt(p) == ("qwen3_asr", "vi", "")
 
 
 def test_resolve_stt_preset_auto_detect_language_is_authoritative(_server_default):
     # A "multi" preset means auto-detect (None) — it must NOT fall back to the
     # server's conversation_language.
     p = Profile(name="p", stt=SttConfig(profile="multi"))
-    assert resolve_stt(p) == ("qwen3_asr", None)
+    assert resolve_stt(p) == ("qwen3_asr", None, "")
 
 
 def test_resolve_stt_explicit_engine_language_override_preset(_server_default):
     p = Profile(name="p", stt=SttConfig(profile="vi", engine="whisper_mlx", language="en"))
-    assert resolve_stt(p) == ("whisper_mlx", "en")
+    assert resolve_stt(p) == ("whisper_mlx", "en", "")
 
 
 def test_resolve_stt_query_param_wins_over_profile(_server_default):
     p = Profile(name="p", stt=SttConfig(profile="vi"))
-    assert resolve_stt(p, q_engine="vosk", q_language="fr") == ("vosk", "fr")
+    assert resolve_stt(p, q_engine="vosk", q_language="fr") == ("vosk", "fr", "")
 
 
 def test_resolve_stt_server_stt_profile_default_applies_without_profile(monkeypatch):
     monkeypatch.setattr(settings, "stt_profile", "en")
     monkeypatch.setattr(settings, "conversation_stt_engine", "whisper")
-    assert resolve_stt(None) == ("qwen3_asr", "en")
+    assert resolve_stt(None) == ("qwen3_asr", "en", "")
+
+
+def test_resolve_stt_model_from_profile(_server_default):
+    # No preset and no explicit language on the SttConfig, so language falls back
+    # to the server default (conversation_language="vi" per _server_default) —
+    # same rule test_resolve_stt_no_profile_uses_server_default already covers.
+    p = Profile(name="p", stt=SttConfig(engine="qwen3_asr", model="1.7b"))
+    assert resolve_stt(p) == ("qwen3_asr", "vi", "1.7b")
+
+
+def test_resolve_stt_model_query_param_wins_over_profile(_server_default):
+    p = Profile(name="p", stt=SttConfig(engine="qwen3_asr", model="1.7b"))
+    assert resolve_stt(p, q_model="0.6b") == ("qwen3_asr", "vi", "0.6b")
+
+
+def test_resolve_stt_model_defaults_empty_when_unset(_server_default):
+    assert resolve_stt(None) == ("whisper", "vi", "")

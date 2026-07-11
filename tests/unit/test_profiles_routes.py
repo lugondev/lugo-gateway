@@ -114,3 +114,57 @@ def test_update_replaces_api_key_when_provided(client):
     })
     from app.services.profiles.store import profile_store as ps
     assert ps.get("keyed2").llm.api_key == "new-key"
+
+
+def test_create_profile_accepts_valid_stt_model(client):
+    resp = client.post("/v1/profiles", json={
+        "name": "good-model",
+        "stt": {"engine": "qwen3_asr", "model": "0.6b"},
+    })
+    assert resp.status_code == 200
+    assert resp.json()["data"]["stt"]["model"] == "0.6b"
+
+
+def test_create_profile_rejects_invalid_stt_model(client):
+    # WhisperManager.validate() checks both filename-safety (`^[A-Za-z0-9.\-]+$`)
+    # and membership in the closed set of known whisper sizes, so an
+    # unlisted-but-well-formed size is enough to trigger rejection.
+    resp = client.post("/v1/profiles", json={
+        "name": "bad-model",
+        "stt": {"engine": "whisper", "model": "not-a-real-whisper-size"},
+    })
+    assert resp.status_code == 400
+
+
+def test_create_profile_rejects_model_on_engine_without_registry(client):
+    resp = client.post("/v1/profiles", json={
+        "name": "no-variants",
+        "stt": {"engine": "vosk", "model": "anything"},
+    })
+    assert resp.status_code == 400
+
+
+def test_create_profile_rejects_model_without_resolvable_engine(client):
+    resp = client.post("/v1/profiles", json={
+        "name": "no-engine",
+        "stt": {"model": "0.6b"},
+    })
+    assert resp.status_code == 400
+
+
+def test_create_profile_model_resolves_engine_via_preset(client):
+    # "vi" preset resolves to qwen3_asr — model should validate against that.
+    resp = client.post("/v1/profiles", json={
+        "name": "preset-model",
+        "stt": {"profile": "vi", "model": "1.7b"},
+    })
+    assert resp.status_code == 200
+
+
+def test_update_profile_rejects_invalid_stt_model(client):
+    client.post("/v1/profiles", json={"name": "upd-model", "stt": {"engine": "qwen3_asr"}})
+    resp = client.put("/v1/profiles/upd-model", json={
+        "name": "upd-model",
+        "stt": {"engine": "qwen3_asr", "model": "nope"},
+    })
+    assert resp.status_code == 400

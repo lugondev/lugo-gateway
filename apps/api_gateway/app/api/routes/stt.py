@@ -88,29 +88,49 @@ async def list_stt_engines() -> dict:
     return {"success": True, "data": stt_service.list_engines()}
 
 
+@router.get("/models")
+async def list_stt_models(engine: str) -> dict:
+    from app.services.stt.model_registry import STT_MODEL_REGISTRIES
+
+    registry = STT_MODEL_REGISTRIES.get(engine)
+    if registry is None:
+        return {"success": True, "data": {"engine": engine, "supports_variants": False, "models": []}}
+    models = [{**m, "valid": True} for m in registry.list_models()]
+    return {"success": True, "data": {"engine": engine, "supports_variants": True, "models": models}}
+
+
 @router.post("/warm")
-async def warm_engine(engine: str | None = None, profile: str | None = None) -> dict:
+async def warm_engine(engine: str | None = None, profile: str | None = None, model: str | None = None) -> dict:
     """Load a heavy STT model into memory ahead of use (e.g. Whisper large ~20s).
 
     Lets the UI preload before the first conversation turn so it isn't a cold wait.
     Pass ?engine= to warm a specific engine, or ?profile= to warm whichever engine
-    that profile resolves to (so a device that only knows its profile can pre-warm
-    the right model, using the same resolution as the conversation stream). With
-    neither, the server-wide default engine is warmed.
+    (and model, if the profile pins one) that profile resolves to (so a device that
+    only knows its profile can pre-warm the right model, using the same resolution
+    as the conversation stream). Pass ?model= to override the model explicitly
+    regardless of profile. With neither engine nor profile, the server-wide default
+    engine is warmed.
     """
     import asyncio
 
     from app.services.profiles.store import profile_store
+    from app.services.stt.model_registry import apply_stt_model
     from app.services.stt.profile import resolve_stt
 
     if not engine:
         prof = profile_store.get(profile) if profile else None
-        engine, _ = resolve_stt(prof)
+        engine, _, resolved_model = resolve_stt(prof)
+        model = model or resolved_model
+    if model:
+        try:
+            apply_stt_model(engine, model)
+        except AppError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     provider = stt_service.get_provider(engine)
     warm = getattr(provider, "warm", None)
     if callable(warm):
         await asyncio.to_thread(warm)
-    return {"success": True, "data": {"engine": engine, "warmed": callable(warm)}}
+    return {"success": True, "data": {"engine": engine, "model": model or None, "warmed": callable(warm)}}
 
 
 async def _emit(websocket: WebSocket, channel: str, event: StreamEvent) -> None:

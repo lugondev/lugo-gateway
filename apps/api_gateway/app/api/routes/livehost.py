@@ -19,6 +19,7 @@ from app.services.livehost.orchestrator import LiveHostOrchestrator
 from app.services.livehost.registry import LivehostSession, livehost_registry
 from app.services.livehost.scheduler import EventScheduler
 from app.services.profiles.store import profile_store
+from app.services.stt.model_registry import apply_stt_model
 from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
 from app.services.tts.profile_store import tts_profile_store
@@ -85,7 +86,9 @@ async def livehost_stream(websocket: WebSocket) -> None:
     system_prompt = (profile.system_prompt or None) if (profile and profile.system_prompt) else None
 
     # STT resolves from the profile (else server default), same as TTS/LLM above.
-    stt_engine, language = resolve_stt(profile, q.get("stt_engine"), q.get("language"))
+    stt_engine, language, stt_model = resolve_stt(
+        profile, q.get("stt_engine"), q.get("language"), q.get("stt_model")
+    )
     # TTS profile resolution: ?tts_profile= (explicit pin) > the active LLM
     # profile's linked TTS profile > legacy tts_engine/voice query params.
     tts_profile_name = q.get("tts_profile") or (profile.tts.profile_name if profile else "") or None
@@ -110,6 +113,12 @@ async def livehost_stream(websocket: WebSocket) -> None:
     want_text = "text" in out_modalities
     audio_out = (q.get("audio_out") or "url").lower()
     output_sample_rate = int(q.get("output_sample_rate", 24000))
+
+    if stt_model:
+        try:
+            apply_stt_model(stt_engine, stt_model)
+        except AppError as exc:
+            logger.warning("stt model override skipped (%s/%s): %s", stt_engine, stt_model, exc)
 
     try:
         stt_provider = stt_service.get_provider(stt_engine)
