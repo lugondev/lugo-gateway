@@ -187,6 +187,7 @@ class OpenAICompatResponder(Responder):
 
             assistant_msg = data["choices"][0]["message"]
             tool_calls = assistant_msg.get("tool_calls")
+            logger.info("DEBUG_HANG _tool_then_stream: iter=%d tool_calls=%s", _, bool(tool_calls))
             if not tool_calls:
                 break
 
@@ -197,9 +198,12 @@ class OpenAICompatResponder(Responder):
                     tool_args = json.loads(tc["function"].get("arguments") or "{}")
                 except json.JSONDecodeError:
                     tool_args = {}
+                logger.info("DEBUG_HANG _tool_then_stream: running tool %s", tool_name)
                 result = await registry.run(tool_name, tool_args, ctx)
+                logger.info("DEBUG_HANG _tool_then_stream: tool %s done", tool_name)
                 working.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
 
+        logger.info("DEBUG_HANG _tool_then_stream: handing off to _stream_history, %d messages", len(working))
         async for chunk in self._stream_history(working):
             yield chunk
 
@@ -207,6 +211,7 @@ class OpenAICompatResponder(Responder):
         messages = [{"role": "system", "content": self.system_prompt}, *history]
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         agg = SentenceAggregator()
+        logger.info("DEBUG_HANG _stream_history: opening stream request")
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 async with client.stream(
@@ -215,19 +220,29 @@ class OpenAICompatResponder(Responder):
                     headers=headers,
                     json={"model": self.model, "messages": messages, "stream": True},
                 ) as resp:
+                    logger.info("DEBUG_HANG _stream_history: got response headers, status=%s", resp.status_code)
                     resp.raise_for_status()
+                    line_count = 0
                     async for line in resp.aiter_lines():
+                        line_count += 1
                         if not line.startswith("data:"):
                             continue
                         data = line[5:].strip()
                         if data == "[DONE]":
+                            logger.info("DEBUG_HANG _stream_history: saw [DONE] after %d lines", line_count)
                             break
                         delta = json.loads(data)["choices"][0].get("delta", {}).get("content", "")
                         if delta:
                             for sentence in agg.push(delta):
+                                logger.info("DEBUG_HANG _stream_history: yielding sentence %r", sentence)
                                 yield sentence
+                    else:
+                        logger.info("DEBUG_HANG _stream_history: aiter_lines exhausted without [DONE], %d lines", line_count)
+            logger.info("DEBUG_HANG _stream_history: stream closed, flushing aggregator")
             for sentence in agg.flush():
+                logger.info("DEBUG_HANG _stream_history: yielding flushed sentence %r", sentence)
                 yield sentence
+            logger.info("DEBUG_HANG _stream_history: done")
         except Exception as exc:  # noqa: BLE001
             logger.warning("LLM stream failed: %s", exc)
             raise LLMUnavailableError(

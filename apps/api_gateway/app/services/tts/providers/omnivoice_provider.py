@@ -50,6 +50,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
         return await self._cli_synth(text, instruct, ref_audio, ref_text, speed)
 
     async def _render_wav(self, payload: TTSRequest) -> bytes:
+        logger.info("DEBUG_HANG _render_wav: text_len=%d", len(payload.text or ""))
         instruct, ref_audio, ref_text = payload.instruct, payload.ref_audio_path, payload.ref_text
         if settings.omnivoice_pin_voice and not ref_audio and not instruct:
             # Clone a fixed reference so every chunk shares exactly one voice.
@@ -144,6 +145,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
             "speed": speed,
             "class_temperature": settings.omnivoice_class_temperature,
         }
+        logger.info("DEBUG_HANG _server_synth: posting /synth, text_len=%d", len(text))
         async with httpx.AsyncClient(timeout=settings.omnivoice_timeout_seconds) as client:
             try:
                 resp = await client.post(f"{self._server_base()}/synth", json=body)
@@ -154,6 +156,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
                 # so a stall traced back here isn't mistaken for a silent hang.
                 logger.warning("OmniVoice synth cancelled mid-request (turn aborted), text_len=%d", len(text))
                 raise
+            logger.info("DEBUG_HANG _server_synth: got response, status=%s", resp.status_code)
             if resp.status_code != 200:
                 raise RuntimeError(f"OmniVoice server error {resp.status_code}: {resp.text[:200]}")
             return resp.content

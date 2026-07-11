@@ -385,6 +385,7 @@ class ConversationSession:
                 return parts
 
             async def _synth(sentence: str):
+                logger.info("DEBUG_HANG _synth: starting engine=%s sentence=%r", cfg.tts_engine, sentence)
                 result = await self.tts_provider.synthesize(
                     TTSRequest(
                         text=sentence, engine=cfg.tts_engine, voice=cfg.voice,
@@ -392,6 +393,7 @@ class ConversationSession:
                         instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
                     )
                 )
+                logger.info("DEBUG_HANG _synth: got result for sentence=%r", sentence)
                 if self.opus_encoder is not None:
                     # Decode the TTS wav -> PCM16 @ output_sr -> Opus packets (off-loop).
                     path = result.audio_url.lstrip("/")
@@ -405,7 +407,9 @@ class ConversationSession:
                     sentence_aiter, _synth, lookahead=settings.conversation_tts_lookahead
                 )
             ) as pipeline:
+                logger.info("DEBUG_HANG _stream_to_tts: entering pipeline consume loop")
                 async for index, sentence, (result, packets) in pipeline:
+                    logger.info("DEBUG_HANG _stream_to_tts: pipeline yielded index=%d", index)
                     _log_first_chunk()
                     parts.append(sentence)
                     if want_text:
