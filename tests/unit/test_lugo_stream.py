@@ -203,3 +203,13 @@ def test_wakeup_without_session_id_gets_a_fresh_uuid():
         assert msg["type"] == "welcome"
         assert msg["session_id"] != "resume-me-123"
         assert len(msg["session_id"]) == 36  # uuid4 string form
+
+
+def test_welcome_includes_engine_ready_flags():
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        msg = ws.receive_json()
+        assert msg["type"] == "welcome"
+        assert msg["stt_ready"] is True
+        assert msg["tts_ready"] is True

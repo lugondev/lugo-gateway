@@ -115,6 +115,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
     # finishes replying — a slow LLM/TTS or slow network never counts toward idle
     # (that window is also covered by session.is_turn_active() in the watchdog).
     last_activity = time.monotonic()
+    engine_status = {"stt_ready": True, "tts_ready": True}
 
     async def emit(event: str, **payload) -> None:
         nonlocal speaking, last_activity
@@ -139,7 +140,11 @@ async def lugo_stream(websocket: WebSocket) -> None:
             await websocket.send_json({"type": "command", **payload})
         elif event == "error":
             await websocket.send_json({"type": "error", "message": payload.get("message", "")})
-        # session_started / processing / engines_ready / speech_* / audio_end / reset: not on the wire
+        elif event == "session_started":
+            engine_status["stt_ready"] = bool(payload.get("stt_ready", True))
+            engine_status["tts_ready"] = bool(payload.get("tts_ready", True))
+        # processing / audio_end / reset: not on the wire (speech_start/speech_end/
+        # processing/engines_ready are handled in Task 3/4 below)
 
     async def emit_audio(packet: bytes) -> None:
         await websocket.send_bytes(encode_frame(LUGO_FRAME_OPUS, packet))
@@ -149,6 +154,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
     await websocket.send_json({
         "type": "welcome", "session_id": session_id, "transport": "websocket",
         "audio_params": {"sample_rate": out_sr}, "idle_timeout_s": idle,
+        "stt_ready": engine_status["stt_ready"], "tts_ready": engine_status["tts_ready"],
     })
 
     device_mcp = bool((hello.get("features") or {}).get("mcp"))
