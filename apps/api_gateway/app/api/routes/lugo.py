@@ -88,7 +88,10 @@ async def lugo_stream(websocket: WebSocket) -> None:
         await websocket.close()
         return
 
-    session_id = str(uuid.uuid4())
+    requested_sid = hello.get("session_id")
+    if not isinstance(requested_sid, str) or not requested_sid:
+        requested_sid = None
+    session_id = requested_sid or str(uuid.uuid4())
     try:
         in_sr = int((hello.get("audio_params") or {}).get("sample_rate", settings.stt_stream_sample_rate))
     except (TypeError, ValueError):
@@ -103,7 +106,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
         ref_text=tts["ref_text"], tts_instruct=tts["instruct"], tts_speed=tts["speed"],
         tts_language=tts["language"], sample_rate=in_sr, output_sample_rate=out_sr,
         audio_codec="opus", want_audio=True, want_text=True, audio_out="opus",
-        denoise=False, resume_sid=None, stt_model=stt_model,
+        denoise=False, resume_sid=requested_sid, stt_model=stt_model,
     )
 
     speaking = False  # one tts{start} on first response/audio, one tts{stop} at turn end/abort

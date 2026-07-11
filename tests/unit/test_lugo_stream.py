@@ -184,3 +184,22 @@ def test_welcome_honors_requested_output_sample_rate():
         welcome = ws.receive_json()
         assert welcome["type"] == "welcome"
         assert welcome["audio_params"]["sample_rate"] == 16000
+
+
+def test_wakeup_with_session_id_resumes_and_echoes_same_id():
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev", "session_id": "resume-me-123",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        msg = ws.receive_json()
+        assert msg["type"] == "welcome"
+        assert msg["session_id"] == "resume-me-123"
+
+
+def test_wakeup_without_session_id_gets_a_fresh_uuid():
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        msg = ws.receive_json()
+        assert msg["type"] == "welcome"
+        assert msg["session_id"] != "resume-me-123"
+        assert len(msg["session_id"]) == 36  # uuid4 string form
