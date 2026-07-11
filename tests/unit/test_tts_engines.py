@@ -1,3 +1,6 @@
+import sys
+import types
+
 import pytest
 
 from app.core.errors import EngineNotFoundError, ProviderError
@@ -82,3 +85,43 @@ def test_edge_tts_estimate_duration():
     # 48000 bits/s CBR -> 6000 bytes/s
     assert _estimate_duration_seconds(b"x" * 6000) == pytest.approx(1.0)
     assert _estimate_duration_seconds(b"") == 0.0
+
+
+def _install_fake_edge_tts(monkeypatch, communicate_cls):
+    """edge_tts is an optional dependency not installed in this test env, so
+    `import edge_tts` inside synthesize() needs a stub module injected into
+    sys.modules (mirrors tests/test_qwen3_asr.py's mlx_qwen3_asr stubbing)."""
+    fake_mod = types.ModuleType("edge_tts")
+    fake_mod.Communicate = communicate_cls
+    monkeypatch.setitem(sys.modules, "edge_tts", fake_mod)
+
+
+async def test_edge_tts_synthesize_wraps_stream_exception_as_provider_error(monkeypatch):
+    class _BrokenCommunicate:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def stream(self):
+            raise RuntimeError("network unreachable")
+            yield {}  # pragma: no cover - makes this an async generator
+
+    _install_fake_edge_tts(monkeypatch, _BrokenCommunicate)
+
+    with pytest.raises(ProviderError):
+        await EdgeTTSProvider().synthesize(TTSRequest(text="hi"))
+
+
+async def test_edge_tts_synthesize_raises_on_no_audio_received(monkeypatch):
+    class _SilentCommunicate:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def stream(self):
+            # No audio chunks at all -- only a non-audio (e.g. word-boundary) event.
+            yield {"type": "WordBoundary"}
+            return
+
+    _install_fake_edge_tts(monkeypatch, _SilentCommunicate)
+
+    with pytest.raises(ProviderError, match="no audio received"):
+        await EdgeTTSProvider().synthesize(TTSRequest(text="hi"))
