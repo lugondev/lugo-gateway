@@ -126,13 +126,12 @@ def test_create_profile_accepts_valid_stt_model(client):
 
 
 def test_create_profile_rejects_invalid_stt_model(client):
-    # WhisperManager.validate() only checks that the id is filename-safe
-    # (`^[A-Za-z0-9.\-]+$`) — sizes are open-ended, not a fixed enum — so the
-    # invalid value must break that character class (underscore) to actually
-    # exercise rejection, rather than merely be an unlisted-but-well-formed size.
+    # WhisperManager.validate() checks both filename-safety (`^[A-Za-z0-9.\-]+$`)
+    # and membership in the closed set of known whisper sizes, so an
+    # unlisted-but-well-formed size is enough to trigger rejection.
     resp = client.post("/v1/profiles", json={
         "name": "bad-model",
-        "stt": {"engine": "whisper", "model": "not_a_real_size"},
+        "stt": {"engine": "whisper", "model": "not-a-real-whisper-size"},
     })
     assert resp.status_code == 400
 

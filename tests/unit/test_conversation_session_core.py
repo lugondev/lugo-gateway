@@ -90,3 +90,23 @@ async def test_session_start_skips_apply_when_no_model_set():
     sess = ConversationSession(_cfg(), emit, emit_audio)  # stt_model defaults to ""
     await sess.start()  # must not raise
     await sess.close()
+
+
+@pytest.mark.asyncio
+async def test_session_start_actually_changes_active_stt_model():
+    """Full unmocked chain: session start -> apply_stt_model -> registry.select
+    actually flips the process-global active model (not just that apply_stt_model
+    was called, which test_session_start_applies_profile_stt_model already checks
+    with a mock)."""
+    from app.services.stt.providers import qwen3_asr_provider as q
+
+    async def emit(name, **p): pass
+    async def emit_audio(pkt): pass
+
+    sess = ConversationSession(_cfg(stt_engine="qwen3_asr", stt_model="1.7b"), emit, emit_audio)
+    try:
+        await sess.start()
+        assert q.get_active_qwen3_asr_model() == "Qwen/Qwen3-ASR-1.7B"
+    finally:
+        await sess.close()
+        q.set_active_qwen3_asr_model(None)

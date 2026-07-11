@@ -16,6 +16,12 @@ def test_validate_accepts_sizes():
     whisper_manager.validate("large-v3")  # no raise
 
 
+def test_validate_rejects_unlisted_but_well_formed_size():
+    # Regex-safe (no path-like chars) but not a real, known whisper size.
+    with pytest.raises(AppError):
+        whisper_manager.validate("large-v99")
+
+
 def test_snapshot_shape():
     snap = whisper_manager.snapshot()
     assert set(snap) == {"models", "active"}

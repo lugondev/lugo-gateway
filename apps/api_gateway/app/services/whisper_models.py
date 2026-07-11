@@ -37,6 +37,8 @@ WHISPER_SIZES = [
     {"size": "large-v3", "label": "Large v3 (multilingual, best)"},
 ]
 
+_VALID_SIZES = {entry["size"] for entry in WHISPER_SIZES}
+
 
 class WhisperManager:
     def __init__(self) -> None:
@@ -66,6 +68,8 @@ class WhisperManager:
     def validate(self, size: str) -> None:
         if not _SIZE_RE.match(size):
             raise AppError(f"Invalid whisper size: {size!r}")
+        if size not in _VALID_SIZES:
+            raise AppError(f"Unknown whisper size: {size!r}")
 
     def snapshot(self) -> dict:
         active = get_active_whisper_model()
