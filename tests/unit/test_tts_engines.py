@@ -3,6 +3,7 @@ import pytest
 from app.core.errors import EngineNotFoundError, ProviderError
 from app.schemas.tts import TTSRequest
 from app.services.tts.base import RenderingTTSProvider
+from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
 from app.services.tts.service import tts_service
 
 
@@ -53,9 +54,6 @@ async def test_render_failure_raises_provider_error_no_silent_fallback():
 
     with pytest.raises(ProviderError):
         await _BrokenTTS().synthesize(TTSRequest(text="hi"))
-
-
-from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
 
 
 def test_lists_edge_tts():
