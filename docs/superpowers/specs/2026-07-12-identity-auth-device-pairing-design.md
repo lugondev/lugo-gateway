@@ -1,9 +1,9 @@
 # Identity, auth & device pairing foundation
 
 Product branding for the UI pieces of this spec: **Lugo** (wordmark), product name
-**Lugo BOT**. Visual identity is placeholder-quality for this round (see Component 7) —
-a full brand pass (logo asset, motion, final palette) is explicitly deferred; the
-priority here is layout/IA, not polish.
+**Lugo BOT**. This round is a text-level rename onto the existing visual system (see
+Component 7) — a full brand pass (logo asset, motion, tuned palette) is explicitly
+deferred; the priority here is layout/IA, not polish.
 
 ## Problem
 
@@ -60,8 +60,8 @@ are separate follow-up specs (see **Follow-ups**, below).
 - Splitting into two separate apps/entrypoints (distinct admin console vs. user
   console). This spec adds role-gated tabs to the *existing* single-page app
   (Component 7) but does not restructure it into two apps — that's Follow-up 4.
-- Final visual identity (real logo asset, motion, tuned palette). Component 7 ships
-  functional layouts with a placeholder palette only.
+- Final visual identity (real logo asset, motion, tuned palette). Component 7 is a
+  text-level rename onto the existing `styles.css` theme, not a new palette.
 
 ## Component 1 — `users` table
 
@@ -238,17 +238,19 @@ per-owner protections (Component 4's re-check, per-device revoke, "which user do
 belong to" visibility). Retiring it is a manual follow-up once the fleet has re-paired —
 not scheduled automatically, not deleted as part of this spec.
 
-## Component 7 — UI (Lugo branding, placeholder tokens)
+## Component 7 — UI (Lugo branding, layout first)
 
-Placeholder tokens (final brand pass deferred; these exist so the layout work below
-isn't unstyled):
-
-| Token | Value | Use |
-|---|---|---|
-| `--lugo-canvas` | `#F6F9FC` | page/content background |
-| `--lugo-primary` | `#3E8FB0` | primary actions, active nav, links |
-| `--lugo-ink` | `#1F2A3D` | body text, headings |
-| `--lugo-border` | `#D8E3EE` | dividers, table borders, input borders |
+`app/static/styles.css` already defines a coherent theme (`--bg-1`/`--bg-2` dark navy,
+`--accent` teal, `--accent-2` amber, `--text`/`--muted`, Chakra Petch display +
+IBM Plex Mono utility fonts) used consistently across every existing section. Per the
+priority set for this round (layout/IA over visual polish), this spec does **not**
+introduce a new palette or new CSS custom properties — it reuses the existing tokens
+and existing component classes (`.model-row`, `.mini`, `.danger`, `.hint`, `.section`,
+`.seg`) for the new Users/Devices UI, exactly as `mcp-servers.js`'s server list does
+today. The only branding change in this round is text: every occurrence of "Speech
+Text Transformer" in `index.html`/`login.html` (page `<title>`, `.app-title` header,
+login card `<h1>`) becomes "Lugo" (page chrome) / "Lugo BOT" (browser tab titles). A
+tuned palette/logo is Follow-up 5.
 
 **Login/signup** (`app/static/login.html`, `app/static/js/auth.js`): one screen, one
 card, a toggle between "Log in" and "Create account" instead of a separate page —
