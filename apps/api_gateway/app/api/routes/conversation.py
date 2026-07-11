@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from app.core.auth_guard import ws_authenticated
 from app.core.errors import AppError
 from app.core.settings import settings
 from app.services.conversation.responder import (
@@ -164,6 +165,9 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
 
 @router.websocket("/stream")
 async def conversation_stream(websocket: WebSocket) -> None:
+    if not ws_authenticated(websocket):
+        await websocket.close(code=4401, reason="unauthorized")
+        return
     await websocket.accept()
     requested_sid = websocket.query_params.get("session_id")
     session_id = requested_sid or str(uuid.uuid4())

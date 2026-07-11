@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     # Cookie-signing secret for the login session. Empty (with admin_password set)
     # -> a random secret is generated at process startup (sessions reset on restart).
     session_secret: str = ""
+    # Shared secret for ESP32/RPi device WS clients, which can't do a browser
+    # cookie login. Empty = device WS connections are rejected while
+    # admin_password is set (browsers still work via cookie session).
+    device_auth_token: str = ""
 
     default_stt_engine: str = "vosk"
     default_tts_engine: str = "omnivoice"
