@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from app.core.errors import DeviceSerialConflictError, PairingCodeInvalidError
+from app.core.errors import AuthError, DeviceSerialConflictError, PairingCodeInvalidError
 from app.services.auth.devices import device_store
 from app.services.auth.pairing import pending_pairings
 
@@ -38,6 +38,9 @@ class PairClaimRequest(BaseModel):
 
 @router.post("/pair/claim")
 async def pair_claim(payload: PairClaimRequest, request: Request) -> dict:
+    user_id = request.session.get("user_id")
+    if not user_id:
+        raise AuthError("login required")
     entry = pending_pairings.get_by_code(payload.code)
     if entry is None:
         raise PairingCodeInvalidError("pairing code is invalid or expired")
@@ -46,7 +49,6 @@ async def pair_claim(payload: PairClaimRequest, request: Request) -> dict:
         raise DeviceSerialConflictError(
             "a device with this hardware is already paired; revoke it first"
         )
-    user_id = request.session["user_id"]  # guaranteed by AuthGuardMiddleware on this path
     device, raw_token = await device_store.create(user_id, payload.name, entry.serial)
     pending_pairings.mark_claimed(payload.code, device["id"], raw_token)
     return {"success": True, "data": device}
@@ -54,13 +56,17 @@ async def pair_claim(payload: PairClaimRequest, request: Request) -> dict:
 
 @router.get("/mine")
 async def list_my_devices(request: Request) -> dict:
-    user_id = request.session["user_id"]
+    user_id = request.session.get("user_id")
+    if not user_id:
+        raise AuthError("login required")
     return {"success": True, "data": await device_store.list_for_user(user_id)}
 
 
 @router.post("/mine/{device_id}/revoke")
 async def revoke_my_device(device_id: str, request: Request) -> dict:
-    user_id = request.session["user_id"]
+    user_id = request.session.get("user_id")
+    if not user_id:
+        raise AuthError("login required")
     ok = await device_store.revoke(device_id, owner_user_id=user_id)
     if not ok:
         raise HTTPException(status_code=404, detail=f"device '{device_id}' not found")

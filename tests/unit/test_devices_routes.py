@@ -99,3 +99,18 @@ def test_admin_lists_and_revokes_any_device(client, _logged_in_user):
 
     resp = client.post("/v1/devices/does-not-exist/revoke")
     assert resp.status_code == 404
+
+
+def test_pair_claim_without_session_returns_401_not_500(client):
+    resp = client.post("/v1/devices/pair/claim", json={"code": "000000", "name": "x"})
+    assert resp.status_code == 401
+
+
+def test_list_my_devices_without_session_returns_401_not_500(client):
+    resp = client.get("/v1/devices/mine")
+    assert resp.status_code == 401
+
+
+def test_revoke_my_device_without_session_returns_401_not_500(client):
+    resp = client.post("/v1/devices/mine/some-id/revoke")
+    assert resp.status_code == 401
