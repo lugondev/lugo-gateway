@@ -20,6 +20,11 @@ _active_model: str | None = None
 
 # Process-wide pinned voice reference {"path", "text"} cloned for every chunk.
 _voice_ref: dict[str, str] = {}
+# Guards the check-then-build in _ensure_voice_ref: concurrent cold-start calls
+# (e.g. two sessions' first turn landing at the same moment) would otherwise each
+# synthesize the reference independently — wasted work, not incorrect output,
+# since both would build the same thing from the same global settings.
+_voice_ref_lock = asyncio.Lock()
 
 
 def get_active_omnivoice_model() -> str:
@@ -66,13 +71,18 @@ class OmniVoiceProvider(RenderingTTSProvider):
         """Generate a fixed reference voice once; reused (cloned) for every chunk."""
         if _voice_ref.get("path") and os.path.isfile(_voice_ref["path"]):
             return _voice_ref
-        ref_dir = Path(settings.artifacts_dir).resolve()
-        ref_dir.mkdir(parents=True, exist_ok=True)
-        ref_path = str(ref_dir / "_omnivoice_voice_ref.wav")
-        wav = await self._synth(settings.omnivoice_ref_text, instruct=settings.omnivoice_default_instruct)
-        Path(ref_path).write_bytes(wav)
-        _voice_ref.update({"path": ref_path, "text": settings.omnivoice_ref_text})
-        return _voice_ref
+        async with _voice_ref_lock:
+            if _voice_ref.get("path") and os.path.isfile(_voice_ref["path"]):
+                return _voice_ref
+            ref_dir = Path(settings.artifacts_dir).resolve()
+            ref_dir.mkdir(parents=True, exist_ok=True)
+            ref_path = str(ref_dir / "_omnivoice_voice_ref.wav")
+            wav = await self._synth(
+                settings.omnivoice_ref_text, instruct=settings.omnivoice_default_instruct
+            )
+            Path(ref_path).write_bytes(wav)
+            _voice_ref.update({"path": ref_path, "text": settings.omnivoice_ref_text})
+            return _voice_ref
 
     # ---------------------------------------------------------------- server mode
     def _server_base(self) -> str:

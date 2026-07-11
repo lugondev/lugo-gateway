@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 from app.core.settings import settings
 from app.services.tts.providers.omnivoice_provider import OmniVoiceProvider
+from app.services.tts.providers import omnivoice_provider as ov_mod
 
 
 def test_omnivoice_timeout_is_not_absurdly_long():
@@ -44,3 +45,25 @@ async def test_server_synth_logs_and_reraises_on_cancellation(monkeypatch, caplo
             await task
 
     assert any("cancel" in r.message.lower() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_ensure_voice_ref_is_single_flight_under_concurrent_cold_start(monkeypatch):
+    ov_mod._voice_ref.clear()
+    build_calls = []
+
+    async def fake_synth(self, text, instruct=None, ref_audio=None, ref_text=None, speed=None):
+        build_calls.append(1)
+        await asyncio.sleep(0.05)  # widen the race window
+        return b"fake-wav-bytes"
+
+    monkeypatch.setattr(ov_mod.OmniVoiceProvider, "_synth", fake_synth)
+    monkeypatch.setattr(ov_mod.settings, "artifacts_dir", "/tmp")
+
+    provider = ov_mod.OmniVoiceProvider()
+    results = await asyncio.gather(*[provider._ensure_voice_ref() for _ in range(8)])
+
+    assert len(build_calls) == 1, f"voice ref synthesized {len(build_calls)}x — not single-flight"
+    assert all(r["path"] == results[0]["path"] for r in results)
+
+    ov_mod._voice_ref.clear()
