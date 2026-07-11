@@ -1,3 +1,5 @@
+import hmac
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
@@ -48,4 +50,4 @@ def ws_authenticated(websocket: WebSocket) -> bool:
     if websocket.session.get("authenticated"):
         return True
     token = websocket.query_params.get("device_token")
-    return bool(settings.device_auth_token) and token == settings.device_auth_token
+    return bool(settings.device_auth_token) and hmac.compare_digest(token or "", settings.device_auth_token)
