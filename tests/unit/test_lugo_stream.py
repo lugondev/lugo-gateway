@@ -1,7 +1,10 @@
 import json
+
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from app.core.audio import pcm16_to_wav_bytes
+from app.core.opus import OpusFrameEncoder, opus_available
 from app.core.settings import settings
 from app.main import app
 from app.schemas.stt import STTResult
@@ -14,6 +17,36 @@ from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
 from app.services.tts.base import TTSProvider
 from app.services.tts.service import tts_service
+
+# Real Opus encoding for the speech_start/speech_end VAD test below: the lugo
+# route hardcodes audio_codec="opus" (see _resolve()/lugo_stream() in
+# app.api.routes.lugo), so session.feed_audio() expects genuine Opus packets,
+# not raw PCM16. Build packets via app.core.opus.OpusFrameEncoder -- the same
+# helper session.py itself uses for outbound audio -- rather than calling
+# opuslib directly: on macOS, opuslib's own ctypes.util.find_library('opus')
+# lookup misses Homebrew's /opt/homebrew/lib, so a bare `import opuslib; then
+# opuslib.Encoder(...)` (as tests/integration/test_opus_transport.py does)
+# fails to load libopus and that whole test module ends up skipped on this
+# host. OpusFrameEncoder runs app.core.opus's ctypes shim first, so it finds
+# the same libopus session.py already loads successfully in production.
+_OPUS_SR = 16000  # 16 kHz mono, 60 ms frames -- matches the wakeup audio_params below.
+
+
+def _loud_opus(ms: int) -> list[bytes]:
+    # A tone, not a DC constant -- Opus is lossy and wouldn't preserve a flat
+    # DC level the way it preserves a tone's energy (same choice as
+    # test_opus_transport.py). Amplitude 0.3 -> RMS ~0.21, comfortably above
+    # settings.conversation_rms_threshold (0.015 by default).
+    n = int(_OPUS_SR * ms / 1000)
+    tone = 0.3 * np.sin(2 * np.pi * 220 * np.arange(n) / _OPUS_SR).astype(np.float32)
+    pcm16 = (tone * 32767).astype("<i2").tobytes()
+    return OpusFrameEncoder(sample_rate=_OPUS_SR, channels=1, frame_ms=60).encode_pcm16(pcm16)
+
+
+def _silence_opus(ms: int) -> list[bytes]:
+    n = int(_OPUS_SR * ms / 1000)
+    pcm16 = b"\x00\x00" * n
+    return OpusFrameEncoder(sample_rate=_OPUS_SR, channels=1, frame_ms=60).encode_pcm16(pcm16)
 
 
 class _StubSTT(STTProvider):
@@ -245,6 +278,53 @@ def test_speech_and_processing_events_are_forwarded():
         # A text turn has no speech_start/speech_end (those are audio-VAD-driven),
         # but "processing" fires for every turn regardless of input modality.
         assert "processing" in types_seen
+
+
+def test_speech_start_and_speech_end_are_forwarded_for_real_audio():
+    # Unlike the text-turn test above, this drives real (Opus-encoded) audio
+    # through the VAD endpointer so speech_start/speech_end actually fire from
+    # ConversationSession.feed_audio(), not just "processing".
+    if not opus_available():
+        pytest.skip("opuslib/libopus not loadable on this host")
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        assert ws.receive_json()["type"] == "welcome"
+
+        # ~1s of loud tone (>> conversation_min_speech_ms) then ~1s of silence
+        # (>> conversation_silence_ms=700ms) to reliably cross both VAD
+        # thresholds -- same durations already proven to trigger speech_start/
+        # endpoint in tests/integration/test_opus_transport.py's real-Opus turn.
+        for pkt in _loud_opus(1000):
+            ws.send_bytes(pkt)
+        for pkt in _silence_opus(1000):
+            ws.send_bytes(pkt)
+
+        types_seen = []
+        speech_end_msg = None
+        for _ in range(60):
+            message = ws.receive()
+            if message.get("bytes") is not None:
+                continue
+            m = json.loads(message["text"])
+            if m["type"] == "engines_ready":
+                continue
+            types_seen.append(m["type"])
+            if m["type"] == "speech_end":
+                speech_end_msg = m
+            if m["type"] == "tts" and m.get("state") == "stop":
+                break
+
+        assert "speech_start" in types_seen
+        assert "speech_end" in types_seen
+        assert types_seen.index("speech_start") < types_seen.index("speech_end")
+        # speech_start/speech_end are VAD signals that must reach the device
+        # before the turn's own stt/tts traffic starts.
+        first_turn_msg = next(i for i, t in enumerate(types_seen) if t in ("stt", "tts"))
+        assert types_seen.index("speech_end") < first_turn_msg
+        assert speech_end_msg is not None
+        assert "speech_ms" in speech_end_msg
+        assert isinstance(speech_end_msg["speech_ms"], int)
 
 
 def test_aborted_reason_is_included_on_tts_stop():
