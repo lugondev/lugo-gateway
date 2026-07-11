@@ -9,6 +9,8 @@ model would silently change what session A's next turn transcribed against.
 
 import asyncio
 import io
+import sys
+import types
 import wave
 
 import pytest
@@ -94,10 +96,6 @@ def test_load_model_falls_back_to_active_global_when_model_omitted(monkeypatch):
         assert calls == ["tiny"]
     finally:
         whisper_provider.set_active_whisper_model(original)
-
-
-import sys
-import types
 
 
 def test_qwen3_concurrent_sessions_use_their_own_model(monkeypatch):
