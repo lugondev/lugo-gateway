@@ -48,7 +48,7 @@ async def test_server_synth_logs_and_reraises_on_cancellation(monkeypatch, caplo
 
 
 @pytest.mark.asyncio
-async def test_ensure_voice_ref_is_single_flight_under_concurrent_cold_start(monkeypatch):
+async def test_ensure_voice_ref_is_single_flight_under_concurrent_cold_start(monkeypatch, tmp_path):
     ov_mod._voice_ref.clear()
     build_calls = []
 
@@ -58,7 +58,7 @@ async def test_ensure_voice_ref_is_single_flight_under_concurrent_cold_start(mon
         return b"fake-wav-bytes"
 
     monkeypatch.setattr(ov_mod.OmniVoiceProvider, "_synth", fake_synth)
-    monkeypatch.setattr(ov_mod.settings, "artifacts_dir", "/tmp")
+    monkeypatch.setattr(ov_mod.settings, "artifacts_dir", str(tmp_path))
 
     provider = ov_mod.OmniVoiceProvider()
     results = await asyncio.gather(*[provider._ensure_voice_ref() for _ in range(8)])
