@@ -15,15 +15,22 @@ _ready_ids: set[int] = set()
 _NOOP_TTS_WARM = TTSProvider.warm
 
 
-def engines_for_boot_warmup() -> tuple[list[str], list[str]]:
+def engines_for_boot_warmup() -> tuple[list[str], list[str], dict[str, str]]:
     """Every STT and TTS engine that any chatllm profile or TTS profile can
-    select, merged with the configured warmup lists.
+    select, merged with the configured warmup lists, plus any per-engine model
+    override those profiles asked for.
 
     Warming these at boot means a device connecting with any profile never pays a
     cold model load on its first turn (the delay the user hits when an engine is
-    loaded lazily on first use). Returns (stt_engines, tts_engines), de-duplicated
-    and order-preserving. LLM engines are remote APIs (no local model to warm), so
-    they're intentionally excluded.
+    loaded lazily on first use). Returns (stt_engines, tts_engines, stt_models),
+    de-duplicated and order-preserving. stt_models maps engine -> model for any
+    engine where at least one enumerated profile set SttConfig.model; since the
+    active model is a single process-global slot per engine (see
+    app.services.stt.model_registry), if two profiles want different models on
+    the same engine only the last one enumerated wins here — the session-start
+    swap-on-use (ConversationSession.start) is the authoritative per-session
+    correctness mechanism, this is just a best-effort head start. LLM engines are
+    remote APIs (no local model to warm), so they're intentionally excluded.
     """
     from app.core.settings import settings
     from app.services.profiles.store import profile_store
@@ -32,6 +39,7 @@ def engines_for_boot_warmup() -> tuple[list[str], list[str]]:
 
     stt: list[str] = []
     tts: list[str] = []
+    stt_models: dict[str, str] = {}
 
     def _add(lst: list[str], name: str | None) -> None:
         if name and name not in lst:
@@ -42,12 +50,12 @@ def engines_for_boot_warmup() -> tuple[list[str], list[str]]:
     for e in settings.warmup_tts_engines:
         _add(tts, e)
 
-    # Any engine a profile resolves to (STT via resolve_stt; TTS via the TTS
-    # profile it points at — covered by iterating every TTS profile below).
     try:
         for prof in profile_store.list().values():
-            engine, _lang, _model = resolve_stt(prof)
+            engine, _lang, model = resolve_stt(prof)
             _add(stt, engine)
+            if model and engine:
+                stt_models[engine] = model
     except Exception as exc:  # noqa: BLE001 - warm-up must never break boot
         logger.warning("profile STT enumeration for warm-up failed: %s", exc)
     try:
@@ -56,7 +64,7 @@ def engines_for_boot_warmup() -> tuple[list[str], list[str]]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("TTS profile enumeration for warm-up failed: %s", exc)
 
-    return stt, tts
+    return stt, tts, stt_models
 
 
 def _needs_warming(provider: object) -> bool:

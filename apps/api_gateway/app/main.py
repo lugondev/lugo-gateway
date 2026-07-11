@@ -48,6 +48,7 @@ async def _warm_default_engines() -> None:
     device still pays a full cold-load on its first-ever turn each boot (see
     app.services.warmup)."""
     from app.core.errors import AppError
+    from app.services.stt.model_registry import apply_stt_model
     from app.services.stt.service import stt_service
     from app.services.tts.service import tts_service
     from app.services.warmup import engines_for_boot_warmup, warm_providers
@@ -55,7 +56,12 @@ async def _warm_default_engines() -> None:
     # Warm every engine any profile / TTS profile can select, not just the static
     # warmup lists — so a device connecting with any profile never pays a cold
     # model load on its first turn.
-    stt_engines, tts_engines = engines_for_boot_warmup()
+    stt_engines, tts_engines, stt_models = engines_for_boot_warmup()
+    for engine, model in stt_models.items():
+        try:
+            apply_stt_model(engine, model)
+        except AppError as exc:
+            logger.warning("stt model warm-up skipped for %s/%s: %s", engine, model, exc)
     providers = []
     for name in stt_engines:
         try:

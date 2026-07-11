@@ -27,3 +27,27 @@ def test_list_stt_models_engine_without_registry():
 def test_list_stt_models_requires_engine_param():
     resp = client.get("/v1/stt/models")
     assert resp.status_code == 422  # FastAPI required-query-param validation
+
+
+def test_warm_stt_engine_with_explicit_model(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "app.services.stt.model_registry.apply_stt_model",
+        lambda e, m: calls.append((e, m)),
+    )
+
+    resp = client.post("/v1/stt/warm", params={"engine": "qwen3_asr", "model": "1.7b"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["model"] == "1.7b"
+    assert calls == [("qwen3_asr", "1.7b")]
+
+
+def test_warm_stt_engine_rejects_invalid_model():
+    resp = client.post("/v1/stt/warm", params={"engine": "qwen3_asr", "model": "not-real"})
+    assert resp.status_code == 400
+
+
+def test_warm_stt_engine_no_model_unchanged():
+    resp = client.post("/v1/stt/warm", params={"engine": "vosk"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["model"] is None

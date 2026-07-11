@@ -43,8 +43,8 @@ class _FakeStore:
         return self._d
 
 
-def _fake_profile(stt_engine):
-    stt = type("S", (), {"profile": "", "engine": stt_engine, "language": ""})()
+def _fake_profile(stt_engine, stt_model=""):
+    stt = type("S", (), {"profile": "", "engine": stt_engine, "language": "", "model": stt_model})()
     return type("P", (), {"stt": stt})()
 
 
@@ -65,7 +65,25 @@ def test_boot_warmup_includes_profile_and_tts_profile_engines(monkeypatch):
         "app.services.tts.profile_store.tts_profile_store",
         _FakeStore({"t": _fake_tts_profile("omnivoice")}),
     )
-    stt, tts = warmup.engines_for_boot_warmup()
+    stt, tts, stt_models = warmup.engines_for_boot_warmup()
     assert "whisper" in stt and "qwen3_asr" in stt   # settings default + profile
     assert "vieneu" in tts and "omnivoice" in tts     # settings default + tts profile
     assert len(stt) == len(set(stt)) and len(tts) == len(set(tts))  # de-duplicated
+    assert stt_models == {}  # no profile set a model
+
+
+def test_boot_warmup_collects_profile_stt_models(monkeypatch):
+    monkeypatch.setattr(settings, "conversation_stt_engine", "whisper")
+    monkeypatch.setattr(settings, "extra_warmup_stt_engines", "")
+    monkeypatch.setattr(settings, "conversation_tts_engine", "vieneu")
+    monkeypatch.setattr(settings, "extra_warmup_tts_engines", "")
+    monkeypatch.setattr(
+        "app.services.profiles.store.profile_store",
+        _FakeStore({"p": _fake_profile("qwen3_asr", stt_model="1.7b")}),
+    )
+    monkeypatch.setattr(
+        "app.services.tts.profile_store.tts_profile_store",
+        _FakeStore({}),
+    )
+    _stt, _tts, stt_models = warmup.engines_for_boot_warmup()
+    assert stt_models == {"qwen3_asr": "1.7b"}
