@@ -84,6 +84,12 @@ CANDIDATES: list[Candidate] = [
     Candidate("stt", "eventlab", "eventlab", "Eventlab STT (remote)",
               "cpu", "medium", False, None, "remote API", None, ["eventlab"],
               _config("Set EVENTLAB_BASE_URL + EVENTLAB_API_KEY")),
+    Candidate("stt", "qwen3_asr_or", "qwen3_asr_or", "Qwen3-ASR Flash via OpenRouter (remote)",
+              "cpu", "medium", True, None, "remote API", None, ["openrouter"],
+              _config("Set the OpenRouter API key in system config")),
+    Candidate("stt", "whisper_or", "whisper_or", "Whisper Large v3 Turbo via OpenRouter (remote)",
+              "cpu", "medium", False, None, "remote API", None, ["openrouter"],
+              _config("Set the OpenRouter API key in system config")),
 
     # ---- TTS ----
     Candidate("tts", "v3turbo", "vieneu", "VieNeu-TTS v3 Turbo — Vietnamese (48kHz, CPU)",

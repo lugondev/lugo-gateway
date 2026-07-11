@@ -5,12 +5,14 @@ from app.core.deps import module_available
 from app.core.errors import EngineNotFoundError
 from app.core.settings import settings
 from app.services.stt.base import STTProvider
+from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
 from app.services.stt.providers.remote_whisper_provider import RemoteWhisperProvider
 from app.services.stt.providers.vosk_provider import VoskProvider
 from app.services.stt.providers.qwen3_asr_provider import Qwen3AsrProvider
 from app.services.stt.providers.whisper_gemma_provider import WhisperGemmaProvider
 from app.services.stt.providers.whisper_mlx_provider import WhisperMlxProvider
 from app.services.stt.providers.whisper_provider import WhisperProvider
+from app.services.system_config import system_config_store
 
 
 class STTService:
@@ -35,6 +37,16 @@ class STTService:
                 base_url=settings.eventlab_base_url,
                 api_key=settings.eventlab_api_key,
                 model=settings.eventlab_model,
+                timeout_seconds=settings.remote_stt_timeout_seconds,
+            ),
+            "qwen3_asr_or": OpenRouterSttProvider(
+                name="qwen3_asr_or",
+                model="qwen/qwen3-asr-flash-2026-02-10",
+                timeout_seconds=settings.remote_stt_timeout_seconds,
+            ),
+            "whisper_or": OpenRouterSttProvider(
+                name="whisper_or",
+                model="openai/whisper-large-v3-turbo",
                 timeout_seconds=settings.remote_stt_timeout_seconds,
             ),
         }
@@ -96,6 +108,9 @@ class STTService:
                 }
             elif engine == "whisper_gemma":
                 entry = {"mode": "local", "available": fw_available, "detail": provider.detail()}
+            elif engine in ("qwen3_asr_or", "whisper_or"):
+                configured = bool(system_config_store.get().openrouter_api_key)
+                entry = {"mode": "remote", "available": configured, "detail": provider.model if configured else None}
             else:
                 base_url, model = remote[engine]
                 configured = bool(base_url)

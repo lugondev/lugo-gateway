@@ -752,6 +752,16 @@
             </section>
 
             <section class="card">
+              <h2>OpenRouter API key</h2>
+              <p class="hint">Used by the <code>qwen3_asr_or</code> and <code>whisper_or</code> STT engines (Qwen3-ASR Flash / Whisper Large v3 Turbo via OpenRouter). Leave blank to keep the existing key.</p>
+              <input type="password" id="sys-openrouter-key" placeholder="sk-or-..." autocomplete="off" />
+              <div class="actions end">
+                <button id="sys-openrouter-key-save">Save</button>
+              </div>
+              <p id="sys-openrouter-key-status" class="meta"></p>
+            </section>
+
+            <section class="card">
               <h2>STT preprocessing</h2>
               <p class="hint">Shared defaults for noise reduction &amp; VAD, applied across STT (file / streaming) and Conversation.</p>
               <div class="checks">

@@ -39,6 +39,7 @@ class LlmModelRequest(BaseModel):
 
 class SystemConfigRequest(BaseModel):
     base_context: str = ""
+    openrouter_api_key: str = ""
 
 
 def _artifacts_stats() -> dict:
@@ -85,15 +86,27 @@ async def system_status() -> dict:
     return {"success": True, "data": data}
 
 
+def _mask_system_config(config) -> dict:
+    data = config.model_dump()
+    if data.get("openrouter_api_key"):
+        data["openrouter_api_key"] = "***"
+    return data
+
+
 @router.get("/system/config")
 async def get_system_config() -> dict:
-    return {"success": True, "data": system_config_store.get().model_dump()}
+    return {"success": True, "data": _mask_system_config(system_config_store.get())}
 
 
 @router.put("/system/config")
 async def set_system_config(payload: SystemConfigRequest) -> dict:
     config = system_config_store.set_base_context(payload.base_context)
-    return {"success": True, "data": config.model_dump()}
+    # Leave-blank-to-keep-existing, same convention as profiles' llm.api_key:
+    # the UI's password field is empty on load, so a save that doesn't
+    # re-enter the key must not wipe it.
+    if payload.openrouter_api_key:
+        config = system_config_store.set_openrouter_api_key(payload.openrouter_api_key)
+    return {"success": True, "data": _mask_system_config(config)}
 
 
 @router.get("/models")

@@ -9,6 +9,7 @@ from app.core.settings import settings
 from app.services.recommend.capabilities import Capabilities, detect_capabilities
 from app.services.recommend.catalog import CANDIDATES
 from app.services.recommend.recommender import rank
+from app.services.system_config import system_config_store
 
 
 def _safe(fn, default):
@@ -85,6 +86,7 @@ def _augment_config_flags(caps: Capabilities) -> None:
     caps.modules["whisper_service"] = bool(settings.whisper_service_base_url)
     caps.modules["eventlab"] = bool(settings.eventlab_base_url)
     caps.modules["online_llm"] = bool(settings.conversation_llm_base_url)
+    caps.modules["openrouter"] = bool(system_config_store.get().openrouter_api_key)
 
 
 def recommend_all() -> dict:

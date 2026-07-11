@@ -17,6 +17,7 @@ _ROW_ID = 1
 
 class SystemConfig(BaseModel):
     base_context: str = ""
+    openrouter_api_key: str = ""
 
 
 class SystemConfigStore:
@@ -94,7 +95,15 @@ class SystemConfigStore:
     def set_base_context(self, value: str) -> SystemConfig:
         with self._lock:
             self._ensure()
-            config = SystemConfig(base_context=value)
+            config = self._cache.model_copy(update={"base_context": value})
+            self._put(config)
+            self._cache = config
+            return config
+
+    def set_openrouter_api_key(self, value: str) -> SystemConfig:
+        with self._lock:
+            self._ensure()
+            config = self._cache.model_copy(update={"openrouter_api_key": value})
             self._put(config)
             self._cache = config
             return config
