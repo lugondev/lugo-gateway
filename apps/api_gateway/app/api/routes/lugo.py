@@ -143,8 +143,10 @@ async def lugo_stream(websocket: WebSocket) -> None:
         elif event == "session_started":
             engine_status["stt_ready"] = bool(payload.get("stt_ready", True))
             engine_status["tts_ready"] = bool(payload.get("tts_ready", True))
+        elif event == "engines_ready":
+            await websocket.send_json({"type": "engines_ready"})
         # processing / audio_end / reset: not on the wire (speech_start/speech_end/
-        # processing/engines_ready are handled in Task 3/4 below)
+        # processing are handled in Task 4 below)
 
     async def emit_audio(packet: bytes) -> None:
         await websocket.send_bytes(encode_frame(LUGO_FRAME_OPUS, packet))

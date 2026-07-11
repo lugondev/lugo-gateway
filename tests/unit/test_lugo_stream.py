@@ -213,3 +213,15 @@ def test_welcome_includes_engine_ready_flags():
         assert msg["type"] == "welcome"
         assert msg["stt_ready"] is True
         assert msg["tts_ready"] is True
+
+
+def test_engines_ready_is_forwarded_when_initially_cold(monkeypatch):
+    monkeypatch.setattr("app.services.conversation.session.is_ready", lambda _provider: False)
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        welcome = ws.receive_json()
+        assert welcome["stt_ready"] is False
+        assert welcome["tts_ready"] is False
+        msg = ws.receive_json()
+        assert msg["type"] == "engines_ready"
