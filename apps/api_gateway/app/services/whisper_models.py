@@ -35,6 +35,7 @@ WHISPER_SIZES = [
     {"size": "small", "label": "Small (multilingual)"},
     {"size": "medium", "label": "Medium (multilingual)"},
     {"size": "large-v3", "label": "Large v3 (multilingual, best)"},
+    {"size": "large-v3-turbo", "label": "Large v3 Turbo (multilingual, ~6x faster)"},
 ]
 
 _VALID_SIZES = {entry["size"] for entry in WHISPER_SIZES}
