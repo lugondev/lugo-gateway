@@ -32,3 +32,9 @@ class AuthError(AppError):
     """Raised when login credentials are invalid or a session is required."""
 
     status_code = 401
+
+
+class UsernameTakenError(AppError):
+    """Raised on signup/create-user when the username already exists."""
+
+    status_code = 409
