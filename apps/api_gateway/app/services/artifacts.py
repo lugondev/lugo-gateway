@@ -23,5 +23,12 @@ class ArtifactStore:
         (self.base_dir / filename).write_bytes(data)
         return artifact_id, f"{self.url_prefix}/{filename}"
 
+    def save_mp3(self, data: bytes) -> tuple[str, str]:
+        """Persist MP3 bytes; return (artifact_id, public_url)."""
+        artifact_id = uuid.uuid4().hex
+        filename = f"{artifact_id}.mp3"
+        (self.base_dir / filename).write_bytes(data)
+        return artifact_id, f"{self.url_prefix}/{filename}"
+
 
 artifact_store = ArtifactStore(settings.artifacts_dir)

@@ -1,6 +1,7 @@
 from app.core.errors import EngineNotFoundError
 from app.core.settings import settings
 from app.services.tts.base import TTSProvider
+from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
 from app.services.tts.providers.extra_engines import EXTRA_TTS_PROVIDERS
 from app.services.tts.providers.omnivoice_provider import OmniVoiceProvider
 from app.services.tts.providers.vieneu_provider import VieNeuProvider
@@ -11,6 +12,7 @@ class TTSService:
         self.providers: dict[str, TTSProvider] = {
             "omnivoice": OmniVoiceProvider(),
             "vieneu": VieNeuProvider(),
+            "edge_tts": EdgeTTSProvider(),
         }
         for provider in EXTRA_TTS_PROVIDERS:
             self.providers[provider.name] = provider

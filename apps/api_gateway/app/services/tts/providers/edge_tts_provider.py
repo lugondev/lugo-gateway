@@ -1,0 +1,83 @@
+"""edge-tts — free cloud TTS via Microsoft Edge's Read Aloud service.
+
+No API key, no local model; needs outbound network access. Unofficial
+(reverse-engineered) API — test-UI/batch synthesis only, not the live
+conversation pipeline (see docs/superpowers/specs/2026-07-11-edge-tts-provider-design.md
+for why: the live path needs real WAV/PCM, this engine's native output is MP3).
+"""
+
+from app.core.deps import module_available
+from app.core.errors import ProviderError
+from app.schemas.tts import TTSRequest, TTSResult
+from app.services.artifacts import artifact_store
+from app.services.tts.base import TTSProvider
+
+_SAMPLE_RATE = 24000
+_BITRATE_BPS = 48000  # fixed edge-tts output format: audio-24khz-48kbitrate-mono-mp3
+
+
+def _estimate_duration_seconds(mp3_bytes: bytes) -> float:
+    """Approximate duration from the known constant bitrate (no decode step)."""
+    if not mp3_bytes:
+        return 0.0
+    return len(mp3_bytes) * 8 / _BITRATE_BPS
+
+
+class EdgeTTSProvider(TTSProvider):
+    name = "edge_tts"
+
+    DEFAULT_VOICE = "vi-VN-HoaiMyNeural"
+    VOICES = [
+        {"label": "Hoài My (nữ)", "voice": "vi-VN-HoaiMyNeural"},
+        {"label": "Nam Minh (nam)", "voice": "vi-VN-NamMinhNeural"},
+    ]
+
+    def available(self) -> bool:
+        return module_available("edge_tts")
+
+    def detail(self) -> str:
+        return "Microsoft Edge TTS (cloud, no API key, network required)"
+
+    def install_hint(self) -> str:
+        return "pip install edge-tts"
+
+    def list_voices(self) -> list[dict]:
+        return self.VOICES
+
+    @staticmethod
+    def _rate_str(speed: float | None) -> str:
+        if not speed:
+            return "+0%"
+        return f"{round((speed - 1) * 100):+d}%"
+
+    async def synthesize(self, payload: TTSRequest) -> TTSResult:
+        try:
+            import edge_tts
+        except ImportError as exc:
+            raise ProviderError(f"{self.name} synthesis failed: edge-tts not installed") from exc
+
+        voice = payload.voice or self.DEFAULT_VOICE
+        rate = self._rate_str(payload.speed)
+        communicate = edge_tts.Communicate(payload.text, voice=voice, rate=rate)
+
+        chunks = bytearray()
+        try:
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    chunks.extend(chunk["data"])
+        except Exception as exc:  # noqa: BLE001 - surface as a clean provider error
+            raise ProviderError(f"{self.name} synthesis failed: {exc}") from exc
+
+        if not chunks:
+            raise ProviderError(f"{self.name} synthesis failed: no audio received")
+
+        mp3_bytes = bytes(chunks)
+        _, audio_url = artifact_store.save_mp3(mp3_bytes)
+
+        return TTSResult(
+            engine=self.name,
+            sample_rate=_SAMPLE_RATE,
+            audio_url=audio_url,
+            duration_seconds=round(_estimate_duration_seconds(mp3_bytes), 3),
+            text=payload.text,
+        )
