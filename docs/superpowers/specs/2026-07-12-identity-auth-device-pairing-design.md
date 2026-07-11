@@ -1,5 +1,10 @@
 # Identity, auth & device pairing foundation
 
+Product branding for the UI pieces of this spec: **Lugo** (wordmark), product name
+**Lugo BOT**. Visual identity is placeholder-quality for this round (see Component 7) —
+a full brand pass (logo asset, motion, final palette) is explicitly deferred; the
+priority here is layout/IA, not polish.
+
 ## Problem
 
 The gateway has exactly one tier of access today: a single shared `admin_password`
@@ -36,6 +41,11 @@ are separate follow-up specs (see **Follow-ups**, below).
    `ws_authenticated()` (unlike `/v1/conversation/stream`, `/v1/stt/stream`,
    `/v1/livehost/stream`) — add the same check for consistency, now that auth is being
    reworked anyway.
+7. UI for everything above, rebranded as Lugo/Lugo BOT: login+signup on one screen,
+   role-gated sidebar additions ("Users", "Devices"), a Users management page, and a
+   Devices page (own devices + claim UI for everyone, plus an all-devices table for
+   admins). Ships inside the existing single-page app — not a separate admin/user app
+   (that split is still Follow-up 4).
 
 **Out of scope, with rationale (separate specs later):**
 - `owner_id` on `Profile`/`TtsProfile`/`McpServer` + clone-from-template UX. Needs the
@@ -47,8 +57,11 @@ are separate follow-up specs (see **Follow-ups**, below).
   `users.can_use_testing` (column added now, consumed later).
 - Email verification / password reset via email. Signup is username+password only;
   admin can reset a user's password directly from the Users page if needed.
-- Admin-facing frontend split into separate admin/user pages. This spec only changes
-  the guard/session model the existing single-page app runs on top of.
+- Splitting into two separate apps/entrypoints (distinct admin console vs. user
+  console). This spec adds role-gated tabs to the *existing* single-page app
+  (Component 7) but does not restructure it into two apps — that's Follow-up 4.
+- Final visual identity (real logo asset, motion, tuned palette). Component 7 ships
+  functional layouts with a placeholder palette only.
 
 ## Component 1 — `users` table
 
@@ -225,10 +238,102 @@ per-owner protections (Component 4's re-check, per-device revoke, "which user do
 belong to" visibility). Retiring it is a manual follow-up once the fleet has re-paired —
 not scheduled automatically, not deleted as part of this spec.
 
+## Component 7 — UI (Lugo branding, placeholder tokens)
+
+Placeholder tokens (final brand pass deferred; these exist so the layout work below
+isn't unstyled):
+
+| Token | Value | Use |
+|---|---|---|
+| `--lugo-canvas` | `#F6F9FC` | page/content background |
+| `--lugo-primary` | `#3E8FB0` | primary actions, active nav, links |
+| `--lugo-ink` | `#1F2A3D` | body text, headings |
+| `--lugo-border` | `#D8E3EE` | dividers, table borders, input borders |
+
+**Login/signup** (`app/static/login.html`, `app/static/js/auth.js`): one screen, one
+card, a toggle between "Log in" and "Create account" instead of a separate page —
+Login adds a `username` field (currently password-only); Create-account is
+`username`/`password`/`confirm`, posting to the new `/api/auth/signup`. Wordmark
+"Lugo" above the card.
+
+```
+┌─────────────────────────────┐
+│            Lugo              │
+│  ┌─────────────────────┐    │
+│  │ Username             │    │
+│  │ Password             │    │
+│  │ [      Log in      ] │    │
+│  │  New here? Create    │    │
+│  │  account →            │    │
+│  └─────────────────────┘    │
+└─────────────────────────────┘
+```
+
+**App shell** (`app/static/index.html`, `js/sidebar-nav.js`): existing sidebar keeps
+its current tabs (Chat/Livehost/STT/TTS/Models/MCP/System) and gains two more —
+"Devices" (visible to every logged-in user) and "Users" (rendered only when
+`GET /api/auth/status` reports `role: "admin"`, matching Component 3's guard so the
+tab's visibility always matches what the backend actually allows). A divider separates
+an "Quản trị" (admin) group from the rest — encodes the real role boundary, not
+decoration:
+
+```
+┌──────────┬─────────────────────────────┐
+│ Lugo     │  [page title]                │
+│──────────│                              │
+│ Chat     │                              │
+│ Livehost │         [tab content]        │
+│ Profiles │                              │
+│ Devices  │                              │
+│──────────│  ── Quản trị ──               │
+│ Users    │  (chỉ hiện nếu role=admin)   │
+│ Models   │                              │
+│ MCP      │                              │
+│ System   │                              │
+└──────────┴─────────────────────────────┘
+```
+
+**Users page** (admin-only; new `js/users.js` module, following the existing per-tab
+module pattern e.g. `profiles.js`/`mcp-servers.js`): table of all users — username,
+role, `can_use_testing` checkbox, status (Active/Disabled), and a row action menu
+(Disable/Enable, change role, toggle testing access, reset password). Backed by
+Component 3's `/v1/users` routes.
+
+```
+Users                                      [+ Create user]
+┌────────────┬───────┬─────────┬──────────┬─────────┐
+│ Username    │ Role  │ Testing │ Status   │ Actions  │
+├────────────┼───────┼─────────┼──────────┼─────────┤
+│ toan        │ admin │  —      │ Active   │ ⋯        │
+│ linh        │ user  │  ☑      │ Active   │ ⋯        │
+│ khanh       │ user  │  ☐      │ Disabled │ ⋯        │
+└────────────┴───────┴─────────┴──────────┴─────────┘
+```
+
+**Devices page** (new `js/devices.js`): every logged-in user sees "Thiết bị của tôi"
+(their own devices, via `/v1/devices/mine`) with a revoke action and a "Thêm thiết bị"
+button that opens a modal for entering the pairing `code` shown on the physical device
+plus a display name (Component 5's `pair/claim`). Admins additionally see a second,
+read-only-except-revoke table "Tất cả thiết bị" (`/v1/devices`) with an owner column.
+
+```
+Devices                                    [+ Thêm thiết bị]
+── Thiết bị của tôi ──
+┌───────────┬───────────┬───────────┬─────────┐
+│ Name       │ Serial     │ Last seen  │ Action  │
+└───────────┴───────────┴───────────┴─────────┘
+
+── Tất cả thiết bị (chỉ admin) ──
+┌───────────┬────────┬───────────┬───────────┬─────────┐
+│ Name       │ Owner  │ Serial     │ Last seen  │ Action  │
+└───────────┴────────┴───────────┴───────────┴─────────┘
+```
+
 ## Migration / rollout notes
 
 - Existing single-page app's login form (`login.html`) needs a username field added
-  (currently password-only); `js/auth.js`'s global 401→redirect behavior is unaffected.
+  (currently password-only) and a signup toggle (Component 7); `js/auth.js`'s global
+  401→redirect behavior is unaffected.
 - No data migration for existing config stores — `Profile`/`TtsProfile`/`McpServer`
   rows stay ownerless (global templates) until the follow-up ownership spec runs.
 - `settings.admin_password` and `settings.device_auth_token` both remain valid, read as
@@ -244,7 +349,10 @@ not scheduled automatically, not deleted as part of this spec.
   round trip; disabled-user's open WS session is closed within the watchdog interval in
   a test that fast-forwards the check (don't sleep 30s in the test).
 - Manual: confirm `/v1/lugo/stream` now rejects an unauthenticated connect (previously
-  it didn't).
+  it didn't); confirm the "Users" sidebar tab is absent for a `role=user` session and
+  present for `role=admin`; confirm the full pairing UX end-to-end with a real ESP32 or
+  the RPi client (device shows code → claim on Devices page → device connects with its
+  new token).
 
 ## Follow-ups (separate specs, not built here)
 
@@ -253,5 +361,7 @@ not scheduled automatically, not deleted as part of this spec.
    `can_use_testing`.
 2. `user_id` scoping of `ChatSession`/`MemoryItem`/session history listing.
 3. `user_id` scoping of the livehost registry/session.
-4. Frontend split into an admin console and a user console, each with its own nav and
-   entrypoint module.
+4. Full frontend split into a separate admin console and user console app/entrypoint
+   (this spec only adds role-gated tabs within the existing single-page app).
+5. Final Lugo visual identity pass (real logo, motion, tuned palette) on top of
+   Component 7's placeholder styling.
