@@ -20,6 +20,17 @@ async def test_create_and_get_by_username(store):
 
 
 @pytest.mark.asyncio
+async def test_get_by_id_returns_user_and_none_for_missing(store):
+    created = await store.create("toan", "s3cret", role="admin")
+    user = await store.get_by_id(created["id"])
+    assert user is not None
+    assert user.id == created["id"]
+    assert user.username == "toan"
+    assert user.role == "admin"
+    assert await store.get_by_id("missing-id") is None
+
+
+@pytest.mark.asyncio
 async def test_create_duplicate_username_raises(store):
     await store.create("toan", "s3cret")
     with pytest.raises(UsernameTakenError):
