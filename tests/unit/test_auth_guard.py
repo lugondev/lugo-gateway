@@ -34,7 +34,8 @@ def test_guard_blocks_models_route_when_logged_out(client, _with_password):
 
 
 def test_guard_allows_system_route_after_login(client, _with_password):
-    client.post("/api/auth/login", json={"password": "s3cret"})
+    client.post("/api/auth/signup", json={"username": "toan", "password": "s3cret"})
+    client.post("/api/auth/login", json={"username": "toan", "password": "s3cret"})
     resp = client.get("/v1/system/status")
     assert resp.status_code != 401
 

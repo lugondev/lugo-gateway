@@ -78,7 +78,8 @@ def test_ws_accepts_valid_device_token(client, _with_password, path, query):
 
 @pytest.mark.parametrize("path,query", ROUTES)
 def test_ws_accepts_valid_browser_cookie(client, _with_password, path, query):
-    login = client.post("/api/auth/login", json={"password": "s3cret"})
+    client.post("/api/auth/signup", json={"username": "toan", "password": "s3cret"})
+    login = client.post("/api/auth/login", json={"username": "toan", "password": "s3cret"})
     assert login.status_code == 200
     with client.websocket_connect(f"{path}?{query}") as ws:
         first = ws.receive_json()
