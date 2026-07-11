@@ -61,40 +61,28 @@ export function updateTtsEngine(selId, detId) {
   const engine = el(selId).value;
   const det = el(detId);
   if (det) det.textContent = ttsEngineDetails[engine] ? `model: ${ttsEngineDetails[engine]}` : "";
-  // Voice selector only applies to the batch VieNeu engine.
-  if (selId === "tts-engine") {
-    const isVieneu = engine === "vieneu";
-    el("tts-voice-wrap").classList.toggle("hidden", !isVieneu);
-    if (isVieneu && !el("tts-voice").dataset.loaded) loadTtsVoices();
-  }
-  if (selId === "t2v-tts-engine") {
-    const isVieneu = engine === "vieneu";
-    const wrap = el("t2v-voice-wrap");
-    if (wrap) wrap.classList.toggle("hidden", !isVieneu);
-    if (isVieneu) {
-      fetch("/v1/tts/voices?engine=vieneu").then(r => r.json()).then(b => {
-        const sel = el("t2v-tts-voice");
-        if (!sel) return;
-        sel.innerHTML = '<option value="">(auto)</option>';
-        b.data.forEach(v => { const o = document.createElement("option"); o.value = v.voice; o.textContent = v.label; sel.appendChild(o); });
-      }).catch(() => {});
-    }
-  }
+  // Voice selector applies to any engine that exposes a voice list (vieneu, edge_tts, kokoro_vi, ...).
+  if (selId === "tts-engine") loadTtsVoices(engine);
+  if (selId === "t2v-tts-engine") loadTtsVoices(engine, { wrapId: "t2v-voice-wrap", selectId: "t2v-tts-voice", restore: false });
 }
 
-export async function loadTtsVoices() {
+export async function loadTtsVoices(engine, { wrapId = "tts-voice-wrap", selectId = "tts-voice", restore = true } = {}) {
+  const wrap = el(wrapId);
+  const sel = el(selectId);
+  if (!sel) return;
   try {
-    const body = await (await fetch("/v1/tts/voices?engine=vieneu")).json();
-    const sel = el("tts-voice");
+    const body = await (await fetch(`/v1/tts/voices?engine=${encodeURIComponent(engine)}`)).json();
+    const voices = body.data || [];
+    if (wrap) wrap.classList.toggle("hidden", voices.length === 0);
     sel.innerHTML = '<option value="">(auto)</option>';
-    body.data.forEach((v) => {
+    voices.forEach((v) => {
       const opt = document.createElement("option");
       opt.value = v.voice;
       opt.textContent = v.label;
       sel.appendChild(opt);
     });
-    sel.dataset.loaded = "1";
-    restoreAndBind("tts-voice");
+    sel.dataset.loaded = engine;
+    if (restore) restoreAndBind(selectId);
   } catch (error) {
     /* voices optional */
   }
