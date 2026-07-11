@@ -116,37 +116,37 @@ class Qwen3AsrProvider(STTProvider):
         where = {"mlx": "Apple GPU (MLX)", "cuda": "NVIDIA GPU (CUDA)"}.get(backend, "GPU")
         return f"{model} · {where} · multilingual incl. Vietnamese"
 
-    def _mlx_session(self):
-        model = get_active_qwen3_asr_model()
-        key = f"mlx:{model}"
+    def _mlx_session(self, model: str | None = None):
+        resolved = model or get_active_qwen3_asr_model()
+        key = f"mlx:{resolved}"
         if key not in _MODEL_CACHE:
             from mlx_qwen3_asr import Session
 
-            _MODEL_CACHE[key] = Session(model)
+            _MODEL_CACHE[key] = Session(resolved)
         return _MODEL_CACHE[key]
 
-    def _cuda_model(self):
-        model = get_active_qwen3_asr_model()
-        key = f"cuda:{model}"
+    def _cuda_model(self, model: str | None = None):
+        resolved = model or get_active_qwen3_asr_model()
+        key = f"cuda:{resolved}"
         if key not in _MODEL_CACHE:
             import torch
             from qwen_asr import Qwen3ASRModel
 
             _MODEL_CACHE[key] = Qwen3ASRModel.from_pretrained(
-                model,
+                resolved,
                 dtype=_cuda_dtype(torch),  # bf16 on Ampere+, fp16 on T4/Turing
                 device_map=settings.qwen3_asr_device or "cuda:0",
                 max_new_tokens=256,
             )
         return _MODEL_CACHE[key]
 
-    def _transcribe(self, wav_path: str, language: str | None) -> str:
+    def _transcribe(self, wav_path: str, language: str | None, model: str | None = None) -> str:
         backend = self._backend()
         lang = _LANG.get((language or "").lower())  # None => auto-detect
         if backend == "mlx":
-            return _extract_text(self._mlx_session().transcribe(wav_path, language=lang))
+            return _extract_text(self._mlx_session(model).transcribe(wav_path, language=lang))
         if backend == "cuda":
-            return _extract_text(self._cuda_model().transcribe(audio=wav_path, language=lang))
+            return _extract_text(self._cuda_model(model).transcribe(audio=wav_path, language=lang))
         raise RuntimeError("Qwen3-ASR needs mlx-qwen3-asr (Apple) or qwen-asr (CUDA) installed")
 
     def warm(self) -> None:
@@ -161,7 +161,9 @@ class Qwen3AsrProvider(STTProvider):
         except Exception:  # noqa: BLE001 - best-effort warm
             pass
 
-    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None) -> STTResult:
+    async def transcribe_bytes(
+        self, audio_bytes: bytes, language: str | None = None, model: str | None = None
+    ) -> STTResult:
         tmp = ""
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
@@ -170,7 +172,7 @@ class Qwen3AsrProvider(STTProvider):
             # Run on the single dedicated thread so the model is built once and all MLX
             # work stays thread-pinned (see _INFER_EXECUTOR above).
             loop = asyncio.get_running_loop()
-            text = await loop.run_in_executor(_INFER_EXECUTOR, self._transcribe, tmp, language)
+            text = await loop.run_in_executor(_INFER_EXECUTOR, self._transcribe, tmp, language, model)
             return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
         finally:
             if tmp and os.path.isfile(tmp):

@@ -75,7 +75,9 @@ class WhisperMlxProvider(STTProvider):
             if tmp and os.path.isfile(tmp):
                 os.unlink(tmp)
 
-    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None) -> STTResult:
+    async def transcribe_bytes(
+        self, audio_bytes: bytes, language: str | None = None, model: str | None = None
+    ) -> STTResult:
         tmp = ""
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:

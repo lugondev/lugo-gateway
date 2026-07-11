@@ -46,7 +46,9 @@ class STTProvider(ABC):
     name: str
 
     @abstractmethod
-    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None) -> STTResult:
+    async def transcribe_bytes(
+        self, audio_bytes: bytes, language: str | None = None, model: str | None = None
+    ) -> STTResult:
         raise NotImplementedError
 
     def open_stream(self, sample_rate: int, language: str | None = None) -> STTStream:

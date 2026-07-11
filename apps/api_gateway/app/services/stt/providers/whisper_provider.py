@@ -68,7 +68,7 @@ class WhisperProvider(STTProvider):
             [model, settings.whisper_local_device, settings.whisper_local_compute_type]
         )
 
-    def _load_model(self):
+    def _load_model(self, model: str | None = None):
         try:
             from faster_whisper import WhisperModel
         except ImportError as exc:
@@ -76,7 +76,7 @@ class WhisperProvider(STTProvider):
                 "faster-whisper is not installed. Run scripts/setup_local_stt.sh"
             ) from exc
 
-        model_name = get_active_whisper_model()
+        model_name = model or get_active_whisper_model()
         key = self._cache_key(model_name)
         if key not in _MODEL_CACHE:
             with _MODEL_LOCK:
@@ -92,14 +92,14 @@ class WhisperProvider(STTProvider):
         """Load the model into memory so the first conversation turn isn't slow."""
         self._load_model()
 
-    def _do_transcribe(self, audio_bytes: bytes, language: str | None) -> str:
-        model = self._load_model()
+    def _do_transcribe(self, audio_bytes: bytes, language: str | None, model: str | None) -> str:
+        whisper_model = self._load_model(model)
         temp_file_path = ""
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 f.write(audio_bytes)
                 temp_file_path = f.name
-            segments, _ = model.transcribe(
+            segments, _ = whisper_model.transcribe(
                 temp_file_path,
                 language=language,
                 vad_filter=settings.whisper_vad_filter,
@@ -114,6 +114,8 @@ class WhisperProvider(STTProvider):
             if temp_file_path and os.path.isfile(temp_file_path):
                 os.unlink(temp_file_path)
 
-    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None) -> STTResult:
-        text = await asyncio.to_thread(self._do_transcribe, audio_bytes, language)
+    async def transcribe_bytes(
+        self, audio_bytes: bytes, language: str | None = None, model: str | None = None
+    ) -> STTResult:
+        text = await asyncio.to_thread(self._do_transcribe, audio_bytes, language, model)
         return STTResult(engine=self.name, text=text, is_final=True, confidence=None)

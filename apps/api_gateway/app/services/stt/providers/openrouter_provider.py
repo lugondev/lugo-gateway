@@ -25,7 +25,9 @@ class OpenRouterSttProvider(STTProvider):
         self.model = model
         self.timeout_seconds = timeout_seconds
 
-    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None) -> STTResult:
+    async def transcribe_bytes(
+        self, audio_bytes: bytes, language: str | None = None, model: str | None = None
+    ) -> STTResult:
         api_key = system_config_store.get().openrouter_api_key
         if not api_key:
             raise RuntimeError(

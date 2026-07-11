@@ -70,7 +70,9 @@ class VoskStream(STTStream):
 class VoskProvider(STTProvider):
     name = "vosk"
 
-    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None) -> STTResult:
+    async def transcribe_bytes(
+        self, audio_bytes: bytes, language: str | None = None, model: str | None = None
+    ) -> STTResult:
         try:
             from vosk import KaldiRecognizer
         except ImportError as exc:

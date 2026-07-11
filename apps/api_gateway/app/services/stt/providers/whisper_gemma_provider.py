@@ -53,8 +53,10 @@ class WhisperGemmaProvider(STTProvider):
             logger.warning("whisper_gemma refine failed (%s); returning raw transcript", exc)
             return text
 
-    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None) -> STTResult:
-        base = await self._whisper.transcribe_bytes(audio_bytes, language)
+    async def transcribe_bytes(
+        self, audio_bytes: bytes, language: str | None = None, model: str | None = None
+    ) -> STTResult:
+        base = await self._whisper.transcribe_bytes(audio_bytes, language, model)
         text = (base.text or "").strip()
         if not text:
             return STTResult(engine=self.name, text="", is_final=True)
