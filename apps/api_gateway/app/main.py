@@ -82,11 +82,29 @@ async def _warm_default_engines() -> None:
     logger.info("boot warm-up finished in %.0fms", (time.monotonic() - started) * 1000)
 
 
+async def _bootstrap_admin_if_needed() -> None:
+    from app.services.auth.users import user_store
+
+    if await user_store.count() > 0:
+        return
+    username = settings.admin_bootstrap_username or "admin"
+    password = settings.admin_bootstrap_password or settings.admin_password
+    if not password:
+        logger.warning(
+            "no admin bootstrap credentials set (ADMIN_BOOTSTRAP_PASSWORD or "
+            "legacy ADMIN_PASSWORD) -- create the first admin account manually"
+        )
+        return
+    await user_store.create(username, password, role="admin")
+    logger.info("bootstrap admin account created: %s", username)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.services.db.engine import init_db
 
     await init_db()
+    await _bootstrap_admin_if_needed()
 
     from app.services.db.sync_engine import init_config_tables
     from app.services.profiles.store import profile_store
