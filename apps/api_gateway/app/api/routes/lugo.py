@@ -135,7 +135,16 @@ async def lugo_stream(websocket: WebSocket) -> None:
         elif event in ("turn_done", "aborted"):
             if speaking:
                 speaking = False
-                await websocket.send_json({"type": "tts", "state": "stop"})
+                stop_msg = {"type": "tts", "state": "stop"}
+                if event == "aborted" and payload.get("reason"):
+                    stop_msg["reason"] = payload["reason"]
+                await websocket.send_json(stop_msg)
+        elif event == "speech_start":
+            await websocket.send_json({"type": "speech_start"})
+        elif event == "speech_end":
+            await websocket.send_json({"type": "speech_end", "speech_ms": payload.get("speech_ms", 0)})
+        elif event == "processing":
+            await websocket.send_json({"type": "processing", "turn": payload.get("turn", 0)})
         elif event == "command":
             await websocket.send_json({"type": "command", **payload})
         elif event == "error":
@@ -145,8 +154,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
             engine_status["tts_ready"] = bool(payload.get("tts_ready", True))
         elif event == "engines_ready":
             await websocket.send_json({"type": "engines_ready"})
-        # processing / audio_end / reset: not on the wire (speech_start/speech_end/
-        # processing are handled in Task 4 below)
+        # audio_end / reset: not on the wire
 
     async def emit_audio(packet: bytes) -> None:
         await websocket.send_bytes(encode_frame(LUGO_FRAME_OPUS, packet))

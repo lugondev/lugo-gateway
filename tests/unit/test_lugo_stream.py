@@ -225,3 +225,49 @@ def test_engines_ready_is_forwarded_when_initially_cold(monkeypatch):
         assert welcome["tts_ready"] is False
         msg = ws.receive_json()
         assert msg["type"] == "engines_ready"
+
+
+def test_speech_and_processing_events_are_forwarded():
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "text", "text": "hi"})
+        types_seen = []
+        for _ in range(30):
+            message = ws.receive()
+            if message.get("bytes") is not None:
+                continue
+            m = json.loads(message["text"])
+            types_seen.append(m["type"])
+            if m["type"] == "tts" and m.get("state") == "stop":
+                break
+        # A text turn has no speech_start/speech_end (those are audio-VAD-driven),
+        # but "processing" fires for every turn regardless of input modality.
+        assert "processing" in types_seen
+
+
+def test_aborted_reason_is_included_on_tts_stop():
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "text", "text": "hi"})
+        # Wait for the turn to actually start speaking, then abort mid-reply.
+        for _ in range(30):
+            message = ws.receive()
+            if message.get("bytes") is not None:
+                continue
+            m = json.loads(message["text"])
+            if m["type"] == "tts" and m.get("state") == "start":
+                break
+        ws.send_json({"type": "abort"})
+        for _ in range(30):
+            message = ws.receive()
+            if message.get("bytes") is not None:
+                continue
+            m = json.loads(message["text"])
+            if m["type"] == "tts" and m.get("state") == "stop":
+                assert m.get("reason") == "barge-in"
+                return
+        raise AssertionError("never saw tts stop after abort")
