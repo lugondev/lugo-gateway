@@ -38,3 +38,15 @@ class UsernameTakenError(AppError):
     """Raised on signup/create-user when the username already exists."""
 
     status_code = 409
+
+
+class PairingCodeInvalidError(AppError):
+    """Raised when pair/claim is given an unknown or expired code."""
+
+    status_code = 400
+
+
+class DeviceSerialConflictError(AppError):
+    """Raised when pair/claim's serial already has a non-revoked device."""
+
+    status_code = 409
