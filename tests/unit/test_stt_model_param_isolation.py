@@ -131,6 +131,40 @@ def test_qwen3_concurrent_sessions_use_their_own_model(monkeypatch):
 
     result_a, result_b = asyncio.run(run())
 
-    assert "0.6b" in result_a.text
-    assert "1.7b" in result_b.text
+    assert "Qwen3-ASR-0.6B" in result_a.text
+    assert "Qwen3-ASR-1.7B" in result_b.text
     q_mod.set_active_qwen3_asr_model(None)
+
+
+def test_qwen3_resolves_shorthand_model_id_passed_explicitly(monkeypatch):
+    """A session pinning stt_model='1.7b' must transcribe against the resolved HF
+    repo id, not the raw shorthand — regression guard for the bug where explicit
+    model= bypassed resolve_qwen3_asr_model() (only the global-fallback path had
+    ever been resolved, at set_active_qwen3_asr_model() time)."""
+    import app.services.stt.providers.qwen3_asr_provider as q_mod
+
+    q_mod._MODEL_CACHE.clear()
+    monkeypatch.setattr(q_mod, "_is_apple_silicon", lambda: True)
+    monkeypatch.setattr(q_mod, "module_available", lambda m: m == "mlx_qwen3_asr")
+
+    built_with: list[str] = []
+
+    class FakeSession:
+        def __init__(self, model):
+            built_with.append(model)
+
+        def transcribe(self, path, language=None):
+            return types.SimpleNamespace(text="ok")
+
+    fake_mod = types.ModuleType("mlx_qwen3_asr")
+    fake_mod.Session = FakeSession
+    monkeypatch.setitem(sys.modules, "mlx_qwen3_asr", fake_mod)
+
+    provider = q_mod.Qwen3AsrProvider()
+    wav = _silent_wav()
+
+    result = asyncio.run(provider.transcribe_bytes(wav, "vi", model="1.7b"))
+
+    assert result.text == "ok"
+    assert built_with == ["Qwen/Qwen3-ASR-1.7B"], f"expected resolved repo id, got {built_with}"
+    q_mod._MODEL_CACHE.clear()

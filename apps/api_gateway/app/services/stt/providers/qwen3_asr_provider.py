@@ -117,7 +117,7 @@ class Qwen3AsrProvider(STTProvider):
         return f"{model} · {where} · multilingual incl. Vietnamese"
 
     def _mlx_session(self, model: str | None = None):
-        resolved = model or get_active_qwen3_asr_model()
+        resolved = resolve_qwen3_asr_model(model or get_active_qwen3_asr_model())
         key = f"mlx:{resolved}"
         if key not in _MODEL_CACHE:
             from mlx_qwen3_asr import Session
@@ -126,7 +126,7 @@ class Qwen3AsrProvider(STTProvider):
         return _MODEL_CACHE[key]
 
     def _cuda_model(self, model: str | None = None):
-        resolved = model or get_active_qwen3_asr_model()
+        resolved = resolve_qwen3_asr_model(model or get_active_qwen3_asr_model())
         key = f"cuda:{resolved}"
         if key not in _MODEL_CACHE:
             import torch

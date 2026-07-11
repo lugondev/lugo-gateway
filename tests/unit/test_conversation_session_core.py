@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from app.core.settings import settings
 from app.schemas.stt import STTResult
@@ -87,8 +89,22 @@ async def test_two_sessions_transcribe_with_their_own_pinned_model():
         assert sess_a.stt_model_id == "small"
         assert sess_b.stt_model_id == "medium"
 
+        # Drive an actual audio turn on each session (feed_text bypasses STT
+        # entirely, so it wouldn't reach transcribe_bytes / prove model pinning).
+        # Call _handle_turn directly -- the same entry point feed_audio's VAD
+        # endpointer uses once it detects an endpoint -- so we deterministically
+        # exercise the STT call without needing to fabricate VAD-triggering audio.
+        pcm = b"\x00\x00" * 1600
+        sess_a.current_turn = asyncio.create_task(sess_a._handle_turn(audio_pcm=pcm, speech_ms=300))
+        await sess_a.wait_current_turn()
+        sess_b.current_turn = asyncio.create_task(sess_b._handle_turn(audio_pcm=pcm, speech_ms=300))
+        await sess_b.wait_current_turn()
+
         await sess_a.close()
         await sess_b.close()
+
+        assert "small" in provider.seen_models
+        assert "medium" in provider.seen_models
     finally:
         stt_service.providers.pop("stub-record-stt", None)
 
