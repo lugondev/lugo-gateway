@@ -53,3 +53,34 @@ async def test_render_failure_raises_provider_error_no_silent_fallback():
 
     with pytest.raises(ProviderError):
         await _BrokenTTS().synthesize(TTSRequest(text="hi"))
+
+
+from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
+
+
+def test_lists_edge_tts():
+    engines = {e["engine"] for e in tts_service.list_engines()}
+    assert "edge_tts" in engines
+
+
+def test_edge_tts_voices_shape():
+    voices = tts_service.get_provider("edge_tts").list_voices()
+    assert voices == [
+        {"label": "Hoài My (nữ)", "voice": "vi-VN-HoaiMyNeural"},
+        {"label": "Nam Minh (nam)", "voice": "vi-VN-NamMinhNeural"},
+    ]
+
+
+def test_edge_tts_rate_str():
+    assert EdgeTTSProvider._rate_str(None) == "+0%"
+    assert EdgeTTSProvider._rate_str(1.0) == "+0%"
+    assert EdgeTTSProvider._rate_str(1.2) == "+20%"
+    assert EdgeTTSProvider._rate_str(0.8) == "-20%"
+
+
+def test_edge_tts_estimate_duration():
+    from app.services.tts.providers.edge_tts_provider import _estimate_duration_seconds
+
+    # 48000 bits/s CBR -> 6000 bytes/s
+    assert _estimate_duration_seconds(b"x" * 6000) == pytest.approx(1.0)
+    assert _estimate_duration_seconds(b"") == 0.0

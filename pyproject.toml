@@ -56,6 +56,12 @@ qwen3-asr-cuda = [
 tiktok = [
   "TikTokLive>=6.6.0",
 ]
+# edge-tts — free cloud TTS via Microsoft Edge's Read Aloud service. No API key,
+# no local model, but needs outbound network access; unofficial (reverse-engineered)
+# API, test-UI/batch use only (see docs/superpowers/specs/2026-07-11-edge-tts-provider-design.md).
+edge-tts = [
+  "edge-tts>=7.2.8",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
