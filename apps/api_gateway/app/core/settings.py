@@ -25,7 +25,10 @@ class Settings(BaseSettings):
     omnivoice_dtype: str = "float16"
     # Python interpreter that can import omnivoice (its own venv). Empty = auto.
     omnivoice_python: str = ""
-    omnivoice_timeout_seconds: float = 600.0
+    # Real-time conversation TTS: a single /synth call normally finishes in a
+    # few seconds. A much longer cap (e.g. minutes) makes a stalled sidecar
+    # request indistinguishable from a permanent hang to whoever's talking.
+    omnivoice_timeout_seconds: float = 45.0
     # Persistent inference server (loads the model once) -> real-time-ish TTS.
     # Falsey -> fall back to the per-call CLI (reloads the model every call).
     omnivoice_use_server: bool = True

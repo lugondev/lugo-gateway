@@ -145,7 +145,15 @@ class OmniVoiceProvider(RenderingTTSProvider):
             "class_temperature": settings.omnivoice_class_temperature,
         }
         async with httpx.AsyncClient(timeout=settings.omnivoice_timeout_seconds) as client:
-            resp = await client.post(f"{self._server_base()}/synth", json=body)
+            try:
+                resp = await client.post(f"{self._server_base()}/synth", json=body)
+            except asyncio.CancelledError:
+                # e.g. barge-in aborted this turn mid-synth. The connection closes
+                # when this `async with` block exits, but nothing guarantees the
+                # sidecar notices and aborts its in-progress inference -- logged
+                # so a stall traced back here isn't mistaken for a silent hang.
+                logger.warning("OmniVoice synth cancelled mid-request (turn aborted), text_len=%d", len(text))
+                raise
             if resp.status_code != 200:
                 raise RuntimeError(f"OmniVoice server error {resp.status_code}: {resp.text[:200]}")
             return resp.content
