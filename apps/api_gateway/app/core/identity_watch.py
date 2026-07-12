@@ -38,16 +38,30 @@ async def receive_with_watchdog(websocket, watchdog: IdentityWatchdog | None):
     """Async generator yielding websocket.receive() results. If `watchdog` fires
     while waiting, yields None exactly once and stops -- the caller should close
     the connection and break out of its loop."""
+    active_watchdog = watchdog
     while True:
         recv = asyncio.create_task(websocket.receive())
-        waitables = {recv, watchdog.task} if watchdog is not None and watchdog.task is not None else {recv}
+        waitables = (
+            {recv, active_watchdog.task}
+            if active_watchdog is not None and active_watchdog.task is not None
+            else {recv}
+        )
         await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED)
-        if watchdog is not None and watchdog.invalid:
+        if active_watchdog is not None and active_watchdog.invalid:
             recv.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await recv
             yield None
             return
+        if recv.done():
+            yield recv.result()
+            continue
+        # The watchdog's task finished for some other reason (e.g. an
+        # external .cancel()), not by firing (invalid=True). Stop selecting
+        # it in future waits -- otherwise it would keep completing
+        # immediately and we'd busy-loop re-checking an already-done task.
+        active_watchdog = None
+        await recv
         yield recv.result()
 
 

@@ -66,6 +66,36 @@ async def test_receive_with_watchdog_yields_none_when_watchdog_fires():
     assert result is None
 
 
+class _SlowFakeWebSocket:
+    """Like _FakeWebSocket, but receive() actually suspends before returning
+    so the `recv` task is still pending when asyncio.wait() resolves via the
+    (already-cancelled) watchdog side -- reproducing the race where the
+    watchdog task finishes first without `recv` being done yet."""
+
+    def __init__(self, messages):
+        self._messages = list(messages)
+
+    async def receive(self):
+        await asyncio.sleep(0.02)
+        return self._messages.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_receive_with_watchdog_survives_watchdog_cancelled_mid_wait():
+    ws = _SlowFakeWebSocket([{"text": "one"}])
+    watchdog = IdentityWatchdog(still_valid=_true, interval_s=10)
+    watchdog.start()
+    watchdog.cancel()  # simulate an external caller tearing down the watchdog
+    await asyncio.sleep(0)  # let the cancellation actually land on the task
+    assert watchdog.task.done()  # sanity: watchdog side is already finished
+    assert watchdog.invalid is False  # ...but not via "fired"
+    received = []
+    async for message in receive_with_watchdog(ws, watchdog):
+        received.append(message)
+        break
+    assert received == [{"text": "one"}]
+
+
 @pytest.mark.asyncio
 async def test_receive_with_watchdog_works_with_no_watchdog():
     ws = _FakeWebSocket([{"text": "one"}])
