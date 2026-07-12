@@ -30,12 +30,6 @@ async def login(body: LoginRequest, request: Request) -> dict:
         raise AuthError("invalid username or password")
     request.session["user_id"] = user.id
     request.session["role"] = user.role
-    # Legacy bridge: AuthGuardMiddleware moves off session["authenticated"] in
-    # Task 5, but ws_authenticated() (conversation.py/stt.py/livehost.py) still
-    # checks it until Task 11 replaces it with resolve_ws_identity(). Do NOT
-    # remove this line until Task 11 lands -- removing it after Task 5 alone
-    # would break WS browser-cookie auth for the Task 5-11 window.
-    request.session["authenticated"] = True
     return {"success": True}
 
 
