@@ -83,6 +83,12 @@
               </button>
             </li>
             <li class="admin-only">
+              <button class="nav-item" data-section="model-registry">
+                <span class="nav-icon">&#9636;</span>
+                <span class="nav-label">Model Registry</span>
+              </button>
+            </li>
+            <li class="admin-only">
               <button class="nav-item" data-section="system">
                 <span class="nav-icon">⊙</span>
                 <span class="nav-label">System</span>
@@ -812,6 +818,64 @@
                 </div>
               </div>
               <p id="user-status" class="meta"></p>
+            </section>
+          </div>
+
+          <!-- ============================== MODEL REGISTRY ============================== -->
+          <div class="section" id="section-model-registry">
+            <section class="card">
+              <div class="card-head">
+                <h2>Model Registry</h2>
+                <button id="model-registry-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <p class="hint">Control which STT/TTS/LLM models users may select, and gate "testing" models to accounts with testing access.</p>
+              <div id="model-registry-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <h3 class="sub">Add Entry</h3>
+              <div class="row tight">
+                <label>
+                  Kind
+                  <select id="registry-add-kind">
+                    <option value="stt">stt</option>
+                    <option value="tts">tts</option>
+                    <option value="llm">llm</option>
+                  </select>
+                </label>
+                <label>
+                  Engine
+                  <input id="registry-add-engine" type="text" placeholder="openrouter" />
+                </label>
+                <label>
+                  Model ID
+                  <input id="registry-add-model-id" type="text" placeholder="qwen3-asr-flash" />
+                </label>
+                <label>
+                  Label
+                  <input id="registry-add-label" type="text" placeholder="Qwen3 ASR Flash" />
+                </label>
+                <label>
+                  Stage
+                  <select id="registry-add-stage">
+                    <option value="stable">stable</option>
+                    <option value="testing">testing</option>
+                  </select>
+                </label>
+              </div>
+              <div class="row tight hidden" id="registry-add-llm-fields">
+                <label>
+                  Base URL
+                  <input id="registry-add-base-url" type="text" placeholder="https://openrouter.ai/api/v1" />
+                </label>
+                <label>
+                  API Key
+                  <input id="registry-add-api-key" type="password" />
+                </label>
+              </div>
+              <div class="actions end">
+                <button id="registry-add-btn">Add (runs a live test first)</button>
+              </div>
+              <p id="model-registry-status" class="meta"></p>
             </section>
           </div>
 

@@ -21,6 +21,7 @@ import "./tts-stream.js";
 import "./sessions.js";
 import "./users.js";
 import "./devices.js";
+import "./model-registry.js";
 
 initSidebar();
 initSttMode();
