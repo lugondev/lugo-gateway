@@ -39,6 +39,16 @@ def _visible(profile: Profile, user_id: str | None) -> bool:
     return profile.owner_id is None or profile.owner_id == user_id
 
 
+def _can_write(profile: Profile, user_id: str | None, role: str) -> bool:
+    """Templates (owner_id is None) may only be modified/deleted by an admin;
+    a user's own row may only be modified/deleted by that user. Distinct from
+    _visible(), which governs read access -- everyone can SEE a template, but
+    only an admin can WRITE to one."""
+    if profile.owner_id is None:
+        return role == "admin"
+    return profile.owner_id == user_id
+
+
 class ProfileRequest(BaseModel):
     name: str
     nickname: str = ""
@@ -66,6 +76,8 @@ async def list_profiles(request: Request) -> dict:
 
 @router.post("")
 async def create_profile(payload: ProfileRequest, request: Request) -> dict:
+    if profile_store.get(payload.name) is not None:
+        raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
     owner_id = None if current_role(request) == "admin" else current_user_id(request)
     profile = Profile(**payload.model_dump(), owner_id=owner_id)
     _validate_stt_model(profile)
@@ -86,8 +98,9 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
     existing = profile_store.get(name)
     # PUT is upsert-or-create (test_update_uses_path_name relies on creating via
     # PUT to a name that doesn't exist yet); ownership scoping only applies when
-    # a row already exists and belongs to someone else.
-    if existing and not _visible(existing, current_user_id(request)):
+    # a row already exists and the caller is not authorized to write to it (not
+    # merely able to see it -- see _can_write for the template/admin distinction).
+    if existing and not _can_write(existing, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     data = payload.model_dump()
     data["name"] = name
@@ -109,7 +122,7 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
 @router.delete("/{name}")
 async def delete_profile(name: str, request: Request) -> dict:
     existing = profile_store.get(name)
-    if not existing or not _visible(existing, current_user_id(request)):
+    if not existing or not _can_write(existing, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     profile_store.delete(name)
     return {"success": True, "data": {"name": name, "deleted": True}}
@@ -121,10 +134,7 @@ async def clone_profile(name: str, payload: CloneRequest, request: Request) -> d
     source = profile_store.get(name)
     if not source or not _visible(source, user_id):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
-    existing_visible = {
-        k for k, v in profile_store.list().items() if _visible(v, user_id)
-    }
-    if payload.new_name in existing_visible:
+    if profile_store.get(payload.new_name) is not None:
         raise HTTPException(status_code=409, detail=f"'{payload.new_name}' already exists")
     data = source.model_dump()
     data["name"] = payload.new_name

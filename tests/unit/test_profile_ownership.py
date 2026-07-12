@@ -115,3 +115,50 @@ def test_clone_name_collision_is_409(client, _with_password):
     client.post("/v1/profiles", json=_minimal_profile("taken"))
     resp = client.post("/v1/profiles/template-a/clone", json={"new_name": "taken"})
     assert resp.status_code == 409
+
+
+def test_create_rejects_name_taken_by_another_users_private_profile(client, _with_password):
+    _signup_login(client, "a", role="user")
+    client.post("/v1/profiles", json=_minimal_profile("secret"))
+
+    _signup_login(client, "b", role="user")
+    resp = client.post("/v1/profiles", json=_minimal_profile("secret"))
+    assert resp.status_code == 409
+    # confirm a's row survived untouched
+    _signup_login(client, "a", role="user")
+    assert client.get("/v1/profiles/secret").status_code == 200
+
+
+def test_clone_rejects_new_name_taken_by_another_users_private_profile(client, _with_password):
+    _signup_login(client, "root", role="admin")
+    client.post("/v1/profiles", json=_minimal_profile("template-a"))
+
+    _signup_login(client, "a", role="user")
+    client.post("/v1/profiles", json=_minimal_profile("a-secret"))
+
+    _signup_login(client, "b", role="user")
+    resp = client.post("/v1/profiles/template-a/clone", json={"new_name": "a-secret"})
+    assert resp.status_code == 409
+
+
+def test_regular_user_cannot_update_or_delete_admin_template(client, _with_password):
+    _signup_login(client, "root", role="admin")
+    client.post("/v1/profiles", json=_minimal_profile("template-a"))
+
+    _signup_login(client, "mallory", role="user")
+    resp = client.put("/v1/profiles/template-a", json=_minimal_profile("template-a"))
+    assert resp.status_code == 404
+    resp = client.delete("/v1/profiles/template-a")
+    assert resp.status_code == 404
+
+    # confirm the template still exists and is unchanged, visible to everyone
+    assert client.get("/v1/profiles/template-a").status_code == 200
+
+
+def test_admin_can_update_and_delete_template(client, _with_password):
+    _signup_login(client, "root", role="admin")
+    client.post("/v1/profiles", json=_minimal_profile("template-b"))
+    resp = client.put("/v1/profiles/template-b", json=_minimal_profile("template-b"))
+    assert resp.status_code == 200
+    resp = client.delete("/v1/profiles/template-b")
+    assert resp.status_code == 200
