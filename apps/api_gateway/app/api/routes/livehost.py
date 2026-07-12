@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.core.audio import pcm16_to_wav_bytes, wav_file_to_pcm16
 from app.core.auth_guard import resolve_ws_identity
 from app.core.errors import AppError
+from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
 from app.schemas.tts import TTSRequest
 from app.services.conversation.endpointer import VadEndpointer
@@ -30,6 +31,10 @@ from app.services.warmup import is_ready, warm_providers
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/livehost", tags=["livehost"])
+
+# How often the disabled/revoked re-check wakes (test-tunable, same pattern as
+# lugo.py's _IDLE_TICK_S).
+_IDENTITY_RECHECK_INTERVAL_S = 30.0
 
 
 def _mention_keywords() -> list[str]:
@@ -199,6 +204,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
         turn_lock = asyncio.Lock()
         drain_task: asyncio.Task | None = None
         poll_task: asyncio.Task | None = None
+        watchdog = None
         stt_ready = is_ready(stt_provider)
         tts_ready = is_ready(tts_provider)
         await websocket.send_json({
@@ -405,8 +411,14 @@ async def livehost_stream(websocket: WebSocket) -> None:
         drain_task = asyncio.create_task(_drain_social_events())
         poll_task = asyncio.create_task(_poll_social_turns())
 
-        while True:
-            message = await websocket.receive()
+        watchdog = build_identity_watchdog(identity, interval_s=_IDENTITY_RECHECK_INTERVAL_S)
+        if watchdog is not None:
+            watchdog.start()
+
+        async for message in receive_with_watchdog(websocket, watchdog):
+            if message is None:
+                await websocket.close(code=4401, reason="account disabled")
+                break
             if message.get("type") == "websocket.disconnect":
                 break
 
@@ -457,6 +469,8 @@ async def livehost_stream(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        if watchdog is not None:
+            watchdog.cancel()
         if current_turn and not current_turn.done():
             current_turn.cancel()
         if drain_task:
