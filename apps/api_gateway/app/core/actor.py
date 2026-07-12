@@ -13,4 +13,11 @@ def current_user_id(request: Request) -> str | None:
 
 
 def current_role(request: Request) -> str:
+    # Invariant this fallback depends on: nothing may ever write "user_id" into
+    # the session without also writing "role" in the same place (today only
+    # /api/auth/login does either, and it always sets both together -- see
+    # api/routes/auth.py). If that invariant is ever broken by a future auth
+    # path, a session with user_id but no role would incorrectly resolve to
+    # "admin" here. Keep both fields set atomically wherever session identity
+    # is established.
     return request.session.get("role") or "admin"
