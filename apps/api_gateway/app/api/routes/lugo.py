@@ -18,6 +18,7 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.auth_guard import resolve_ws_identity
+from app.core.identity_watch import identity_still_valid
 from app.core.settings import settings
 from app.services.conversation.lugo_frame import LUGO_FRAME_OPUS, encode_frame
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
@@ -33,6 +34,11 @@ router = APIRouter(prefix="/v1/lugo", tags=["lugo"])
 
 # How often the idle watchdog wakes to check for inactivity (test-tunable).
 _IDLE_TICK_S = 1.0
+
+# How often the disabled/revoked re-check wakes (test-tunable, same idea as
+# _IDLE_TICK_S). Independent of idle/turn-active state -- a disabled account
+# is cut off even mid-turn.
+_IDENTITY_RECHECK_INTERVAL_S = 30.0
 
 def _resolve(profile_name: str | None):
     """Resolve engines/tts params from a profile (server owns everything)."""
@@ -173,14 +179,26 @@ async def lugo_stream(websocket: WebSocket) -> None:
         discovery_task = asyncio.create_task(_discover())
 
     closing = False
+    last_identity_check = time.monotonic()
+    identity_owned = identity.user_id is not None or identity.device_id is not None
 
     async def _watchdog() -> None:
-        nonlocal closing
+        nonlocal closing, last_identity_check
         while True:
             await asyncio.sleep(_IDLE_TICK_S)
+            now = time.monotonic()
+            if identity_owned and now - last_identity_check >= _IDENTITY_RECHECK_INTERVAL_S:
+                last_identity_check = now
+                if not await identity_still_valid(identity):
+                    closing = True
+                    try:
+                        await websocket.send_json({"type": "goodbye", "reason": "account_disabled"})
+                    except RuntimeError:
+                        pass
+                    return
             if session.is_turn_active():
                 continue
-            if time.monotonic() - last_activity >= idle:
+            if now - last_activity >= idle:
                 # Commit to closing synchronously, before the await below, so
                 # the main loop cannot process/emit a message that raced in
                 # concurrently with this goodbye send (ASGI sends aren't
@@ -202,7 +220,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
     # entirely rather than having it return immediately, since a completed
     # task would make `wd.done()` true on the very next loop check below and
     # tear down the connection mid-turn.
-    wd = asyncio.create_task(_watchdog()) if idle > 0 else None
+    wd = asyncio.create_task(_watchdog()) if (idle > 0 or identity_owned) else None
     try:
         while True:
             if wd is not None and wd.done():
