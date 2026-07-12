@@ -94,3 +94,44 @@ def test_clear_all_no_profile_clears_everything(client, seeded):
     assert resp.status_code == 200
     assert resp.json()["data"]["deleted"] == 2
     assert client.get("/v1/sessions").json()["data"] == []
+
+
+@pytest.fixture
+def _with_password(monkeypatch):
+    from app.core.settings import settings
+
+    monkeypatch.setattr(settings, "admin_password", "s3cret")
+    yield
+    monkeypatch.setattr(settings, "admin_password", "")
+
+
+def _signup_login(client, username: str, role: str = "user") -> None:
+    client.post("/api/auth/signup", json={"username": username, "password": "pw"})
+    if role == "admin":
+        import asyncio
+
+        from app.services.auth.users import user_store
+
+        user = asyncio.run(user_store.get_by_username(username))
+        asyncio.run(user_store.set_fields(user.id, role="admin"))
+    client.post("/api/auth/login", json={"username": username, "password": "pw"})
+
+
+def test_sessions_scoped_to_owner_unless_admin(client, _with_password):
+    _signup_login(client, "a", role="user")
+    import asyncio
+
+    from app.services.auth.users import user_store
+    from app.services.history.store import session_store
+
+    user_a = asyncio.run(user_store.get_by_username("a"))
+    asyncio.run(session_store.create("sess-a", profile_id="p", user_id=user_a.id))
+    asyncio.run(session_store.create("sess-orphan", profile_id="p", user_id=None))
+
+    _signup_login(client, "a", role="user")
+    rows = client.get("/v1/sessions").json()["data"]
+    assert {r["id"] for r in rows} == {"sess-a"}
+
+    _signup_login(client, "root", role="admin")
+    rows = client.get("/v1/sessions").json()["data"]
+    assert {"sess-a", "sess-orphan"}.issubset({r["id"] for r in rows})

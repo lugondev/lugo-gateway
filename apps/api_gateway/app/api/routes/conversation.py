@@ -108,7 +108,7 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
         if session_id and await session_store.exists(session_id):
             stored = await session_store.get_messages(session_id)
         elif not await session_store.exists(sid):
-            await session_store.create(sid, profile_id=profile or "")
+            await session_store.create(sid, profile_id=profile or "", user_id=active_profile.owner_id if active_profile else None)
     except Exception as exc:  # noqa: BLE001 - session setup must not block the reply
         logger.warning("session setup failed for %s: %s", sid, exc)
         stored = []

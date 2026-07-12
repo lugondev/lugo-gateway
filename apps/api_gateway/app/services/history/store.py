@@ -11,6 +11,7 @@ def _session_dict(s: ChatSession) -> dict:
     return {
         "id": s.id,
         "profile_id": s.profile_id,
+        "user_id": s.user_id,
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "ended_at": s.ended_at.isoformat() if s.ended_at else None,
         "meta": s.meta or {},
@@ -18,9 +19,12 @@ def _session_dict(s: ChatSession) -> dict:
 
 
 class SessionStore:
-    async def create(self, session_id: str, profile_id: str = "", meta: dict | None = None) -> dict:
+    async def create(
+        self, session_id: str, profile_id: str = "", meta: dict | None = None,
+        user_id: str | None = None,
+    ) -> dict:
         async with db_session() as s:
-            row = ChatSession(id=session_id, profile_id=profile_id, meta=meta or {})
+            row = ChatSession(id=session_id, profile_id=profile_id, meta=meta or {}, user_id=user_id)
             s.add(row)
             await s.commit()
             return _session_dict(row)
@@ -33,11 +37,16 @@ class SessionStore:
     async def exists(self, session_id: str) -> bool:
         return await self.get(session_id) is not None
 
-    async def list(self, profile_id: str | None = None, limit: int = 20, offset: int = 0) -> list[dict]:
+    async def list(
+        self, profile_id: str | None = None, user_id: str | None = None,
+        limit: int = 20, offset: int = 0,
+    ) -> list[dict]:
         async with db_session() as s:
             q = select(ChatSession).order_by(ChatSession.created_at.desc())
             if profile_id is not None:
                 q = q.where(ChatSession.profile_id == profile_id)
+            if user_id is not None:
+                q = q.where(ChatSession.user_id == user_id)
             rows = (await s.execute(q.limit(limit).offset(offset))).scalars().all()
             out = []
             for row in rows:

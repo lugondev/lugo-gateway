@@ -41,6 +41,16 @@ def configure(url: str | None = None) -> None:
     _initialized = False
 
 
+async def _ensure_column(conn, table: str, column: str, ddl_type: str) -> None:
+    """Idempotent ALTER TABLE ADD COLUMN -- this codebase has no migration
+    framework, and Base.metadata.create_all only creates missing tables, never
+    alters existing ones. Safe to call every startup."""
+    result = await conn.exec_driver_sql(f"PRAGMA table_info({table})")
+    existing = {row[1] for row in result.fetchall()}
+    if column not in existing:
+        await conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+
 async def init_db() -> None:
     """Create tables once (idempotent, concurrency-safe)."""
     from app.services.db.models import Base
@@ -54,6 +64,7 @@ async def init_db() -> None:
         assert _engine is not None
         async with _engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await _ensure_column(conn, "sessions", "user_id", "VARCHAR(36)")
         _initialized = True
 
 

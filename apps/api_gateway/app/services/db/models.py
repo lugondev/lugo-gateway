@@ -19,6 +19,7 @@ class ChatSession(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     profile_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
