@@ -3,6 +3,8 @@ from fastapi.testclient import TestClient
 
 from app.core.settings import settings
 from app.main import app
+from app.services.auth.devices import device_store
+from app.services.auth.users import user_store
 
 
 @pytest.fixture
@@ -136,3 +138,96 @@ def test_ws_auth_rejects_device_token_when_none_configured(_with_password):
 
     ws = _FakeWebSocket(query_params={"device_token": "anything"})
     assert ws_authenticated(ws) is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_noop_when_admin_password_unset():
+    from app.core.auth_guard import resolve_ws_identity
+
+    assert settings.admin_password == ""
+    identity = await resolve_ws_identity(_FakeWebSocket())
+    assert identity is not None
+    assert identity.user_id is None and identity.device_id is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_from_browser_cookie_session(_with_password):
+    from app.core.auth_guard import resolve_ws_identity
+
+    user = await user_store.create("toan", "pw")
+    identity = await resolve_ws_identity(_FakeWebSocket(session={"user_id": user["id"]}))
+    assert identity is not None
+    assert identity.user_id == user["id"]
+    assert identity.device_id is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_rejects_disabled_user_cookie(_with_password):
+    from app.core.auth_guard import resolve_ws_identity
+
+    user = await user_store.create("toan", "pw")
+    await user_store.set_fields(user["id"], disabled=True)
+    identity = await resolve_ws_identity(_FakeWebSocket(session={"user_id": user["id"]}))
+    assert identity is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_rejects_missing_cookie_and_token(_with_password):
+    from app.core.auth_guard import resolve_ws_identity
+
+    assert await resolve_ws_identity(_FakeWebSocket()) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_from_paired_device_token(_with_password):
+    from app.core.auth_guard import resolve_ws_identity
+
+    user = await user_store.create("toan", "pw")
+    device, raw_token = await device_store.create(user["id"], "ESP32", "AA:BB:CC")
+    identity = await resolve_ws_identity(_FakeWebSocket(query_params={"device_token": raw_token}))
+    assert identity is not None
+    assert identity.user_id == user["id"]
+    assert identity.device_id == device["id"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_rejects_revoked_device(_with_password):
+    from app.core.auth_guard import resolve_ws_identity
+
+    user = await user_store.create("toan", "pw")
+    device, raw_token = await device_store.create(user["id"], "ESP32", "AA:BB:CC")
+    await device_store.revoke(device["id"])
+    identity = await resolve_ws_identity(_FakeWebSocket(query_params={"device_token": raw_token}))
+    assert identity is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_rejects_device_of_disabled_owner(_with_password):
+    from app.core.auth_guard import resolve_ws_identity
+
+    user = await user_store.create("toan", "pw")
+    device, raw_token = await device_store.create(user["id"], "ESP32", "AA:BB:CC")
+    await user_store.set_fields(user["id"], disabled=True)
+    identity = await resolve_ws_identity(_FakeWebSocket(query_params={"device_token": raw_token}))
+    assert identity is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_accepts_legacy_shared_device_token(_with_password, monkeypatch):
+    from app.core.auth_guard import resolve_ws_identity
+
+    monkeypatch.setattr(settings, "device_auth_token", "d3vice-secret")
+    identity = await resolve_ws_identity(
+        _FakeWebSocket(query_params={"device_token": "d3vice-secret"})
+    )
+    assert identity is not None
+    assert identity.user_id is None and identity.device_id is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_rejects_wrong_token(_with_password, monkeypatch):
+    from app.core.auth_guard import resolve_ws_identity
+
+    monkeypatch.setattr(settings, "device_auth_token", "d3vice-secret")
+    identity = await resolve_ws_identity(_FakeWebSocket(query_params={"device_token": "wrong"}))
+    assert identity is None
