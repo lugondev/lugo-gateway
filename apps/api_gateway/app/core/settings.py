@@ -273,6 +273,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
+    def auth_enabled(self) -> bool:
+        return bool(self.admin_password or self.admin_bootstrap_password)
+
+    @property
     def omnivoice_python_path(self) -> str:
         return self.omnivoice_python or f"{self.omnivoice_path.rstrip('/')}/.venv/bin/python"
 

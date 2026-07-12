@@ -37,7 +37,7 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        if not settings.admin_password:
+        if not settings.auth_enabled:
             return await call_next(request)
 
         path = request.url.path
@@ -82,7 +82,7 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
     from app.services.auth.devices import device_store
     from app.services.auth.users import user_store
 
-    if not settings.admin_password:
+    if not settings.auth_enabled:
         return WsIdentity(user_id=None, device_id=None)
 
     session_user_id = websocket.session.get("user_id")

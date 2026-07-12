@@ -126,8 +126,11 @@ async def lifespan(app: FastAPI):
     # DB is configured at that moment -- in practice, the real data/app.db.
     seed_default_servers(mcp_server_store)
 
-    if not settings.admin_password and settings.app_env != "dev":
-        logger.warning("auth disabled: ADMIN_PASSWORD not set (app_env=%s)", settings.app_env)
+    if not settings.auth_enabled and settings.app_env != "dev":
+        logger.warning(
+            "auth disabled: neither ADMIN_PASSWORD nor ADMIN_BOOTSTRAP_PASSWORD is set (app_env=%s)",
+            settings.app_env,
+        )
     # Warm engines BEFORE the app starts serving so the very first device turn is
     # instant instead of paying a cold model load (worse with connect-on-wake,
     # where the session starts the moment the user wakes). Capped so a stuck/slow

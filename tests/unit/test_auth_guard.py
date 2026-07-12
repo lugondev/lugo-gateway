@@ -92,6 +92,16 @@ def test_guard_allows_options_preflight_without_login(client, _with_password):
     assert resp.status_code != 401
 
 
+def test_guard_enforces_when_only_bootstrap_password_set(client, monkeypatch):
+    assert settings.admin_password == ""
+    monkeypatch.setattr(settings, "admin_bootstrap_password", "boot-pw")
+    try:
+        resp = client.get("/v1/system/status")
+        assert resp.status_code == 401
+    finally:
+        monkeypatch.setattr(settings, "admin_bootstrap_password", "")
+
+
 class _FakeWebSocket:
     def __init__(self, session: dict | None = None, query_params: dict | None = None):
         self.session = session or {}
@@ -189,3 +199,16 @@ async def test_resolve_identity_rejects_wrong_token(_with_password, monkeypatch)
     monkeypatch.setattr(settings, "device_auth_token", "d3vice-secret")
     identity = await resolve_ws_identity(_FakeWebSocket(query_params={"device_token": "wrong"}))
     assert identity is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_enforced_when_only_bootstrap_password_set(monkeypatch):
+    from app.core.auth_guard import resolve_ws_identity
+
+    assert settings.admin_password == ""
+    monkeypatch.setattr(settings, "admin_bootstrap_password", "boot-pw")
+    try:
+        identity = await resolve_ws_identity(_FakeWebSocket())
+        assert identity is None
+    finally:
+        monkeypatch.setattr(settings, "admin_bootstrap_password", "")
