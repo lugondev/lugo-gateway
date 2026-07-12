@@ -11,7 +11,7 @@ from app.core.audio import (
     read_wav,
     wav_duration_seconds,
 )
-from app.core.auth_guard import ws_authenticated
+from app.core.auth_guard import resolve_ws_identity
 from app.core.errors import AppError
 from app.core.settings import settings
 from app.schemas.common import StreamEvent
@@ -143,7 +143,8 @@ async def _emit(websocket: WebSocket, channel: str, event: StreamEvent) -> None:
 
 @router.websocket("/stream")
 async def stt_stream(websocket: WebSocket) -> None:
-    if not ws_authenticated(websocket):
+    identity = await resolve_ws_identity(websocket)
+    if identity is None:
         await websocket.close(code=4401, reason="unauthorized")
         return
     await websocket.accept()

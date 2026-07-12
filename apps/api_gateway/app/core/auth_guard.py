@@ -67,19 +67,6 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         return JSONResponse({"success": False, "error": "login required"}, status_code=401)
 
 
-def ws_authenticated(websocket: WebSocket) -> bool:
-    """Auth check for WS handshakes — AuthGuardMiddleware can't run here since
-    BaseHTTPMiddleware never runs for websocket scope. Browsers reuse the same
-    cookie session as the HTTP UI; devices (no browser login flow) use a shared
-    token passed as a query param at connect time."""
-    if not settings.admin_password:
-        return True
-    if websocket.session.get("authenticated"):
-        return True
-    token = websocket.query_params.get("device_token")
-    return bool(settings.device_auth_token) and hmac.compare_digest(token or "", settings.device_auth_token)
-
-
 @dataclass
 class WsIdentity:
     user_id: str | None

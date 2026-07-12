@@ -98,48 +98,6 @@ class _FakeWebSocket:
         self.query_params = query_params or {}
 
 
-def test_ws_auth_noop_when_admin_password_unset():
-    from app.core.auth_guard import ws_authenticated
-
-    assert settings.admin_password == ""
-    assert ws_authenticated(_FakeWebSocket()) is True
-
-
-def test_ws_auth_accepts_valid_browser_cookie_session(_with_password):
-    from app.core.auth_guard import ws_authenticated
-
-    assert ws_authenticated(_FakeWebSocket(session={"authenticated": True})) is True
-
-
-def test_ws_auth_rejects_missing_cookie_and_missing_token(_with_password):
-    from app.core.auth_guard import ws_authenticated
-
-    assert ws_authenticated(_FakeWebSocket()) is False
-
-
-def test_ws_auth_accepts_valid_device_token(_with_password, monkeypatch):
-    from app.core.auth_guard import ws_authenticated
-
-    monkeypatch.setattr(settings, "device_auth_token", "d3vice-secret")
-    ws = _FakeWebSocket(query_params={"device_token": "d3vice-secret"})
-    assert ws_authenticated(ws) is True
-
-
-def test_ws_auth_rejects_wrong_device_token(_with_password, monkeypatch):
-    from app.core.auth_guard import ws_authenticated
-
-    monkeypatch.setattr(settings, "device_auth_token", "d3vice-secret")
-    ws = _FakeWebSocket(query_params={"device_token": "wrong"})
-    assert ws_authenticated(ws) is False
-
-
-def test_ws_auth_rejects_device_token_when_none_configured(_with_password):
-    from app.core.auth_guard import ws_authenticated
-
-    ws = _FakeWebSocket(query_params={"device_token": "anything"})
-    assert ws_authenticated(ws) is False
-
-
 @pytest.mark.asyncio
 async def test_resolve_identity_noop_when_admin_password_unset():
     from app.core.auth_guard import resolve_ws_identity
