@@ -74,7 +74,7 @@ class WsIdentity:
 
 
 async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
-    """Identity-resolving replacement for ws_authenticated(). Checks the browser
+    """Resolves the identity behind a WS connection. Checks the browser
     cookie session first (and re-verifies the user isn't disabled -- a stale
     cookie from before a disable shouldn't grant a fresh connection), then a
     paired-device token (services.auth.devices), then the legacy shared
