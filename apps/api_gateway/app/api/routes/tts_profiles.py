@@ -2,10 +2,19 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.actor import current_role, current_user_id
+from app.services.auth.users import user_store
+from app.services.model_registry.gate import check_model_allowed
 from app.services.tts.profile_models import TtsProfile
 from app.services.tts.profile_store import tts_profile_store
 
 router = APIRouter(prefix="/v1/tts/profiles", tags=["tts"])
+
+
+async def _resolve_acting_user(request: Request):
+    """None when there's no real logged-in user (dev mode, auth fully
+    disabled). check_model_allowed handles a None user without crashing."""
+    user_id = current_user_id(request)
+    return await user_store.get_by_id(user_id) if user_id else None
 
 
 def _visible(profile: TtsProfile, user_id: str | None) -> bool:
@@ -36,6 +45,9 @@ async def create_tts_profile(payload: TtsProfile, request: Request) -> dict:
         raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
     owner_id = None if current_role(request) == "admin" else current_user_id(request)
     profile = payload.model_copy(update={"owner_id": owner_id})
+    if profile.engine:
+        acting_user = await _resolve_acting_user(request)
+        await check_model_allowed("tts", profile.engine, profile.engine, acting_user)
     tts_profile_store.upsert(profile)
     return {"success": True, "data": profile.model_dump()}
 
@@ -63,6 +75,9 @@ async def update_tts_profile(name: str, payload: TtsProfile, request: Request) -
         None if current_role(request) == "admin" else current_user_id(request)
     )
     profile = TtsProfile(**data)
+    if profile.engine:
+        acting_user = await _resolve_acting_user(request)
+        await check_model_allowed("tts", profile.engine, profile.engine, acting_user)
     tts_profile_store.upsert(profile)
     return {"success": True, "data": profile.model_dump()}
 
