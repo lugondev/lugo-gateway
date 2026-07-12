@@ -477,6 +477,42 @@
             </section>
           </div>
 
+          <!-- ============================== DEVICES ============================== -->
+          <div class="section" id="section-devices">
+            <section class="card">
+              <div class="card-head">
+                <h2>My Devices</h2>
+                <button id="device-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <p class="hint">Pair an ESP32 or RPi client to your account. Enter the code shown on the device.</p>
+              <div id="device-mine-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <h3 class="sub">Add Device</h3>
+              <div class="row tight">
+                <label>
+                  Code shown on device
+                  <input id="device-pair-code" type="text" placeholder="123456" />
+                </label>
+                <label>
+                  Name
+                  <input id="device-pair-name" type="text" placeholder="ESP32 desk" />
+                </label>
+                <div class="actions end">
+                  <button id="device-pair-btn">Pair</button>
+                </div>
+              </div>
+              <p id="device-status" class="meta"></p>
+            </section>
+            <section class="card hidden" id="device-all-section">
+              <div class="card-head">
+                <h2>All Devices</h2>
+              </div>
+              <p class="hint">Every paired device, across all accounts.</p>
+              <div id="device-all-list" class="model-list"></div>
+            </section>
+          </div>
+
           <!-- ============================== TTS ============================== -->
           <div class="section" id="section-tts">
             <section class="card">
