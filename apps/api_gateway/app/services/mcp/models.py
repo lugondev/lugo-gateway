@@ -5,6 +5,7 @@ from pydantic import BaseModel, field_validator
 
 class McpServer(BaseModel):
     name: str
+    owner_id: str | None = None
     url: str
     headers: dict[str, str] = {}
     enabled: bool = True

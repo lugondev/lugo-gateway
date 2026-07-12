@@ -1,12 +1,23 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from app.core.actor import current_role, current_user_id
 from app.services.mcp.models import McpServer
 from app.services.mcp.pool import mcp_pool
 from app.services.mcp.presets import PRESET_NAMES
 from app.services.mcp.server_store import mcp_server_store
 
 router = APIRouter(prefix="/v1/mcp", tags=["mcp"])
+
+
+def _visible(server: McpServer, user_id: str | None) -> bool:
+    return server.owner_id is None or server.owner_id == user_id
+
+
+def _can_write(server: McpServer, user_id: str | None, role: str) -> bool:
+    if server.owner_id is None:
+        return role == "admin"
+    return server.owner_id == user_id
 
 
 class McpServerRequest(BaseModel):
@@ -20,45 +31,57 @@ class McpServerEnabledRequest(BaseModel):
     enabled: bool
 
 
+class CloneRequest(BaseModel):
+    new_name: str
+
+
 @router.get("/servers")
-async def list_servers() -> dict:
+async def list_servers(request: Request) -> dict:
+    user_id = current_user_id(request)
     servers = mcp_server_store.list()
-    return {"success": True, "data": {k: v.model_dump() for k, v in servers.items()}}
+    visible = {k: v for k, v in servers.items() if _visible(v, user_id)}
+    return {"success": True, "data": {k: v.model_dump() for k, v in visible.items()}}
 
 
 @router.post("/servers")
-async def add_server(payload: McpServerRequest) -> dict:
+async def add_server(payload: McpServerRequest, request: Request) -> dict:
+    if mcp_server_store.get(payload.name) is not None:
+        raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
+    owner_id = None if current_role(request) == "admin" else current_user_id(request)
     entry = McpServer(
-        name=payload.name, url=payload.url, headers=payload.headers, enabled=payload.enabled
+        name=payload.name, url=payload.url, headers=payload.headers,
+        enabled=payload.enabled, owner_id=owner_id,
     )
     mcp_server_store.upsert(entry)
     return {"success": True, "data": entry.model_dump()}
 
 
 @router.get("/servers/{name}")
-async def get_server(name: str) -> dict:
+async def get_server(name: str, request: Request) -> dict:
     entry = mcp_server_store.get(name)
-    if not entry:
+    if not entry or not _visible(entry, current_user_id(request)):
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
     return {"success": True, "data": entry.model_dump()}
 
 
 @router.put("/servers/{name}")
-async def update_server(name: str, payload: McpServerRequest) -> dict:
+async def update_server(name: str, payload: McpServerRequest, request: Request) -> dict:
     old = mcp_server_store.get(name)
-    if old:
-        mcp_pool.invalidate(old.url)
+    if not old or not _can_write(old, current_user_id(request), current_role(request)):
+        raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
+    mcp_pool.invalidate(old.url)
     entry = McpServer(
-        name=name, url=payload.url, headers=payload.headers, enabled=payload.enabled
+        name=name, url=payload.url, headers=payload.headers,
+        enabled=payload.enabled, owner_id=old.owner_id,
     )
     mcp_server_store.upsert(entry)
     return {"success": True, "data": entry.model_dump()}
 
 
 @router.patch("/servers/{name}/enabled")
-async def set_server_enabled(name: str, payload: McpServerEnabledRequest) -> dict:
+async def set_server_enabled(name: str, payload: McpServerEnabledRequest, request: Request) -> dict:
     entry = mcp_server_store.get(name)
-    if not entry:
+    if not entry or not _can_write(entry, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
     updated = entry.model_copy(update={"enabled": payload.enabled})
     mcp_server_store.upsert(updated)
@@ -66,24 +89,41 @@ async def set_server_enabled(name: str, payload: McpServerEnabledRequest) -> dic
 
 
 @router.delete("/servers/{name}")
-async def delete_server(name: str) -> dict:
+async def delete_server(name: str, request: Request) -> dict:
     if name in PRESET_NAMES:
         raise HTTPException(
             status_code=400,
             detail=f"'{name}' is a built-in preset; disable it instead of deleting it",
         )
     entry = mcp_server_store.get(name)
-    if entry:
-        mcp_pool.invalidate(entry.url)
+    if not entry or not _can_write(entry, current_user_id(request), current_role(request)):
+        raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
+    mcp_pool.invalidate(entry.url)
     mcp_server_store.delete(name)
     return {"success": True, "data": {"name": name, "deleted": True}}
 
 
 @router.get("/servers/{name}/tools")
-async def list_server_tools(name: str) -> dict:
+async def list_server_tools(name: str, request: Request) -> dict:
     entry = mcp_server_store.get(name)
-    if not entry:
+    if not entry or not _visible(entry, current_user_id(request)):
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
     mcp_pool.invalidate(entry.url)
     tools = await mcp_pool.get_tools(entry.url, headers=entry.headers)
     return {"success": True, "data": {"server": name, "url": entry.url, "tools": tools}}
+
+
+@router.post("/servers/{name}/clone")
+async def clone_server(name: str, payload: CloneRequest, request: Request) -> dict:
+    user_id = current_user_id(request)
+    source = mcp_server_store.get(name)
+    if not source or not _visible(source, user_id):
+        raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
+    if mcp_server_store.get(payload.new_name) is not None:
+        raise HTTPException(status_code=409, detail=f"'{payload.new_name}' already exists")
+    clone = McpServer(
+        name=payload.new_name, url=source.url, headers=source.headers,
+        enabled=source.enabled, owner_id=user_id,
+    )
+    mcp_server_store.upsert(clone)
+    return {"success": True, "data": clone.model_dump()}
