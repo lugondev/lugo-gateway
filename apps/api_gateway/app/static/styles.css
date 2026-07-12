@@ -1322,3 +1322,11 @@ input[type="radio"] {
   color: #e05555;
   font-size: 13px;
 }
+.login-form {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-form.active {
+  display: flex;
+}
