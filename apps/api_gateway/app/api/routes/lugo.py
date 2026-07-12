@@ -198,7 +198,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     return
             if session.is_turn_active():
                 continue
-            if now - last_activity >= idle:
+            if idle > 0 and now - last_activity >= idle:
                 # Commit to closing synchronously, before the await below, so
                 # the main loop cannot process/emit a message that raced in
                 # concurrently with this goodbye send (ASGI sends aren't
@@ -216,10 +216,17 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     pass
                 return
 
-    # idle <= 0 means "never disconnect": skip scheduling the watchdog task
-    # entirely rather than having it return immediately, since a completed
-    # task would make `wd.done()` true on the very next loop check below and
-    # tear down the connection mid-turn.
+    # Schedule the watchdog whenever there's something for it to watch: a real
+    # idle timeout (idle > 0) or an identity to periodically recheck
+    # (identity_owned). Skip scheduling entirely when neither applies, rather
+    # than having it return immediately, since a completed task would make
+    # `wd.done()` true on the very next loop check below and tear down the
+    # connection mid-turn.
+    #
+    # Note: idle <= 0 ("never idle-disconnect") can still leave the watchdog
+    # running when identity_owned is true — that's fine, because the
+    # idle-check branch above is separately guarded with `idle > 0`, so it
+    # can never fire in that case; only the identity re-check can.
     wd = asyncio.create_task(_watchdog()) if (idle > 0 or identity_owned) else None
     try:
         while True:
