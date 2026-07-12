@@ -67,6 +67,21 @@ def test_guard_blocks_user_route_when_logged_out(client, _with_password):
     assert resp.status_code == 401
 
 
+def test_guard_blocks_tts_profiles_route_when_logged_out(client, _with_password):
+    # Regression: _USER_PREFIXES previously had a typo ("/v1/tts_profiles" instead
+    # of the router's actual "/v1/tts/profiles" prefix), so this whole surface fell
+    # through the middleware unauthenticated whenever auth was enabled.
+    resp = client.get("/v1/tts/profiles")
+    assert resp.status_code == 401
+
+
+def test_guard_allows_tts_profiles_route_for_regular_user(client, _with_password):
+    _login_as(client, "toan", "s3cret", role="user")
+    resp = client.get("/v1/tts/profiles")
+    assert resp.status_code != 401
+    assert resp.status_code != 403
+
+
 def test_guard_allows_device_pairing_init_without_login(client, _with_password):
     resp = client.post("/v1/devices/pair/init", json={"serial": "AA:BB:CC"})
     assert resp.status_code != 401

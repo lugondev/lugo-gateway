@@ -19,7 +19,7 @@ _USER_PREFIXES = (
     "/v1/livehost",
     "/v1/profiles",
     "/v1/mcp",
-    "/v1/tts_profiles",
+    "/v1/tts/profiles",
     "/v1/sessions",
     "/v1/devices/mine",
     "/v1/devices/pair/claim",
