@@ -9,6 +9,7 @@ class LlmConfig(BaseModel):
     base_url: str = ""
     api_key: str = ""
     model: str = ""
+    engine: str = ""
 
 
 class TtsConfig(BaseModel):

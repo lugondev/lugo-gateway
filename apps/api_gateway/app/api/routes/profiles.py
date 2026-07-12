@@ -3,7 +3,9 @@ from pydantic import BaseModel
 
 from app.core.actor import current_role, current_user_id
 from app.core.errors import AppError
+from app.services.auth.users import user_store
 from app.services.mcp.models import McpServer
+from app.services.model_registry.gate import check_model_allowed
 from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, SessionConfig, SttConfig, TtsConfig
 from app.services.profiles.store import profile_store
 from app.services.stt.model_registry import STT_MODEL_REGISTRIES
@@ -19,20 +21,31 @@ def _mask(profile: Profile) -> dict:
     return data
 
 
-def _validate_stt_model(profile: Profile) -> None:
-    if not profile.stt.model:
-        return
-    preset = resolve_stt_profile(profile.stt.profile)
-    # Validation scope is intentionally narrowed to explicit stt.engine or stt.profile preset:
-    # profiles must be self-contained and not depend on mutable settings.conversation_stt_engine/
-    # default_stt_engine, so a profile's validity is independent of deploy-time config.
-    engine = profile.stt.engine or (preset[0] if preset else "")
-    if not engine:
-        raise AppError("stt.model requires stt.engine or a resolvable stt.profile preset")
-    registry = STT_MODEL_REGISTRIES.get(engine)
-    if registry is None:
-        raise AppError(f"engine '{engine}' has no selectable model variants")
-    registry.validate(profile.stt.model)
+async def _validate_profile_models(profile: Profile, acting_user) -> None:
+    if profile.stt.model:
+        preset = resolve_stt_profile(profile.stt.profile)
+        # Validation scope is intentionally narrowed to explicit stt.engine or stt.profile preset:
+        # profiles must be self-contained and not depend on mutable settings.conversation_stt_engine/
+        # default_stt_engine, so a profile's validity is independent of deploy-time config.
+        engine = profile.stt.engine or (preset[0] if preset else "")
+        if not engine:
+            raise AppError("stt.model requires stt.engine or a resolvable stt.profile preset")
+        registry = STT_MODEL_REGISTRIES.get(engine)
+        if registry is None:
+            raise AppError(f"engine '{engine}' has no selectable model variants")
+        registry.validate(profile.stt.model)
+        await check_model_allowed("stt", engine, profile.stt.model, acting_user)
+    if profile.llm.engine and profile.llm.model:
+        await check_model_allowed("llm", profile.llm.engine, profile.llm.model, acting_user)
+
+
+async def _resolve_acting_user(request: Request):
+    """None when there's no real logged-in user to resolve (dev mode, auth
+    fully disabled -- see app.core.actor.current_user_id). check_model_allowed
+    already handles a None user by failing closed only on the testing-stage
+    check, never crashing."""
+    user_id = current_user_id(request)
+    return await user_store.get_by_id(user_id) if user_id else None
 
 
 def _visible(profile: Profile, user_id: str | None) -> bool:
@@ -80,7 +93,8 @@ async def create_profile(payload: ProfileRequest, request: Request) -> dict:
         raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
     owner_id = None if current_role(request) == "admin" else current_user_id(request)
     profile = Profile(**payload.model_dump(), owner_id=owner_id)
-    _validate_stt_model(profile)
+    acting_user = await _resolve_acting_user(request)
+    await _validate_profile_models(profile, acting_user)
     profile_store.upsert(profile)
     return {"success": True, "data": _mask(profile)}
 
@@ -114,7 +128,8 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
     else:
         data["owner_id"] = None if current_role(request) == "admin" else current_user_id(request)
     profile = Profile(**data)
-    _validate_stt_model(profile)
+    acting_user = await _resolve_acting_user(request)
+    await _validate_profile_models(profile, acting_user)
     profile_store.upsert(profile)
     return {"success": True, "data": _mask(profile)}
 
