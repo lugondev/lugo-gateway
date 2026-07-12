@@ -47,6 +47,12 @@
               </button>
             </li>
             <li>
+              <button class="nav-item" data-section="devices">
+                <span class="nav-icon">&#9635;</span>
+                <span class="nav-label">Devices</span>
+              </button>
+            </li>
+            <li>
               <button class="nav-item" data-section="stt">
                 <span class="nav-icon">◉</span>
                 <span class="nav-label">STT</span>
@@ -58,7 +64,7 @@
                 <span class="nav-label">TTS</span>
               </button>
             </li>
-            <li>
+            <li class="admin-only">
               <button class="nav-item" data-section="models">
                 <span class="nav-icon">⊞</span>
                 <span class="nav-label">Models</span>
@@ -70,7 +76,13 @@
                 <span class="nav-label">MCP</span>
               </button>
             </li>
-            <li>
+            <li class="admin-only">
+              <button class="nav-item" data-section="users">
+                <span class="nav-icon">&#9689;</span>
+                <span class="nav-label">Users</span>
+              </button>
+            </li>
+            <li class="admin-only">
               <button class="nav-item" data-section="system">
                 <span class="nav-icon">⊙</span>
                 <span class="nav-label">System</span>
@@ -727,6 +739,42 @@
                 </div>
               </div>
               <p id="mcp-status" class="meta"></p>
+            </section>
+          </div>
+
+          <!-- ============================== USERS ============================== -->
+          <div class="section" id="section-users">
+            <section class="card">
+              <div class="card-head">
+                <h2>Users</h2>
+                <button id="user-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <p class="hint">Manage accounts, roles, and testing-model access.</p>
+              <div id="user-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <h3 class="sub">Create User</h3>
+              <div class="row tight">
+                <label>
+                  Username
+                  <input id="user-add-username" type="text" placeholder="username" />
+                </label>
+                <label>
+                  Password
+                  <input id="user-add-password" type="password" placeholder="password" />
+                </label>
+                <label>
+                  Role
+                  <select id="user-add-role">
+                    <option value="user" selected>user</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </label>
+                <div class="actions end">
+                  <button id="user-add-btn">Create</button>
+                </div>
+              </div>
+              <p id="user-status" class="meta"></p>
             </section>
           </div>
 

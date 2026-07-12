@@ -30,6 +30,10 @@
   --sp-6: 24px;
 }
 
+.admin-only {
+  display: none;
+}
+
 * {
   box-sizing: border-box;
 }

@@ -19,6 +19,10 @@ import { loadMcpServers } from "./mcp-servers.js";
 import "./tts-batch.js";
 import "./tts-stream.js";
 import "./sessions.js";
+import "./users.js";
+// NOTE(Task 19): also import "./devices.js" here once that module is created —
+// importing it before the file exists would 404 the module graph and abort
+// all of main.js's top-level code (initSidebar, engine loaders, etc).
 
 initSidebar();
 initSttMode();
