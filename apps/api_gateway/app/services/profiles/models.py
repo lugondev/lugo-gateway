@@ -47,6 +47,7 @@ class SessionConfig(BaseModel):
 
 class Profile(BaseModel):
     name: str
+    owner_id: str | None = None
     nickname: str = ""
     llm: LlmConfig = LlmConfig()
     system_prompt: str = ""

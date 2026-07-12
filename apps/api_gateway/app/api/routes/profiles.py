@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from app.core.actor import current_role, current_user_id
 from app.core.errors import AppError
 from app.services.mcp.models import McpServer
 from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, SessionConfig, SttConfig, TtsConfig
@@ -34,6 +35,10 @@ def _validate_stt_model(profile: Profile) -> None:
     registry.validate(profile.stt.model)
 
 
+def _visible(profile: Profile, user_id: str | None) -> bool:
+    return profile.owner_id is None or profile.owner_id == user_id
+
+
 class ProfileRequest(BaseModel):
     name: str
     nickname: str = ""
@@ -47,39 +52,54 @@ class ProfileRequest(BaseModel):
     session: SessionConfig = SessionConfig()
 
 
+class CloneRequest(BaseModel):
+    new_name: str
+
+
 @router.get("")
-async def list_profiles() -> dict:
+async def list_profiles(request: Request) -> dict:
+    user_id = current_user_id(request)
     profiles = profile_store.list()
-    return {"success": True, "data": {k: _mask(v) for k, v in profiles.items()}}
+    visible = {k: v for k, v in profiles.items() if _visible(v, user_id)}
+    return {"success": True, "data": {k: _mask(v) for k, v in visible.items()}}
 
 
 @router.post("")
-async def create_profile(payload: ProfileRequest) -> dict:
-    profile = Profile(**payload.model_dump())
+async def create_profile(payload: ProfileRequest, request: Request) -> dict:
+    owner_id = None if current_role(request) == "admin" else current_user_id(request)
+    profile = Profile(**payload.model_dump(), owner_id=owner_id)
     _validate_stt_model(profile)
     profile_store.upsert(profile)
     return {"success": True, "data": _mask(profile)}
 
 
 @router.get("/{name}")
-async def get_profile(name: str) -> dict:
+async def get_profile(name: str, request: Request) -> dict:
     profile = profile_store.get(name)
-    if not profile:
+    if not profile or not _visible(profile, current_user_id(request)):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     return {"success": True, "data": _mask(profile)}
 
 
 @router.put("/{name}")
-async def update_profile(name: str, payload: ProfileRequest) -> dict:
+async def update_profile(name: str, payload: ProfileRequest, request: Request) -> dict:
+    existing = profile_store.get(name)
+    # PUT is upsert-or-create (test_update_uses_path_name relies on creating via
+    # PUT to a name that doesn't exist yet); ownership scoping only applies when
+    # a row already exists and belongs to someone else.
+    if existing and not _visible(existing, current_user_id(request)):
+        raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     data = payload.model_dump()
     data["name"] = name
-    # Preserve the stored API key when the client sends a blank one: the UI's
-    # password field is empty on edit ("leave blank to keep existing"), so a save
-    # that doesn't re-enter the key must NOT wipe it.
-    if not data.get("llm", {}).get("api_key"):
-        existing = profile_store.get(name)
-        if existing and existing.llm.api_key:
+    if existing:
+        data["owner_id"] = existing.owner_id
+        # Preserve the stored API key when the client sends a blank one: the UI's
+        # password field is empty on edit ("leave blank to keep existing"), so a save
+        # that doesn't re-enter the key must NOT wipe it.
+        if not data.get("llm", {}).get("api_key") and existing.llm.api_key:
             data.setdefault("llm", {})["api_key"] = existing.llm.api_key
+    else:
+        data["owner_id"] = None if current_role(request) == "admin" else current_user_id(request)
     profile = Profile(**data)
     _validate_stt_model(profile)
     profile_store.upsert(profile)
@@ -87,6 +107,28 @@ async def update_profile(name: str, payload: ProfileRequest) -> dict:
 
 
 @router.delete("/{name}")
-async def delete_profile(name: str) -> dict:
+async def delete_profile(name: str, request: Request) -> dict:
+    existing = profile_store.get(name)
+    if not existing or not _visible(existing, current_user_id(request)):
+        raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     profile_store.delete(name)
     return {"success": True, "data": {"name": name, "deleted": True}}
+
+
+@router.post("/{name}/clone")
+async def clone_profile(name: str, payload: CloneRequest, request: Request) -> dict:
+    user_id = current_user_id(request)
+    source = profile_store.get(name)
+    if not source or not _visible(source, user_id):
+        raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
+    existing_visible = {
+        k for k, v in profile_store.list().items() if _visible(v, user_id)
+    }
+    if payload.new_name in existing_visible:
+        raise HTTPException(status_code=409, detail=f"'{payload.new_name}' already exists")
+    data = source.model_dump()
+    data["name"] = payload.new_name
+    data["owner_id"] = user_id
+    clone = Profile(**data)
+    profile_store.upsert(clone)
+    return {"success": True, "data": _mask(clone)}
