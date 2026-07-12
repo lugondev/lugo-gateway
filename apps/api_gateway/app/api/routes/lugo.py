@@ -17,6 +17,7 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.core.auth_guard import resolve_ws_identity
 from app.core.settings import settings
 from app.services.conversation.lugo_frame import LUGO_FRAME_OPUS, encode_frame
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
@@ -56,6 +57,10 @@ def _resolve(profile_name: str | None):
 
 @router.websocket("/stream")
 async def lugo_stream(websocket: WebSocket) -> None:
+    identity = await resolve_ws_identity(websocket)
+    if identity is None:
+        await websocket.close(code=4401, reason="unauthorized")
+        return
     await websocket.accept()
     # Handshake: first frame must be a `wakeup`.
     message = await websocket.receive()
