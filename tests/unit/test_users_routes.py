@@ -59,3 +59,42 @@ def test_reset_password(client):
 def test_reset_password_missing_user_404(client):
     resp = client.post("/v1/users/does-not-exist/reset_password", json={"new_password": "x"})
     assert resp.status_code == 404
+
+
+def test_cannot_demote_last_admin(client):
+    admin = client.post(
+        "/v1/users", json={"username": "root", "password": "pw", "role": "admin"}
+    ).json()["data"]
+    resp = client.patch(f"/v1/users/{admin['id']}", json={"role": "user"})
+    assert resp.status_code == 400
+
+    from app.services.auth.users import user_store
+    import asyncio
+
+    reloaded = asyncio.run(user_store.get_by_id(admin["id"]))
+    assert reloaded.role == "admin"
+
+
+def test_cannot_disable_last_admin(client):
+    admin = client.post(
+        "/v1/users", json={"username": "root", "password": "pw", "role": "admin"}
+    ).json()["data"]
+    resp = client.patch(f"/v1/users/{admin['id']}", json={"disabled": True})
+    assert resp.status_code == 400
+
+    from app.services.auth.users import user_store
+    import asyncio
+
+    reloaded = asyncio.run(user_store.get_by_id(admin["id"]))
+    assert reloaded.disabled is False
+
+
+def test_can_demote_admin_when_another_admin_exists(client):
+    admin1 = client.post(
+        "/v1/users", json={"username": "root", "password": "pw", "role": "admin"}
+    ).json()["data"]
+    client.post("/v1/users", json={"username": "root2", "password": "pw", "role": "admin"})
+
+    resp = client.patch(f"/v1/users/{admin1['id']}", json={"role": "user"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["role"] == "user"

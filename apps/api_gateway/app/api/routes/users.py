@@ -38,6 +38,15 @@ async def update_user(user_id: str, payload: UpdateUserRequest) -> dict:
     fields = {k: v for k, v in payload.model_dump().items() if v is not None}
     if "role" in fields and fields["role"] not in _VALID_ROLES:
         raise HTTPException(status_code=400, detail="role must be 'admin' or 'user'")
+
+    demoting = fields.get("role") is not None and fields["role"] != "admin"
+    disabling = fields.get("disabled") is True
+    if demoting or disabling:
+        target = await user_store.get_by_id(user_id)
+        if target is not None and target.role == "admin" and not target.disabled:
+            if await user_store.count_active_admins() <= 1:
+                raise HTTPException(status_code=400, detail="cannot remove the last active admin")
+
     updated = await user_store.set_fields(user_id, **fields)
     if updated is None:
         raise HTTPException(status_code=404, detail=f"user '{user_id}' not found")

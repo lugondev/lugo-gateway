@@ -27,6 +27,15 @@ class UserStore:
             rows = (await s.execute(select(User.id))).scalars().all()
             return len(rows)
 
+    async def count_active_admins(self) -> int:
+        async with db_session() as s:
+            rows = (
+                await s.execute(
+                    select(User.id).where(User.role == "admin", User.disabled.is_(False))
+                )
+            ).scalars().all()
+            return len(rows)
+
     async def create(self, username: str, password: str, role: str = "user") -> dict:
         async with db_session() as s:
             existing = (
