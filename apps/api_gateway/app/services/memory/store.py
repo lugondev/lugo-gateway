@@ -13,6 +13,7 @@ def _mem_dict(m: MemoryItem) -> dict:
     return {
         "id": m.id,
         "profile_id": m.profile_id,
+        "user_id": m.user_id,
         "content": m.content,
         "source_session_id": m.source_session_id,
         "embedding": m.embedding,
@@ -39,6 +40,7 @@ class MemoryStore:
         content: str,
         source_session_id: str | None = None,
         embedding: list[float] | None = None,
+        user_id: str | None = None,
     ) -> dict:
         async with db_session() as s:
             row = MemoryItem(
@@ -47,6 +49,7 @@ class MemoryStore:
                 content=content,
                 source_session_id=source_session_id,
                 embedding=embedding,
+                user_id=user_id,
             )
             s.add(row)
             await s.commit()

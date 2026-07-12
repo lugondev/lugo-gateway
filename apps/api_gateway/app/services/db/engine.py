@@ -65,6 +65,8 @@ async def init_db() -> None:
         async with _engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             await _ensure_column(conn, "sessions", "user_id", "VARCHAR(36)")
+            await _ensure_column(conn, "memories", "user_id", "VARCHAR(36)")
+            await _ensure_column(conn, "memory_profile_docs", "user_id", "VARCHAR(36)")
         _initialized = True
 
 

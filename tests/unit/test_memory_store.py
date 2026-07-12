@@ -56,3 +56,17 @@ async def test_delete_many(store):
     assert remaining == {"c"}
     assert await store.delete_many([]) == 0
     _ = c
+
+
+@pytest.mark.asyncio
+async def test_add_with_user_id_roundtrips(store):
+    added = await store.add("profile-a", "likes tea", user_id="user-a")
+    assert added["user_id"] == "user-a"
+    items = await store.list("profile-a")
+    assert items[0]["user_id"] == "user-a"
+
+
+@pytest.mark.asyncio
+async def test_add_without_user_id_defaults_none(store):
+    added = await store.add("profile-a", "likes coffee")
+    assert added["user_id"] is None

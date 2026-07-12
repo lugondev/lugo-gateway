@@ -139,7 +139,8 @@ class MemoryExtractor:
                 ):
                     continue
                 await memory_store.add(
-                    profile.name, fact, source_session_id=session_id, embedding=vec
+                    profile.name, fact, source_session_id=session_id, embedding=vec,
+                    user_id=profile.owner_id,
                 )
                 existing_norm.add(norm)
                 if vec is not None:

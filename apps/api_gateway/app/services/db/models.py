@@ -43,6 +43,7 @@ class MemoryItem(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     profile_id: Mapped[str] = mapped_column(String(128), index=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     content: Mapped[str] = mapped_column(Text)
     source_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
@@ -56,6 +57,7 @@ class MemoryProfileDoc(Base):
     __tablename__ = "memory_profile_docs"
 
     profile_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     content: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
