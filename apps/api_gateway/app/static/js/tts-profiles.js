@@ -1,5 +1,6 @@
 import { el, print, restoreAndBind } from "./helpers.js";
 import { renderProfileTtsSelect } from "./profiles.js";
+import { fetchAuthStatus } from "./session.js";
 
 export let ttsProfileData = {};
 export let ttsProfileEditName = null; // null = "new" (no profile currently loaded into the form)
@@ -47,7 +48,7 @@ export function renderLivehostTtsProfileSelect() {
   restoreAndBind("lh-tts-profile");
 }
 
-export function renderTtsProfileList() {
+export async function renderTtsProfileList() {
   const host = el("tts-profile-list");
   if (!host) return;
   const names = Object.keys(ttsProfileData).sort();
@@ -55,19 +56,27 @@ export function renderTtsProfileList() {
     host.innerHTML = '<p class="hint">No TTS profiles yet. Create one below.</p>';
     return;
   }
+  const status = await fetchAuthStatus();
+  const isAdmin = !!(status && status.authenticated && status.role === "admin");
+
   host.innerHTML = names.map((name) => {
     const p = ttsProfileData[name];
     const voiceSummary = p.voice_mode === "clone" ? "cloned voice" : (p.voice || "auto voice");
+    const isTemplate = p.owner_id === null || p.owner_id === undefined;
+    const mine = !isTemplate ? '<span class="hint">mine</span>' : "";
+    const hideWriteControls = isTemplate && !isAdmin;
     return `
       <div class="model-row">
         <div class="model-info">
           <strong>${name}</strong>
+          ${mine}
           <code>${p.engine || "(no engine)"}</code>
           <span class="hint">${voiceSummary}</span>
         </div>
         <div class="model-action">
-          <button class="mini" data-tp-edit="${name}">Edit</button>
-          <button class="mini danger" data-tp-delete="${name}">Delete</button>
+          ${hideWriteControls ? "" : `<button class="mini" data-tp-edit="${name}">Edit</button>`}
+          <button class="mini" data-tp-clone="${name}">Clone</button>
+          ${hideWriteControls ? "" : `<button class="mini danger" data-tp-delete="${name}">Delete</button>`}
         </div>
       </div>
     `;
@@ -78,6 +87,9 @@ export function renderTtsProfileList() {
   );
   document.querySelectorAll("[data-tp-delete]").forEach((btn) =>
     btn.addEventListener("click", () => deleteTtsProfile(btn.getAttribute("data-tp-delete")))
+  );
+  document.querySelectorAll("[data-tp-clone]").forEach((btn) =>
+    btn.addEventListener("click", () => cloneTtsProfile(btn.getAttribute("data-tp-clone")))
   );
 }
 
@@ -181,6 +193,23 @@ export async function deleteTtsProfile(name) {
     if (!resp.ok) { const b = await resp.json(); print(el("tp-status"), b.detail || "Delete failed", true); return; }
     await loadTtsProfiles();
     if (ttsProfileEditName === name) resetTtsProfileForm();
+  } catch (error) {
+    print(el("tp-status"), String(error), true);
+  }
+}
+
+export async function cloneTtsProfile(name) {
+  const new_name = prompt(`Clone "${name}" as:`, `${name}-copy`);
+  if (!new_name || !new_name.trim()) return;
+  try {
+    const resp = await fetch(`/v1/tts/profiles/${encodeURIComponent(name)}/clone`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_name: new_name.trim() }),
+    });
+    const body = await resp.json();
+    if (!resp.ok) { print(el("tp-status"), body.detail || "Clone failed", true); return; }
+    await loadTtsProfiles();
   } catch (error) {
     print(el("tp-status"), String(error), true);
   }

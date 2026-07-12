@@ -2,6 +2,7 @@ import { el, print, restoreAndBind } from "./helpers.js";
 import { mcpServerData } from "./mcp-servers.js";
 import { ttsProfileData } from "./tts-profiles.js";
 import { setCurrentSessionId } from "./chat.js";
+import { fetchAuthStatus } from "./session.js";
 
 export let profileData = {};
 export let profileEditMode = null; // null | "new" | "<profile-name>"
@@ -25,7 +26,7 @@ export function renderProfileSelect() {
   Object.keys(profileData).sort().forEach((name) => {
     const opt = document.createElement("option");
     opt.value = name;
-    opt.textContent = name;
+    opt.textContent = profileData[name]?.owner_id ? `${name} (mine)` : name;
     sel.appendChild(opt);
   });
   if (profileData[prev]) sel.value = prev;
@@ -39,7 +40,7 @@ export function renderLivehostProfileSelect() {
   Object.keys(profileData).sort().forEach((name) => {
     const opt = document.createElement("option");
     opt.value = name;
-    opt.textContent = name;
+    opt.textContent = profileData[name]?.owner_id ? `${name} (mine)` : name;
     sel.appendChild(opt);
   });
   if (profileData[prev]) sel.value = prev;
@@ -60,7 +61,7 @@ export function renderProfileTtsSelect() {
   if (ttsProfileData[prev]) sel.value = prev;
 }
 
-export function openProfilePanel(mode, name) {
+export async function openProfilePanel(mode, name) {
   profileEditMode = mode === "new" ? "new" : name;
   const panel = el("profile-panel");
   if (!panel) return;
@@ -81,6 +82,8 @@ export function openProfilePanel(mode, name) {
     if (el("pf-tts-profile")) el("pf-tts-profile").value = "";
     if (el("pf-idle-timeout")) el("pf-idle-timeout").value = 30;
     el("pf-delete-btn").classList.add("hidden");
+    if (el("pf-clone-btn")) el("pf-clone-btn").classList.add("hidden");
+    el("pf-save-btn").classList.remove("hidden");
     el("pf-mem-enabled").checked = true;
     el("pf-mem-mode").value = "all";
     el("pf-mem-list").innerHTML = "";
@@ -98,11 +101,20 @@ export function openProfilePanel(mode, name) {
     if (el("pf-stt-profile")) el("pf-stt-profile").value = p.stt?.profile || "";
     if (el("pf-tts-profile")) el("pf-tts-profile").value = p.tts?.profile_name || "";
     if (el("pf-idle-timeout")) el("pf-idle-timeout").value = p.session?.idle_timeout_s ?? 30;
-    el("pf-delete-btn").classList.remove("hidden");
     selectedMcpServers = p.mcp_servers || [];
     el("pf-mem-enabled").checked = p.memory?.enabled ?? true;
     el("pf-mem-mode").value = p.memory?.mode || "all";
     loadMemories(name);
+
+    // Templates (owner_id === null) are read-only for non-admins: the server
+    // 404s Save/Delete on them anyway, so hide those controls and offer Clone only.
+    const isTemplate = p.owner_id === null || p.owner_id === undefined;
+    const status = await fetchAuthStatus();
+    const isAdmin = !!(status && status.authenticated && status.role === "admin");
+    const hideWriteControls = isTemplate && !isAdmin;
+    el("pf-save-btn").classList.toggle("hidden", hideWriteControls);
+    el("pf-delete-btn").classList.toggle("hidden", hideWriteControls);
+    if (el("pf-clone-btn")) el("pf-clone-btn").classList.remove("hidden");
   }
 
   el("pf-status").textContent = "";
@@ -198,7 +210,12 @@ export async function saveProfile() {
     el("pf-llm-key").value = "";
     await loadProfiles();
     el("profile-select").value = name;
-    if (isNew) { profileEditMode = name; el("pf-name").disabled = true; el("pf-delete-btn").classList.remove("hidden"); }
+    if (isNew) {
+      profileEditMode = name;
+      el("pf-name").disabled = true;
+      el("pf-delete-btn").classList.remove("hidden");
+      if (el("pf-clone-btn")) el("pf-clone-btn").classList.remove("hidden");
+    }
   } catch (error) {
     print(el("pf-status"), String(error), true);
   }
@@ -212,6 +229,27 @@ export async function deleteProfile() {
     if (!resp.ok) { const b = await resp.json(); print(el("pf-status"), b.detail || "Delete failed", true); return; }
     await loadProfiles();
     el("profile-select").value = "";
+    closeProfilePanel();
+  } catch (error) {
+    print(el("pf-status"), String(error), true);
+  }
+}
+
+export async function cloneProfile() {
+  const name = el("pf-name").value.trim();
+  if (!name) return;
+  const new_name = prompt(`Clone "${name}" as:`, `${name}-copy`);
+  if (!new_name || !new_name.trim()) return;
+  try {
+    const resp = await fetch(`/v1/profiles/${encodeURIComponent(name)}/clone`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_name: new_name.trim() }),
+    });
+    const body = await resp.json();
+    if (!resp.ok) { print(el("pf-status"), body.detail || "Clone failed", true); return; }
+    await loadProfiles();
+    el("profile-select").value = new_name.trim();
     closeProfilePanel();
   } catch (error) {
     print(el("pf-status"), String(error), true);
@@ -319,6 +357,7 @@ if (el("profile-close-btn")) el("profile-close-btn").addEventListener("click", c
 if (el("pf-cancel-btn")) el("pf-cancel-btn").addEventListener("click", closeProfilePanel);
 if (el("pf-save-btn")) el("pf-save-btn").addEventListener("click", saveProfile);
 if (el("pf-delete-btn")) el("pf-delete-btn").addEventListener("click", deleteProfile);
+if (el("pf-clone-btn")) el("pf-clone-btn").addEventListener("click", cloneProfile);
 if (el("profile-select")) {
   el("profile-select").addEventListener("change", () => {
     setCurrentSessionId(null);
