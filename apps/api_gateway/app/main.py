@@ -126,6 +126,10 @@ async def lifespan(app: FastAPI):
     # DB is configured at that moment -- in practice, the real data/app.db.
     seed_default_servers(mcp_server_store)
 
+    from app.services.model_registry.seed import seed_known_models
+
+    await seed_known_models()
+
     if not settings.auth_enabled and settings.app_env != "dev":
         logger.warning(
             "auth disabled: neither ADMIN_PASSWORD nor ADMIN_BOOTSTRAP_PASSWORD is set (app_env=%s)",

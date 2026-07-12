@@ -87,3 +87,15 @@ class Device(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ModelRegistryEntry(Base):
+    __tablename__ = "model_registry_entries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(8), index=True)   # "stt" | "tts" | "llm"
+    engine: Mapped[str] = mapped_column(String(64), index=True)
+    model_id: Mapped[str] = mapped_column(String(128), index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    stage: Mapped[str] = mapped_column(String(16), default="stable")  # "stable" | "testing"
