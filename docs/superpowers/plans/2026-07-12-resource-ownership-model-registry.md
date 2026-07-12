@@ -426,6 +426,30 @@ def test_clone_tts_profile(client, _with_password):
     resp = client.post("/v1/tts/profiles/template-voice/clone", json={"new_name": "toan-voice"})
     assert resp.status_code == 200
     assert resp.json()["data"]["owner_id"] is not None
+
+
+def test_create_rejects_name_taken_by_another_users_private_profile(client, _with_password):
+    _signup_login(client, "a", role="user")
+    client.post("/v1/tts/profiles", json={"name": "a-secret-voice"})
+
+    _signup_login(client, "b", role="user")
+    resp = client.post("/v1/tts/profiles", json={"name": "a-secret-voice"})
+    assert resp.status_code == 409
+    # confirm a's row survived untouched
+    _signup_login(client, "a", role="user")
+    assert client.get("/v1/tts/profiles/a-secret-voice").status_code == 200
+
+
+def test_regular_user_cannot_update_or_delete_admin_template(client, _with_password):
+    _signup_login(client, "root", role="admin")
+    client.post("/v1/tts/profiles", json={"name": "template-voice-2"})
+
+    _signup_login(client, "mallory", role="user")
+    resp = client.put("/v1/tts/profiles/template-voice-2", json={"name": "template-voice-2"})
+    assert resp.status_code == 404
+    resp = client.delete("/v1/tts/profiles/template-voice-2")
+    assert resp.status_code == 404
+    assert client.get("/v1/tts/profiles/template-voice-2").status_code == 200
 ```
 
 ```python
@@ -474,6 +498,37 @@ def test_user_created_mcp_server_hidden_from_other_users(client, _with_password)
     assert resp.status_code == 404
 
 
+def test_create_rejects_name_taken_by_another_users_private_server(client, _with_password):
+    _signup_login(client, "a", role="user")
+    client.post("/v1/mcp/servers", json={"name": "a-secret-server", "url": "https://a.example.com/mcp"})
+
+    _signup_login(client, "b", role="user")
+    resp = client.post("/v1/mcp/servers", json={"name": "a-secret-server", "url": "https://b.example.com/mcp"})
+    assert resp.status_code == 409
+    # confirm a's row (and its own url) survived untouched
+    _signup_login(client, "a", role="user")
+    got = client.get("/v1/mcp/servers/a-secret-server")
+    assert got.status_code == 200
+    assert got.json()["data"]["url"] == "https://a.example.com/mcp"
+
+
+def test_regular_user_cannot_update_or_delete_admin_template(client, _with_password):
+    _signup_login(client, "root", role="admin")
+    client.post("/v1/mcp/servers", json={"name": "template-mcp-2", "url": "https://t.example.com/mcp"})
+
+    _signup_login(client, "mallory", role="user")
+    resp = client.put(
+        "/v1/mcp/servers/template-mcp-2",
+        json={"name": "template-mcp-2", "url": "https://mallory.example.com/mcp"},
+    )
+    assert resp.status_code == 404
+    resp = client.delete("/v1/mcp/servers/template-mcp-2")
+    assert resp.status_code == 404
+    got = client.get("/v1/mcp/servers/template-mcp-2")
+    assert got.status_code == 200
+    assert got.json()["data"]["url"] == "https://t.example.com/mcp"
+
+
 def test_clone_mcp_server(client, _with_password):
     _signup_login(client, "root", role="admin")
     client.post("/v1/mcp/servers", json={"name": "template-mcp", "url": "https://t.example.com/mcp"})
@@ -497,7 +552,13 @@ In `apps/api_gateway/app/services/tts/profile_models.py`, add to `TtsProfile` (a
     owner_id: str | None = None
 ```
 
-Replace `apps/api_gateway/app/api/routes/tts_profiles.py`:
+Replace `apps/api_gateway/app/api/routes/tts_profiles.py`. Two authorization predicates,
+matching the pattern Task 1 established (and had to fix after its first review found
+two Critical bugs — repeated here from the start): `_visible` gates reads (a template
+is visible to everyone), `_can_write` gates writes (a template may only be written by
+an admin; an owned row only by its owner) — and `create`/`clone` check *existence*
+(`tts_profile_store.get(...) is not None`), not visibility, before writing, so a name
+already taken by another user's invisible private row can't be silently overwritten:
 
 ```python
 from fastapi import APIRouter, HTTPException, Request
@@ -514,6 +575,12 @@ def _visible(profile: TtsProfile, user_id: str | None) -> bool:
     return profile.owner_id is None or profile.owner_id == user_id
 
 
+def _can_write(profile: TtsProfile, user_id: str | None, role: str) -> bool:
+    if profile.owner_id is None:
+        return role == "admin"
+    return profile.owner_id == user_id
+
+
 class CloneRequest(BaseModel):
     new_name: str
 
@@ -528,6 +595,8 @@ async def list_tts_profiles(request: Request) -> dict:
 
 @router.post("")
 async def create_tts_profile(payload: TtsProfile, request: Request) -> dict:
+    if tts_profile_store.get(payload.name) is not None:
+        raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
     owner_id = None if current_role(request) == "admin" else current_user_id(request)
     profile = payload.model_copy(update={"owner_id": owner_id})
     tts_profile_store.upsert(profile)
@@ -545,7 +614,7 @@ async def get_tts_profile(name: str, request: Request) -> dict:
 @router.put("/{name}")
 async def update_tts_profile(name: str, payload: TtsProfile, request: Request) -> dict:
     existing = tts_profile_store.get(name)
-    if not existing or not _visible(existing, current_user_id(request)):
+    if not existing or not _can_write(existing, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"TTS profile '{name}' not found")
     data = payload.model_dump()
     data["name"] = name
@@ -558,7 +627,7 @@ async def update_tts_profile(name: str, payload: TtsProfile, request: Request) -
 @router.delete("/{name}")
 async def delete_tts_profile(name: str, request: Request) -> dict:
     existing = tts_profile_store.get(name)
-    if not existing or not _visible(existing, current_user_id(request)):
+    if not existing or not _can_write(existing, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"TTS profile '{name}' not found")
     tts_profile_store.delete(name)
     return {"success": True, "data": {"name": name, "deleted": True}}
@@ -570,8 +639,7 @@ async def clone_tts_profile(name: str, payload: CloneRequest, request: Request) 
     source = tts_profile_store.get(name)
     if not source or not _visible(source, user_id):
         raise HTTPException(status_code=404, detail=f"TTS profile '{name}' not found")
-    visible_names = {k for k, v in tts_profile_store.list().items() if _visible(v, user_id)}
-    if payload.new_name in visible_names:
+    if tts_profile_store.get(payload.new_name) is not None:
         raise HTTPException(status_code=409, detail=f"'{payload.new_name}' already exists")
     data = source.model_dump()
     data["name"] = payload.new_name
@@ -587,7 +655,8 @@ In `apps/api_gateway/app/services/mcp/models.py`, add to `McpServer` (after `nam
     owner_id: str | None = None
 ```
 
-Replace `apps/api_gateway/app/api/routes/mcp.py`:
+Replace `apps/api_gateway/app/api/routes/mcp.py`. Same `_visible`/`_can_write` split and
+existence-check-before-write as `tts_profiles.py` above:
 
 ```python
 from fastapi import APIRouter, HTTPException, Request
@@ -604,6 +673,12 @@ router = APIRouter(prefix="/v1/mcp", tags=["mcp"])
 
 def _visible(server: McpServer, user_id: str | None) -> bool:
     return server.owner_id is None or server.owner_id == user_id
+
+
+def _can_write(server: McpServer, user_id: str | None, role: str) -> bool:
+    if server.owner_id is None:
+        return role == "admin"
+    return server.owner_id == user_id
 
 
 class McpServerRequest(BaseModel):
@@ -631,6 +706,8 @@ async def list_servers(request: Request) -> dict:
 
 @router.post("/servers")
 async def add_server(payload: McpServerRequest, request: Request) -> dict:
+    if mcp_server_store.get(payload.name) is not None:
+        raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
     owner_id = None if current_role(request) == "admin" else current_user_id(request)
     entry = McpServer(
         name=payload.name, url=payload.url, headers=payload.headers,
@@ -651,7 +728,7 @@ async def get_server(name: str, request: Request) -> dict:
 @router.put("/servers/{name}")
 async def update_server(name: str, payload: McpServerRequest, request: Request) -> dict:
     old = mcp_server_store.get(name)
-    if not old or not _visible(old, current_user_id(request)):
+    if not old or not _can_write(old, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
     mcp_pool.invalidate(old.url)
     entry = McpServer(
@@ -665,7 +742,7 @@ async def update_server(name: str, payload: McpServerRequest, request: Request) 
 @router.patch("/servers/{name}/enabled")
 async def set_server_enabled(name: str, payload: McpServerEnabledRequest, request: Request) -> dict:
     entry = mcp_server_store.get(name)
-    if not entry or not _visible(entry, current_user_id(request)):
+    if not entry or not _can_write(entry, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
     updated = entry.model_copy(update={"enabled": payload.enabled})
     mcp_server_store.upsert(updated)
@@ -680,7 +757,7 @@ async def delete_server(name: str, request: Request) -> dict:
             detail=f"'{name}' is a built-in preset; disable it instead of deleting it",
         )
     entry = mcp_server_store.get(name)
-    if not entry or not _visible(entry, current_user_id(request)):
+    if not entry or not _can_write(entry, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
     mcp_pool.invalidate(entry.url)
     mcp_server_store.delete(name)
@@ -703,8 +780,7 @@ async def clone_server(name: str, payload: CloneRequest, request: Request) -> di
     source = mcp_server_store.get(name)
     if not source or not _visible(source, user_id):
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
-    visible_names = {k for k, v in mcp_server_store.list().items() if _visible(v, user_id)}
-    if payload.new_name in visible_names:
+    if mcp_server_store.get(payload.new_name) is not None:
         raise HTTPException(status_code=409, detail=f"'{payload.new_name}' already exists")
     clone = McpServer(
         name=payload.new_name, url=source.url, headers=source.headers,
@@ -717,7 +793,7 @@ async def clone_server(name: str, payload: CloneRequest, request: Request) -> di
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/unit/test_tts_profile_ownership.py tests/unit/test_mcp_ownership.py -v`
-Expected: 5 passed
+Expected: 9 passed
 
 - [ ] **Step 5: Commit**
 
@@ -1678,11 +1754,13 @@ async def _resolve_acting_user(request: Request):
 
 (This replaces the old synchronous `_validate_stt_model` — remove that function entirely and rename all three call sites from `_validate_stt_model(profile)` to `await _validate_profile_models(profile, acting_user)`, where `acting_user = await _resolve_acting_user(request)` is resolved once at the top of `create_profile`/`update_profile` — `get_profile`/`delete_profile`/`clone_profile` don't validate models and are unaffected.)
 
-Updated `create_profile`:
+**IMPORTANT:** Task 1 was fixed after an initial review found two Critical bugs (cross-tenant name-collision overwrite on create/clone, and any non-admin being able to write to admin templates). By the time you're doing this task, `profiles.py` already has: an existence check (`profile_store.get(payload.name) is not None` → 409) in `create_profile`, and a `_can_write(profile, user_id, role)` predicate gating `update_profile`/`delete_profile` (not `_visible`, which stays read-only). Read the current file first and only add the two `_resolve_acting_user`/`_validate_profile_models` lines shown below to the EXISTING (already-fixed) bodies — do not paste over them with an older version. For reference, the two functions should end up looking like this:
 
 ```python
 @router.post("")
 async def create_profile(payload: ProfileRequest, request: Request) -> dict:
+    if profile_store.get(payload.name) is not None:
+        raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
     owner_id = None if current_role(request) == "admin" else current_user_id(request)
     profile = Profile(**payload.model_dump(), owner_id=owner_id)
     acting_user = await _resolve_acting_user(request)
@@ -1691,9 +1769,20 @@ async def create_profile(payload: ProfileRequest, request: Request) -> dict:
     return {"success": True, "data": _mask(profile)}
 ```
 
-Updated `update_profile` (only the validation line changes from Task 1's version):
-
 ```python
+@router.put("/{name}")
+async def update_profile(name: str, payload: ProfileRequest, request: Request) -> dict:
+    existing = profile_store.get(name)
+    if existing is not None and not _can_write(existing, current_user_id(request), current_role(request)):
+        raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
+    data = payload.model_dump()
+    data["name"] = name
+    data["owner_id"] = existing.owner_id if existing else (
+        None if current_role(request) == "admin" else current_user_id(request)
+    )
+    if not data.get("llm", {}).get("api_key"):
+        if existing and existing.llm.api_key:
+            data.setdefault("llm", {})["api_key"] = existing.llm.api_key
     profile = Profile(**data)
     acting_user = await _resolve_acting_user(request)
     await _validate_profile_models(profile, acting_user)
@@ -1793,9 +1882,17 @@ async def _resolve_acting_user(request: Request):
     return await user_store.get_by_id(user_id) if user_id else None
 ```
 
+**IMPORTANT:** By this point in the plan, `tts_profiles.py` already has the existence
+check (`tts_profile_store.get(payload.name) is not None` → 409) in `create_tts_profile`
+and `_can_write` gating `update_tts_profile` (Task 2, fixed after its own review found
+the same two Critical bugs as Task 1). Read the current file first and only add the
+`check_model_allowed` lines to the EXISTING bodies. For reference:
+
 ```python
 @router.post("")
 async def create_tts_profile(payload: TtsProfile, request: Request) -> dict:
+    if tts_profile_store.get(payload.name) is not None:
+        raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
     owner_id = None if current_role(request) == "admin" else current_user_id(request)
     profile = payload.model_copy(update={"owner_id": owner_id})
     if profile.engine:
@@ -1809,7 +1906,7 @@ async def create_tts_profile(payload: TtsProfile, request: Request) -> dict:
 @router.put("/{name}")
 async def update_tts_profile(name: str, payload: TtsProfile, request: Request) -> dict:
     existing = tts_profile_store.get(name)
-    if not existing or not _visible(existing, current_user_id(request)):
+    if not existing or not _can_write(existing, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"TTS profile '{name}' not found")
     data = payload.model_dump()
     data["name"] = name
