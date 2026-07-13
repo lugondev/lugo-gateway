@@ -3,6 +3,7 @@ import pytest
 from app.core.settings import settings
 from app.services.profiles.models import Profile, SttConfig
 from app.services.stt.profile import STT_PROFILES, resolve_stt, resolve_stt_profile
+from app.services.system_config import SystemConfigStore
 
 
 def test_vietnamese_profile_uses_qwen3_asr():
@@ -39,12 +40,18 @@ def test_profiles_registry_lists_all_keys():
 # --- resolve_stt: profile-driven STT resolution -----------------------------
 
 @pytest.fixture
-def _server_default(monkeypatch):
+def _server_default(monkeypatch, tmp_path):
     # Pin the server-wide default so tests don't depend on the ambient .env.
     monkeypatch.setattr(settings, "stt_profile", "")
     monkeypatch.setattr(settings, "conversation_stt_engine", "whisper")
     monkeypatch.setattr(settings, "conversation_language", "vi")
-    monkeypatch.setattr(settings, "default_stt_engine", "vosk")
+    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
+    fresh.set(
+        fresh.get().model_copy(
+            update={"engines": fresh.get().engines.model_copy(update={"default_stt_engine": "vosk"})}
+        )
+    )
+    monkeypatch.setattr("app.services.system_config.system_config_store", fresh)
 
 
 def test_resolve_stt_no_profile_uses_server_default(_server_default):

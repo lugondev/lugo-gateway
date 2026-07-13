@@ -30,9 +30,6 @@ class Settings(BaseSettings):
     admin_bootstrap_username: str = ""
     admin_bootstrap_password: str = ""
 
-    default_stt_engine: str = "vosk"
-    default_tts_engine: str = "omnivoice"
-
     omnivoice_path: str = "/Users/lugon/code/OmniVoice"
     omnivoice_model_id: str = "k2-fsa/OmniVoice"
     omnivoice_device: str = ""  # empty = auto-detect (cuda/mps/cpu)
@@ -159,19 +156,6 @@ class Settings(BaseSettings):
     # (Lugo route). Empty disables it (disconnect silently).
     conversation_goodbye_text: str = "Hẹn gặp lại nha!"
     conversation_stt_engine: str = "whisper"  # better than vosk for Vietnamese
-    # Extra STT engine(s) to eagerly warm at boot alongside conversation_stt_engine
-    # (comma-separated). A device that always pins a different engine via
-    # ?stt_engine=... (e.g. an RPi client configured for qwen3_asr) never touches
-    # the default, so without listing it here its first-ever use each boot always
-    # pays the full cold-load cost regardless of how early boot warm-up starts.
-    extra_warmup_stt_engines: str = ""
-    # Boot warm-up is awaited before the app serves (so the first device turn isn't
-    # cold). Capped here so a slow/stuck model load can't block startup — and the
-    # health check — forever; on timeout the app serves and the first turn is cold.
-    warmup_startup_timeout_s: int = 180
-    # Await boot warm-up before serving. Tests turn this off so TestClient(app)
-    # doesn't load real models on every lifespan.
-    warmup_on_startup: bool = True
     # Fast-path routing: short utterances (<= max_ms) go to a low-latency engine,
     # longer/harder ones stay on the accurate default. Empty engine = disabled.
     conversation_fast_stt_engine: str = ""
@@ -183,9 +167,6 @@ class Settings(BaseSettings):
     conversation_streaming_stt: bool = False
     conversation_streaming_chunk_ms: int = 1000
     conversation_tts_engine: str = "omnivoice"  # sidecar server mode (omnivoice_use_server) keeps it warm/in-process
-    # Extra TTS engine(s) to eagerly warm at boot, same reasoning as
-    # extra_warmup_stt_engines above.
-    extra_warmup_tts_engines: str = ""
     # How many reply sentences to synthesize ahead of sending (gapless playback). The
     # next sentence's audio is prepared while the current is being sent. 0/1 = no
     # prefetch. Bounds memory/in-flight synth per turn. 3 keeps the pipeline a sentence
@@ -286,24 +267,5 @@ class Settings(BaseSettings):
         if not value or value == "*":
             return ["*"]
         return [origin.strip() for origin in value.split(",") if origin.strip()]
-
-    @property
-    def warmup_stt_engines(self) -> list[str]:
-        extra = [e.strip() for e in self.extra_warmup_stt_engines.split(",") if e.strip()]
-        seen: list[str] = []
-        for engine in [self.conversation_stt_engine, *extra]:
-            if engine and engine not in seen:
-                seen.append(engine)
-        return seen
-
-    @property
-    def warmup_tts_engines(self) -> list[str]:
-        extra = [e.strip() for e in self.extra_warmup_tts_engines.split(",") if e.strip()]
-        seen: list[str] = []
-        for engine in [self.conversation_tts_engine, *extra]:
-            if engine and engine not in seen:
-                seen.append(engine)
-        return seen
-
 
 settings = Settings()

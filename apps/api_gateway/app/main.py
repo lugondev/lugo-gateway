@@ -140,13 +140,14 @@ async def lifespan(app: FastAPI):
     # instant instead of paying a cold model load (worse with connect-on-wake,
     # where the session starts the moment the user wakes). Capped so a stuck/slow
     # warm can't block startup forever (health checks); on timeout we serve cold.
-    if settings.warmup_on_startup:
+    engine_defaults = system_config_store.get().engines
+    if engine_defaults.warmup_on_startup:
         try:
-            await asyncio.wait_for(_warm_default_engines(), timeout=settings.warmup_startup_timeout_s)
+            await asyncio.wait_for(_warm_default_engines(), timeout=engine_defaults.warmup_startup_timeout_s)
         except TimeoutError:
             logger.warning(
                 "boot warm-up exceeded %ss — serving anyway; the first turn may be cold",
-                settings.warmup_startup_timeout_s,
+                engine_defaults.warmup_startup_timeout_s,
             )
     yield
 

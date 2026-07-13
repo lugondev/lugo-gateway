@@ -24,6 +24,7 @@ from app.services.profiles.store import profile_store
 from app.services.stt.model_registry import resolve_default_stt_model
 from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
+from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
@@ -112,7 +113,11 @@ async def livehost_stream(websocket: WebSocket) -> None:
         tts_speed = tts_profile.speed
         tts_language = tts_profile.language
     else:
-        tts_engine = q.get("tts_engine") or settings.conversation_tts_engine or settings.default_tts_engine
+        tts_engine = (
+            q.get("tts_engine")
+            or settings.conversation_tts_engine
+            or system_config_store.get().engines.default_tts_engine
+        )
         voice = q.get("voice") or None
         ref_audio_path = ref_text = tts_instruct = None
         tts_speed = tts_language = None

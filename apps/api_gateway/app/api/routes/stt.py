@@ -20,6 +20,7 @@ from app.schemas.stt import STTRequest, STTResult
 from app.services.stt.base import STTStream
 from app.services.stt.segmented import transcribe_long
 from app.services.stt.service import stt_service
+from app.services.system_config import system_config_store
 from app.services.vad import apply_vad
 from app.streaming.event_bus import event_bus
 
@@ -44,13 +45,14 @@ def _parse_bool(value: str | None) -> bool | None:
 @router.post("/transcribe")
 async def transcribe(
     audio: UploadFile = File(...),
-    engine: str = Form(default=settings.default_stt_engine),
+    engine: str | None = Form(default=None),
     language: str | None = Form(default=None),
     denoise: bool | None = Form(default=None),
     vad: bool | None = Form(default=None),
     vad_backend: str | None = Form(default=None),
     segment: bool | None = Form(default=None),
 ) -> dict:
+    engine = engine or system_config_store.get().engines.default_stt_engine
     payload = STTRequest(engine=engine, language=language)
     provider = stt_service.get_provider(payload.engine)
     audio_bytes = await audio.read()
@@ -157,7 +159,7 @@ async def stt_stream(websocket: WebSocket) -> None:
     channel = f"session:{session_id}"
     sequence = 0
 
-    engine = websocket.query_params.get("engine", settings.default_stt_engine)
+    engine = websocket.query_params.get("engine", system_config_store.get().engines.default_stt_engine)
     language = websocket.query_params.get("language")
     sample_rate = int(
         websocket.query_params.get("sample_rate", settings.stt_stream_sample_rate)

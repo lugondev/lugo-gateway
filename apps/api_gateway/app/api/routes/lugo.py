@@ -27,6 +27,7 @@ from app.services.conversation.tools.device_mcp import (
 )
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
+from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 
 logger = logging.getLogger(__name__)
@@ -55,8 +56,9 @@ def _resolve(profile_name: str | None):
                    ref_audio_path=tts_profile.ref_audio_path or None, ref_text=tts_profile.ref_text or None,
                    instruct=tts_profile.instruct or None, speed=tts_profile.speed, language=tts_profile.language)
     else:
-        tts = dict(engine=settings.conversation_tts_engine or settings.default_tts_engine,
-                   voice=None, ref_audio_path=None, ref_text=None, instruct=None, speed=None, language=None)
+        tts = dict(
+            engine=settings.conversation_tts_engine or system_config_store.get().engines.default_tts_engine,
+            voice=None, ref_audio_path=None, ref_text=None, instruct=None, speed=None, language=None)
     idle = profile.session.idle_timeout_s if profile else 30
     return profile, stt_engine, language, stt_model, tts, idle
 

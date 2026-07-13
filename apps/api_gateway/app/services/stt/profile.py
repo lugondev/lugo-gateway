@@ -52,6 +52,7 @@ def resolve_stt(
     of the preset system — a preset never implies a model variant.
     """
     from app.core.settings import settings
+    from app.services.system_config import system_config_store
 
     stt_cfg = getattr(profile, "stt", None)
     preset_name = (getattr(stt_cfg, "profile", "") or "") or settings.stt_profile
@@ -63,7 +64,7 @@ def resolve_stt(
         or (getattr(stt_cfg, "engine", "") or None)
         or preset_engine
         or settings.conversation_stt_engine
-        or settings.default_stt_engine
+        or system_config_store.get().engines.default_stt_engine
     )
     if q_language:
         language: str | None = q_language

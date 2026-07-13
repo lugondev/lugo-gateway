@@ -241,3 +241,23 @@ class SystemConfigStore:
 
 
 system_config_store = SystemConfigStore(settings_attr="system_config_path")
+
+
+def warmup_stt_engines() -> list[str]:
+    engines = system_config_store.get().engines
+    extra = [e.strip() for e in engines.extra_warmup_stt_engines.split(",") if e.strip()]
+    seen: list[str] = []
+    for engine in [settings.conversation_stt_engine, *extra]:  # migrated to system_config_store in Task 3
+        if engine and engine not in seen:
+            seen.append(engine)
+    return seen
+
+
+def warmup_tts_engines() -> list[str]:
+    engines = system_config_store.get().engines
+    extra = [e.strip() for e in engines.extra_warmup_tts_engines.split(",") if e.strip()]
+    seen: list[str] = []
+    for engine in [settings.conversation_tts_engine, *extra]:  # migrated to system_config_store in Task 3
+        if engine and engine not in seen:
+            seen.append(engine)
+    return seen
