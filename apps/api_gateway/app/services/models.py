@@ -18,7 +18,7 @@ import httpx
 
 from app.core.errors import AppError
 from app.core.hf_cache import dir_size_bytes
-from app.core.settings import settings
+from app.services.system_config import system_config_store
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -34,7 +34,7 @@ VOSK_SUGGESTIONS = [
 
 class ModelManager:
     def __init__(self) -> None:
-        self._base = Path(settings.stt_model_dir)
+        self._base = Path(system_config_store.get().stt_local.stt_model_dir)
         self._base.mkdir(parents=True, exist_ok=True)
         # name -> {"state": downloading|installed|error, "progress": float, "error": str|None}
         self._jobs: dict[str, dict] = {}
@@ -91,7 +91,7 @@ class ModelManager:
             return
         self._jobs[name] = {"state": "downloading", "progress": 0.0, "error": None}
         try:
-            url = f"{settings.vosk_model_base_url.rstrip('/')}/{name}.zip"
+            url = f"{system_config_store.get().stt_local.vosk_model_base_url.rstrip('/')}/{name}.zip"
             zip_path = self._base / f"{name}.zip.part"
             async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
                 async with client.stream("GET", url) as resp:

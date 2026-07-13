@@ -14,10 +14,10 @@ import concurrent.futures
 import os
 import tempfile
 
-from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.stt.base import STTProvider
 from app.services.stt.glossary import resolve_initial_prompt
+from app.services.system_config import system_config_store
 
 # mlx_whisper runs on MLX, which is not safe for concurrent cross-thread use (see
 # qwen3_asr_provider.py for the same hazard in detail). The conversation warms this
@@ -37,21 +37,23 @@ class WhisperMlxProvider(STTProvider):
             import mlx_whisper  # noqa: F401
         except ImportError:
             return False
-        return os.path.isdir(settings.whisper_mlx_model_path)
+        return os.path.isdir(system_config_store.get().stt_local.whisper_mlx_model_path)
 
     def detail(self) -> str:
-        return f"{os.path.basename(settings.whisper_mlx_model_path)} · Apple GPU (MLX)"
+        path = system_config_store.get().stt_local.whisper_mlx_model_path
+        return f"{os.path.basename(path)} · Apple GPU (MLX)"
 
     def _transcribe(self, wav_path: str, language: str | None) -> str:
         import mlx_whisper
 
+        stt_local = system_config_store.get().stt_local
         result = mlx_whisper.transcribe(
             wav_path,
-            path_or_hf_repo=settings.whisper_mlx_model_path,
+            path_or_hf_repo=stt_local.whisper_mlx_model_path,
             language=language,
-            condition_on_previous_text=settings.whisper_condition_on_previous_text,
+            condition_on_previous_text=stt_local.whisper_condition_on_previous_text,
             initial_prompt=resolve_initial_prompt(
-                settings.whisper_initial_prompt, settings.stt_glossary_path
+                stt_local.whisper_initial_prompt, stt_local.stt_glossary_path
             ),
         )
         return (result.get("text") or "").strip()

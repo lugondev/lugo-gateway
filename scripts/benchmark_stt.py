@@ -30,7 +30,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "api_gateway"))
 
 from app.core.audio import wav_duration_seconds  # noqa: E402
-from app.core.settings import settings  # noqa: E402
 from app.services.stt.benchmark import (  # noqa: E402
     ClipResult,
     aggregate,
@@ -65,8 +64,12 @@ async def transcribe_one(
     engine: str, glossary_path: str, qwen3_model: str, wav_bytes: bytes, language: str | None
 ):
     """Transcribe with a specific engine/glossary/qwen3-size; return (text, latency_s)."""
-    # Glossary is read from settings at call time (cached by path in glossary.py).
-    settings.stt_glossary_path = glossary_path
+    # Glossary is read from system_config_store.get().stt_local at call time (cached
+    # by path in glossary.py). stt_glossary_path moved off Settings onto the admin
+    # System settings store (Task 4); mutate the cached SystemConfig in-process only
+    # (not .set(), which would write through to the DB and could clobber whatever
+    # the developer has configured there) -- fine for this one-off benchmark run.
+    system_config_store.get().stt_local.stt_glossary_path = glossary_path
     if engine == "qwen3_asr":
         set_active_qwen3_asr_model(qwen3_model or None)
     provider = stt_service.get_provider(engine)

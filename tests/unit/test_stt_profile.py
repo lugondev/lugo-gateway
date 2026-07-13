@@ -1,6 +1,5 @@
 import pytest
 
-from app.core.settings import settings
 from app.services.profiles.models import Profile, SttConfig
 from app.services.stt.profile import STT_PROFILES, resolve_stt, resolve_stt_profile
 from app.services.system_config import SystemConfigStore
@@ -41,13 +40,13 @@ def test_profiles_registry_lists_all_keys():
 
 @pytest.fixture
 def _server_default(monkeypatch, tmp_path):
-    # Pin the server-wide default so tests don't depend on the ambient .env.
-    monkeypatch.setattr(settings, "stt_profile", "")
+    # Pin the server-wide default so tests don't depend on the ambient config DB.
     fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
     fresh.set(
         fresh.get().model_copy(
             update={
                 "engines": fresh.get().engines.model_copy(update={"default_stt_engine": "vosk"}),
+                "stt_local": fresh.get().stt_local.model_copy(update={"stt_profile": ""}),
                 "conversation": fresh.get().conversation.model_copy(
                     update={"conversation_stt_engine": "whisper", "conversation_language": "vi"}
                 ),
@@ -84,11 +83,13 @@ def test_resolve_stt_query_param_wins_over_profile(_server_default):
 
 
 def test_resolve_stt_server_stt_profile_default_applies_without_profile(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "stt_profile", "en")
     fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
     fresh.set(
         fresh.get().model_copy(
-            update={"conversation": fresh.get().conversation.model_copy(update={"conversation_stt_engine": "whisper"})}
+            update={
+                "stt_local": fresh.get().stt_local.model_copy(update={"stt_profile": "en"}),
+                "conversation": fresh.get().conversation.model_copy(update={"conversation_stt_engine": "whisper"}),
+            }
         )
     )
     monkeypatch.setattr("app.services.system_config.system_config_store", fresh)

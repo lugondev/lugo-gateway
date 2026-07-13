@@ -3,9 +3,9 @@ import json
 import os
 import wave
 
-from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.stt.base import STTProvider, STTStream
+from app.services.system_config import system_config_store
 
 _MODEL_CACHE: dict[str, object] = {}
 
@@ -15,7 +15,7 @@ _active_path: str | None = None
 
 
 def get_active_vosk_path() -> str:
-    return _active_path or settings.vosk_model_path
+    return _active_path or system_config_store.get().stt_local.vosk_model_path
 
 
 def set_active_vosk_path(path: str) -> None:

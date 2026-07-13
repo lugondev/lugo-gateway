@@ -18,7 +18,8 @@ class TtsConfig(BaseModel):
 
 class SttConfig(BaseModel):
     # Language preset (services/stt/profile.py: vi|en|multi|en_vi) — sets engine +
-    # language together. "" = inherit the server-wide default (settings.stt_profile).
+    # language together. "" = inherit the server-wide default (system_config_store's
+    # stt_local.stt_profile).
     profile: str = ""
     # Explicit overrides, for when the preset isn't enough. "" = derive from the
     # preset / server default. engine is a registered STT engine name; language is

@@ -17,9 +17,9 @@ import platform
 import tempfile
 
 from app.core.deps import module_available
-from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.stt.base import STTProvider
+from app.services.system_config import system_config_store
 
 _MODEL_CACHE: dict[str, object] = {}
 
@@ -40,13 +40,20 @@ def resolve_qwen3_asr_model(name: str) -> str:
 
 
 def get_active_qwen3_asr_model() -> str:
-    return _active_model or settings.qwen3_asr_model
+    return _active_model or system_config_store.get().stt_local.qwen3_asr_model
 
 
 def set_active_qwen3_asr_model(name: str | None) -> None:
     """Override the active model at runtime (shorthand resolved); None resets to settings."""
     global _active_model
     _active_model = resolve_qwen3_asr_model(name) if name else None
+
+
+def clear_model_cache() -> None:
+    """Drop every cached model instance so the next call rebuilds with current
+    settings (e.g. a changed qwen3_asr_device, which the cache key does not
+    include — see _cuda_model's key format)."""
+    _MODEL_CACHE.clear()
 
 # A single dedicated worker thread for ALL Qwen3-ASR GPU work (model build + every
 # transcribe + warm). MLX is not safe for concurrent cross-thread use: its streams are
@@ -135,7 +142,7 @@ class Qwen3AsrProvider(STTProvider):
             _MODEL_CACHE[key] = Qwen3ASRModel.from_pretrained(
                 resolved,
                 dtype=_cuda_dtype(torch),  # bf16 on Ampere+, fp16 on T4/Turing
-                device_map=settings.qwen3_asr_device or "cuda:0",
+                device_map=system_config_store.get().stt_local.qwen3_asr_device or "cuda:0",
                 max_new_tokens=256,
             )
         return _MODEL_CACHE[key]

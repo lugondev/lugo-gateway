@@ -152,3 +152,24 @@ def test_non_dict_json_body_returns_422_not_500(client):
     assert resp.status_code == 422
     assert resp.headers["content-type"].startswith("application/json")
     assert resp.json()["detail"]
+
+
+def test_changing_qwen3_asr_device_clears_the_model_cache(client, monkeypatch):
+    from app.services.stt.providers import qwen3_asr_provider as mod
+
+    mod._MODEL_CACHE["cuda:some-model"] = object()
+    full = client.get("/v1/system/config").json()["data"]
+    full["stt_local"]["qwen3_asr_device"] = "cuda:1"
+    client.put("/v1/system/config", json=full)
+    assert mod._MODEL_CACHE == {}
+
+
+def test_unrelated_field_change_does_not_clear_qwen3_asr_cache(client):
+    from app.services.stt.providers import qwen3_asr_provider as mod
+
+    sentinel = object()
+    mod._MODEL_CACHE["cuda:some-model"] = sentinel
+    full = client.get("/v1/system/config").json()["data"]
+    full["base_context"] = "unrelated change"
+    client.put("/v1/system/config", json=full)
+    assert mod._MODEL_CACHE.get("cuda:some-model") is sentinel

@@ -106,10 +106,11 @@ async def lugo_stream(websocket: WebSocket) -> None:
     if not isinstance(requested_sid, str) or not requested_sid:
         requested_sid = None
     session_id = requested_sid or str(uuid.uuid4())
+    default_sample_rate = system_config_store.get().stt_local.stt_stream_sample_rate
     try:
-        in_sr = int((hello.get("audio_params") or {}).get("sample_rate", settings.stt_stream_sample_rate))
+        in_sr = int((hello.get("audio_params") or {}).get("sample_rate", default_sample_rate))
     except (TypeError, ValueError):
-        in_sr = settings.stt_stream_sample_rate
+        in_sr = default_sample_rate
     try:
         out_sr = int((hello.get("audio_params") or {}).get("output_sample_rate", 24000))
     except (TypeError, ValueError):

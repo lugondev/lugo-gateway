@@ -2,7 +2,6 @@
 conversation stream does), not just from server-wide settings — so a device
 that sends only a profile id streams against that profile's STT."""
 
-from app.core.settings import settings
 from app.services.profiles.models import Profile, SttConfig
 from app.services.profiles.store import ProfileStore
 from app.services.system_config import SystemConfigStore
@@ -35,14 +34,14 @@ def test_lugo_resolve_explicit_engine_overrides_preset(monkeypatch, tmp_path):
 def test_lugo_resolve_no_profile_falls_back_to_settings(monkeypatch, tmp_path):
     fresh = ProfileStore(str(tmp_path / "profiles.json"))
     monkeypatch.setattr(lugo, "profile_store", fresh)
-    monkeypatch.setattr(settings, "stt_profile", "")
     fresh_config = SystemConfigStore(str(tmp_path / "system_config.json"))
     fresh_config.set(
         fresh_config.get().model_copy(
             update={
+                "stt_local": fresh_config.get().stt_local.model_copy(update={"stt_profile": ""}),
                 "conversation": fresh_config.get().conversation.model_copy(
                     update={"conversation_stt_engine": "stub-fallback-stt"}
-                )
+                ),
             }
         )
     )

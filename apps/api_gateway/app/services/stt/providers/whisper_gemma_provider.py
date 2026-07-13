@@ -10,7 +10,6 @@ import logging
 
 import httpx
 
-from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.conversation.responder import get_active_llm_model
 from app.services.stt.base import STTProvider
@@ -36,12 +35,13 @@ class WhisperGemmaProvider(STTProvider):
             return text  # no LLM configured -> raw transcript
         headers = {"Authorization": f"Bearer {cl.conversation_llm_api_key}"} if cl.conversation_llm_api_key else {}
         lang = language or "the same language as the transcript"
+        stt_local = system_config_store.get().stt_local
         messages = [
-            {"role": "system", "content": settings.stt_enhance_prompt},
+            {"role": "system", "content": stt_local.stt_enhance_prompt},
             {"role": "user", "content": f"Language: {lang}\nTranscript: {text}"},
         ]
         try:
-            async with httpx.AsyncClient(timeout=settings.stt_enhance_timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=stt_local.stt_enhance_timeout_seconds) as client:
                 resp = await client.post(
                     f"{base.rstrip('/')}/chat/completions",
                     headers=headers,

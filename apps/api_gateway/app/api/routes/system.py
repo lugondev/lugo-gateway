@@ -51,6 +51,7 @@ async def system_status() -> dict:
 
     active_vosk_path = get_active_vosk_path()
     active_whisper = whisper_manager.snapshot()["active"]
+    stt_local = system_config_store.get().stt_local
     data = {
         "app": {"name": settings.app_name, "env": settings.app_env},
         "stt_engines": stt_service.list_engines(),
@@ -61,7 +62,7 @@ async def system_status() -> dict:
         },
         "whisper_local": {
             "active_model": active_whisper,
-            "device": settings.whisper_local_device,
+            "device": stt_local.whisper_local_device,
             "cached": whisper_manager._cached(active_whisper),
         },
         "vosk": {
@@ -70,7 +71,7 @@ async def system_status() -> dict:
             "installed": model_manager.list_installed(),
         },
         "artifacts": _artifacts_stats(),
-        "stream_sample_rate": settings.stt_stream_sample_rate,
+        "stream_sample_rate": stt_local.stt_stream_sample_rate,
         "stt_preprocess": {
             "vad": settings.stt_vad_enabled,
             "vad_backend": settings.stt_vad_backend,
@@ -167,9 +168,12 @@ async def set_system_config(request: Request) -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     merged = _merge_system_config(current, payload)
     new_config = system_config_store.set(merged)
-    # Cache-invalidation hooks for settings cached at boot/first-use are added here
-    # incrementally (remote_stt in Task 6, omnivoice in Task 7, preprocessing.pyannote_*
-    # and stt_local.qwen3_asr_device in Tasks 5/4 respectively).
+    if current.stt_local.qwen3_asr_device != new_config.stt_local.qwen3_asr_device:
+        from app.services.stt.providers.qwen3_asr_provider import clear_model_cache
+
+        clear_model_cache()
+    # Remaining cache-invalidation hooks (preprocessing.pyannote_*, remote_stt, omnivoice)
+    # are added here incrementally in Tasks 5, 6, 7.
     return {"success": True, "data": _mask_system_config(new_config)}
 
 

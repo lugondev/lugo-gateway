@@ -68,16 +68,17 @@ async def transcribe(
 
     # Long clips: split on silence and transcribe segments in parallel (higher
     # throughput). Only when enabled and the clip is at/over the length threshold.
-    use_segment = _resolve_flag(segment, settings.stt_segment_long_enabled)
+    stt_local = system_config_store.get().stt_local
+    use_segment = _resolve_flag(segment, stt_local.stt_segment_long_enabled)
     try:
-        if use_segment and wav_duration_seconds(audio_bytes) >= settings.stt_segment_min_seconds:
+        if use_segment and wav_duration_seconds(audio_bytes) >= stt_local.stt_segment_min_seconds:
             pcm, sample_rate, _, _ = read_wav(audio_bytes)
             result = await transcribe_long(
                 provider,
                 pcm16_to_float_array(pcm),
                 sample_rate,
                 language=payload.language,
-                concurrency=settings.stt_segment_concurrency,
+                concurrency=stt_local.stt_segment_concurrency,
             )
         else:
             # no per-session model here -- falls back to this engine's process-global
@@ -162,7 +163,9 @@ async def stt_stream(websocket: WebSocket) -> None:
     engine = websocket.query_params.get("engine", system_config_store.get().engines.default_stt_engine)
     language = websocket.query_params.get("language")
     sample_rate = int(
-        websocket.query_params.get("sample_rate", settings.stt_stream_sample_rate)
+        websocket.query_params.get(
+            "sample_rate", system_config_store.get().stt_local.stt_stream_sample_rate
+        )
     )
     denoise = _resolve_flag(
         _parse_bool(websocket.query_params.get("denoise")), settings.stt_noise_reduce_enabled

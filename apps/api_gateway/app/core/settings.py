@@ -66,51 +66,6 @@ class Settings(BaseSettings):
 
     artifacts_dir: str = "artifacts"
 
-    stt_model_dir: str = "models/stt"
-    vosk_model_path: str = "models/stt/vosk-model-small-en-us-0.15"
-    vosk_model_base_url: str = "https://alphacephei.com/vosk/models"
-    stt_stream_sample_rate: int = 16000
-
-    # PhoWhisper (VinAI) — Whisper fine-tuned on 844h Vietnamese. Far better tones/
-    # diacritics than vanilla Whisper. CT2 build runs in faster-whisper at the same
-    # speed class as the equivalent vanilla size. Standard sizes ("small"/"medium"/
-    # "large-v3") still work; PhoWhisper ids: "phowhisper-{tiny,base,small,medium,large}".
-    whisper_local_model: str = "phowhisper-medium"
-    whisper_local_device: str = "cpu"
-    whisper_local_compute_type: str = "int8"
-    # Whisper's OWN (Silero) VAD — keep on; it removes silence well and speeds up.
-    whisper_vad_filter: bool = True
-    # Decoding quality knobs (apply to all whisper-family engines). beam_size=1
-    # (greedy) is ~17% faster than 5 with no measured accuracy loss on PhoWhisper —
-    # favors conversation latency. Raise to 5 for best batch-transcription quality.
-    whisper_beam_size: int = 1
-    # Off: avoids hallucination/repetition drift across silent gaps (important for
-    # short conversation turns). Initial prompt seeds Vietnamese orthography; empty = off.
-    whisper_condition_on_previous_text: bool = False
-    whisper_initial_prompt: str = ""
-    # Optional hotword/glossary file (one domain term per line, "#" comments). Merged
-    # into the Whisper initial prompt to bias recognition toward domain vocabulary
-    # (product names, wake-words, commands) — the Whisper-family analogue of a
-    # FunASR hotword list. Empty = no glossary biasing.
-    stt_glossary_path: str = ""
-    # Language preset -> (engine, language). One of: vi | en | multi | en_vi (see
-    # services/stt/profile.py). Empty = use conversation_stt_engine/language as-is.
-    # An explicit stt_engine/language (query param) still overrides the profile.
-    stt_profile: str = ""
-
-    # whisper_mlx: Apple Silicon GPU path (mlx-whisper). ~7x faster than CPU faster-
-    # whisper on M-series. Point at a locally converted MLX model dir (see
-    # scripts/convert_phowhisper_mlx.sh). Engine auto-hides when mlx_whisper is absent
-    # (non-Mac) or the dir is missing -> callers fall back to the faster-whisper engine.
-    whisper_mlx_model_path: str = "models/stt/phowhisper-medium-mlx"
-
-    # Qwen3-ASR (engine "qwen3_asr"), multilingual incl. Vietnamese. Two GPU backends,
-    # auto-selected: mlx-qwen3-asr (Apple, `qwen3-asr` extra) or qwen-asr (NVIDIA/CUDA,
-    # `qwen3-asr-cuda` extra). 0.6B (default, light, verified VN) or Qwen/Qwen3-ASR-1.7B
-    # (higher accuracy). qwen3_asr_device applies to the CUDA backend (empty = cuda:0).
-    qwen3_asr_model: str = "Qwen/Qwen3-ASR-0.6B"
-    qwen3_asr_device: str = ""
-
     # Extra STT preprocessing (defaults OFF: our energy gate / spectral denoise can
     # clip or add artifacts and don't help Whisper, which has its own VAD).
     stt_vad_enabled: bool = False
@@ -118,24 +73,9 @@ class Settings(BaseSettings):
     stt_noise_reduce_enabled: bool = False
     stt_noise_reduce_amount: float = 0.85
 
-    # VAD-segmented parallel transcription for long batch audio (FunASR-style): split
-    # on silence, transcribe segments concurrently, merge. Off by default; when on it
-    # only kicks in for clips at/over stt_segment_min_seconds.
-    stt_segment_long_enabled: bool = False
-    stt_segment_min_seconds: float = 30.0
-    stt_segment_concurrency: int = 4
-
     # Pyannote VAD model + optional Hugging Face token (gated models)
     pyannote_vad_model: str = "pyannote/segmentation-3.0"
     pyannote_auth_token: str = ""
-
-    # whisper_gemma: faster-whisper transcript refined by the conversation LLM
-    stt_enhance_timeout_seconds: float = 30.0
-    stt_enhance_prompt: str = (
-        "You are an ASR post-editor. Fix spelling, casing, punctuation and obvious "
-        "speech-recognition errors in the transcript. Do NOT translate, do NOT answer it, "
-        "do NOT add or remove meaning. Return ONLY the corrected transcript text."
-    )
 
     whisper_service_base_url: str = ""
     whisper_service_api_key: str = ""
