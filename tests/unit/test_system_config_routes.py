@@ -124,3 +124,31 @@ def test_partial_put_does_not_reset_unrelated_group_to_defaults(client):
     # Also confirmed via a fresh GET, not just the PUT response.
     data = client.get("/v1/system/config").json()["data"]
     assert data["engines"]["default_stt_engine"] == "qwen3_asr"
+
+
+def test_malformed_field_type_returns_422_not_500(client):
+    """Regression test: switching the route to manual request.json() +
+    SystemConfig.model_validate() (to enable the deep-merge fix above) must not
+    lose the structured 422 FastAPI gave for free when the param was a typed
+    `payload: SystemConfig` -- a wrong-typed field should be a 422 JSON error,
+    not a bare 500 text/plain response."""
+    resp = client.put(
+        "/v1/system/config",
+        json={"engines": {"warmup_startup_timeout_s": "not-a-number"}},
+    )
+    assert resp.status_code == 422
+    assert resp.headers["content-type"].startswith("application/json")
+    assert resp.json()["detail"]
+
+
+def test_non_dict_json_body_returns_422_not_500(client):
+    """A JSON body that parses but isn't an object (e.g. a bare array) must also
+    be a 422, not a 500 -- request.json() succeeding doesn't guarantee a dict."""
+    resp = client.put(
+        "/v1/system/config",
+        content="[1, 2, 3]",
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422
+    assert resp.headers["content-type"].startswith("application/json")
+    assert resp.json()["detail"]

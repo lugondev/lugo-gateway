@@ -1,6 +1,7 @@
 import os
 
-from fastapi import APIRouter, BackgroundTasks, Request
+import pydantic
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.settings import settings
@@ -152,9 +153,18 @@ async def set_system_config(request: Request) -> dict:
     # Pydantic default value" -- a partial body (e.g. the base-context/openrouter
     # save buttons, which only ever send those 2 fields) must never reset the
     # other groups back to their hard-coded defaults.
-    raw = await request.json()
-    deep_merged = _deep_merge(current.model_dump(), raw)
-    payload = SystemConfig.model_validate(deep_merged)
+    try:
+        raw = await request.json()
+        if not isinstance(raw, dict):
+            raise ValueError("request body must be a JSON object")
+        deep_merged = _deep_merge(current.model_dump(), raw)
+        payload = SystemConfig.model_validate(deep_merged)
+    except (ValueError, pydantic.ValidationError) as exc:
+        # Mirror the structured 422 FastAPI would give automatically for a typed
+        # `payload: SystemConfig` parameter -- manual json()/model_validate() calls
+        # don't get that for free, so surface the same status/shape ourselves
+        # instead of letting a malformed body fall through as a bare 500.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     merged = _merge_system_config(current, payload)
     new_config = system_config_store.set(merged)
     # Cache-invalidation hooks for settings cached at boot/first-use are added here
