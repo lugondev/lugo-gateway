@@ -66,3 +66,31 @@ export function setBadge(id, ok) {
   e.classList.toggle("ok", !!ok);
   e.classList.toggle("err", !ok);
 }
+
+export function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str == null ? "" : String(str);
+  return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// Runs `fn(id)` for every id in sequence. `fn` must resolve to
+// `{ ok: true }` or `{ ok: false, error }` and must never throw (catch
+// internally). Returns one "<label>: <error>" string per failed id — an
+// empty array means every id succeeded.
+export async function runBulk(ids, fn, describeId) {
+  const errors = [];
+  for (const id of ids) {
+    const result = await fn(id);
+    if (!result.ok) errors.push(`${describeId(id)}: ${result.error}`);
+  }
+  return errors;
+}
+
+// Prints a one-line summary of a completed bulk action to `statusEl`.
+export function printBulkSummary(statusEl, total, errors, verb = "Updated") {
+  if (errors.length) {
+    print(statusEl, `${errors.length} of ${total} failed:\n${errors.join("\n")}`, true);
+  } else {
+    print(statusEl, `${verb} ${total} item${total === 1 ? "" : "s"}`);
+  }
+}

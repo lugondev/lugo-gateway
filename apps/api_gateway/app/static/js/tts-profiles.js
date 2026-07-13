@@ -1,4 +1,5 @@
-import { el, print, restoreAndBind } from "./helpers.js";
+import { el, print, escapeHtml, runBulk, printBulkSummary, restoreAndBind } from "./helpers.js";
+import { renderDataTable } from "./data-table.js";
 import { renderProfileTtsSelect } from "./profiles.js";
 import { fetchAuthStatus } from "./session.js";
 
@@ -59,36 +60,60 @@ export async function renderTtsProfileList() {
   const status = await fetchAuthStatus();
   const isAdmin = !!(status && status.authenticated && status.role === "admin");
 
-  host.innerHTML = names.map((name) => {
-    const p = ttsProfileData[name];
-    const voiceSummary = p.voice_mode === "clone" ? "cloned voice" : (p.voice || "auto voice");
-    const isTemplate = p.owner_id === null || p.owner_id === undefined;
-    const mine = !isTemplate ? '<span class="hint">mine</span>' : "";
-    const hideWriteControls = isTemplate && !isAdmin;
-    return `
-      <div class="model-row">
-        <div class="model-info">
-          <strong>${name}</strong>
-          ${mine}
-          <code>${p.engine || "(no engine)"}</code>
-          <span class="hint">${voiceSummary}</span>
-        </div>
-        <div class="model-action">
-          ${hideWriteControls ? "" : `<button class="mini" data-tp-edit="${name}">Edit</button>`}
-          <button class="mini" data-tp-clone="${name}">Clone</button>
-          ${hideWriteControls ? "" : `<button class="mini danger" data-tp-delete="${name}">Delete</button>`}
-        </div>
-      </div>
-    `;
-  }).join("");
+  const table = renderDataTable({
+    container: host,
+    rows: names,
+    rowKey: (name) => name,
+    emptyMessage: "No TTS profiles yet. Create one below.",
+    columns: [
+      {
+        key: "name",
+        label: "Name",
+        render: (name) => {
+          const p = ttsProfileData[name];
+          const isTemplate = p.owner_id === null || p.owner_id === undefined;
+          return `<strong>${escapeHtml(name)}</strong>${isTemplate ? "" : ' <span class="hint">mine</span>'}`;
+        },
+      },
+      { key: "engine", label: "Engine", render: (name) => `<code>${escapeHtml(ttsProfileData[name].engine || "(no engine)")}</code>` },
+      {
+        key: "voice",
+        label: "Voice",
+        render: (name) => {
+          const p = ttsProfileData[name];
+          return escapeHtml(p.voice_mode === "clone" ? "cloned voice" : (p.voice || "auto voice"));
+        },
+      },
+      {
+        key: "actions",
+        label: "",
+        headerClass: "dt-actions-cell",
+        cellClass: "dt-actions-cell",
+        render: (name) => {
+          const p = ttsProfileData[name];
+          const isTemplate = p.owner_id === null || p.owner_id === undefined;
+          const hideWriteControls = isTemplate && !isAdmin;
+          return `
+            ${hideWriteControls ? "" : `<button class="mini" data-tp-edit="${escapeHtml(name)}">Edit</button>`}
+            <button class="mini" data-tp-clone="${escapeHtml(name)}">Clone</button>
+            ${hideWriteControls ? "" : `<button class="mini danger" data-tp-delete="${escapeHtml(name)}">Delete</button>`}
+          `;
+        },
+      },
+    ],
+    bulkActions: [
+      { label: "Delete selected", run: (ids) => bulkDeleteTtsProfiles(ids) },
+    ],
+  });
+  if (!table) return;
 
-  document.querySelectorAll("[data-tp-edit]").forEach((btn) =>
+  table.querySelectorAll("[data-tp-edit]").forEach((btn) =>
     btn.addEventListener("click", () => openTtsProfileForm(btn.getAttribute("data-tp-edit")))
   );
-  document.querySelectorAll("[data-tp-delete]").forEach((btn) =>
+  table.querySelectorAll("[data-tp-delete]").forEach((btn) =>
     btn.addEventListener("click", () => deleteTtsProfile(btn.getAttribute("data-tp-delete")))
   );
-  document.querySelectorAll("[data-tp-clone]").forEach((btn) =>
+  table.querySelectorAll("[data-tp-clone]").forEach((btn) =>
     btn.addEventListener("click", () => cloneTtsProfile(btn.getAttribute("data-tp-clone")))
   );
 }
@@ -186,16 +211,36 @@ export async function saveTtsProfile() {
   }
 }
 
-export async function deleteTtsProfile(name) {
-  if (!confirm(`Delete TTS profile "${name}"?`)) return;
+async function _deleteTtsProfileRaw(name) {
   try {
     const resp = await fetch(`/v1/tts/profiles/${encodeURIComponent(name)}`, { method: "DELETE" });
-    if (!resp.ok) { const b = await resp.json(); print(el("tp-status"), b.detail || "Delete failed", true); return; }
-    await loadTtsProfiles();
-    if (ttsProfileEditName === name) resetTtsProfileForm();
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      return { ok: false, error: body.detail || "Delete failed" };
+    }
+    return { ok: true };
   } catch (error) {
-    print(el("tp-status"), String(error), true);
+    return { ok: false, error: String(error) };
   }
+}
+
+export async function deleteTtsProfile(name) {
+  if (!confirm(`Delete TTS profile "${name}"?`)) return;
+  const result = await _deleteTtsProfileRaw(name);
+  if (!result.ok) {
+    print(el("tp-status"), result.error, true);
+    return;
+  }
+  await loadTtsProfiles();
+  if (ttsProfileEditName === name) resetTtsProfileForm();
+}
+
+async function bulkDeleteTtsProfiles(names) {
+  if (!confirm(`Delete ${names.length} TTS profile(s)?`)) return;
+  const errors = await runBulk(names, _deleteTtsProfileRaw, (name) => name);
+  await loadTtsProfiles();
+  if (names.includes(ttsProfileEditName)) resetTtsProfileForm();
+  printBulkSummary(el("tp-status"), names.length, errors, "Deleted");
 }
 
 export async function cloneTtsProfile(name) {

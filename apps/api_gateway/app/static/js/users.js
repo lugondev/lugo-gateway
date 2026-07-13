@@ -1,4 +1,5 @@
-import { el, print } from "./helpers.js";
+import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
+import { renderDataTable } from "./data-table.js";
 
 export let userData = [];
 
@@ -12,58 +13,75 @@ export async function loadUsers() {
   }
 }
 
-function _escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str == null ? "" : String(str);
-  return div.innerHTML;
-}
-
 function renderUserList() {
   const host = el("user-list");
   if (!host) return;
-  if (!userData.length) {
-    host.innerHTML = '<p class="hint">No users yet.</p>';
-    return;
-  }
-  host.innerHTML = userData.map((u) => `
-    <div class="model-row ${u.disabled ? "dim" : ""}">
-      <div class="model-info">
-        <strong>${_escapeHtml(u.username)}</strong>
-        <select data-user-role="${u.id}">
-          <option value="user" ${u.role === "user" ? "selected" : ""}>user</option>
-          <option value="admin" ${u.role === "admin" ? "selected" : ""}>admin</option>
-        </select>
-        <label><input type="checkbox" data-user-testing="${u.id}" ${u.can_use_testing ? "checked" : ""} /> Testing</label>
-        <span class="hint">${u.disabled ? "Disabled" : "Active"}</span>
-      </div>
-      <div class="model-action">
-        <button class="mini" data-user-toggle-disabled="${u.id}">${u.disabled ? "Enable" : "Disable"}</button>
-        <button class="mini" data-user-reset="${u.id}">Reset password</button>
-      </div>
-    </div>
-  `).join("");
 
-  document.querySelectorAll("[data-user-role]").forEach((sel) =>
+  const table = renderDataTable({
+    container: host,
+    rows: userData,
+    rowKey: (u) => u.id,
+    getRowClass: (u) => (u.disabled ? "dim" : ""),
+    emptyMessage: "No users yet.",
+    columns: [
+      { key: "username", label: "Username", render: (u) => `<strong>${escapeHtml(u.username)}</strong>` },
+      {
+        key: "role",
+        label: "Role",
+        render: (u) => `
+          <select data-user-role="${escapeHtml(u.id)}">
+            <option value="user" ${u.role === "user" ? "selected" : ""}>user</option>
+            <option value="admin" ${u.role === "admin" ? "selected" : ""}>admin</option>
+          </select>
+        `,
+      },
+      {
+        key: "testing",
+        label: "Testing",
+        render: (u) => `<input type="checkbox" data-user-testing="${escapeHtml(u.id)}" ${u.can_use_testing ? "checked" : ""} />`,
+      },
+      { key: "status", label: "Status", render: (u) => (u.disabled ? "Disabled" : "Active") },
+      {
+        key: "actions",
+        label: "",
+        headerClass: "dt-actions-cell",
+        cellClass: "dt-actions-cell",
+        render: (u) => `
+          <button class="mini" data-user-toggle-disabled="${escapeHtml(u.id)}">${u.disabled ? "Enable" : "Disable"}</button>
+          <button class="mini" data-user-reset="${escapeHtml(u.id)}">Reset password</button>
+        `,
+      },
+    ],
+    bulkActions: [
+      { label: "Disable selected", run: (ids) => bulkUpdateUsers(ids, { disabled: true }, "Disabled") },
+      { label: "Enable selected", run: (ids) => bulkUpdateUsers(ids, { disabled: false }, "Enabled") },
+      { label: "Make admin", run: (ids) => bulkUpdateUsers(ids, { role: "admin" }, "Updated") },
+      { label: "Make user", run: (ids) => bulkUpdateUsers(ids, { role: "user" }, "Updated") },
+    ],
+  });
+  if (!table) return;
+
+  table.querySelectorAll("[data-user-role]").forEach((sel) =>
     sel.addEventListener("change", () => updateUser(sel.getAttribute("data-user-role"), { role: sel.value }))
   );
-  document.querySelectorAll("[data-user-testing]").forEach((cb) =>
+  table.querySelectorAll("[data-user-testing]").forEach((cb) =>
     cb.addEventListener("change", () =>
       updateUser(cb.getAttribute("data-user-testing"), { can_use_testing: cb.checked })
     )
   );
-  document.querySelectorAll("[data-user-toggle-disabled]").forEach((btn) =>
+  table.querySelectorAll("[data-user-toggle-disabled]").forEach((btn) =>
     btn.addEventListener("click", () => {
       const id = btn.getAttribute("data-user-toggle-disabled");
       const user = userData.find((u) => u.id === id);
       updateUser(id, { disabled: !user.disabled });
     })
   );
-  document.querySelectorAll("[data-user-reset]").forEach((btn) =>
+  table.querySelectorAll("[data-user-reset]").forEach((btn) =>
     btn.addEventListener("click", () => resetUserPassword(btn.getAttribute("data-user-reset")))
   );
 }
 
-async function updateUser(id, fields) {
+async function _patchUserRaw(id, fields) {
   try {
     const resp = await fetch(`/v1/users/${encodeURIComponent(id)}`, {
       method: "PATCH",
@@ -71,14 +89,32 @@ async function updateUser(id, fields) {
       body: JSON.stringify(fields),
     });
     if (!resp.ok) {
-      const body = await resp.json();
-      print(el("user-status"), body.detail || "Update failed", true);
-      return;
+      const body = await resp.json().catch(() => ({}));
+      return { ok: false, error: body.detail || "Update failed" };
     }
-    await loadUsers();
+    return { ok: true };
   } catch (error) {
-    print(el("user-status"), String(error), true);
+    return { ok: false, error: String(error) };
   }
+}
+
+async function updateUser(id, fields) {
+  const result = await _patchUserRaw(id, fields);
+  if (!result.ok) {
+    print(el("user-status"), result.error, true);
+    return;
+  }
+  await loadUsers();
+}
+
+async function bulkUpdateUsers(ids, fields, verb) {
+  const errors = await runBulk(
+    ids,
+    (id) => _patchUserRaw(id, fields),
+    (id) => userData.find((u) => u.id === id)?.username || id
+  );
+  await loadUsers();
+  printBulkSummary(el("user-status"), ids.length, errors, verb);
 }
 
 async function resetUserPassword(id) {
