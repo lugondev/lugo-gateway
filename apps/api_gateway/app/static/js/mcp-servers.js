@@ -1,4 +1,5 @@
-import { el, print } from "./helpers.js";
+import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
+import { renderDataTable } from "./data-table.js";
 import { profileData, renderProfileMcpList } from "./profiles.js";
 import { fetchAuthStatus } from "./session.js";
 
@@ -25,47 +26,89 @@ export async function renderMcpList() {
   const status = await fetchAuthStatus();
   const isAdmin = !!(status && status.authenticated && status.role === "admin");
 
-  host.innerHTML = servers.map((s) => {
-    const isTemplate = s.owner_id === null || s.owner_id === undefined;
-    const mine = !isTemplate ? '<span class="hint">mine</span>' : "";
-    const hideWriteControls = isTemplate && !isAdmin;
-    return `
-    <div class="model-row ${s.enabled ? "" : "dim"}">
-      <div class="model-info">
-        ${hideWriteControls ? "" : `<input type="checkbox" data-mcp-enabled="${s.name}" ${s.enabled ? "checked" : ""} title="Enabled" />`}
-        <strong>${s.name}</strong>
-        ${mine}
-        <code>${s.url}</code>
-        ${s.headers && Object.keys(s.headers).length ? `<span class="hint">headers: ${Object.keys(s.headers).join(", ")}</span>` : ""}
-        <span class="mcp-row-status" id="mcp-test-${s.name}"></span>
-      </div>
-      <div class="model-action">
-        <button class="mini" data-mcp-test="${s.name}">Test</button>
-        <button class="mini" data-mcp-clone="${s.name}">Clone</button>
-        ${hideWriteControls ? "" : `<button class="mini danger" data-mcp-delete="${s.name}">Delete</button>`}
-      </div>
-    </div>
-    <div class="mcp-tool-list" id="mcp-tools-${s.name}"></div>
-  `;
-  }).join("");
+  const table = renderDataTable({
+    container: host,
+    rows: servers,
+    rowKey: (s) => s.name,
+    getRowClass: (s) => (s.enabled ? "" : "dim"),
+    emptyMessage: "No servers configured yet. Add one below.",
+    columns: [
+      {
+        key: "enabled",
+        label: "On",
+        render: (s) => {
+          const isTemplate = s.owner_id === null || s.owner_id === undefined;
+          const hideWriteControls = isTemplate && !isAdmin;
+          return hideWriteControls
+            ? ""
+            : `<input type="checkbox" data-mcp-enabled="${escapeHtml(s.name)}" ${s.enabled ? "checked" : ""} title="Enabled" />`;
+        },
+      },
+      {
+        key: "name",
+        label: "Name",
+        render: (s) => {
+          const isTemplate = s.owner_id === null || s.owner_id === undefined;
+          return `<strong>${escapeHtml(s.name)}</strong>${isTemplate ? "" : ' <span class="hint">mine</span>'}`;
+        },
+      },
+      {
+        key: "url",
+        label: "URL",
+        render: (s) => `
+          <code>${escapeHtml(s.url)}</code>
+          ${s.headers && Object.keys(s.headers).length ? `<br /><span class="hint">headers: ${escapeHtml(Object.keys(s.headers).join(", "))}</span>` : ""}
+        `,
+      },
+      {
+        key: "tools",
+        label: "Tools",
+        render: (s) => `
+          <span class="mcp-row-status" id="mcp-test-${escapeHtml(s.name)}"></span>
+          <div class="mcp-tool-list" id="mcp-tools-${escapeHtml(s.name)}"></div>
+        `,
+      },
+      {
+        key: "actions",
+        label: "",
+        headerClass: "dt-actions-cell",
+        cellClass: "dt-actions-cell",
+        render: (s) => {
+          const isTemplate = s.owner_id === null || s.owner_id === undefined;
+          const hideWriteControls = isTemplate && !isAdmin;
+          return `
+            <button class="mini" data-mcp-test="${escapeHtml(s.name)}">Test</button>
+            <button class="mini" data-mcp-clone="${escapeHtml(s.name)}">Clone</button>
+            ${hideWriteControls ? "" : `<button class="mini danger" data-mcp-delete="${escapeHtml(s.name)}">Delete</button>`}
+          `;
+        },
+      },
+    ],
+    bulkActions: [
+      { label: "Enable selected", run: (ids) => bulkSetMcpEnabled(ids, true) },
+      { label: "Disable selected", run: (ids) => bulkSetMcpEnabled(ids, false) },
+      { label: "Delete selected", run: (ids) => bulkDeleteMcpServers(ids) },
+    ],
+  });
+  if (!table) return;
 
-  document.querySelectorAll("[data-mcp-enabled]").forEach((cb) =>
+  table.querySelectorAll("[data-mcp-enabled]").forEach((cb) =>
     cb.addEventListener("change", () =>
       toggleMcpServerEnabled(cb.getAttribute("data-mcp-enabled"), cb.checked)
     )
   );
-  document.querySelectorAll("[data-mcp-test]").forEach((btn) =>
+  table.querySelectorAll("[data-mcp-test]").forEach((btn) =>
     btn.addEventListener("click", () => testMcpServer(btn.getAttribute("data-mcp-test")))
   );
-  document.querySelectorAll("[data-mcp-delete]").forEach((btn) =>
+  table.querySelectorAll("[data-mcp-delete]").forEach((btn) =>
     btn.addEventListener("click", () => deleteMcpServer(btn.getAttribute("data-mcp-delete")))
   );
-  document.querySelectorAll("[data-mcp-clone]").forEach((btn) =>
+  table.querySelectorAll("[data-mcp-clone]").forEach((btn) =>
     btn.addEventListener("click", () => cloneMcpServer(btn.getAttribute("data-mcp-clone")))
   );
 }
 
-export async function toggleMcpServerEnabled(name, enabled) {
+async function _setMcpEnabledRaw(name, enabled) {
   try {
     const resp = await fetch(`/v1/mcp/servers/${encodeURIComponent(name)}/enabled`, {
       method: "PATCH",
@@ -73,17 +116,30 @@ export async function toggleMcpServerEnabled(name, enabled) {
       body: JSON.stringify({ enabled }),
     });
     if (!resp.ok) {
-      const body = await resp.json();
-      print(el("mcp-status"), body.detail || "Toggle failed", true);
-      await loadMcpServers();
-      return;
+      const body = await resp.json().catch(() => ({}));
+      return { ok: false, error: body.detail || "Toggle failed" };
     }
-    if (mcpServerData[name]) mcpServerData[name].enabled = enabled;
-    renderMcpList();
+    return { ok: true };
   } catch (error) {
-    print(el("mcp-status"), String(error), true);
-    await loadMcpServers();
+    return { ok: false, error: String(error) };
   }
+}
+
+export async function toggleMcpServerEnabled(name, enabled) {
+  const result = await _setMcpEnabledRaw(name, enabled);
+  if (!result.ok) {
+    print(el("mcp-status"), result.error, true);
+    await loadMcpServers();
+    return;
+  }
+  if (mcpServerData[name]) mcpServerData[name].enabled = enabled;
+  renderMcpList();
+}
+
+async function bulkSetMcpEnabled(names, enabled) {
+  const errors = await runBulk(names, (name) => _setMcpEnabledRaw(name, enabled), (name) => name);
+  await loadMcpServers();
+  printBulkSummary(el("mcp-status"), names.length, errors, enabled ? "Enabled" : "Disabled");
 }
 
 export async function addMcpServer() {
@@ -118,12 +174,6 @@ export async function addMcpServer() {
   }
 }
 
-export function _escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str == null ? "" : String(str);
-  return div.innerHTML;
-}
-
 export async function testMcpServer(name) {
   const statusEl = el(`mcp-test-${name}`);
   const listEl = el(`mcp-tools-${name}`);
@@ -141,8 +191,8 @@ export async function testMcpServer(name) {
     if (listEl) {
       listEl.innerHTML = tools.map((t) => `
         <div class="mcp-tool-item">
-          <code>${_escapeHtml(t.name)}</code>
-          <span>${_escapeHtml(t.description || "")}</span>
+          <code>${escapeHtml(t.name)}</code>
+          <span>${escapeHtml(t.description || "")}</span>
         </div>
       `).join("");
     }
@@ -151,15 +201,34 @@ export async function testMcpServer(name) {
   }
 }
 
-export async function deleteMcpServer(name) {
-  if (!confirm(`Delete MCP server "${name}"?`)) return;
+async function _deleteMcpServerRaw(name) {
   try {
     const resp = await fetch(`/v1/mcp/servers/${encodeURIComponent(name)}`, { method: "DELETE" });
-    if (!resp.ok) { const b = await resp.json(); print(el("mcp-status"), b.detail || "Delete failed", true); return; }
-    await loadMcpServers();
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      return { ok: false, error: body.detail || "Delete failed" };
+    }
+    return { ok: true };
   } catch (error) {
-    print(el("mcp-status"), String(error), true);
+    return { ok: false, error: String(error) };
   }
+}
+
+export async function deleteMcpServer(name) {
+  if (!confirm(`Delete MCP server "${name}"?`)) return;
+  const result = await _deleteMcpServerRaw(name);
+  if (!result.ok) {
+    print(el("mcp-status"), result.error, true);
+    return;
+  }
+  await loadMcpServers();
+}
+
+async function bulkDeleteMcpServers(names) {
+  if (!confirm(`Delete ${names.length} MCP server(s)?`)) return;
+  const errors = await runBulk(names, _deleteMcpServerRaw, (name) => name);
+  await loadMcpServers();
+  printBulkSummary(el("mcp-status"), names.length, errors, "Deleted");
 }
 
 export async function cloneMcpServer(name) {
@@ -181,4 +250,3 @@ export async function cloneMcpServer(name) {
 
 if (el("mcp-add-btn")) el("mcp-add-btn").addEventListener("click", addMcpServer);
 if (el("mcp-refresh")) el("mcp-refresh").addEventListener("click", loadMcpServers);
-
