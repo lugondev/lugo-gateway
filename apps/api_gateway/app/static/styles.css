@@ -906,6 +906,76 @@ input[type="radio"] {
   justify-content: flex-end;
 }
 
+/* ================================================================
+   DATA TABLE
+   ================================================================ */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.data-table thead th {
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.data-table tbody td {
+  padding: 8px 10px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--line);
+}
+.data-table tbody tr {
+  transition: background-color 140ms;
+}
+.data-table tbody tr:hover {
+  background: var(--surface-hover);
+}
+.data-table tbody tr.dim {
+  opacity: 0.4;
+}
+.data-table tbody tr.dt-row-selected {
+  background: rgba(125, 234, 214, 0.08);
+}
+.data-table .dt-checkbox-cell {
+  width: 28px;
+  padding-right: 0;
+}
+.data-table .dt-actions-cell {
+  text-align: right;
+  white-space: nowrap;
+}
+.data-table .dt-actions-cell button + button {
+  margin-left: 6px;
+}
+
+.dt-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(125, 234, 214, 0.28);
+  border-radius: var(--r-md);
+  background: rgba(125, 234, 214, 0.06);
+}
+.dt-toolbar-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.dt-toolbar-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .progress {
   width: 80px;
   height: 6px;
