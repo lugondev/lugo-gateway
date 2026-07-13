@@ -12,12 +12,12 @@ import logging
 
 import httpx
 
-from app.core.settings import settings
 from app.services.history.store import session_store
 from app.services.memory.compactor import memory_compactor
 from app.services.memory.embedder import cosine, embed_texts
 from app.services.memory.store import memory_store
 from app.services.profiles.models import Profile
+from app.services.system_config import system_config_store
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class MemoryExtractor:
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         try:
             async with httpx.AsyncClient(
-                timeout=settings.conversation_llm_timeout_seconds
+                timeout=system_config_store.get().conversation_llm.conversation_llm_timeout_seconds
             ) as client:
                 resp = await client.post(
                     f"{base_url.rstrip('/')}/chat/completions",

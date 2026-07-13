@@ -34,7 +34,8 @@ class _StubTTS(TTSProvider):
 
 @pytest.fixture(autouse=True)
 def _register_stub(monkeypatch):
-    monkeypatch.setattr(settings, "conversation_llm_base_url", "")
+    # conversation_llm_base_url now lives on system_config_store (Task 3), not
+    # Settings; the module-level conftest._hermetic fixture already zeroes it.
     monkeypatch.setattr(settings, "livehost_individual_threshold", 5)
     stt_service.providers["stub-livehost-social"] = _StubSTT()
     tts_service.providers["stub-livehost-social-tts"] = _StubTTS()

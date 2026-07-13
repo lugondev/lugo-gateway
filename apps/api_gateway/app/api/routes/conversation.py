@@ -125,7 +125,13 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
     except Exception as exc:  # noqa: BLE001 - memory retrieval must not block the reply
         logger.warning("memory retrieval failed for %s: %s", sid, exc)
         block = ""
-    system_prompt = inject_memories(system_prompt or settings.conversation_system_prompt, block) if block else system_prompt
+    system_prompt = (
+        inject_memories(
+            system_prompt or system_config_store.get().conversation.conversation_system_prompt, block
+        )
+        if block
+        else system_prompt
+    )
 
     responder = build_responder_ex(
         base_url=llm_base_url,
@@ -208,9 +214,10 @@ async def conversation_stream(websocket: WebSocket) -> None:
         tts_speed = tts_profile.speed
         tts_language = tts_profile.language
     else:
+        conv_cfg = system_config_store.get().conversation
         tts_engine = (
             q.get("tts_engine")
-            or settings.conversation_tts_engine
+            or conv_cfg.conversation_tts_engine
             or system_config_store.get().engines.default_tts_engine
         )
         voice = q.get("voice") or None

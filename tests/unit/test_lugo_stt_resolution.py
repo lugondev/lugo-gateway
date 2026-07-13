@@ -5,6 +5,7 @@ that sends only a profile id streams against that profile's STT."""
 from app.core.settings import settings
 from app.services.profiles.models import Profile, SttConfig
 from app.services.profiles.store import ProfileStore
+from app.services.system_config import SystemConfigStore
 
 import app.api.routes.lugo as lugo
 
@@ -35,7 +36,17 @@ def test_lugo_resolve_no_profile_falls_back_to_settings(monkeypatch, tmp_path):
     fresh = ProfileStore(str(tmp_path / "profiles.json"))
     monkeypatch.setattr(lugo, "profile_store", fresh)
     monkeypatch.setattr(settings, "stt_profile", "")
-    monkeypatch.setattr(settings, "conversation_stt_engine", "stub-fallback-stt")
+    fresh_config = SystemConfigStore(str(tmp_path / "system_config.json"))
+    fresh_config.set(
+        fresh_config.get().model_copy(
+            update={
+                "conversation": fresh_config.get().conversation.model_copy(
+                    update={"conversation_stt_engine": "stub-fallback-stt"}
+                )
+            }
+        )
+    )
+    monkeypatch.setattr("app.services.system_config.system_config_store", fresh_config)
 
     _profile, stt_engine, _language, _stt_model, _tts, _idle = lugo._resolve(None)
 

@@ -56,8 +56,9 @@ def _resolve(profile_name: str | None):
                    ref_audio_path=tts_profile.ref_audio_path or None, ref_text=tts_profile.ref_text or None,
                    instruct=tts_profile.instruct or None, speed=tts_profile.speed, language=tts_profile.language)
     else:
+        conv_cfg = system_config_store.get().conversation
         tts = dict(
-            engine=settings.conversation_tts_engine or system_config_store.get().engines.default_tts_engine,
+            engine=conv_cfg.conversation_tts_engine or system_config_store.get().engines.default_tts_engine,
             voice=None, ref_audio_path=None, ref_text=None, instruct=None, speed=None, language=None)
     idle = profile.session.idle_timeout_s if profile else 30
     return profile, stt_engine, language, stt_model, tts, idle
@@ -229,8 +230,9 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     # Say a short farewell (in the bot's voice) before disconnecting.
                     # Paced in real time; give the device a moment to finish playing
                     # it out of its jitter buffer before the goodbye/close.
-                    if settings.conversation_goodbye_text:
-                        await session.speak(settings.conversation_goodbye_text)
+                    goodbye_text = system_config_store.get().conversation.conversation_goodbye_text
+                    if goodbye_text:
+                        await session.speak(goodbye_text)
                         await asyncio.sleep(0.5)
                     await websocket.send_json({"type": "goodbye", "reason": "idle_timeout"})
                 except RuntimeError:

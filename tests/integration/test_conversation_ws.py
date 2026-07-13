@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.settings import settings
 from app.main import app
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
@@ -47,8 +46,8 @@ class _SlowTTS(TTSProvider):
 @pytest.fixture(autouse=True)
 def _register_stub(monkeypatch):
     # Keep the test hermetic regardless of .env: stub TTS + built-in echo responder
-    # (no external Ollama / real model calls).
-    monkeypatch.setattr(settings, "conversation_llm_base_url", "")
+    # (no external Ollama / real model calls). conversation_llm_base_url now
+    # lives on system_config_store (Task 3); conftest._hermetic already zeroes it.
     stt_service.providers["stub-conv"] = _StubSTT()
     tts_service.providers["stub-conv-tts"] = _StubTTS()
     tts_service.providers["slow-conv-tts"] = _SlowTTS()

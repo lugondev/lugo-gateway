@@ -4,7 +4,7 @@ import math
 
 import httpx
 
-from app.core.settings import settings
+from app.services.system_config import system_config_store
 
 
 async def embed_texts(
@@ -12,7 +12,8 @@ async def embed_texts(
 ) -> list[list[float]]:
     """Embed texts via an OpenAI-compatible /embeddings endpoint. Raises on failure."""
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    async with httpx.AsyncClient(timeout=settings.conversation_llm_timeout_seconds) as client:
+    timeout = system_config_store.get().conversation_llm.conversation_llm_timeout_seconds
+    async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
             f"{base_url.rstrip('/')}/embeddings",
             headers=headers,

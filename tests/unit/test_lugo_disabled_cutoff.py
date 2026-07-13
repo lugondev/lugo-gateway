@@ -14,6 +14,7 @@ from app.services.profiles.models import Profile, SessionConfig
 from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
+from app.services.system_config import system_config_store
 
 
 class _StubSTT(STTProvider):
@@ -25,10 +26,23 @@ class _StubSTT(STTProvider):
 
 @pytest.fixture(autouse=True)
 def _hermetic(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "conversation_llm_base_url", "")
-    monkeypatch.setattr(settings, "conversation_stt_engine", "stub-lugo-cutoff-stt")
+    # conversation_stt_engine/conversation_goodbye_text now live on
+    # system_config_store's `conversation` group (Task 3), not Settings. Patch
+    # the shared singleton's .get() (not .set()) so this never writes through
+    # to the shared config_system DB row (see conftest.py's _hermetic for why).
+    _real_get = system_config_store.get
+
+    def _get_with_stub_conversation():
+        cfg = _real_get()
+        return cfg.model_copy(update={
+            "conversation": cfg.conversation.model_copy(update={
+                "conversation_stt_engine": "stub-lugo-cutoff-stt",
+                "conversation_goodbye_text": "",
+            })
+        })
+
+    monkeypatch.setattr(system_config_store, "get", _get_with_stub_conversation)
     monkeypatch.setattr(settings, "admin_password", "s3cret")
-    monkeypatch.setattr(settings, "conversation_goodbye_text", "")
     stt_service.providers["stub-lugo-cutoff-stt"] = _StubSTT()
     # idle_timeout_s huge so only the identity re-check can fire in this test.
     fresh = ProfileStore(str(tmp_path / "profiles.json"))

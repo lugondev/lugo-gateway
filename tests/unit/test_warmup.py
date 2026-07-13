@@ -7,12 +7,16 @@ from app.services.system_config import SystemConfigStore
 from app.services.warmup import is_ready, warm_providers
 
 
-def _set_extra_warmup_engines(monkeypatch, tmp_path, *, stt: str = "", tts: str = ""):
+def _set_extra_warmup_engines(
+    monkeypatch, tmp_path, *, stt: str = "", tts: str = "", stt_engine="whisper", tts_engine="omnivoice"
+):
     """extra_warmup_stt_engines/extra_warmup_tts_engines now live on
-    system_config_store (Task 2), not Settings -- build a fresh, isolated
-    store and patch it in at the point of use (app.services.system_config,
-    where the module-level warmup_stt_engines()/warmup_tts_engines() look it
-    up), following the pattern in tests/unit/test_stt_service_openrouter.py.
+    system_config_store (Task 2), and conversation_stt_engine/conversation_tts_engine
+    now live on system_config_store's `conversation` group (Task 3) -- not
+    Settings. Build a fresh, isolated store and patch it in at the point of
+    use (app.services.system_config, where the module-level
+    warmup_stt_engines()/warmup_tts_engines() look it up), following the
+    pattern in tests/unit/test_stt_service_openrouter.py.
     """
     fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
     fresh.set(
@@ -20,7 +24,10 @@ def _set_extra_warmup_engines(monkeypatch, tmp_path, *, stt: str = "", tts: str 
             update={
                 "engines": fresh.get().engines.model_copy(
                     update={"extra_warmup_stt_engines": stt, "extra_warmup_tts_engines": tts}
-                )
+                ),
+                "conversation": fresh.get().conversation.model_copy(
+                    update={"conversation_stt_engine": stt_engine, "conversation_tts_engine": tts_engine}
+                ),
             }
         )
     )
@@ -71,12 +78,9 @@ async def test_warm_default_engines_warms_configured_stt_and_tts(monkeypatch, tm
     from app.main import _warm_default_engines
     from app.services.stt.service import stt_service
     from app.services.tts.service import tts_service
-    from app.core.settings import settings
 
     stt_spy, tts_spy = _Spy(), _Spy()
-    monkeypatch.setattr(settings, "conversation_stt_engine", "fake_stt")
-    monkeypatch.setattr(settings, "conversation_tts_engine", "fake_tts")
-    _set_extra_warmup_engines(monkeypatch, tmp_path)
+    _set_extra_warmup_engines(monkeypatch, tmp_path, stt_engine="fake_stt", tts_engine="fake_tts")
     _empty = type("E", (), {"list": lambda self: {}})()
     monkeypatch.setattr("app.services.profiles.store.profile_store", _empty)
     monkeypatch.setattr("app.services.tts.profile_store.tts_profile_store", _empty)
@@ -171,12 +175,9 @@ async def test_warm_default_engines_warms_extra_stt_and_tts_engines_too(monkeypa
     from app.main import _warm_default_engines
     from app.services.stt.service import stt_service
     from app.services.tts.service import tts_service
-    from app.core.settings import settings
 
     spies = {"whisper": _Spy(), "qwen3_asr": _Spy(), "vieneu": _Spy()}
-    monkeypatch.setattr(settings, "conversation_stt_engine", "whisper")
-    monkeypatch.setattr(settings, "conversation_tts_engine", "vieneu")
-    _set_extra_warmup_engines(monkeypatch, tmp_path, stt="qwen3_asr")
+    _set_extra_warmup_engines(monkeypatch, tmp_path, stt="qwen3_asr", stt_engine="whisper", tts_engine="vieneu")
     # Isolate from profiles.json so only the settings engines are enumerated.
     _empty = type("E", (), {"list": lambda self: {}})()
     monkeypatch.setattr("app.services.profiles.store.profile_store", _empty)

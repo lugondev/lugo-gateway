@@ -20,7 +20,8 @@ class _StubSTT(STTProvider):
 
 @pytest.fixture(autouse=True)
 def _hermetic(monkeypatch):
-    monkeypatch.setattr(settings, "conversation_llm_base_url", "")
+    # conversation_llm_base_url now lives on system_config_store (Task 3), not
+    # Settings; the module-level conftest._hermetic fixture already zeroes it.
     monkeypatch.setattr(settings, "admin_password", "s3cret")
     monkeypatch.setattr("app.api.routes.conversation._IDENTITY_RECHECK_INTERVAL_S", 0.05, raising=False)
     stt_service.providers["stub-cutoff-stt"] = _StubSTT()

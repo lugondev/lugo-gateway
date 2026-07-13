@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass
 
 from app.core.deps import module_available
 from app.core.settings import settings
+from app.services.system_config import system_config_store
 
 # Optional Python modules probed for the recommender's `requires` flags.
 _PROBE_MODULES = [
@@ -117,7 +118,8 @@ def _libopus() -> bool:
 
 def _ollama() -> bool:
     try:
-        if settings.ollama_bin and os.path.exists(settings.ollama_bin):
+        ollama_bin = system_config_store.get().conversation_llm.ollama_bin
+        if ollama_bin and os.path.exists(ollama_bin):
             return True
         return shutil.which("ollama") is not None or os.path.exists(
             "/opt/homebrew/opt/ollama/bin/ollama"

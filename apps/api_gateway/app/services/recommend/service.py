@@ -85,7 +85,7 @@ def _augment_config_flags(caps: Capabilities) -> None:
     """Remote/online entries are 'available' when their endpoint is configured."""
     caps.modules["whisper_service"] = bool(settings.whisper_service_base_url)
     caps.modules["eventlab"] = bool(settings.eventlab_base_url)
-    caps.modules["online_llm"] = bool(settings.conversation_llm_base_url)
+    caps.modules["online_llm"] = bool(system_config_store.get().conversation_llm.conversation_llm_base_url)
     caps.modules["openrouter"] = bool(system_config_store.get().openrouter_api_key)
 
 

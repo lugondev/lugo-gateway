@@ -218,7 +218,6 @@ def test_set_replaces_full_config_and_persists(tmp_path):
 
 
 def test_warmup_stt_engines_combines_conversation_default_and_extras(tmp_path, monkeypatch):
-    from app.core.settings import settings
     from app.services import system_config as sc_mod
 
     fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
@@ -229,4 +228,4 @@ def test_warmup_stt_engines_combines_conversation_default_and_extras(tmp_path, m
     )
     monkeypatch.setattr(sc_mod, "system_config_store", fresh)
     result = sc_mod.warmup_stt_engines()
-    assert result == [settings.conversation_stt_engine, "qwen3_asr", "whisper_mlx"]
+    assert result == [fresh.get().conversation.conversation_stt_engine, "qwen3_asr", "whisper_mlx"]

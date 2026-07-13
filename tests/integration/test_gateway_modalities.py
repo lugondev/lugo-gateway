@@ -4,12 +4,12 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.settings import settings
 from app.main import app
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
+from app.services.system_config import system_config_store
 from app.services.tts.base import TTSProvider
 from app.services.tts.service import tts_service
 
@@ -35,7 +35,9 @@ class _StubTTS(TTSProvider):
 
 @pytest.fixture(autouse=True)
 def _stub(monkeypatch):
-    monkeypatch.setattr(settings, "conversation_llm_base_url", "")  # echo responder
+    # conversation_llm_base_url now lives on system_config_store (Task 3), not
+    # Settings; the module-level conftest._hermetic fixture already zeroes it
+    # (echo responder).
     stt_service.providers["stub-gw"] = _StubSTT()
     tts_service.providers["stub-gw-tts"] = _StubTTS()
     yield
@@ -96,9 +98,17 @@ def _opus_ok():
 def test_text_to_opus_frames(monkeypatch):
     # Verify Opus framing only; disable real-time pacing so the test doesn't sleep
     # through the reply audio. Pacing schedule is unit-tested.
-    from app.core.settings import settings
+    # conversation_opus_pace now lives on system_config_store's `conversation`
+    # group (Task 3), not Settings.
+    _real_get = system_config_store.get
 
-    monkeypatch.setattr(settings, "conversation_opus_pace", False)
+    def _get_with_pace_off():
+        cfg = _real_get()
+        return cfg.model_copy(
+            update={"conversation": cfg.conversation.model_copy(update={"conversation_opus_pace": False})}
+        )
+
+    monkeypatch.setattr(system_config_store, "get", _get_with_pace_off)
     c = TestClient(app)
     url = "/v1/conversation/stream?stt_engine=stub-gw&tts_engine=stub-gw-tts&output=audio&audio_out=opus&output_sample_rate=24000"
     with c.websocket_connect(url) as ws:

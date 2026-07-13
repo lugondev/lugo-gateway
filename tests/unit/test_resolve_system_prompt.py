@@ -1,11 +1,12 @@
 import pytest
 
-from app.core.settings import settings
 from app.services.conversation.responder import (
     VOICE_OPTIMIZATION_DIRECTIVE,
     resolve_system_prompt,
 )
-from app.services.system_config import SystemConfigStore
+from app.services.system_config import ConversationTuningConfig, SystemConfigStore
+
+_DEFAULT_SYSTEM_PROMPT = ConversationTuningConfig().conversation_system_prompt
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +21,7 @@ def test_no_base_context_returns_persona_prompt_unchanged(_fresh_store):
 
 
 def test_no_base_context_falls_back_to_settings_default():
-    assert resolve_system_prompt(None) == settings.conversation_system_prompt
+    assert resolve_system_prompt(None) == _DEFAULT_SYSTEM_PROMPT
 
 
 def test_base_context_prepended_to_explicit_persona(_fresh_store):
@@ -32,7 +33,7 @@ def test_base_context_prepended_to_explicit_persona(_fresh_store):
 def test_base_context_prepended_to_default_persona(_fresh_store):
     _fresh_store.set_base_context("Platform: TeguVoice.")
     result = resolve_system_prompt(None)
-    assert result == f"Platform: TeguVoice.\n\n{settings.conversation_system_prompt}"
+    assert result == f"Platform: TeguVoice.\n\n{_DEFAULT_SYSTEM_PROMPT}"
 
 
 def test_voice_optimized_off_by_default(_fresh_store):

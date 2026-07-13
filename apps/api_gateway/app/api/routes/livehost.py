@@ -113,9 +113,10 @@ async def livehost_stream(websocket: WebSocket) -> None:
         tts_speed = tts_profile.speed
         tts_language = tts_profile.language
     else:
+        conv_cfg = system_config_store.get().conversation
         tts_engine = (
             q.get("tts_engine")
-            or settings.conversation_tts_engine
+            or conv_cfg.conversation_tts_engine
             or system_config_store.get().engines.default_tts_engine
         )
         voice = q.get("voice") or None
@@ -164,15 +165,16 @@ async def livehost_stream(websocket: WebSocket) -> None:
         voice_optimized=bool(profile and profile.voice_optimized),
     )
 
+    conv_cfg = system_config_store.get().conversation
     endpointer = VadEndpointer(
         sample_rate,
-        silence_ms=settings.conversation_silence_ms,
-        min_speech_ms=settings.conversation_min_speech_ms,
-        rms_threshold=settings.conversation_rms_threshold,
-        max_utterance_ms=settings.conversation_max_utterance_ms,
-        min_silence_ms=settings.conversation_min_silence_ms,
-        adaptive_full_ms=settings.conversation_adaptive_full_ms,
-        preroll_ms=settings.conversation_preroll_ms,
+        silence_ms=conv_cfg.conversation_silence_ms,
+        min_speech_ms=conv_cfg.conversation_min_speech_ms,
+        rms_threshold=conv_cfg.conversation_rms_threshold,
+        max_utterance_ms=conv_cfg.conversation_max_utterance_ms,
+        min_silence_ms=conv_cfg.conversation_min_silence_ms,
+        adaptive_full_ms=conv_cfg.conversation_adaptive_full_ms,
+        preroll_ms=conv_cfg.conversation_preroll_ms,
     )
 
     history: list[dict] = []
@@ -277,7 +279,10 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 return result, None
 
             async with aclosing(
-                prefetch_synthesis(sentence_aiter, _synth, lookahead=settings.conversation_tts_lookahead)
+                prefetch_synthesis(
+                    sentence_aiter, _synth,
+                    lookahead=system_config_store.get().conversation.conversation_tts_lookahead,
+                )
             ) as pipeline:
                 async for index, sentence, (result, packets) in pipeline:
                     parts.append(sentence)
@@ -289,9 +294,12 @@ async def livehost_stream(websocket: WebSocket) -> None:
                             text=sentence if want_text else None,
                             codec="opus", sample_rate=output_sample_rate, frames=len(packets),
                         )
-                        if settings.conversation_opus_pace and packets:
+                        conv_cfg = system_config_store.get().conversation
+                        if conv_cfg.conversation_opus_pace and packets:
                             frame_s = opus_encoder.frame / opus_encoder.sample_rate
-                            delays = pacing_delays(len(packets), settings.conversation_opus_prebuffer_frames, frame_s)
+                            delays = pacing_delays(
+                                len(packets), conv_cfg.conversation_opus_prebuffer_frames, frame_s
+                            )
                         else:
                             delays = [0.0] * len(packets)
                         for delay, pkt in zip(delays, packets):

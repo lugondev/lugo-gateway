@@ -13,7 +13,8 @@ from app.services.profiles.store import ProfileStore
 
 @pytest.fixture(autouse=True)
 def _hermetic(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "conversation_llm_base_url", "")
+    # conversation_llm_base_url now lives on system_config_store (Task 3), not
+    # Settings; the module-level conftest._hermetic fixture already zeroes it.
     monkeypatch.setattr(settings, "omnivoice_use_server", False)
 
     fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))

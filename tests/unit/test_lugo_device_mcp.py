@@ -8,6 +8,7 @@ from app.services.profiles.models import Profile, SessionConfig
 from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
+from app.services.system_config import system_config_store
 
 
 class _StubSTT(STTProvider):
@@ -44,8 +45,19 @@ def _fake_build_responder_ex(*args, **kwargs):
 
 @pytest.fixture(autouse=True)
 def _hermetic(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "conversation_llm_base_url", "")
-    monkeypatch.setattr(settings, "conversation_stt_engine", "stub-mcp-stt")
+    # conversation_stt_engine now lives on system_config_store's `conversation`
+    # group (Task 3), not Settings. Patch the shared singleton's .get() (not
+    # .set()) so this never writes through to the shared config_system DB row
+    # (see conftest.py's _hermetic for why).
+    _real_get = system_config_store.get
+
+    def _get_with_stub_stt():
+        cfg = _real_get()
+        return cfg.model_copy(update={
+            "conversation": cfg.conversation.model_copy(update={"conversation_stt_engine": "stub-mcp-stt"})
+        })
+
+    monkeypatch.setattr(system_config_store, "get", _get_with_stub_stt)
     monkeypatch.setattr(settings, "device_mcp_enabled", True)
     # The real LLM responder can't be exercised hermetically (no live LLM), so
     # replace the responder builder that ConversationSession.start() calls

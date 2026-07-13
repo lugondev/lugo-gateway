@@ -4,7 +4,6 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 from app.core.audio import pcm16_to_wav_bytes
-from app.core.settings import settings
 from app.main import app
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
@@ -13,6 +12,7 @@ from app.services.profiles.models import Profile, SessionConfig
 from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
+from app.services.system_config import system_config_store
 from app.services.tts.base import TTSProvider
 from app.services.tts.service import tts_service
 
@@ -34,9 +34,22 @@ class _StubTTS(TTSProvider):
 
 @pytest.fixture(autouse=True)
 def _hermetic(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "conversation_llm_base_url", "")
-    monkeypatch.setattr(settings, "conversation_stt_engine", "stub-bi-stt")
-    monkeypatch.setattr(settings, "conversation_tts_engine", "stub-bi-tts")
+    # conversation_stt_engine/conversation_tts_engine now live on
+    # system_config_store's `conversation` group (Task 3), not Settings. Patch
+    # the shared singleton's .get() (not .set()) so this never writes through
+    # to the shared config_system DB row (see conftest.py's _hermetic for why).
+    _real_get = system_config_store.get
+
+    def _get_with_stub_engines():
+        cfg = _real_get()
+        return cfg.model_copy(update={
+            "conversation": cfg.conversation.model_copy(update={
+                "conversation_stt_engine": "stub-bi-stt",
+                "conversation_tts_engine": "stub-bi-tts",
+            })
+        })
+
+    monkeypatch.setattr(system_config_store, "get", _get_with_stub_engines)
     stt_service.providers["stub-bi-stt"] = _StubSTT()
     tts_service.providers["stub-bi-tts"] = _StubTTS()
     fresh = ProfileStore(str(tmp_path / "profiles.json"))

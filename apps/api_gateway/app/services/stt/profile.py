@@ -59,11 +59,12 @@ def resolve_stt(
     preset = resolve_stt_profile(preset_name)
     preset_engine, preset_lang = preset if preset else (None, None)
 
+    conv_cfg = system_config_store.get().conversation
     engine = (
         q_engine
         or (getattr(stt_cfg, "engine", "") or None)
         or preset_engine
-        or settings.conversation_stt_engine
+        or conv_cfg.conversation_stt_engine
         or system_config_store.get().engines.default_stt_engine
     )
     if q_language:
@@ -73,6 +74,6 @@ def resolve_stt(
     elif preset:
         language = preset_lang  # may be None (auto-detect) — authoritative
     else:
-        language = settings.conversation_language or None
+        language = conv_cfg.conversation_language or None
     model = q_model or (getattr(stt_cfg, "model", "") or "")
     return engine, language, model
