@@ -13,16 +13,32 @@ export async function loadModelRegistry() {
   }
 }
 
+function _filteredRegistryData() {
+  const kind = el("registry-filter-kind")?.value || "";
+  const stage = el("registry-filter-stage")?.value || "";
+  const search = (el("registry-filter-search")?.value || "").trim().toLowerCase();
+  return registryData.filter((e) => {
+    if (kind && e.kind !== kind) return false;
+    if (stage && e.stage !== stage) return false;
+    if (search) {
+      const haystack = `${e.engine} ${e.model_id} ${e.label}`.toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    return true;
+  });
+}
+
 function renderModelRegistry() {
   const host = el("model-registry-list");
   if (!host) return;
 
+  const rows = _filteredRegistryData();
   const table = renderDataTable({
     container: host,
-    rows: registryData,
+    rows,
     rowKey: (e) => e.id,
     getRowClass: (e) => (e.enabled ? "" : "dim"),
-    emptyMessage: "No entries yet.",
+    emptyMessage: registryData.length ? "No entries match the current filters." : "No entries yet.",
     columns: [
       { key: "kind", label: "Kind", render: (e) => `<strong>${escapeHtml(e.kind)}</strong>` },
       { key: "model", label: "Engine / Model", render: (e) => `<code>${escapeHtml(e.engine)}/${escapeHtml(e.model_id)}</code>` },
@@ -150,3 +166,6 @@ export async function createModelRegistryEntry() {
 if (el("registry-add-kind")) el("registry-add-kind").addEventListener("change", _updateKindFields);
 if (el("registry-add-btn")) el("registry-add-btn").addEventListener("click", createModelRegistryEntry);
 if (el("model-registry-refresh")) el("model-registry-refresh").addEventListener("click", loadModelRegistry);
+if (el("registry-filter-kind")) el("registry-filter-kind").addEventListener("change", renderModelRegistry);
+if (el("registry-filter-stage")) el("registry-filter-stage").addEventListener("change", renderModelRegistry);
+if (el("registry-filter-search")) el("registry-filter-search").addEventListener("input", renderModelRegistry);
