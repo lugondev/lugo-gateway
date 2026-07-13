@@ -1,29 +1,22 @@
-import { el, print } from "./helpers.js";
+import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
+import { renderDataTable } from "./data-table.js";
 import { fetchAuthStatus } from "./session.js";
 
 export let myDeviceData = [];
 export let allDeviceData = [];
 
-function _escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str == null ? "" : String(str);
-  return div.innerHTML;
-}
-
-function _deviceRow(d, ownerLabel, revokeAttr) {
-  return `
-    <div class="model-row ${d.revoked ? "dim" : ""}">
-      <div class="model-info">
-        <strong>${_escapeHtml(d.name)}</strong>
-        ${ownerLabel}
-        <code>${_escapeHtml(d.serial)}</code>
-        <span class="hint">${d.last_seen_at ? "last seen " + _escapeHtml(d.last_seen_at) : "never connected"}</span>
-      </div>
-      <div class="model-action">
-        <button class="mini danger" ${revokeAttr}="${d.id}" ${d.revoked ? "disabled" : ""}>Revoke</button>
-      </div>
-    </div>
-  `;
+function deviceColumns(includeOwner) {
+  const columns = [
+    { key: "name", label: "Name", render: (d) => `<strong>${escapeHtml(d.name)}</strong>` },
+  ];
+  if (includeOwner) {
+    columns.push({ key: "owner", label: "Owner", render: (d) => escapeHtml(d.owner_username) });
+  }
+  columns.push(
+    { key: "serial", label: "Serial", render: (d) => `<code>${escapeHtml(d.serial)}</code>` },
+    { key: "last_seen", label: "Last seen", render: (d) => escapeHtml(d.last_seen_at || "never connected") },
+  );
+  return columns;
 }
 
 export async function loadMyDevices() {
@@ -40,12 +33,30 @@ export async function loadMyDevices() {
 function renderMyDeviceList() {
   const host = el("device-mine-list");
   if (!host) return;
-  if (!myDeviceData.length) {
-    host.innerHTML = '<p class="hint">No devices paired yet.</p>';
-    return;
-  }
-  host.innerHTML = myDeviceData.map((d) => _deviceRow(d, "", "data-device-revoke-mine")).join("");
-  document.querySelectorAll("[data-device-revoke-mine]").forEach((btn) =>
+
+  const table = renderDataTable({
+    container: host,
+    rows: myDeviceData,
+    rowKey: (d) => d.id,
+    getRowClass: (d) => (d.revoked ? "dim" : ""),
+    emptyMessage: "No devices paired yet.",
+    columns: [
+      ...deviceColumns(false),
+      {
+        key: "actions",
+        label: "",
+        headerClass: "dt-actions-cell",
+        cellClass: "dt-actions-cell",
+        render: (d) => `<button class="mini danger" data-device-revoke-mine="${escapeHtml(d.id)}" ${d.revoked ? "disabled" : ""}>Revoke</button>`,
+      },
+    ],
+    bulkActions: [
+      { label: "Revoke selected", run: (ids) => bulkRevokeDevices(ids, false) },
+    ],
+  });
+  if (!table) return;
+
+  table.querySelectorAll("[data-device-revoke-mine]").forEach((btn) =>
     btn.addEventListener("click", () => revokeMyDevice(btn.getAttribute("data-device-revoke-mine")))
   );
 }
@@ -70,46 +81,81 @@ async function maybeLoadAllDevices() {
 function renderAllDeviceList() {
   const host = el("device-all-list");
   if (!host) return;
-  if (!allDeviceData.length) {
-    host.innerHTML = '<p class="hint">No devices paired yet.</p>';
-    return;
-  }
-  host.innerHTML = allDeviceData
-    .map((d) => _deviceRow(d, `<span class="hint">owner: ${_escapeHtml(d.owner_username)}</span>`, "data-device-revoke-any"))
-    .join("");
-  document.querySelectorAll("[data-device-revoke-any]").forEach((btn) =>
+
+  const table = renderDataTable({
+    container: host,
+    rows: allDeviceData,
+    rowKey: (d) => d.id,
+    getRowClass: (d) => (d.revoked ? "dim" : ""),
+    emptyMessage: "No devices paired yet.",
+    columns: [
+      ...deviceColumns(true),
+      {
+        key: "actions",
+        label: "",
+        headerClass: "dt-actions-cell",
+        cellClass: "dt-actions-cell",
+        render: (d) => `<button class="mini danger" data-device-revoke-any="${escapeHtml(d.id)}" ${d.revoked ? "disabled" : ""}>Revoke</button>`,
+      },
+    ],
+    bulkActions: [
+      { label: "Revoke selected", run: (ids) => bulkRevokeDevices(ids, true) },
+    ],
+  });
+  if (!table) return;
+
+  table.querySelectorAll("[data-device-revoke-any]").forEach((btn) =>
     btn.addEventListener("click", () => revokeAnyDevice(btn.getAttribute("data-device-revoke-any")))
   );
 }
 
+async function _revokeDeviceRaw(id, isAdminScope) {
+  const path = isAdminScope
+    ? `/v1/devices/${encodeURIComponent(id)}/revoke`
+    : `/v1/devices/mine/${encodeURIComponent(id)}/revoke`;
+  try {
+    const resp = await fetch(path, { method: "POST" });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      return { ok: false, error: body.detail || "Revoke failed" };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
 async function revokeMyDevice(id) {
   if (!confirm("Revoke this device? It will need to be paired again.")) return;
-  try {
-    const resp = await fetch(`/v1/devices/mine/${encodeURIComponent(id)}/revoke`, { method: "POST" });
-    if (!resp.ok) {
-      const body = await resp.json();
-      print(el("device-status"), body.detail || "Revoke failed", true);
-      return;
-    }
-    await loadMyDevices();
-  } catch (error) {
-    print(el("device-status"), String(error), true);
+  const result = await _revokeDeviceRaw(id, false);
+  if (!result.ok) {
+    print(el("device-status"), result.error, true);
+    return;
   }
+  await loadMyDevices();
 }
 
 async function revokeAnyDevice(id) {
   if (!confirm("Revoke this device? It will need to be paired again.")) return;
-  try {
-    const resp = await fetch(`/v1/devices/${encodeURIComponent(id)}/revoke`, { method: "POST" });
-    if (!resp.ok) {
-      const body = await resp.json();
-      print(el("device-status"), body.detail || "Revoke failed", true);
-      return;
-    }
-    await maybeLoadAllDevices();
-  } catch (error) {
-    print(el("device-status"), String(error), true);
+  const result = await _revokeDeviceRaw(id, true);
+  if (!result.ok) {
+    print(el("device-status"), result.error, true);
+    return;
   }
+  await maybeLoadAllDevices();
+}
+
+async function bulkRevokeDevices(ids, isAdminScope) {
+  if (!confirm(`Revoke ${ids.length} device(s)? They will need to be paired again.`)) return;
+  const data = isAdminScope ? allDeviceData : myDeviceData;
+  const errors = await runBulk(
+    ids,
+    (id) => _revokeDeviceRaw(id, isAdminScope),
+    (id) => data.find((d) => d.id === id)?.name || id
+  );
+  if (isAdminScope) await maybeLoadAllDevices();
+  else await loadMyDevices();
+  printBulkSummary(el("device-status"), ids.length, errors, "Revoked");
 }
 
 export async function claimDevice() {
