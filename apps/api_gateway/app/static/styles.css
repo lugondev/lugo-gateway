@@ -30,6 +30,10 @@
   --sp-6: 24px;
 }
 
+.admin-only {
+  display: none;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -1321,4 +1325,12 @@ input[type="radio"] {
   min-height: 18px;
   color: #e05555;
   font-size: 13px;
+}
+.login-form {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-form.active {
+  display: flex;
 }

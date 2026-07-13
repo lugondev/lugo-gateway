@@ -78,8 +78,27 @@ def test_ws_accepts_valid_device_token(client, _with_password, path, query):
 
 @pytest.mark.parametrize("path,query", ROUTES)
 def test_ws_accepts_valid_browser_cookie(client, _with_password, path, query):
-    login = client.post("/api/auth/login", json={"password": "s3cret"})
+    client.post("/api/auth/signup", json={"username": "toan", "password": "s3cret"})
+    login = client.post("/api/auth/login", json={"username": "toan", "password": "s3cret"})
     assert login.status_code == 200
     with client.websocket_connect(f"{path}?{query}") as ws:
         first = ws.receive_json()
         assert first
+
+
+@pytest.mark.parametrize("path,query", ROUTES)
+def test_ws_rejects_disabled_user_cookie(client, _with_password, path, query, monkeypatch):
+    import asyncio
+
+    from app.services.auth.users import user_store
+
+    client.post("/api/auth/signup", json={"username": "toan", "password": "pw"})
+    login = client.post("/api/auth/login", json={"username": "toan", "password": "pw"})
+    assert login.status_code == 200
+    user = asyncio.run(user_store.get_by_username("toan"))
+    asyncio.run(user_store.set_fields(user.id, disabled=True))
+
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"{path}?{query}"):
+            pass
+    assert exc_info.value.code == 4401

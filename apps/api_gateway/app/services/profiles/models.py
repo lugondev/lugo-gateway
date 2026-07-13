@@ -9,6 +9,7 @@ class LlmConfig(BaseModel):
     base_url: str = ""
     api_key: str = ""
     model: str = ""
+    engine: str = ""
 
 
 class TtsConfig(BaseModel):
@@ -47,6 +48,7 @@ class SessionConfig(BaseModel):
 
 class Profile(BaseModel):
     name: str
+    owner_id: str | None = None
     nickname: str = ""
     llm: LlmConfig = LlmConfig()
     system_prompt: str = ""

@@ -11,8 +11,9 @@ from app.core.audio import (
     read_wav,
     wav_duration_seconds,
 )
-from app.core.auth_guard import ws_authenticated
+from app.core.auth_guard import resolve_ws_identity
 from app.core.errors import AppError
+from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
 from app.schemas.common import StreamEvent
 from app.schemas.stt import STTRequest, STTResult
@@ -24,6 +25,10 @@ from app.streaming.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/stt", tags=["stt"])
+
+# How often the disabled/revoked re-check wakes (test-tunable, same pattern as
+# lugo.py's _IDLE_TICK_S).
+_IDENTITY_RECHECK_INTERVAL_S = 30.0
 
 
 def _resolve_flag(value: bool | None, default: bool) -> bool:
@@ -143,7 +148,8 @@ async def _emit(websocket: WebSocket, channel: str, event: StreamEvent) -> None:
 
 @router.websocket("/stream")
 async def stt_stream(websocket: WebSocket) -> None:
-    if not ws_authenticated(websocket):
+    identity = await resolve_ws_identity(websocket)
+    if identity is None:
         await websocket.close(code=4401, reason="unauthorized")
         return
     await websocket.accept()
@@ -191,9 +197,15 @@ async def stt_stream(websocket: WebSocket) -> None:
             ),
         )
 
+    watchdog = build_identity_watchdog(identity, interval_s=_IDENTITY_RECHECK_INTERVAL_S)
+    if watchdog is not None:
+        watchdog.start()
+
     try:
-        while True:
-            message = await websocket.receive()
+        async for message in receive_with_watchdog(websocket, watchdog):
+            if message is None:
+                await websocket.close(code=4401, reason="account disabled")
+                break
 
             if message.get("type") == "websocket.disconnect":
                 break
@@ -266,6 +278,8 @@ async def stt_stream(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        if watchdog is not None:
+            watchdog.cancel()
         event_bus.close(channel)
         try:
             await websocket.close()

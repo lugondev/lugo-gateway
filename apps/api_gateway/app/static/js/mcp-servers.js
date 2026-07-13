@@ -1,5 +1,6 @@
 import { el, print } from "./helpers.js";
 import { profileData, renderProfileMcpList } from "./profiles.js";
+import { fetchAuthStatus } from "./session.js";
 
 export let mcpServerData = {};     // loaded first so profile panel can use it
 
@@ -13,7 +14,7 @@ export async function loadMcpServers() {
   }
 }
 
-export function renderMcpList() {
+export async function renderMcpList() {
   const host = el("mcp-server-list");
   if (!host) return;
   const servers = Object.values(mcpServerData);
@@ -21,22 +22,32 @@ export function renderMcpList() {
     host.innerHTML = '<p class="hint">No servers configured yet. Add one below.</p>';
     return;
   }
-  host.innerHTML = servers.map((s) => `
+  const status = await fetchAuthStatus();
+  const isAdmin = !!(status && status.authenticated && status.role === "admin");
+
+  host.innerHTML = servers.map((s) => {
+    const isTemplate = s.owner_id === null || s.owner_id === undefined;
+    const mine = !isTemplate ? '<span class="hint">mine</span>' : "";
+    const hideWriteControls = isTemplate && !isAdmin;
+    return `
     <div class="model-row ${s.enabled ? "" : "dim"}">
       <div class="model-info">
-        <input type="checkbox" data-mcp-enabled="${s.name}" ${s.enabled ? "checked" : ""} title="Enabled" />
+        ${hideWriteControls ? "" : `<input type="checkbox" data-mcp-enabled="${s.name}" ${s.enabled ? "checked" : ""} title="Enabled" />`}
         <strong>${s.name}</strong>
+        ${mine}
         <code>${s.url}</code>
         ${s.headers && Object.keys(s.headers).length ? `<span class="hint">headers: ${Object.keys(s.headers).join(", ")}</span>` : ""}
         <span class="mcp-row-status" id="mcp-test-${s.name}"></span>
       </div>
       <div class="model-action">
         <button class="mini" data-mcp-test="${s.name}">Test</button>
-        <button class="mini danger" data-mcp-delete="${s.name}">Delete</button>
+        <button class="mini" data-mcp-clone="${s.name}">Clone</button>
+        ${hideWriteControls ? "" : `<button class="mini danger" data-mcp-delete="${s.name}">Delete</button>`}
       </div>
     </div>
     <div class="mcp-tool-list" id="mcp-tools-${s.name}"></div>
-  `).join("");
+  `;
+  }).join("");
 
   document.querySelectorAll("[data-mcp-enabled]").forEach((cb) =>
     cb.addEventListener("change", () =>
@@ -48,6 +59,9 @@ export function renderMcpList() {
   );
   document.querySelectorAll("[data-mcp-delete]").forEach((btn) =>
     btn.addEventListener("click", () => deleteMcpServer(btn.getAttribute("data-mcp-delete")))
+  );
+  document.querySelectorAll("[data-mcp-clone]").forEach((btn) =>
+    btn.addEventListener("click", () => cloneMcpServer(btn.getAttribute("data-mcp-clone")))
   );
 }
 
@@ -142,6 +156,23 @@ export async function deleteMcpServer(name) {
   try {
     const resp = await fetch(`/v1/mcp/servers/${encodeURIComponent(name)}`, { method: "DELETE" });
     if (!resp.ok) { const b = await resp.json(); print(el("mcp-status"), b.detail || "Delete failed", true); return; }
+    await loadMcpServers();
+  } catch (error) {
+    print(el("mcp-status"), String(error), true);
+  }
+}
+
+export async function cloneMcpServer(name) {
+  const new_name = prompt(`Clone "${name}" as:`, `${name}-copy`);
+  if (!new_name || !new_name.trim()) return;
+  try {
+    const resp = await fetch(`/v1/mcp/servers/${encodeURIComponent(name)}/clone`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_name: new_name.trim() }),
+    });
+    const body = await resp.json();
+    if (!resp.ok) { print(el("mcp-status"), body.detail || "Clone failed", true); return; }
     await loadMcpServers();
   } catch (error) {
     print(el("mcp-status"), String(error), true);

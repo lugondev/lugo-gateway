@@ -13,12 +13,14 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.api.routes.agents_docs import router as agents_docs_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.conversation import router as conversation_router
+from app.api.routes.devices import router as devices_router
 from app.api.routes.events import router as events_router
 from app.api.routes.health import router as health_router
 from app.api.routes.livehost import router as livehost_router
 from app.api.routes.lugo import router as lugo_router
 from app.api.routes.mcp import router as mcp_router
 from app.api.routes.memories import router as memories_router
+from app.api.routes.model_registry import router as model_registry_router
 from app.api.routes.profiles import router as profiles_router
 from app.api.routes.recommend import router as recommend_router
 from app.api.routes.sessions import router as sessions_router
@@ -27,6 +29,7 @@ from app.api.routes.system import router as system_router
 from app.api.routes.tts import router as tts_router
 from app.api.routes.tts_profiles import router as tts_profiles_router
 from app.api.routes.ui import router as ui_router
+from app.api.routes.users import router as users_router
 from app.core.auth_guard import AuthGuardMiddleware
 from app.core.errors import AppError
 from app.core.logging import setup_logging
@@ -82,11 +85,29 @@ async def _warm_default_engines() -> None:
     logger.info("boot warm-up finished in %.0fms", (time.monotonic() - started) * 1000)
 
 
+async def _bootstrap_admin_if_needed() -> None:
+    from app.services.auth.users import user_store
+
+    if await user_store.count() > 0:
+        return
+    username = settings.admin_bootstrap_username or "admin"
+    password = settings.admin_bootstrap_password or settings.admin_password
+    if not password:
+        logger.warning(
+            "no admin bootstrap credentials set (ADMIN_BOOTSTRAP_PASSWORD or "
+            "legacy ADMIN_PASSWORD) -- create the first admin account manually"
+        )
+        return
+    await user_store.create(username, password, role="admin")
+    logger.info("bootstrap admin account created: %s", username)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.services.db.engine import init_db
 
     await init_db()
+    await _bootstrap_admin_if_needed()
 
     from app.services.db.sync_engine import init_config_tables
     from app.services.profiles.store import profile_store
@@ -106,8 +127,15 @@ async def lifespan(app: FastAPI):
     # DB is configured at that moment -- in practice, the real data/app.db.
     seed_default_servers(mcp_server_store)
 
-    if not settings.admin_password and settings.app_env != "dev":
-        logger.warning("auth disabled: ADMIN_PASSWORD not set (app_env=%s)", settings.app_env)
+    from app.services.model_registry.seed import seed_known_models
+
+    await seed_known_models()
+
+    if not settings.auth_enabled and settings.app_env != "dev":
+        logger.warning(
+            "auth disabled: neither ADMIN_PASSWORD nor ADMIN_BOOTSTRAP_PASSWORD is set (app_env=%s)",
+            settings.app_env,
+        )
     # Warm engines BEFORE the app starts serving so the very first device turn is
     # instant instead of paying a cold model load (worse with connect-on-wake,
     # where the session starts the moment the user wakes). Capped so a stuck/slow
@@ -153,11 +181,13 @@ async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
 
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(users_router)
 app.include_router(stt_router)
 app.include_router(tts_router)
 app.include_router(tts_profiles_router)
 app.include_router(events_router)
 app.include_router(conversation_router)
+app.include_router(devices_router)
 app.include_router(system_router)
 app.include_router(livehost_router)
 app.include_router(lugo_router)
@@ -168,6 +198,7 @@ app.include_router(profiles_router)
 app.include_router(mcp_router)
 app.include_router(sessions_router)
 app.include_router(memories_router)
+app.include_router(model_registry_router)
 
 app.mount("/static", StaticFiles(directory="apps/api_gateway/app/static"), name="static")
 # Serve generated audio artifacts (foundation; swap for object storage later).

@@ -19,6 +19,9 @@ import { loadMcpServers } from "./mcp-servers.js";
 import "./tts-batch.js";
 import "./tts-stream.js";
 import "./sessions.js";
+import "./users.js";
+import "./devices.js";
+import "./model-registry.js";
 
 initSidebar();
 initSttMode();

@@ -32,3 +32,28 @@ class AuthError(AppError):
     """Raised when login credentials are invalid or a session is required."""
 
     status_code = 401
+
+
+class UsernameTakenError(AppError):
+    """Raised on signup/create-user when the username already exists."""
+
+    status_code = 409
+
+
+class PairingCodeInvalidError(AppError):
+    """Raised when pair/claim is given an unknown or expired code."""
+
+    status_code = 400
+
+
+class DeviceSerialConflictError(AppError):
+    """Raised when pair/claim's serial already has a non-revoked device."""
+
+    status_code = 409
+
+
+class ModelNotAllowedError(AppError):
+    """Raised when a chosen (kind, engine, model_id) matches a registry entry
+    that is disabled, or is stage=testing and the user lacks can_use_testing."""
+
+    status_code = 403

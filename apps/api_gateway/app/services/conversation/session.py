@@ -253,6 +253,7 @@ class ConversationSession:
                     cfg.session_id,
                     profile_id=cfg.profile_name or "",
                     meta={"stt_engine": cfg.stt_engine, "tts_engine": cfg.tts_engine},
+                    user_id=profile.owner_id if profile else None,
                 )
         except Exception as exc:  # noqa: BLE001 - session setup must not drop the connection
             logger.warning("session setup failed for %s: %s", cfg.session_id, exc)

@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     # that in log handling/retention if you enable this.
     device_auth_token: str = ""
 
+    # Bootstrap admin account, created once on startup if the `users` table is
+    # empty. Falls back to admin_password (legacy single-secret login) with
+    # username "admin" if these are unset, so upgrading an existing deployment
+    # doesn't lock the operator out.
+    admin_bootstrap_username: str = ""
+    admin_bootstrap_password: str = ""
+
     default_stt_engine: str = "vosk"
     default_tts_engine: str = "omnivoice"
 
@@ -264,6 +271,10 @@ class Settings(BaseSettings):
     livehost_watchdog_idle_seconds: float = 300.0
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.admin_password or self.admin_bootstrap_password)
 
     @property
     def omnivoice_python_path(self) -> str:

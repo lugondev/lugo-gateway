@@ -118,3 +118,13 @@ async def test_clear_only_empty_scoped_to_profile(store):
     assert deleted == 1
     assert await store.exists("p1empty") is False
     assert await store.exists("p2empty") is True
+
+
+@pytest.mark.asyncio
+async def test_create_with_user_id_and_filter(store):
+    await store.create("s1", profile_id="pet", user_id="user-a")
+    await store.create("s2", profile_id="pet", user_id="user-b")
+    rows = await store.list(user_id="user-a")
+    assert [r["id"] for r in rows] == ["s1"]
+    got = await store.get("s1")
+    assert got["user_id"] == "user-a"

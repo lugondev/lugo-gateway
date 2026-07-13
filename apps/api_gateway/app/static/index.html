@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Speech Text Transformer</title>
+    <title>Lugo BOT</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -19,7 +19,7 @@
       <header class="app-header">
         <div class="hdr-left">
           <button class="sidebar-toggle" id="sidebar-toggle" title="Toggle sidebar">&#9776;</button>
-          <span class="app-title">Speech&nbsp;Text&nbsp;Transformer</span>
+          <span class="app-title">Lugo BOT</span>
         </div>
         <div class="hdr-badges">
           <span class="hdr-badge" id="badge-stt">&#9679; STT</span>
@@ -47,6 +47,12 @@
               </button>
             </li>
             <li>
+              <button class="nav-item" data-section="devices">
+                <span class="nav-icon">&#9635;</span>
+                <span class="nav-label">Devices</span>
+              </button>
+            </li>
+            <li>
               <button class="nav-item" data-section="stt">
                 <span class="nav-icon">◉</span>
                 <span class="nav-label">STT</span>
@@ -58,7 +64,7 @@
                 <span class="nav-label">TTS</span>
               </button>
             </li>
-            <li>
+            <li class="admin-only">
               <button class="nav-item" data-section="models">
                 <span class="nav-icon">⊞</span>
                 <span class="nav-label">Models</span>
@@ -70,7 +76,19 @@
                 <span class="nav-label">MCP</span>
               </button>
             </li>
-            <li>
+            <li class="admin-only">
+              <button class="nav-item" data-section="users">
+                <span class="nav-icon">&#9689;</span>
+                <span class="nav-label">Users</span>
+              </button>
+            </li>
+            <li class="admin-only">
+              <button class="nav-item" data-section="model-registry">
+                <span class="nav-icon">&#9636;</span>
+                <span class="nav-label">Model Registry</span>
+              </button>
+            </li>
+            <li class="admin-only">
               <button class="nav-item" data-section="system">
                 <span class="nav-icon">⊙</span>
                 <span class="nav-label">System</span>
@@ -204,6 +222,7 @@
                   </label>
                   <div class="pf-foot">
                     <button id="pf-save-btn">Save Configuration</button>
+                    <button id="pf-clone-btn" class="ghost mini hidden">Clone</button>
                     <button id="pf-cancel-btn" class="ghost">Cancel</button>
                     <button id="pf-delete-btn" class="danger hidden">Delete Profile</button>
                   </div>
@@ -462,6 +481,42 @@
                 <p id="stt-stream-transcript" class="transcript"></p>
               </div>
               <pre id="stt-stream-log" class="output small"></pre>
+            </section>
+          </div>
+
+          <!-- ============================== DEVICES ============================== -->
+          <div class="section" id="section-devices">
+            <section class="card">
+              <div class="card-head">
+                <h2>My Devices</h2>
+                <button id="device-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <p class="hint">Pair an ESP32 or RPi client to your account. Enter the code shown on the device.</p>
+              <div id="device-mine-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <h3 class="sub">Add Device</h3>
+              <div class="row tight">
+                <label>
+                  Code shown on device
+                  <input id="device-pair-code" type="text" placeholder="123456" />
+                </label>
+                <label>
+                  Name
+                  <input id="device-pair-name" type="text" placeholder="ESP32 desk" />
+                </label>
+                <div class="actions end">
+                  <button id="device-pair-btn">Pair</button>
+                </div>
+              </div>
+              <p id="device-status" class="meta"></p>
+            </section>
+            <section class="card hidden" id="device-all-section">
+              <div class="card-head">
+                <h2>All Devices</h2>
+              </div>
+              <p class="hint">Every paired device, across all accounts.</p>
+              <div id="device-all-list" class="model-list"></div>
             </section>
           </div>
 
@@ -727,6 +782,100 @@
                 </div>
               </div>
               <p id="mcp-status" class="meta"></p>
+            </section>
+          </div>
+
+          <!-- ============================== USERS ============================== -->
+          <div class="section" id="section-users">
+            <section class="card">
+              <div class="card-head">
+                <h2>Users</h2>
+                <button id="user-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <p class="hint">Manage accounts, roles, and testing-model access.</p>
+              <div id="user-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <h3 class="sub">Create User</h3>
+              <div class="row tight">
+                <label>
+                  Username
+                  <input id="user-add-username" type="text" placeholder="username" />
+                </label>
+                <label>
+                  Password
+                  <input id="user-add-password" type="password" placeholder="password" />
+                </label>
+                <label>
+                  Role
+                  <select id="user-add-role">
+                    <option value="user" selected>user</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </label>
+                <div class="actions end">
+                  <button id="user-add-btn">Create</button>
+                </div>
+              </div>
+              <p id="user-status" class="meta"></p>
+            </section>
+          </div>
+
+          <!-- ============================== MODEL REGISTRY ============================== -->
+          <div class="section" id="section-model-registry">
+            <section class="card">
+              <div class="card-head">
+                <h2>Model Registry</h2>
+                <button id="model-registry-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <p class="hint">Control which STT/TTS/LLM models users may select, and gate "testing" models to accounts with testing access.</p>
+              <div id="model-registry-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <h3 class="sub">Add Entry</h3>
+              <div class="row tight">
+                <label>
+                  Kind
+                  <select id="registry-add-kind">
+                    <option value="stt">stt</option>
+                    <option value="tts">tts</option>
+                    <option value="llm">llm</option>
+                  </select>
+                </label>
+                <label>
+                  Engine
+                  <input id="registry-add-engine" type="text" placeholder="openrouter" />
+                </label>
+                <label>
+                  Model ID
+                  <input id="registry-add-model-id" type="text" placeholder="qwen3-asr-flash" />
+                </label>
+                <label>
+                  Label
+                  <input id="registry-add-label" type="text" placeholder="Qwen3 ASR Flash" />
+                </label>
+                <label>
+                  Stage
+                  <select id="registry-add-stage">
+                    <option value="stable">stable</option>
+                    <option value="testing">testing</option>
+                  </select>
+                </label>
+              </div>
+              <div class="row tight hidden" id="registry-add-llm-fields">
+                <label>
+                  Base URL
+                  <input id="registry-add-base-url" type="text" placeholder="https://openrouter.ai/api/v1" />
+                </label>
+                <label>
+                  API Key
+                  <input id="registry-add-api-key" type="password" />
+                </label>
+              </div>
+              <div class="actions end">
+                <button id="registry-add-btn">Add (runs a live test first)</button>
+              </div>
+              <p id="model-registry-status" class="meta"></p>
             </section>
           </div>
 
