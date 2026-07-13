@@ -829,6 +829,29 @@
                 <button id="model-registry-refresh" class="ghost mini">Refresh</button>
               </div>
               <p class="hint">Control which STT/TTS/LLM models users may select, and gate "testing" models to accounts with testing access.</p>
+              <div class="row tight">
+                <label>
+                  Kind
+                  <select id="registry-filter-kind">
+                    <option value="">All</option>
+                    <option value="stt">stt</option>
+                    <option value="tts">tts</option>
+                    <option value="llm">llm</option>
+                  </select>
+                </label>
+                <label>
+                  Stage
+                  <select id="registry-filter-stage">
+                    <option value="">All</option>
+                    <option value="stable">stable</option>
+                    <option value="testing">testing</option>
+                  </select>
+                </label>
+                <label>
+                  Search
+                  <input id="registry-filter-search" type="text" placeholder="engine, model, or label…" />
+                </label>
+              </div>
               <div id="model-registry-list" class="model-list">
                 <p class="hint">Loading&#8230;</p>
               </div>
