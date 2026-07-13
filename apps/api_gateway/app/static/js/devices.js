@@ -1,6 +1,7 @@
 import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
 import { renderDataTable } from "./data-table.js";
 import { fetchAuthStatus } from "./session.js";
+import { confirmDialog } from "./modal.js";
 
 export let myDeviceData = [];
 export let allDeviceData = [];
@@ -126,7 +127,7 @@ async function _revokeDeviceRaw(id, isAdminScope) {
 }
 
 async function revokeMyDevice(id) {
-  if (!confirm("Revoke this device? It will need to be paired again.")) return;
+  if (!(await confirmDialog("Revoke this device? It will need to be paired again.", { danger: true }))) return;
   const result = await _revokeDeviceRaw(id, false);
   if (!result.ok) {
     print(el("device-status"), result.error, true);
@@ -136,7 +137,7 @@ async function revokeMyDevice(id) {
 }
 
 async function revokeAnyDevice(id) {
-  if (!confirm("Revoke this device? It will need to be paired again.")) return;
+  if (!(await confirmDialog("Revoke this device? It will need to be paired again.", { danger: true }))) return;
   const result = await _revokeDeviceRaw(id, true);
   if (!result.ok) {
     print(el("device-status"), result.error, true);
@@ -146,7 +147,7 @@ async function revokeAnyDevice(id) {
 }
 
 async function bulkRevokeDevices(ids, isAdminScope) {
-  if (!confirm(`Revoke ${ids.length} device(s)? They will need to be paired again.`)) return;
+  if (!(await confirmDialog(`Revoke ${ids.length} device(s)? They will need to be paired again.`, { danger: true }))) return;
   const data = isAdminScope ? allDeviceData : myDeviceData;
   const errors = await runBulk(
     ids,

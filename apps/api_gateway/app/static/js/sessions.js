@@ -1,6 +1,7 @@
 import { el } from "./helpers.js";
 import { chat, setCurrentSessionId, currentSessionId } from "./chat.js";
 import { addBubble } from "./conversation.js";
+import { confirmDialog } from "./modal.js";
 
 // The profile filter the panel is currently showing. Every bulk/clear action
 // is scoped to this so "what you see is what you delete".
@@ -123,7 +124,7 @@ async function deleteSelected() {
 async function clearSessions(onlyEmpty) {
   const scopeLabel = currentScopeProfile ? `profile "${currentScopeProfile}"` : "all profiles";
   const what = onlyEmpty ? "empty sessions" : "ALL sessions";
-  if (!window.confirm(`Delete ${what} for ${scopeLabel}? This cannot be undone.`)) return;
+  if (!(await confirmDialog(`Delete ${what} for ${scopeLabel}? This cannot be undone.`, { danger: true }))) return;
   const q = scopeQuery();
   const url = `/v1/sessions${q}${onlyEmpty ? (q ? "&" : "?") + "only_empty=true" : ""}`;
   try {

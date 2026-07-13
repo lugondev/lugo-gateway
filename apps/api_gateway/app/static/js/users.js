@@ -1,5 +1,6 @@
 import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
 import { renderDataTable } from "./data-table.js";
+import { promptDialog } from "./modal.js";
 
 export let userData = [];
 
@@ -118,7 +119,7 @@ async function bulkUpdateUsers(ids, fields, verb) {
 }
 
 async function resetUserPassword(id) {
-  const newPassword = prompt("New password for this user:");
+  const newPassword = await promptDialog("New password for this user:");
   if (!newPassword) return;
   try {
     const resp = await fetch(`/v1/users/${encodeURIComponent(id)}/reset_password`, {

@@ -3,6 +3,7 @@ import { loadSttEngines } from "./stt-engines.js";
 import { loadTtsEngines } from "./tts-engines.js";
 import { loadSystemStatus } from "./system-status.js";
 import { renderLlmRow } from "./model-recommender.js";
+import { confirmDialog } from "./modal.js";
 
 export let modelPollTimer = null;
 
@@ -211,7 +212,7 @@ export function bindModelButtons() {
 
 export async function runModelAction(engine, action, key) {
   const cfg = MODEL_ENGINES[engine];
-  if (action === "delete" && !confirm(`Delete ${engine} "${key}"?`)) return;
+  if (action === "delete" && !(await confirmDialog(`Delete ${engine} "${key}"?`, { danger: true }))) return;
   print(el("model-msg"), `${engine} ${key}: ${action}...`);
   try {
     let resp;

@@ -3,6 +3,7 @@ import { mcpServerData } from "./mcp-servers.js";
 import { ttsProfileData } from "./tts-profiles.js";
 import { setCurrentSessionId } from "./chat.js";
 import { fetchAuthStatus } from "./session.js";
+import { confirmDialog, promptDialog } from "./modal.js";
 
 export let profileData = {};
 export let profileEditMode = null; // null | "new" | "<profile-name>"
@@ -223,7 +224,8 @@ export async function saveProfile() {
 
 export async function deleteProfile() {
   const name = el("pf-name").value.trim();
-  if (!name || !confirm(`Delete profile "${name}"?`)) return;
+  if (!name) return;
+  if (!(await confirmDialog(`Delete profile "${name}"?`, { danger: true }))) return;
   try {
     const resp = await fetch(`/v1/profiles/${encodeURIComponent(name)}`, { method: "DELETE" });
     if (!resp.ok) { const b = await resp.json(); print(el("pf-status"), b.detail || "Delete failed", true); return; }
@@ -238,7 +240,7 @@ export async function deleteProfile() {
 export async function cloneProfile() {
   const name = el("pf-name").value.trim();
   if (!name) return;
-  const new_name = prompt(`Clone "${name}" as:`, `${name}-copy`);
+  const new_name = await promptDialog(`Clone "${name}" as:`, `${name}-copy`);
   if (!new_name || !new_name.trim()) return;
   try {
     const resp = await fetch(`/v1/profiles/${encodeURIComponent(name)}/clone`, {
@@ -281,7 +283,7 @@ export function memRow(name, m) {
   edit.type = "button";
   edit.textContent = "✎";
   edit.addEventListener("click", async () => {
-    const next = prompt("Edit memory:", m.content);
+    const next = await promptDialog("Edit memory:", m.content);
     if (next === null || !next.trim()) return;
     try {
       const resp = await fetch(`/v1/profiles/${encodeURIComponent(name)}/memories/${m.id}`, {

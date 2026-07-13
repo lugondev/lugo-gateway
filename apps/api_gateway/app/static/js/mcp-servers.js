@@ -2,6 +2,7 @@ import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
 import { renderDataTable } from "./data-table.js";
 import { profileData, renderProfileMcpList } from "./profiles.js";
 import { fetchAuthStatus } from "./session.js";
+import { confirmDialog, promptDialog } from "./modal.js";
 
 export let mcpServerData = {};     // loaded first so profile panel can use it
 
@@ -215,7 +216,7 @@ async function _deleteMcpServerRaw(name) {
 }
 
 export async function deleteMcpServer(name) {
-  if (!confirm(`Delete MCP server "${name}"?`)) return;
+  if (!(await confirmDialog(`Delete MCP server "${name}"?`, { danger: true }))) return;
   const result = await _deleteMcpServerRaw(name);
   if (!result.ok) {
     print(el("mcp-status"), result.error, true);
@@ -225,14 +226,14 @@ export async function deleteMcpServer(name) {
 }
 
 async function bulkDeleteMcpServers(names) {
-  if (!confirm(`Delete ${names.length} MCP server(s)?`)) return;
+  if (!(await confirmDialog(`Delete ${names.length} MCP server(s)?`, { danger: true }))) return;
   const errors = await runBulk(names, _deleteMcpServerRaw, (name) => name);
   await loadMcpServers();
   printBulkSummary(el("mcp-status"), names.length, errors, "Deleted");
 }
 
 export async function cloneMcpServer(name) {
-  const new_name = prompt(`Clone "${name}" as:`, `${name}-copy`);
+  const new_name = await promptDialog(`Clone "${name}" as:`, `${name}-copy`);
   if (!new_name || !new_name.trim()) return;
   try {
     const resp = await fetch(`/v1/mcp/servers/${encodeURIComponent(name)}/clone`, {

@@ -2,6 +2,7 @@ import { el, print, escapeHtml, runBulk, printBulkSummary, restoreAndBind } from
 import { renderDataTable } from "./data-table.js";
 import { renderProfileTtsSelect } from "./profiles.js";
 import { fetchAuthStatus } from "./session.js";
+import { confirmDialog, promptDialog } from "./modal.js";
 
 export let ttsProfileData = {};
 export let ttsProfileEditName = null; // null = "new" (no profile currently loaded into the form)
@@ -225,7 +226,7 @@ async function _deleteTtsProfileRaw(name) {
 }
 
 export async function deleteTtsProfile(name) {
-  if (!confirm(`Delete TTS profile "${name}"?`)) return;
+  if (!(await confirmDialog(`Delete TTS profile "${name}"?`, { danger: true }))) return;
   const result = await _deleteTtsProfileRaw(name);
   if (!result.ok) {
     print(el("tp-status"), result.error, true);
@@ -236,7 +237,7 @@ export async function deleteTtsProfile(name) {
 }
 
 async function bulkDeleteTtsProfiles(names) {
-  if (!confirm(`Delete ${names.length} TTS profile(s)?`)) return;
+  if (!(await confirmDialog(`Delete ${names.length} TTS profile(s)?`, { danger: true }))) return;
   const errors = await runBulk(names, _deleteTtsProfileRaw, (name) => name);
   await loadTtsProfiles();
   if (names.includes(ttsProfileEditName)) resetTtsProfileForm();
@@ -244,7 +245,7 @@ async function bulkDeleteTtsProfiles(names) {
 }
 
 export async function cloneTtsProfile(name) {
-  const new_name = prompt(`Clone "${name}" as:`, `${name}-copy`);
+  const new_name = await promptDialog(`Clone "${name}" as:`, `${name}-copy`);
   if (!new_name || !new_name.trim()) return;
   try {
     const resp = await fetch(`/v1/tts/profiles/${encodeURIComponent(name)}/clone`, {
