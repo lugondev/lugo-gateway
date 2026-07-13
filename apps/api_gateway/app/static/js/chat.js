@@ -1,7 +1,7 @@
 import { el, wsUrl } from "./helpers.js";
 import { conv, convStopAudio } from "./conversation.js";
 import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
-import { getPreproc } from "./base-context.js";
+import { getPreproc } from "./system-config.js";
 
 export const CHAT_MODES = {
   "text-text":   { title: "Text Chat",      hint: "Text chat with the configured LLM." },

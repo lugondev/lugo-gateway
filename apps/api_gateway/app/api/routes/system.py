@@ -8,7 +8,7 @@ from app.services.artifacts import artifact_store
 from app.services.models import model_manager
 from app.services.stt.service import stt_service
 from app.services.llm_models import llm_manager
-from app.services.system_config import system_config_store
+from app.services.system_config import SystemConfig, system_config_store
 from app.services.tts.service import tts_service
 from app.services.tts_models import tts_model_manager
 from app.services.vad import available_backends
@@ -35,11 +35,6 @@ class VieneuModeRequest(BaseModel):
 
 class LlmModelRequest(BaseModel):
     model: str
-
-
-class SystemConfigRequest(BaseModel):
-    base_context: str = ""
-    openrouter_api_key: str = ""
 
 
 def _artifacts_stats() -> dict:
@@ -86,11 +81,48 @@ async def system_status() -> dict:
     return {"success": True, "data": data}
 
 
-def _mask_system_config(config) -> dict:
+def _mask_system_config(config: SystemConfig) -> dict:
     data = config.model_dump()
     if data.get("openrouter_api_key"):
         data["openrouter_api_key"] = "***"
+    if data["conversation_llm"].get("conversation_llm_api_key"):
+        data["conversation_llm"]["conversation_llm_api_key"] = "***"
+    if data["remote_stt"].get("whisper_service_api_key"):
+        data["remote_stt"]["whisper_service_api_key"] = "***"
+    if data["remote_stt"].get("eventlab_api_key"):
+        data["remote_stt"]["eventlab_api_key"] = "***"
+    if data["preprocessing"].get("pyannote_auth_token"):
+        data["preprocessing"]["pyannote_auth_token"] = "***"
     return data
+
+
+def _merge_system_config(current: SystemConfig, payload: SystemConfig) -> SystemConfig:
+    """Blank or '***' in an incoming secret field means "keep the existing value" --
+    the UI never re-sends a real secret it fetched, only a fresh one the user typed."""
+    update = payload.model_dump()
+
+    def _keep_if_blank_or_masked(new_value: str, old_value: str) -> str:
+        return old_value if (not new_value or new_value == "***") else new_value
+
+    update["openrouter_api_key"] = _keep_if_blank_or_masked(
+        update["openrouter_api_key"], current.openrouter_api_key
+    )
+    update["conversation_llm"]["conversation_llm_api_key"] = _keep_if_blank_or_masked(
+        update["conversation_llm"]["conversation_llm_api_key"],
+        current.conversation_llm.conversation_llm_api_key,
+    )
+    update["remote_stt"]["whisper_service_api_key"] = _keep_if_blank_or_masked(
+        update["remote_stt"]["whisper_service_api_key"],
+        current.remote_stt.whisper_service_api_key,
+    )
+    update["remote_stt"]["eventlab_api_key"] = _keep_if_blank_or_masked(
+        update["remote_stt"]["eventlab_api_key"], current.remote_stt.eventlab_api_key
+    )
+    update["preprocessing"]["pyannote_auth_token"] = _keep_if_blank_or_masked(
+        update["preprocessing"]["pyannote_auth_token"],
+        current.preprocessing.pyannote_auth_token,
+    )
+    return SystemConfig.model_validate(update)
 
 
 @router.get("/system/config")
@@ -99,14 +131,14 @@ async def get_system_config() -> dict:
 
 
 @router.put("/system/config")
-async def set_system_config(payload: SystemConfigRequest) -> dict:
-    config = system_config_store.set_base_context(payload.base_context)
-    # Leave-blank-to-keep-existing, same convention as profiles' llm.api_key:
-    # the UI's password field is empty on load, so a save that doesn't
-    # re-enter the key must not wipe it.
-    if payload.openrouter_api_key:
-        config = system_config_store.set_openrouter_api_key(payload.openrouter_api_key)
-    return {"success": True, "data": _mask_system_config(config)}
+async def set_system_config(payload: SystemConfig) -> dict:
+    current = system_config_store.get()
+    merged = _merge_system_config(current, payload)
+    new_config = system_config_store.set(merged)
+    # Cache-invalidation hooks for settings cached at boot/first-use are added here
+    # incrementally (remote_stt in Task 6, omnivoice in Task 7, preprocessing.pyannote_*
+    # and stt_local.qwen3_asr_device in Tasks 5/4 respectively).
+    return {"success": True, "data": _mask_system_config(new_config)}
 
 
 @router.get("/models")

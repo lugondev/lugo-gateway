@@ -59,3 +59,48 @@ def test_set_base_context_does_not_clear_openrouter_api_key(client):
     client.put("/v1/system/config", json={"openrouter_api_key": "sk-or-real-secret"})
     client.put("/v1/system/config", json={"base_context": "hello"})
     assert client.get("/v1/system/config").json()["data"]["openrouter_api_key"] == "***"
+
+
+def test_get_config_includes_nested_groups_with_defaults(client):
+    data = client.get("/v1/system/config").json()["data"]
+    assert data["engines"]["default_stt_engine"] == "vosk"
+    assert data["stt_local"]["whisper_local_model"] == "phowhisper-medium"
+    assert data["omnivoice"]["omnivoice_model_id"] == "k2-fsa/OmniVoice"
+    assert data["conversation_llm"]["conversation_llm_model"] == "gpt-3.5-turbo"
+    assert data["remote_stt"]["whisper_service_model"] == "whisper-1"
+    assert data["conversation"]["conversation_silence_ms"] == 700
+    assert data["preprocessing"]["stt_vad_backend"] == "energy"
+
+
+def test_put_updates_a_nested_field_and_preserves_others(client):
+    full = client.get("/v1/system/config").json()["data"]
+    full["engines"]["default_stt_engine"] = "qwen3_asr"
+    resp = client.put("/v1/system/config", json=full)
+    data = resp.json()["data"]
+    assert data["engines"]["default_stt_engine"] == "qwen3_asr"
+    assert data["stt_local"]["whisper_local_model"] == "phowhisper-medium"  # unrelated group untouched
+
+
+@pytest.mark.parametrize(
+    "group,field",
+    [
+        (None, "openrouter_api_key"),
+        ("conversation_llm", "conversation_llm_api_key"),
+        ("remote_stt", "whisper_service_api_key"),
+        ("remote_stt", "eventlab_api_key"),
+        ("preprocessing", "pyannote_auth_token"),
+    ],
+)
+def test_secret_field_is_masked_and_blank_put_preserves_it(client, group, field):
+    full = client.get("/v1/system/config").json()["data"]
+    target = full if group is None else full[group]
+    target[field] = "super-secret-value"
+    masked = client.put("/v1/system/config", json=full).json()["data"]
+    masked_target = masked if group is None else masked[group]
+    assert masked_target[field] == "***"
+
+    # Re-submit the whole form with the mask placeholder still in place (as the UI would).
+    resubmit = client.get("/v1/system/config").json()["data"]
+    still_masked = client.put("/v1/system/config", json=resubmit).json()["data"]
+    still_masked_target = still_masked if group is None else still_masked[group]
+    assert still_masked_target[field] == "***"  # still configured, not wiped
