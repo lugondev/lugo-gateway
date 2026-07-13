@@ -70,7 +70,7 @@ export function setBadge(id, ok) {
 export function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str == null ? "" : String(str);
-  return div.innerHTML;
+  return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 // Runs `fn(id)` for every id in sequence. `fn` must resolve to
