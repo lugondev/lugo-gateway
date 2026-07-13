@@ -42,6 +42,7 @@ from app.services.stt.providers.qwen3_asr_provider import (  # noqa: E402
     set_active_qwen3_asr_model,
 )
 from app.services.stt.service import stt_service  # noqa: E402
+from app.services.system_config import system_config_store  # noqa: E402
 
 
 def load_manifest(path: str) -> list[dict]:
@@ -140,7 +141,7 @@ def main() -> int:
         help="comma-separated qwen3_asr sizes to A/B, e.g. '0.6B,1.7B' (only fans out qwen3_asr)",
     )
     p.add_argument("--glossary", default="", help="glossary file to A/B against (whisper-family only)")
-    p.add_argument("--language", default=settings.conversation_language or None)
+    p.add_argument("--language", default=system_config_store.get().conversation.conversation_language or None)
     p.add_argument("--warmup", action="store_true", help="warm each engine on the first clip (excluded)")
     p.add_argument("--limit", type=int, default=0, help="only the first N clips")
     p.add_argument("--json-out", default="", help="write per-clip results to this JSON file")
