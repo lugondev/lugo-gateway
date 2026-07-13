@@ -1,12 +1,7 @@
-import { el, print } from "./helpers.js";
+import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
+import { renderDataTable } from "./data-table.js";
 
 export let registryData = [];
-
-function _escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str == null ? "" : String(str);
-  return div.innerHTML;
-}
 
 export async function loadModelRegistry() {
   try {
@@ -21,33 +16,50 @@ export async function loadModelRegistry() {
 function renderModelRegistry() {
   const host = el("model-registry-list");
   if (!host) return;
-  if (!registryData.length) {
-    host.innerHTML = '<p class="hint">No entries yet.</p>';
-    return;
-  }
-  host.innerHTML = registryData.map((e) => `
-    <div class="model-row ${e.enabled ? "" : "dim"}">
-      <div class="model-info">
-        <strong>${_escapeHtml(e.kind)}</strong>
-        <code>${_escapeHtml(e.engine)}/${_escapeHtml(e.model_id)}</code>
-        <span class="hint">${_escapeHtml(e.label)}</span>
-        <select data-registry-stage="${e.id}">
-          <option value="stable" ${e.stage === "stable" ? "selected" : ""}>stable</option>
-          <option value="testing" ${e.stage === "testing" ? "selected" : ""}>testing</option>
-        </select>
-      </div>
-      <div class="model-action">
-        <button class="mini" data-registry-toggle="${e.id}">${e.enabled ? "Disable" : "Enable"}</button>
-      </div>
-    </div>
-  `).join("");
 
-  document.querySelectorAll("[data-registry-stage]").forEach((sel) =>
+  const table = renderDataTable({
+    container: host,
+    rows: registryData,
+    rowKey: (e) => e.id,
+    getRowClass: (e) => (e.enabled ? "" : "dim"),
+    emptyMessage: "No entries yet.",
+    columns: [
+      { key: "kind", label: "Kind", render: (e) => `<strong>${escapeHtml(e.kind)}</strong>` },
+      { key: "model", label: "Engine / Model", render: (e) => `<code>${escapeHtml(e.engine)}/${escapeHtml(e.model_id)}</code>` },
+      { key: "label", label: "Label", render: (e) => escapeHtml(e.label) },
+      {
+        key: "stage",
+        label: "Stage",
+        render: (e) => `
+          <select data-registry-stage="${escapeHtml(e.id)}">
+            <option value="stable" ${e.stage === "stable" ? "selected" : ""}>stable</option>
+            <option value="testing" ${e.stage === "testing" ? "selected" : ""}>testing</option>
+          </select>
+        `,
+      },
+      {
+        key: "actions",
+        label: "",
+        headerClass: "dt-actions-cell",
+        cellClass: "dt-actions-cell",
+        render: (e) => `<button class="mini" data-registry-toggle="${escapeHtml(e.id)}">${e.enabled ? "Disable" : "Enable"}</button>`,
+      },
+    ],
+    bulkActions: [
+      { label: "Enable selected", run: (ids) => bulkPatchEntries(ids, { enabled: true }, "Enabled") },
+      { label: "Disable selected", run: (ids) => bulkPatchEntries(ids, { enabled: false }, "Disabled") },
+      { label: "Set stage: stable", run: (ids) => bulkPatchEntries(ids, { stage: "stable" }, "Updated") },
+      { label: "Set stage: testing", run: (ids) => bulkPatchEntries(ids, { stage: "testing" }, "Updated") },
+    ],
+  });
+  if (!table) return;
+
+  table.querySelectorAll("[data-registry-stage]").forEach((sel) =>
     sel.addEventListener("change", () =>
       patchEntry(sel.getAttribute("data-registry-stage"), { stage: sel.value })
     )
   );
-  document.querySelectorAll("[data-registry-toggle]").forEach((btn) =>
+  table.querySelectorAll("[data-registry-toggle]").forEach((btn) =>
     btn.addEventListener("click", () => {
       const id = btn.getAttribute("data-registry-toggle");
       const entry = registryData.find((e) => e.id === id);
@@ -56,7 +68,7 @@ function renderModelRegistry() {
   );
 }
 
-async function patchEntry(id, fields) {
+async function _patchEntryRaw(id, fields) {
   try {
     const resp = await fetch(`/v1/model_registry/${encodeURIComponent(id)}`, {
       method: "PATCH",
@@ -64,14 +76,32 @@ async function patchEntry(id, fields) {
       body: JSON.stringify(fields),
     });
     if (!resp.ok) {
-      const body = await resp.json();
-      print(el("model-registry-status"), body.detail || "Update failed", true);
-      return;
+      const body = await resp.json().catch(() => ({}));
+      return { ok: false, error: body.detail || "Update failed" };
     }
-    await loadModelRegistry();
+    return { ok: true };
   } catch (error) {
-    print(el("model-registry-status"), String(error), true);
+    return { ok: false, error: String(error) };
   }
+}
+
+async function patchEntry(id, fields) {
+  const result = await _patchEntryRaw(id, fields);
+  if (!result.ok) {
+    print(el("model-registry-status"), result.error, true);
+    return;
+  }
+  await loadModelRegistry();
+}
+
+async function bulkPatchEntries(ids, fields, verb) {
+  const errors = await runBulk(
+    ids,
+    (id) => _patchEntryRaw(id, fields),
+    (id) => registryData.find((e) => e.id === id)?.label || id
+  );
+  await loadModelRegistry();
+  printBulkSummary(el("model-registry-status"), ids.length, errors, verb);
 }
 
 function _updateKindFields() {
