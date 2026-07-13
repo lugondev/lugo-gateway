@@ -104,3 +104,23 @@ def test_secret_field_is_masked_and_blank_put_preserves_it(client, group, field)
     still_masked = client.put("/v1/system/config", json=resubmit).json()["data"]
     still_masked_target = still_masked if group is None else still_masked[group]
     assert still_masked_target[field] == "***"  # still configured, not wiped
+
+
+def test_partial_put_does_not_reset_unrelated_group_to_defaults(client):
+    """Regression test: a PUT body that only contains base_context (exactly what the
+    pre-existing saveBaseContext() JS sends) must not silently reset every other
+    group/field back to its Pydantic default. Before the fix, PUT'ing a bare
+    SystemConfig-shaped payload filled in ALL omitted fields with fresh defaults,
+    wiping any customization made via the new grouped settings panel."""
+    full = client.get("/v1/system/config").json()["data"]
+    full["engines"]["default_stt_engine"] = "qwen3_asr"
+    client.put("/v1/system/config", json=full)
+
+    # Mirrors exactly what saveBaseContext() sends: only base_context, nothing else.
+    resp = client.put("/v1/system/config", json={"base_context": "something else"})
+    assert resp.json()["data"]["base_context"] == "something else"
+    assert resp.json()["data"]["engines"]["default_stt_engine"] == "qwen3_asr"
+
+    # Also confirmed via a fresh GET, not just the PUT response.
+    data = client.get("/v1/system/config").json()["data"]
+    assert data["engines"]["default_stt_engine"] == "qwen3_asr"

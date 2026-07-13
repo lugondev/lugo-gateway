@@ -1,6 +1,6 @@
 import os
 
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic import BaseModel
 
 from app.core.settings import settings
@@ -96,6 +96,20 @@ def _mask_system_config(config: SystemConfig) -> dict:
     return data
 
 
+def _deep_merge(base: dict, overrides: dict) -> dict:
+    """Recursively overlay `overrides` onto `base`. A key absent from `overrides`
+    keeps its `base` value; a dict value merges key-by-key rather than replacing
+    the whole sub-dict, so a partial PUT body (e.g. just `{"base_context": "x"}`)
+    never resets sibling groups/fields to their Pydantic defaults."""
+    merged = dict(base)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def _merge_system_config(current: SystemConfig, payload: SystemConfig) -> SystemConfig:
     """Blank or '***' in an incoming secret field means "keep the existing value" --
     the UI never re-sends a real secret it fetched, only a fresh one the user typed."""
@@ -131,8 +145,16 @@ async def get_system_config() -> dict:
 
 
 @router.put("/system/config")
-async def set_system_config(payload: SystemConfig) -> dict:
+async def set_system_config(request: Request) -> dict:
     current = system_config_store.get()
+    # Accept the raw JSON body (rather than a typed SystemConfig) so we can tell
+    # "field absent from the PUT body" apart from "field present with its
+    # Pydantic default value" -- a partial body (e.g. the base-context/openrouter
+    # save buttons, which only ever send those 2 fields) must never reset the
+    # other groups back to their hard-coded defaults.
+    raw = await request.json()
+    deep_merged = _deep_merge(current.model_dump(), raw)
+    payload = SystemConfig.model_validate(deep_merged)
     merged = _merge_system_config(current, payload)
     new_config = system_config_store.set(merged)
     # Cache-invalidation hooks for settings cached at boot/first-use are added here
