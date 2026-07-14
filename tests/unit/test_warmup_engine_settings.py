@@ -1,34 +1,54 @@
-from app.core.settings import settings
+from app.services import system_config as sc_mod
+from app.services.system_config import SystemConfigStore
 
 
-def test_warmup_stt_engines_defaults_to_just_the_conversation_engine(monkeypatch):
-    monkeypatch.setattr(settings, "conversation_stt_engine", "whisper")
-    monkeypatch.setattr(settings, "extra_warmup_stt_engines", "")
-    assert settings.warmup_stt_engines == ["whisper"]
+def _patch_extras(monkeypatch, tmp_path, *, stt: str = "", tts: str = "", stt_engine="whisper", tts_engine="vieneu"):
+    """extra_warmup_stt_engines/extra_warmup_tts_engines now live on
+    system_config_store (Task 2), and conversation_stt_engine/conversation_tts_engine
+    now live on system_config_store's ``conversation`` group (Task 3) -- build a
+    fresh, isolated store and patch it in at the point of use
+    (app.services.system_config), following the pattern in
+    tests/unit/test_stt_service_openrouter.py.
+    """
+    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
+    fresh.set(
+        fresh.get().model_copy(
+            update={
+                "engines": fresh.get().engines.model_copy(
+                    update={"extra_warmup_stt_engines": stt, "extra_warmup_tts_engines": tts}
+                ),
+                "conversation": fresh.get().conversation.model_copy(
+                    update={"conversation_stt_engine": stt_engine, "conversation_tts_engine": tts_engine}
+                ),
+            }
+        )
+    )
+    monkeypatch.setattr(sc_mod, "system_config_store", fresh)
 
 
-def test_warmup_stt_engines_includes_extra_engines_a_device_pins(monkeypatch):
-    monkeypatch.setattr(settings, "conversation_stt_engine", "whisper")
-    monkeypatch.setattr(settings, "extra_warmup_stt_engines", "qwen3_asr")
-    assert settings.warmup_stt_engines == ["whisper", "qwen3_asr"]
+def test_warmup_stt_engines_defaults_to_just_the_conversation_engine(monkeypatch, tmp_path):
+    _patch_extras(monkeypatch, tmp_path, stt_engine="whisper")
+    assert sc_mod.warmup_stt_engines() == ["whisper"]
 
 
-def test_warmup_stt_engines_dedupes_and_strips_whitespace(monkeypatch):
-    monkeypatch.setattr(settings, "conversation_stt_engine", "whisper")
-    monkeypatch.setattr(settings, "extra_warmup_stt_engines", " whisper, qwen3_asr ,qwen3_asr")
-    assert settings.warmup_stt_engines == ["whisper", "qwen3_asr"]
+def test_warmup_stt_engines_includes_extra_engines_a_device_pins(monkeypatch, tmp_path):
+    _patch_extras(monkeypatch, tmp_path, stt="qwen3_asr", stt_engine="whisper")
+    assert sc_mod.warmup_stt_engines() == ["whisper", "qwen3_asr"]
 
 
-def test_warmup_tts_engines_defaults_to_just_the_conversation_engine(monkeypatch):
-    monkeypatch.setattr(settings, "conversation_tts_engine", "vieneu")
-    monkeypatch.setattr(settings, "extra_warmup_tts_engines", "")
-    assert settings.warmup_tts_engines == ["vieneu"]
+def test_warmup_stt_engines_dedupes_and_strips_whitespace(monkeypatch, tmp_path):
+    _patch_extras(monkeypatch, tmp_path, stt=" whisper, qwen3_asr ,qwen3_asr", stt_engine="whisper")
+    assert sc_mod.warmup_stt_engines() == ["whisper", "qwen3_asr"]
 
 
-def test_warmup_tts_engines_includes_extra_engines(monkeypatch):
-    monkeypatch.setattr(settings, "conversation_tts_engine", "vieneu")
-    monkeypatch.setattr(settings, "extra_warmup_tts_engines", "omnivoice")
-    assert settings.warmup_tts_engines == ["vieneu", "omnivoice"]
+def test_warmup_tts_engines_defaults_to_just_the_conversation_engine(monkeypatch, tmp_path):
+    _patch_extras(monkeypatch, tmp_path, tts_engine="vieneu")
+    assert sc_mod.warmup_tts_engines() == ["vieneu"]
+
+
+def test_warmup_tts_engines_includes_extra_engines(monkeypatch, tmp_path):
+    _patch_extras(monkeypatch, tmp_path, tts="omnivoice", tts_engine="vieneu")
+    assert sc_mod.warmup_tts_engines() == ["vieneu", "omnivoice"]
 
 
 # --- boot warm-up enumerates every profile / tts-profile engine ---
@@ -52,11 +72,8 @@ def _fake_tts_profile(engine):
     return type("T", (), {"engine": engine})()
 
 
-def test_boot_warmup_includes_profile_and_tts_profile_engines(monkeypatch):
-    monkeypatch.setattr(settings, "conversation_stt_engine", "whisper")
-    monkeypatch.setattr(settings, "extra_warmup_stt_engines", "")
-    monkeypatch.setattr(settings, "conversation_tts_engine", "vieneu")
-    monkeypatch.setattr(settings, "extra_warmup_tts_engines", "")
+def test_boot_warmup_includes_profile_and_tts_profile_engines(monkeypatch, tmp_path):
+    _patch_extras(monkeypatch, tmp_path, stt_engine="whisper", tts_engine="vieneu")
     monkeypatch.setattr(
         "app.services.profiles.store.profile_store",
         _FakeStore({"p": _fake_profile("qwen3_asr")}),
@@ -72,11 +89,8 @@ def test_boot_warmup_includes_profile_and_tts_profile_engines(monkeypatch):
     assert stt_models == {}  # no profile set a model
 
 
-def test_boot_warmup_collects_profile_stt_models(monkeypatch):
-    monkeypatch.setattr(settings, "conversation_stt_engine", "whisper")
-    monkeypatch.setattr(settings, "extra_warmup_stt_engines", "")
-    monkeypatch.setattr(settings, "conversation_tts_engine", "vieneu")
-    monkeypatch.setattr(settings, "extra_warmup_tts_engines", "")
+def test_boot_warmup_collects_profile_stt_models(monkeypatch, tmp_path):
+    _patch_extras(monkeypatch, tmp_path, stt_engine="whisper", tts_engine="vieneu")
     monkeypatch.setattr(
         "app.services.profiles.store.profile_store",
         _FakeStore({"p": _fake_profile("qwen3_asr", stt_model="1.7b")}),

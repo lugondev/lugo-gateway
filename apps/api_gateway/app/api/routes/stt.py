@@ -14,12 +14,12 @@ from app.core.audio import (
 from app.core.auth_guard import resolve_ws_identity
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
-from app.core.settings import settings
 from app.schemas.common import StreamEvent
 from app.schemas.stt import STTRequest, STTResult
 from app.services.stt.base import STTStream
 from app.services.stt.segmented import transcribe_long
 from app.services.stt.service import stt_service
+from app.services.system_config import system_config_store
 from app.services.vad import apply_vad
 from app.streaming.event_bus import event_bus
 
@@ -44,38 +44,41 @@ def _parse_bool(value: str | None) -> bool | None:
 @router.post("/transcribe")
 async def transcribe(
     audio: UploadFile = File(...),
-    engine: str = Form(default=settings.default_stt_engine),
+    engine: str | None = Form(default=None),
     language: str | None = Form(default=None),
     denoise: bool | None = Form(default=None),
     vad: bool | None = Form(default=None),
     vad_backend: str | None = Form(default=None),
     segment: bool | None = Form(default=None),
 ) -> dict:
+    engine = engine or system_config_store.get().engines.default_stt_engine
     payload = STTRequest(engine=engine, language=language)
     provider = stt_service.get_provider(payload.engine)
     audio_bytes = await audio.read()
 
-    backend = vad_backend or settings.stt_vad_backend
+    preprocessing = system_config_store.get().preprocessing
+    backend = vad_backend or preprocessing.stt_vad_backend
     audio_bytes = preprocess_wav_bytes(
         audio_bytes,
-        denoise=_resolve_flag(denoise, settings.stt_noise_reduce_enabled),
-        vad=_resolve_flag(vad, settings.stt_vad_enabled),
-        amount=settings.stt_noise_reduce_amount,
+        denoise=_resolve_flag(denoise, preprocessing.stt_noise_reduce_enabled),
+        vad=_resolve_flag(vad, preprocessing.stt_vad_enabled),
+        amount=preprocessing.stt_noise_reduce_amount,
         vad_fn=lambda s, sr: apply_vad(s, sr, backend),
     )
 
     # Long clips: split on silence and transcribe segments in parallel (higher
     # throughput). Only when enabled and the clip is at/over the length threshold.
-    use_segment = _resolve_flag(segment, settings.stt_segment_long_enabled)
+    stt_local = system_config_store.get().stt_local
+    use_segment = _resolve_flag(segment, stt_local.stt_segment_long_enabled)
     try:
-        if use_segment and wav_duration_seconds(audio_bytes) >= settings.stt_segment_min_seconds:
+        if use_segment and wav_duration_seconds(audio_bytes) >= stt_local.stt_segment_min_seconds:
             pcm, sample_rate, _, _ = read_wav(audio_bytes)
             result = await transcribe_long(
                 provider,
                 pcm16_to_float_array(pcm),
                 sample_rate,
                 language=payload.language,
-                concurrency=settings.stt_segment_concurrency,
+                concurrency=stt_local.stt_segment_concurrency,
             )
         else:
             # no per-session model here -- falls back to this engine's process-global
@@ -157,16 +160,19 @@ async def stt_stream(websocket: WebSocket) -> None:
     channel = f"session:{session_id}"
     sequence = 0
 
-    engine = websocket.query_params.get("engine", settings.default_stt_engine)
+    engine = websocket.query_params.get("engine", system_config_store.get().engines.default_stt_engine)
     language = websocket.query_params.get("language")
     sample_rate = int(
-        websocket.query_params.get("sample_rate", settings.stt_stream_sample_rate)
+        websocket.query_params.get(
+            "sample_rate", system_config_store.get().stt_local.stt_stream_sample_rate
+        )
     )
+    preprocessing = system_config_store.get().preprocessing
     denoise = _resolve_flag(
-        _parse_bool(websocket.query_params.get("denoise")), settings.stt_noise_reduce_enabled
+        _parse_bool(websocket.query_params.get("denoise")), preprocessing.stt_noise_reduce_enabled
     )
     vad = _resolve_flag(
-        _parse_bool(websocket.query_params.get("vad")), settings.stt_vad_enabled
+        _parse_bool(websocket.query_params.get("vad")), preprocessing.stt_vad_enabled
     )
 
     try:
@@ -215,7 +221,7 @@ async def stt_stream(websocket: WebSocket) -> None:
                 if denoise or vad:
                     frame = preprocess_pcm16(
                         frame, sample_rate, denoise=denoise, vad=vad,
-                        amount=settings.stt_noise_reduce_amount,
+                        amount=preprocessing.stt_noise_reduce_amount,
                     )
                 try:
                     results = await stream.accept(frame)

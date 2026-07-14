@@ -31,3 +31,11 @@ def test_unavailable_backend_falls_back_to_energy():
 
 def test_empty_input():
     assert apply_vad(np.zeros(0, dtype=np.float32), 16000, backend="pyannote").size == 0
+
+
+def test_clear_pyannote_cache_empties_the_cache():
+    from app.services import vad as mod
+
+    mod._pyannote_cache["pipeline"] = object()
+    mod.clear_pyannote_cache()
+    assert mod._pyannote_cache == {}

@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
@@ -28,7 +27,8 @@ class _StubTTS(TTSProvider):
 
 @pytest.fixture(autouse=True)
 def _stubs(monkeypatch):
-    monkeypatch.setattr(settings, "conversation_llm_base_url", "")
+    # conversation_llm_base_url now lives on system_config_store (Task 3), not
+    # Settings; the module-level conftest._hermetic fixture already zeroes it.
     stt_service.providers["stub-core-stt"] = _StubSTT()
     tts_service.providers["stub-core-tts"] = _StubTTS()
     yield

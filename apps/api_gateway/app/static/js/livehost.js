@@ -1,6 +1,6 @@
 import { el, wsUrl, restoreAndBind } from "./helpers.js";
 import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
-import { getPreproc } from "./base-context.js";
+import { getPreproc } from "./system-config.js";
 
 export const lh = {
   ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null,

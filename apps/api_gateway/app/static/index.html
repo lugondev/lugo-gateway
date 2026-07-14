@@ -910,7 +910,7 @@
                 <button id="status-refresh" class="ghost mini">Refresh</button>
               </div>
               <div id="system-status" class="status-groups"></div>
-              <p class="hint">Engines, devices and preprocessing come from environment config (see <code>.env</code>). Manage downloadable models in the <strong>Models</strong> section.</p>
+              <p class="hint">Manage downloadable models in the <strong>Models</strong> section. Engine/model/LLM/tuning config has moved to System settings below.</p>
             </section>
 
             <section class="card">
@@ -931,6 +931,16 @@
                 <button id="sys-openrouter-key-save">Save</button>
               </div>
               <p id="sys-openrouter-key-status" class="meta"></p>
+            </section>
+
+            <section class="card">
+              <h2>System settings</h2>
+              <p class="hint">Engine choices, model paths, LLM/remote-STT endpoints, and conversation tuning. Changes take effect immediately — no restart needed.</p>
+              <div id="sys-config-groups"></div>
+              <div class="actions end">
+                <button id="sys-config-groups-save">Save</button>
+              </div>
+              <p id="sys-config-groups-status" class="meta"></p>
             </section>
 
             <section class="card">

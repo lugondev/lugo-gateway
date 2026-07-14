@@ -4,10 +4,10 @@ import tempfile
 import threading
 from pathlib import Path
 
-from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.stt.base import STTProvider
 from app.services.stt.glossary import resolve_initial_prompt
+from app.services.system_config import system_config_store
 
 _MODEL_CACHE: dict[str, object] = {}
 # Guards the check-then-set on _MODEL_CACHE: the background warm() task and the
@@ -16,7 +16,7 @@ _MODEL_CACHE: dict[str, object] = {}
 # latency. A lock makes the build single-flight.
 _MODEL_LOCK = threading.Lock()
 
-# Runtime-selected whisper model size; falls back to settings when unset.
+# Runtime-selected whisper model size; falls back to system_config_store when unset.
 # Reset on restart (not persisted).
 _active_model: str | None = None
 
@@ -52,7 +52,7 @@ def resolve_whisper_model(model: str) -> str:
 
 
 def get_active_whisper_model() -> str:
-    return _active_model or settings.whisper_local_model
+    return _active_model or system_config_store.get().stt_local.whisper_local_model
 
 
 def set_active_whisper_model(model: str) -> None:
@@ -64,9 +64,8 @@ class WhisperProvider(STTProvider):
     name = "whisper_local"
 
     def _cache_key(self, model: str) -> str:
-        return ":".join(
-            [model, settings.whisper_local_device, settings.whisper_local_compute_type]
-        )
+        stt_local = system_config_store.get().stt_local
+        return ":".join([model, stt_local.whisper_local_device, stt_local.whisper_local_compute_type])
 
     def _load_model(self, model: str | None = None):
         try:
@@ -81,10 +80,11 @@ class WhisperProvider(STTProvider):
         if key not in _MODEL_CACHE:
             with _MODEL_LOCK:
                 if key not in _MODEL_CACHE:
+                    stt_local = system_config_store.get().stt_local
                     _MODEL_CACHE[key] = WhisperModel(
                         resolve_whisper_model(model_name),
-                        device=settings.whisper_local_device,
-                        compute_type=settings.whisper_local_compute_type,
+                        device=stt_local.whisper_local_device,
+                        compute_type=stt_local.whisper_local_compute_type,
                     )
         return _MODEL_CACHE[key]
 
@@ -99,14 +99,15 @@ class WhisperProvider(STTProvider):
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 f.write(audio_bytes)
                 temp_file_path = f.name
+            stt_local = system_config_store.get().stt_local
             segments, _ = whisper_model.transcribe(
                 temp_file_path,
                 language=language,
-                vad_filter=settings.whisper_vad_filter,
-                beam_size=settings.whisper_beam_size,
-                condition_on_previous_text=settings.whisper_condition_on_previous_text,
+                vad_filter=stt_local.whisper_vad_filter,
+                beam_size=stt_local.whisper_beam_size,
+                condition_on_previous_text=stt_local.whisper_condition_on_previous_text,
                 initial_prompt=resolve_initial_prompt(
-                    settings.whisper_initial_prompt, settings.stt_glossary_path
+                    stt_local.whisper_initial_prompt, stt_local.stt_glossary_path
                 ),
             )
             return " ".join(s.text.strip() for s in segments if s.text.strip())

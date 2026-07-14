@@ -92,7 +92,8 @@ shows the active STT/LLM/TTS), and **LLM Chat**.
 
 ### STT WebSocket (`/v1/stt/stream`)
 
-Audio contract: raw PCM signed-16, mono, at `STT_STREAM_SAMPLE_RATE` (default 16 kHz).
+Audio contract: raw PCM signed-16, mono, at the configured stream sample rate
+(admin System tab; default 16 kHz).
 Query params: `?engine=vosk&language=en&sample_rate=16000`.
 
 - Client -> server: binary PCM frames, or text control `{"type":"flush"}` / `{"type":"end"}`.
@@ -139,10 +140,8 @@ audio→audio, text→audio, audio→text, text→text. Input audio is PCM16 or 
 (`?audio_codec=opus`); reply audio is an `audio_url` (browser) or pushed Opus binary
 frames (`?audio_out=opus`, for ESP32 / Raspberry Pi). See [docs/api.md](docs/api.md).
 
-Remote engine endpoints are configured in .env:
-
-- WHISPER_SERVICE_BASE_URL, WHISPER_SERVICE_API_KEY, WHISPER_SERVICE_MODEL
-- EVENTLAB_BASE_URL, EVENTLAB_API_KEY, EVENTLAB_MODEL
+Remote engine endpoints (whisper_service, eventlab: base url/API key/model) are
+configured in the admin System tab (System settings > remote_stt group), not .env.
 
 Expected remote API format:
 
@@ -160,5 +159,5 @@ pytest
 
 ## Notes
 
-- OmniVoice source path is configured via OMNIVOICE_PATH.
+- OmniVoice source path is configured in the admin System tab (System settings > omnivoice group).
 - Vosk requires WAV PCM16 mono input for local transcribe endpoint.

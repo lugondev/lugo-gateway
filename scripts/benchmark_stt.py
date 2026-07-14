@@ -30,7 +30,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "api_gateway"))
 
 from app.core.audio import wav_duration_seconds  # noqa: E402
-from app.core.settings import settings  # noqa: E402
 from app.services.stt.benchmark import (  # noqa: E402
     ClipResult,
     aggregate,
@@ -42,6 +41,7 @@ from app.services.stt.providers.qwen3_asr_provider import (  # noqa: E402
     set_active_qwen3_asr_model,
 )
 from app.services.stt.service import stt_service  # noqa: E402
+from app.services.system_config import system_config_store  # noqa: E402
 
 
 def load_manifest(path: str) -> list[dict]:
@@ -64,8 +64,12 @@ async def transcribe_one(
     engine: str, glossary_path: str, qwen3_model: str, wav_bytes: bytes, language: str | None
 ):
     """Transcribe with a specific engine/glossary/qwen3-size; return (text, latency_s)."""
-    # Glossary is read from settings at call time (cached by path in glossary.py).
-    settings.stt_glossary_path = glossary_path
+    # Glossary is read from system_config_store.get().stt_local at call time (cached
+    # by path in glossary.py). stt_glossary_path moved off Settings onto the admin
+    # System settings store (Task 4); mutate the cached SystemConfig in-process only
+    # (not .set(), which would write through to the DB and could clobber whatever
+    # the developer has configured there) -- fine for this one-off benchmark run.
+    system_config_store.get().stt_local.stt_glossary_path = glossary_path
     if engine == "qwen3_asr":
         set_active_qwen3_asr_model(qwen3_model or None)
     provider = stt_service.get_provider(engine)
@@ -140,7 +144,7 @@ def main() -> int:
         help="comma-separated qwen3_asr sizes to A/B, e.g. '0.6B,1.7B' (only fans out qwen3_asr)",
     )
     p.add_argument("--glossary", default="", help="glossary file to A/B against (whisper-family only)")
-    p.add_argument("--language", default=settings.conversation_language or None)
+    p.add_argument("--language", default=system_config_store.get().conversation.conversation_language or None)
     p.add_argument("--warmup", action="store_true", help="warm each engine on the first clip (excluded)")
     p.add_argument("--limit", type=int, default=0, help="only the first N clips")
     p.add_argument("--json-out", default="", help="write per-clip results to this JSON file")

@@ -12,7 +12,6 @@ import shutil
 
 from app.core.errors import AppError
 from app.core.hf_cache import dir_size_bytes, hub_dir
-from app.core.settings import settings
 from app.services.stt.providers.whisper_provider import (
     PHOWHISPER_REPO,
     PHOWHISPER_SUBFOLDERS,
@@ -21,6 +20,7 @@ from app.services.stt.providers.whisper_provider import (
     resolve_whisper_model,
     set_active_whisper_model,
 )
+from app.services.system_config import system_config_store
 
 _SIZE_RE = re.compile(r"^[A-Za-z0-9.\-]+$")
 
@@ -113,10 +113,11 @@ class WhisperManager:
 
         # resolve_whisper_model downloads the PhoWhisper subfolder (or passes a
         # standard size through) and returns a path faster-whisper can load.
+        stt_local = system_config_store.get().stt_local
         WhisperModel(
             resolve_whisper_model(size),
-            device=settings.whisper_local_device,
-            compute_type=settings.whisper_local_compute_type,
+            device=stt_local.whisper_local_device,
+            compute_type=stt_local.whisper_local_compute_type,
         )
 
     def delete(self, size: str) -> None:

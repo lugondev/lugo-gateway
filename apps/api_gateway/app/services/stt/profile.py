@@ -41,7 +41,7 @@ def resolve_stt(
 
       1. explicit query param (stt_engine / language / stt_model) — debugging / manual override
       2. the chatllm profile's SttConfig (engine/language/model, or a language preset)
-      3. the server-wide default (settings.stt_profile preset, then
+      3. the server-wide default (system_config_store's stt_local.stt_profile preset, then
          conversation_stt_engine / conversation_language); model has no server-wide
          default — "" means "whatever's currently active for the resolved engine".
 
@@ -51,19 +51,20 @@ def resolve_stt(
     resolves (it is not overridden by conversation_language). model is independent
     of the preset system — a preset never implies a model variant.
     """
-    from app.core.settings import settings
+    from app.services.system_config import system_config_store
 
     stt_cfg = getattr(profile, "stt", None)
-    preset_name = (getattr(stt_cfg, "profile", "") or "") or settings.stt_profile
+    preset_name = (getattr(stt_cfg, "profile", "") or "") or system_config_store.get().stt_local.stt_profile
     preset = resolve_stt_profile(preset_name)
     preset_engine, preset_lang = preset if preset else (None, None)
 
+    conv_cfg = system_config_store.get().conversation
     engine = (
         q_engine
         or (getattr(stt_cfg, "engine", "") or None)
         or preset_engine
-        or settings.conversation_stt_engine
-        or settings.default_stt_engine
+        or conv_cfg.conversation_stt_engine
+        or system_config_store.get().engines.default_stt_engine
     )
     if q_language:
         language: str | None = q_language
@@ -72,6 +73,6 @@ def resolve_stt(
     elif preset:
         language = preset_lang  # may be None (auto-detect) — authoritative
     else:
-        language = settings.conversation_language or None
+        language = conv_cfg.conversation_language or None
     model = q_model or (getattr(stt_cfg, "model", "") or "")
     return engine, language, model

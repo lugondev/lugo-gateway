@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.settings import settings
 from app.main import app
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
@@ -42,7 +41,8 @@ class _StubTTS(TTSProvider):
 
 @pytest.fixture(autouse=True)
 def _register_stub(monkeypatch):
-    monkeypatch.setattr(settings, "conversation_llm_base_url", "")
+    # conversation_llm_base_url now lives on system_config_store (Task 3), not
+    # Settings; the module-level conftest._hermetic fixture already zeroes it.
     stt_service.providers["stub-livehost"] = _StubSTT()
     stt_service.providers["stub-livehost-failing"] = _FailingSTT()
     tts_service.providers["stub-livehost-tts"] = _StubTTS()

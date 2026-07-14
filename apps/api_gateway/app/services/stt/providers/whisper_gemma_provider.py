@@ -10,11 +10,11 @@ import logging
 
 import httpx
 
-from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.conversation.responder import get_active_llm_model
 from app.services.stt.base import STTProvider
 from app.services.stt.providers.whisper_provider import WhisperProvider, get_active_whisper_model
+from app.services.system_config import system_config_store
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +29,19 @@ class WhisperGemmaProvider(STTProvider):
         return f"{get_active_whisper_model()} → {get_active_llm_model()} refine"
 
     async def _refine(self, text: str, language: str | None) -> str:
-        base = settings.conversation_llm_base_url
+        cl = system_config_store.get().conversation_llm
+        base = cl.conversation_llm_base_url
         if not base:
             return text  # no LLM configured -> raw transcript
-        headers = {"Authorization": f"Bearer {settings.conversation_llm_api_key}"} if settings.conversation_llm_api_key else {}
+        headers = {"Authorization": f"Bearer {cl.conversation_llm_api_key}"} if cl.conversation_llm_api_key else {}
         lang = language or "the same language as the transcript"
+        stt_local = system_config_store.get().stt_local
         messages = [
-            {"role": "system", "content": settings.stt_enhance_prompt},
+            {"role": "system", "content": stt_local.stt_enhance_prompt},
             {"role": "user", "content": f"Language: {lang}\nTranscript: {text}"},
         ]
         try:
-            async with httpx.AsyncClient(timeout=settings.stt_enhance_timeout_seconds) as client:
+            async with httpx.AsyncClient(timeout=stt_local.stt_enhance_timeout_seconds) as client:
                 resp = await client.post(
                     f"{base.rstrip('/')}/chat/completions",
                     headers=headers,

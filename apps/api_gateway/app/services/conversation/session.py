@@ -43,6 +43,7 @@ from app.services.stt.model_registry import resolve_default_stt_model
 from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.stt.routing import select_stt_engine
 from app.services.stt.service import stt_service
+from app.services.system_config import system_config_store
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
 from app.services.warmup import is_ready, warm_providers
@@ -229,15 +230,16 @@ class ConversationSession:
 
         model_label = get_active_llm_model() if self.responder.name == "llm" else self.responder.name
 
+        conv_cfg = system_config_store.get().conversation
         self.endpointer = VadEndpointer(
             cfg.sample_rate,
-            silence_ms=settings.conversation_silence_ms,
-            min_speech_ms=settings.conversation_min_speech_ms,
-            rms_threshold=settings.conversation_rms_threshold,
-            max_utterance_ms=settings.conversation_max_utterance_ms,
-            min_silence_ms=settings.conversation_min_silence_ms,
-            adaptive_full_ms=settings.conversation_adaptive_full_ms,
-            preroll_ms=settings.conversation_preroll_ms,
+            silence_ms=conv_cfg.conversation_silence_ms,
+            min_speech_ms=conv_cfg.conversation_min_speech_ms,
+            rms_threshold=conv_cfg.conversation_rms_threshold,
+            max_utterance_ms=conv_cfg.conversation_max_utterance_ms,
+            min_silence_ms=conv_cfg.conversation_min_silence_ms,
+            adaptive_full_ms=conv_cfg.conversation_adaptive_full_ms,
+            preroll_ms=conv_cfg.conversation_preroll_ms,
         )
         # Session persistence: resume seeds history from the DB; new sessions are recorded.
         self.history = []
@@ -400,7 +402,8 @@ class ConversationSession:
 
             async with aclosing(
                 prefetch_synthesis(
-                    sentence_aiter, _synth, lookahead=settings.conversation_tts_lookahead
+                    sentence_aiter, _synth,
+                    lookahead=system_config_store.get().conversation.conversation_tts_lookahead,
                 )
             ) as pipeline:
                 logger.info("DEBUG_HANG _stream_to_tts: entering pipeline consume loop")
@@ -419,10 +422,11 @@ class ConversationSession:
                         )
                         # Pace packets at real-time after an initial burst so the
                         # device buffer isn't flooded on long replies.
-                        if settings.conversation_opus_pace and packets:
+                        conv_cfg = system_config_store.get().conversation
+                        if conv_cfg.conversation_opus_pace and packets:
                             frame_s = self.opus_encoder.frame / self.opus_encoder.sample_rate
                             delays = pacing_delays(
-                                len(packets), settings.conversation_opus_prebuffer_frames, frame_s
+                                len(packets), conv_cfg.conversation_opus_prebuffer_frames, frame_s
                             )
                         else:
                             delays = [0.0] * len(packets)
@@ -468,7 +472,7 @@ class ConversationSession:
         if cfg.denoise:
             pcm = preprocess_pcm16(
                 audio_pcm, cfg.sample_rate, denoise=True, vad=False,
-                amount=settings.stt_noise_reduce_amount,
+                amount=system_config_store.get().preprocessing.stt_noise_reduce_amount,
             )
         wav = pcm16_to_wav_bytes(pcm, sample_rate=cfg.sample_rate)
 
@@ -476,12 +480,13 @@ class ConversationSession:
         turn_provider = self.stt_provider
         turn_engine = cfg.stt_engine
         turn_model = self.stt_model_id
-        if speech_ms and settings.conversation_fast_stt_engine:
+        conv_cfg = system_config_store.get().conversation
+        if speech_ms and conv_cfg.conversation_fast_stt_engine:
             chosen = select_stt_engine(
                 speech_ms,
                 cfg.stt_engine,
-                settings.conversation_fast_stt_engine,
-                settings.conversation_fast_stt_max_ms,
+                conv_cfg.conversation_fast_stt_engine,
+                conv_cfg.conversation_fast_stt_max_ms,
             )
             if chosen != cfg.stt_engine:
                 try:
@@ -595,7 +600,11 @@ class ConversationSession:
                 await self.emit("audio_start", turn=self.turn, chunk_index=0, codec="opus",
                                 sample_rate=cfg.output_sample_rate, frames=len(packets))
                 frame_s = self.opus_encoder.frame / self.opus_encoder.sample_rate
-                delays = pacing_delays(len(packets), settings.conversation_opus_prebuffer_frames, frame_s)
+                delays = pacing_delays(
+                    len(packets),
+                    system_config_store.get().conversation.conversation_opus_prebuffer_frames,
+                    frame_s,
+                )
                 for delay, pkt in zip(delays, packets):
                     if delay:
                         await asyncio.sleep(delay)

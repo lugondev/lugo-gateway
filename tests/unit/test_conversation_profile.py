@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.settings import settings
 from app.main import app
 from app.services.mcp.models import McpServer
 from app.services.mcp.server_store import McpServerStore
@@ -13,9 +12,9 @@ from app.services.profiles.store import ProfileStore
 
 @pytest.fixture(autouse=True)
 def _hermetic(monkeypatch, tmp_path):
-    monkeypatch.setattr(settings, "conversation_llm_base_url", "")
-    monkeypatch.setattr(settings, "omnivoice_use_server", False)
-
+    # conversation_llm_base_url and omnivoice_use_server now live on
+    # system_config_store (Task 3 / Task 7), not Settings; the module-level
+    # conftest._hermetic fixture already zeroes/disables them.
     fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
     fresh_servers = McpServerStore(str(tmp_path / "mcp.json"))
     monkeypatch.setattr("app.api.routes.conversation.profile_store", fresh_profiles)

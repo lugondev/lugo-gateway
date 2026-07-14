@@ -1,6 +1,7 @@
 import os
 
-from fastapi import APIRouter, BackgroundTasks
+import pydantic
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.settings import settings
@@ -8,7 +9,7 @@ from app.services.artifacts import artifact_store
 from app.services.models import model_manager
 from app.services.stt.service import stt_service
 from app.services.llm_models import llm_manager
-from app.services.system_config import system_config_store
+from app.services.system_config import SystemConfig, system_config_store
 from app.services.tts.service import tts_service
 from app.services.tts_models import tts_model_manager
 from app.services.vad import available_backends
@@ -37,11 +38,6 @@ class LlmModelRequest(BaseModel):
     model: str
 
 
-class SystemConfigRequest(BaseModel):
-    base_context: str = ""
-    openrouter_api_key: str = ""
-
-
 def _artifacts_stats() -> dict:
     base = artifact_store.base_dir
     files = list(base.glob("*.wav")) if base.is_dir() else []
@@ -55,17 +51,20 @@ async def system_status() -> dict:
 
     active_vosk_path = get_active_vosk_path()
     active_whisper = whisper_manager.snapshot()["active"]
+    stt_local = system_config_store.get().stt_local
+    preprocessing = system_config_store.get().preprocessing
+    omnivoice = system_config_store.get().omnivoice
     data = {
         "app": {"name": settings.app_name, "env": settings.app_env},
         "stt_engines": stt_service.list_engines(),
         "tts_engines": [{"engine": name} for name in tts_service.providers],
         "tts": {
-            "omnivoice_path": settings.omnivoice_path,
-            "omnivoice_present": os.path.isdir(settings.omnivoice_path),
+            "omnivoice_path": omnivoice.omnivoice_path,
+            "omnivoice_present": os.path.isdir(omnivoice.omnivoice_path),
         },
         "whisper_local": {
             "active_model": active_whisper,
-            "device": settings.whisper_local_device,
+            "device": stt_local.whisper_local_device,
             "cached": whisper_manager._cached(active_whisper),
         },
         "vosk": {
@@ -74,23 +73,74 @@ async def system_status() -> dict:
             "installed": model_manager.list_installed(),
         },
         "artifacts": _artifacts_stats(),
-        "stream_sample_rate": settings.stt_stream_sample_rate,
+        "stream_sample_rate": stt_local.stt_stream_sample_rate,
         "stt_preprocess": {
-            "vad": settings.stt_vad_enabled,
-            "vad_backend": settings.stt_vad_backend,
+            "vad": preprocessing.stt_vad_enabled,
+            "vad_backend": preprocessing.stt_vad_backend,
             "vad_backends_available": available_backends(),
-            "noise_reduce": settings.stt_noise_reduce_enabled,
-            "noise_reduce_amount": settings.stt_noise_reduce_amount,
+            "noise_reduce": preprocessing.stt_noise_reduce_enabled,
+            "noise_reduce_amount": preprocessing.stt_noise_reduce_amount,
         },
     }
     return {"success": True, "data": data}
 
 
-def _mask_system_config(config) -> dict:
+def _mask_system_config(config: SystemConfig) -> dict:
     data = config.model_dump()
     if data.get("openrouter_api_key"):
         data["openrouter_api_key"] = "***"
+    if data["conversation_llm"].get("conversation_llm_api_key"):
+        data["conversation_llm"]["conversation_llm_api_key"] = "***"
+    if data["remote_stt"].get("whisper_service_api_key"):
+        data["remote_stt"]["whisper_service_api_key"] = "***"
+    if data["remote_stt"].get("eventlab_api_key"):
+        data["remote_stt"]["eventlab_api_key"] = "***"
+    if data["preprocessing"].get("pyannote_auth_token"):
+        data["preprocessing"]["pyannote_auth_token"] = "***"
     return data
+
+
+def _deep_merge(base: dict, overrides: dict) -> dict:
+    """Recursively overlay `overrides` onto `base`. A key absent from `overrides`
+    keeps its `base` value; a dict value merges key-by-key rather than replacing
+    the whole sub-dict, so a partial PUT body (e.g. just `{"base_context": "x"}`)
+    never resets sibling groups/fields to their Pydantic defaults."""
+    merged = dict(base)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _merge_system_config(current: SystemConfig, payload: SystemConfig) -> SystemConfig:
+    """Blank or '***' in an incoming secret field means "keep the existing value" --
+    the UI never re-sends a real secret it fetched, only a fresh one the user typed."""
+    update = payload.model_dump()
+
+    def _keep_if_blank_or_masked(new_value: str, old_value: str) -> str:
+        return old_value if (not new_value or new_value == "***") else new_value
+
+    update["openrouter_api_key"] = _keep_if_blank_or_masked(
+        update["openrouter_api_key"], current.openrouter_api_key
+    )
+    update["conversation_llm"]["conversation_llm_api_key"] = _keep_if_blank_or_masked(
+        update["conversation_llm"]["conversation_llm_api_key"],
+        current.conversation_llm.conversation_llm_api_key,
+    )
+    update["remote_stt"]["whisper_service_api_key"] = _keep_if_blank_or_masked(
+        update["remote_stt"]["whisper_service_api_key"],
+        current.remote_stt.whisper_service_api_key,
+    )
+    update["remote_stt"]["eventlab_api_key"] = _keep_if_blank_or_masked(
+        update["remote_stt"]["eventlab_api_key"], current.remote_stt.eventlab_api_key
+    )
+    update["preprocessing"]["pyannote_auth_token"] = _keep_if_blank_or_masked(
+        update["preprocessing"]["pyannote_auth_token"],
+        current.preprocessing.pyannote_auth_token,
+    )
+    return SystemConfig.model_validate(update)
 
 
 @router.get("/system/config")
@@ -99,14 +149,47 @@ async def get_system_config() -> dict:
 
 
 @router.put("/system/config")
-async def set_system_config(payload: SystemConfigRequest) -> dict:
-    config = system_config_store.set_base_context(payload.base_context)
-    # Leave-blank-to-keep-existing, same convention as profiles' llm.api_key:
-    # the UI's password field is empty on load, so a save that doesn't
-    # re-enter the key must not wipe it.
-    if payload.openrouter_api_key:
-        config = system_config_store.set_openrouter_api_key(payload.openrouter_api_key)
-    return {"success": True, "data": _mask_system_config(config)}
+async def set_system_config(request: Request) -> dict:
+    current = system_config_store.get()
+    # Accept the raw JSON body (rather than a typed SystemConfig) so we can tell
+    # "field absent from the PUT body" apart from "field present with its
+    # Pydantic default value" -- a partial body (e.g. the base-context/openrouter
+    # save buttons, which only ever send those 2 fields) must never reset the
+    # other groups back to their hard-coded defaults.
+    try:
+        raw = await request.json()
+        if not isinstance(raw, dict):
+            raise ValueError("request body must be a JSON object")
+        deep_merged = _deep_merge(current.model_dump(), raw)
+        payload = SystemConfig.model_validate(deep_merged)
+    except (ValueError, pydantic.ValidationError) as exc:
+        # Mirror the structured 422 FastAPI would give automatically for a typed
+        # `payload: SystemConfig` parameter -- manual json()/model_validate() calls
+        # don't get that for free, so surface the same status/shape ourselves
+        # instead of letting a malformed body fall through as a bare 500.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    merged = _merge_system_config(current, payload)
+    new_config = system_config_store.set(merged)
+    if current.stt_local.qwen3_asr_device != new_config.stt_local.qwen3_asr_device:
+        from app.services.stt.providers.qwen3_asr_provider import clear_model_cache
+
+        clear_model_cache()
+    if (
+        current.preprocessing.pyannote_vad_model != new_config.preprocessing.pyannote_vad_model
+        or current.preprocessing.pyannote_auth_token != new_config.preprocessing.pyannote_auth_token
+    ):
+        from app.services.vad import clear_pyannote_cache
+
+        clear_pyannote_cache()
+    if current.remote_stt != new_config.remote_stt:
+        from app.services.stt.service import stt_service
+
+        stt_service.reinit_remote_providers(new_config.remote_stt)
+    if current.omnivoice != new_config.omnivoice:
+        from app.services.tts.providers.omnivoice_provider import reset_voice_ref_and_respawn
+
+        reset_voice_ref_and_respawn()
+    return {"success": True, "data": _mask_system_config(new_config)}
 
 
 @router.get("/models")

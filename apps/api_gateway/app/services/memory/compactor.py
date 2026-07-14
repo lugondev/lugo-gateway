@@ -14,10 +14,10 @@ import logging
 
 import httpx
 
-from app.core.settings import settings
 from app.services.memory.retriever import MAX_DOC_CHARS, _truncate_at_boundary
 from app.services.memory.store import memory_store, profile_doc_store
 from app.services.profiles.models import Profile
+from app.services.system_config import system_config_store
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class MemoryCompactor:
             else {}
         )
         async with httpx.AsyncClient(
-            timeout=settings.conversation_llm_timeout_seconds
+            timeout=system_config_store.get().conversation_llm.conversation_llm_timeout_seconds
         ) as client:
             resp = await client.post(
                 f"{profile.llm.base_url.rstrip('/')}/chat/completions",

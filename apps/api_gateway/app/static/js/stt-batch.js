@@ -1,6 +1,6 @@
 import { el, print } from "./helpers.js";
 import { createMicCapture } from "./audio-capture.js";
-import { getPreproc } from "./base-context.js";
+import { getPreproc } from "./system-config.js";
 
 export let sttBatchRecorder = null;
 export let sttRecordedBlob = null;

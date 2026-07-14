@@ -4,8 +4,8 @@ import threading
 
 from app.core.audio import float_array_to_wav_bytes
 from app.core.deps import module_available
-from app.core.settings import settings
 from app.schemas.tts import TTSRequest
+from app.services.system_config import system_config_store
 from app.services.tts.base import RenderingTTSProvider
 
 logger = logging.getLogger(__name__)
@@ -67,7 +67,7 @@ class VieNeuProvider(RenderingTTSProvider):
             payload.text,
             ref_audio=payload.ref_audio_path,
             ref_text=payload.ref_text,
-            voice=payload.voice or (settings.default_tts_engine_voice or None),
+            voice=payload.voice or (system_config_store.get().engines.default_tts_engine_voice or None),
         )
         return float_array_to_wav_bytes(audio, sample_rate=_SAMPLE_RATE)
 

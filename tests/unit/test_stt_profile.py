@@ -1,8 +1,8 @@
 import pytest
 
-from app.core.settings import settings
 from app.services.profiles.models import Profile, SttConfig
 from app.services.stt.profile import STT_PROFILES, resolve_stt, resolve_stt_profile
+from app.services.system_config import SystemConfigStore
 
 
 def test_vietnamese_profile_uses_qwen3_asr():
@@ -39,12 +39,21 @@ def test_profiles_registry_lists_all_keys():
 # --- resolve_stt: profile-driven STT resolution -----------------------------
 
 @pytest.fixture
-def _server_default(monkeypatch):
-    # Pin the server-wide default so tests don't depend on the ambient .env.
-    monkeypatch.setattr(settings, "stt_profile", "")
-    monkeypatch.setattr(settings, "conversation_stt_engine", "whisper")
-    monkeypatch.setattr(settings, "conversation_language", "vi")
-    monkeypatch.setattr(settings, "default_stt_engine", "vosk")
+def _server_default(monkeypatch, tmp_path):
+    # Pin the server-wide default so tests don't depend on the ambient config DB.
+    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
+    fresh.set(
+        fresh.get().model_copy(
+            update={
+                "engines": fresh.get().engines.model_copy(update={"default_stt_engine": "vosk"}),
+                "stt_local": fresh.get().stt_local.model_copy(update={"stt_profile": ""}),
+                "conversation": fresh.get().conversation.model_copy(
+                    update={"conversation_stt_engine": "whisper", "conversation_language": "vi"}
+                ),
+            }
+        )
+    )
+    monkeypatch.setattr("app.services.system_config.system_config_store", fresh)
 
 
 def test_resolve_stt_no_profile_uses_server_default(_server_default):
@@ -73,9 +82,17 @@ def test_resolve_stt_query_param_wins_over_profile(_server_default):
     assert resolve_stt(p, q_engine="vosk", q_language="fr") == ("vosk", "fr", "")
 
 
-def test_resolve_stt_server_stt_profile_default_applies_without_profile(monkeypatch):
-    monkeypatch.setattr(settings, "stt_profile", "en")
-    monkeypatch.setattr(settings, "conversation_stt_engine", "whisper")
+def test_resolve_stt_server_stt_profile_default_applies_without_profile(monkeypatch, tmp_path):
+    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
+    fresh.set(
+        fresh.get().model_copy(
+            update={
+                "stt_local": fresh.get().stt_local.model_copy(update={"stt_profile": "en"}),
+                "conversation": fresh.get().conversation.model_copy(update={"conversation_stt_engine": "whisper"}),
+            }
+        )
+    )
+    monkeypatch.setattr("app.services.system_config.system_config_store", fresh)
     assert resolve_stt(None) == ("qwen3_asr", "en", "")
 
 

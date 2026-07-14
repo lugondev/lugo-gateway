@@ -32,9 +32,9 @@ def engines_for_boot_warmup() -> tuple[list[str], list[str], dict[str, str]]:
     correctness mechanism, this is just a best-effort head start. LLM engines are
     remote APIs (no local model to warm), so they're intentionally excluded.
     """
-    from app.core.settings import settings
     from app.services.profiles.store import profile_store
     from app.services.stt.profile import resolve_stt
+    from app.services.system_config import warmup_stt_engines, warmup_tts_engines
     from app.services.tts.profile_store import tts_profile_store
 
     stt: list[str] = []
@@ -45,9 +45,9 @@ def engines_for_boot_warmup() -> tuple[list[str], list[str], dict[str, str]]:
         if name and name not in lst:
             lst.append(name)
 
-    for e in settings.warmup_stt_engines:
+    for e in warmup_stt_engines():
         _add(stt, e)
-    for e in settings.warmup_tts_engines:
+    for e in warmup_tts_engines():
         _add(tts, e)
 
     try:

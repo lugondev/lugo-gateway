@@ -1,7 +1,5 @@
 import pytest
 
-from app.core.settings import settings
-
 
 @pytest.fixture(autouse=True)
 def _hermetic(monkeypatch):
@@ -9,10 +7,28 @@ def _hermetic(monkeypatch):
     the built-in echo responder, and never spawn the OmniVoice sidecar or
     call a real LLM.
     """
-    monkeypatch.setattr(settings, "conversation_llm_base_url", "")
-    monkeypatch.setattr(settings, "omnivoice_use_server", False)
     # Don't load real STT/TTS models when TestClient(app) runs the app lifespan.
-    monkeypatch.setattr(settings, "warmup_on_startup", False)
+    # warmup_on_startup, conversation_llm_base_url, and omnivoice_use_server now
+    # live on system_config_store (Task 2 / Task 3 / Task 7), not Settings.
+    # Patch the *instance method* (not `.set()`/the DB row) so this never writes
+    # through to the shared config_system DB row -- system_config_store is a
+    # true singleton shared by every test in the run (and by any test that
+    # builds its own SystemConfigStore pointed at the same test DB, since the
+    # row is keyed by a fixed id, not by path), so a `.set()` write here would
+    # leak into and corrupt unrelated tests' expectations.
+    from app.services.system_config import system_config_store
+
+    _real_get = system_config_store.get
+
+    def _get_with_warmup_off():
+        cfg = _real_get()
+        return cfg.model_copy(update={
+            "engines": cfg.engines.model_copy(update={"warmup_on_startup": False}),
+            "conversation_llm": cfg.conversation_llm.model_copy(update={"conversation_llm_base_url": ""}),
+            "omnivoice": cfg.omnivoice.model_copy(update={"omnivoice_use_server": False}),
+        })
+
+    monkeypatch.setattr(system_config_store, "get", _get_with_warmup_off)
 
     # warmup._ready_ids tracks readiness by id(provider), which is safe in
     # production (providers are long-lived process-wide singletons) but not

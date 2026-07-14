@@ -30,6 +30,7 @@ from app.services.memory.retriever import inject_memories, memory_retriever
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
+from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
 
@@ -124,7 +125,13 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
     except Exception as exc:  # noqa: BLE001 - memory retrieval must not block the reply
         logger.warning("memory retrieval failed for %s: %s", sid, exc)
         block = ""
-    system_prompt = inject_memories(system_prompt or settings.conversation_system_prompt, block) if block else system_prompt
+    system_prompt = (
+        inject_memories(
+            system_prompt or system_config_store.get().conversation.conversation_system_prompt, block
+        )
+        if block
+        else system_prompt
+    )
 
     responder = build_responder_ex(
         base_url=llm_base_url,
@@ -207,11 +214,16 @@ async def conversation_stream(websocket: WebSocket) -> None:
         tts_speed = tts_profile.speed
         tts_language = tts_profile.language
     else:
-        tts_engine = q.get("tts_engine") or settings.conversation_tts_engine or settings.default_tts_engine
+        conv_cfg = system_config_store.get().conversation
+        tts_engine = (
+            q.get("tts_engine")
+            or conv_cfg.conversation_tts_engine
+            or system_config_store.get().engines.default_tts_engine
+        )
         voice = q.get("voice") or None
         ref_audio_path = ref_text = tts_instruct = None
         tts_speed = tts_language = None
-    sample_rate = int(q.get("sample_rate", settings.stt_stream_sample_rate))
+    sample_rate = int(q.get("sample_rate", system_config_store.get().stt_local.stt_stream_sample_rate))
     # Audio transport: pcm16 (default) or opus (embedded ESP32/RPi + browser WebCodecs;
     # ~10x less bandwidth). Server decodes Opus packets -> PCM16 for the endpointer.
     audio_codec = (q.get("audio_codec") or "pcm16").lower()
@@ -228,7 +240,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
     # Only optional noise reduction here — the endpointer already does VAD
     # segmentation and Whisper has its own vad_filter, so an extra VAD gate on the
     # utterance would clip speech and hurt recognition.
-    denoise = _truthy(q.get("denoise"), settings.stt_noise_reduce_enabled)
+    denoise = _truthy(q.get("denoise"), system_config_store.get().preprocessing.stt_noise_reduce_enabled)
 
     try:
         stt_service.get_provider(stt_engine)

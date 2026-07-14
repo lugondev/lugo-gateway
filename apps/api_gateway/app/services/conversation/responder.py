@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 import httpx
 
 from app.core.errors import LLMUnavailableError
-from app.core.settings import settings
 from app.services.system_config import system_config_store
 from app.services.tts.segmenter import SentenceAggregator, segment_text
 
@@ -36,7 +35,7 @@ _active_api_key: str | None = None
 
 
 def get_active_llm_model() -> str:
-    return _active_model or settings.conversation_llm_model
+    return _active_model or system_config_store.get().conversation_llm.conversation_llm_model
 
 
 def set_active_llm_model(model: str) -> None:
@@ -45,11 +44,15 @@ def set_active_llm_model(model: str) -> None:
 
 
 def get_active_llm_base_url() -> str:
-    return settings.conversation_llm_base_url if _active_base_url is None else _active_base_url
+    if _active_base_url is not None:
+        return _active_base_url
+    return system_config_store.get().conversation_llm.conversation_llm_base_url
 
 
 def get_active_llm_api_key() -> str:
-    return settings.conversation_llm_api_key if _active_api_key is None else _active_api_key
+    if _active_api_key is not None:
+        return _active_api_key
+    return system_config_store.get().conversation_llm.conversation_llm_api_key
 
 
 def set_active_llm_config(base_url: str, api_key: str, model: str) -> None:
@@ -273,7 +276,11 @@ def resolve_system_prompt(system_prompt: str | None, voice_optimized: bool = Fal
 
     When voice_optimized is set, append the speakable-text directive to the very
     end so it survives memory injection (which prepends) and stays most salient."""
-    persona = system_prompt if system_prompt is not None else settings.conversation_system_prompt
+    persona = (
+        system_prompt
+        if system_prompt is not None
+        else system_config_store.get().conversation.conversation_system_prompt
+    )
     base_context = system_config_store.get().base_context
     prompt = f"{base_context}\n\n{persona}" if base_context else persona
     if voice_optimized:
@@ -289,7 +296,7 @@ def build_responder() -> Responder:
             api_key=get_active_llm_api_key(),
             model=get_active_llm_model(),
             system_prompt=resolve_system_prompt(None),
-            timeout=settings.conversation_llm_timeout_seconds,
+            timeout=system_config_store.get().conversation_llm.conversation_llm_timeout_seconds,
         )
     return EchoResponder()
 
@@ -312,6 +319,6 @@ def build_responder_ex(
             api_key=api_key if api_key is not None else get_active_llm_api_key(),
             model=model if model is not None else get_active_llm_model(),
             system_prompt=resolve_system_prompt(system_prompt, voice_optimized),
-            timeout=settings.conversation_llm_timeout_seconds,
+            timeout=system_config_store.get().conversation_llm.conversation_llm_timeout_seconds,
         )
     return EchoResponder()

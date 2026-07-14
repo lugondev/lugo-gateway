@@ -49,8 +49,8 @@ errors. They never embed model logic.
 - **Model managers** (`whisper_models`, `llm_models`, `tts_models`, `models`) —
   download / select / delete weights for the System-tab managers.
 - **TTS providers** implement `synthesize()`.
-  - `OmniVoiceProvider` — lazy-loads OmniVoice from `OMNIVOICE_PATH`, runs inference
-    in a worker thread, and raises `ProviderError` (502) on failure.
+  - `OmniVoiceProvider` — lazy-loads OmniVoice from the configured path (admin System
+    tab), runs inference in a worker thread, and raises `ProviderError` (502) on failure.
 - **ArtifactStore** — persists generated WAVs and returns a `/artifacts/...` URL.
 - **segmenter** — splits text into sentence-sized chunks for streaming TTS.
 
@@ -81,9 +81,10 @@ OmniVoice generates per segment (no native token-level streaming), so first-byte
 is driven by chunk size — short leading sentences play sooner.
 
 ## The audio contract
-Streaming STT is fixed to **PCM signed-16, mono**, at `STT_STREAM_SAMPLE_RATE`
-(16 kHz default). Clients resample at the edge (the browser playground decimates the
-mic's native rate down to 16 kHz before sending). OmniVoice output is 24 kHz WAV.
+Streaming STT is fixed to **PCM signed-16, mono**, at the configured stream sample
+rate (admin System tab; 16 kHz default). Clients resample at the edge (the browser
+playground decimates the mic's native rate down to 16 kHz before sending). OmniVoice
+output is 24 kHz WAV.
 
 ## Upgrade paths (not yet implemented)
 - **Event bus → Redis Pub/Sub + streams** for multi-worker scale and reconnect/replay

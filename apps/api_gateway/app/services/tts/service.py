@@ -1,5 +1,5 @@
 from app.core.errors import EngineNotFoundError
-from app.core.settings import settings
+from app.services.system_config import system_config_store
 from app.services.tts.base import TTSProvider
 from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
 from app.services.tts.providers.extra_engines import EXTRA_TTS_PROVIDERS
@@ -25,6 +25,7 @@ class TTSService:
 
     def list_engines(self) -> list[dict]:
         result: list[dict] = []
+        default_engine = system_config_store.get().engines.default_tts_engine
         for name, provider in self.providers.items():
             result.append(
                 {
@@ -32,7 +33,7 @@ class TTSService:
                     "available": provider.available(),
                     "detail": provider.detail(),
                     "install_hint": provider.install_hint(),
-                    "default": name == settings.default_tts_engine,
+                    "default": name == default_engine,
                 }
             )
         return result

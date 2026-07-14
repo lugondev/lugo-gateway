@@ -18,14 +18,18 @@ import subprocess
 import httpx
 
 from app.core.errors import AppError
-from app.core.settings import settings
 from app.services.conversation.responder import get_active_llm_model, set_active_llm_config
+from app.services.system_config import system_config_store
 
 logger = logging.getLogger(__name__)
 
 
 def _ollama_bin() -> str | None:
-    candidates = [settings.ollama_bin, shutil.which("ollama"), "/opt/homebrew/opt/ollama/bin/ollama"]
+    candidates = [
+        system_config_store.get().conversation_llm.ollama_bin,
+        shutil.which("ollama"),
+        "/opt/homebrew/opt/ollama/bin/ollama",
+    ]
     for c in candidates:
         if c and (shutil.which(c) or os.path.isfile(c)):
             return c
@@ -41,14 +45,14 @@ LLM_SUGGESTIONS = [
 
 
 def _ollama_base() -> str:
-    base = settings.conversation_llm_base_url.rstrip("/")
+    base = system_config_store.get().conversation_llm.conversation_llm_base_url.rstrip("/")
     return base[:-3].rstrip("/") if base.endswith("/v1") else base
 
 
 def _is_remote_endpoint() -> bool:
     """True when base_url points at a cloud API (not localhost/LAN Ollama)."""
     from urllib.parse import urlparse
-    host = urlparse(settings.conversation_llm_base_url).hostname or ""
+    host = urlparse(system_config_store.get().conversation_llm.conversation_llm_base_url).hostname or ""
     return bool(host) and host not in ("localhost", "127.0.0.1", "0.0.0.0", "::1") \
         and not host.startswith("192.168.") and not host.endswith(".local")
 
@@ -63,7 +67,8 @@ class LlmManager:
 
     def available(self) -> bool:
         if _is_remote_endpoint():
-            return bool(settings.conversation_llm_base_url and settings.conversation_llm_api_key)
+            cl = system_config_store.get().conversation_llm
+            return bool(cl.conversation_llm_base_url and cl.conversation_llm_api_key)
         base = _ollama_base()
         if not base:
             return False
@@ -102,7 +107,7 @@ class LlmManager:
         return {
             "available": available,
             "remote": remote,
-            "base_url": settings.conversation_llm_base_url,
+            "base_url": system_config_store.get().conversation_llm.conversation_llm_base_url,
             "active": active,
             "running": active in running,
             "installed": [
@@ -168,8 +173,9 @@ class LlmManager:
         # Selecting a local model also pins the conversation to the Ollama endpoint,
         # overriding any stale online (e.g. OpenAI) base_url so the model and endpoint
         # can never mismatch (which surfaces as "model not found" errors).
-        base = settings.conversation_llm_base_url or "http://localhost:11434/v1"
-        set_active_llm_config(base, settings.conversation_llm_api_key, model)
+        cl = system_config_store.get().conversation_llm
+        base = cl.conversation_llm_base_url or "http://localhost:11434/v1"
+        set_active_llm_config(base, cl.conversation_llm_api_key, model)
 
     async def _is_up(self) -> bool:
         base = _ollama_base()
@@ -198,8 +204,8 @@ class LlmManager:
     async def start_service(self, warm: bool = True) -> dict:
         """Ensure the Ollama (OpenAI-compatible) service is running; optionally warm
         the active model. Spawns `ollama serve` detached when not reachable."""
-        if not settings.conversation_llm_base_url:
-            raise AppError("CONVERSATION_LLM_BASE_URL is not set")
+        if not system_config_store.get().conversation_llm.conversation_llm_base_url:
+            raise AppError("conversation_llm.conversation_llm_base_url is not set")
 
         started = False
         if not await self._is_up():
@@ -227,7 +233,7 @@ class LlmManager:
             "started": started,
             "warmed": warmed,
             "active": active,
-            "base_url": settings.conversation_llm_base_url,
+            "base_url": system_config_store.get().conversation_llm.conversation_llm_base_url,
         }
 
     async def stop(self) -> dict:
