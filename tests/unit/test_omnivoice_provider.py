@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 
 import pytest
 from unittest.mock import AsyncMock
@@ -98,14 +99,19 @@ def test_spawn_sidecar_tracks_the_process_handle(monkeypatch, tmp_path):
 
 
 def test_reset_voice_ref_and_respawn_clears_voice_ref_and_kills_old_sidecar(monkeypatch, tmp_path):
+    """reset_voice_ref_and_respawn() no longer kills the old sidecar itself --
+    _spawn_sidecar() owns the whole kill-then-spawn sequence (atomically, under
+    _sidecar_lock) so mock subprocess.Popen and let the real _spawn_sidecar run,
+    rather than mocking _spawn_sidecar itself (which would bypass the kill)."""
+    monkeypatch.setattr(ov_mod.settings, "artifacts_dir", str(tmp_path))
     ov_mod._voice_ref.update({"path": "/tmp/fake.wav", "text": "old"})
 
     class _FakeProc:
-        def __init__(self):
+        def __init__(self, *a, **kw):
             self.killed = False
 
         def poll(self):
-            return None
+            return None if not self.killed else 0
 
         def kill(self):
             self.killed = True
@@ -113,15 +119,81 @@ def test_reset_voice_ref_and_respawn_clears_voice_ref_and_kills_old_sidecar(monk
         def wait(self, timeout=None):
             return 0
 
-    fake_proc = _FakeProc()
-    ov_mod._sidecar_process = fake_proc
+    old_proc = _FakeProc()
+    ov_mod._sidecar_process = old_proc
 
-    spawn_calls = []
-    monkeypatch.setattr(ov_mod.OmniVoiceProvider, "_spawn_sidecar", lambda self: spawn_calls.append(1))
+    popen_calls = []
+
+    def _fake_popen(*a, **kw):
+        popen_calls.append((a, kw))
+        return _FakeProc()
+
+    monkeypatch.setattr(ov_mod.subprocess, "Popen", _fake_popen)
 
     ov_mod.reset_voice_ref_and_respawn()
 
     assert ov_mod._voice_ref == {}
-    assert fake_proc.killed is True
-    assert len(spawn_calls) == 1
+    assert old_proc.killed is True
+    assert len(popen_calls) == 1
+    assert ov_mod._sidecar_process is not old_proc  # replaced by the new spawn
+    ov_mod._sidecar_process = None  # reset module state
+
+
+def test_spawn_sidecar_serializes_concurrent_calls_via_lock(monkeypatch, tmp_path):
+    """Two threads calling _spawn_sidecar() "simultaneously" (e.g. one session's
+    background warm() on a thread-pool thread racing another) must not both
+    slip past the kill-check and each spawn independently -- _sidecar_lock
+    should make each thread's kill-then-spawn atomic, so whichever thread's
+    process doesn't end up as the final _sidecar_process was actually killed
+    (never silently leaked/orphaned)."""
+    monkeypatch.setattr(ov_mod.settings, "artifacts_dir", str(tmp_path))
+    ov_mod._sidecar_process = None
+
+    created: list["_FakePopen"] = []
+    created_lock = threading.Lock()
+
+    class _FakePopen:
+        def __init__(self, *a, **kw):
+            self.killed = False
+            self._alive = True
+            with created_lock:
+                created.append(self)
+
+        def poll(self):
+            return None if self._alive else 0
+
+        def kill(self):
+            self.killed = True
+            self._alive = False
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(ov_mod.subprocess, "Popen", _FakePopen)
+
+    provider = ov_mod.OmniVoiceProvider()
+    barrier = threading.Barrier(2)
+
+    def _spawn():
+        barrier.wait()  # both threads enter _spawn_sidecar() at nearly the same instant
+        provider._spawn_sidecar()
+
+    t1 = threading.Thread(target=_spawn)
+    t2 = threading.Thread(target=_spawn)
+    t1.start()
+    t2.start()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+
+    assert len(created) == 2, "expected exactly one Popen per thread"
+    survivor = ov_mod._sidecar_process
+    victims = [p for p in created if p is not survivor]
+    assert len(victims) == 1
+    # Without the lock, a racing thread's kill-check can see _sidecar_process
+    # as None (or as its own not-yet-overwritten value) and skip killing the
+    # other thread's process entirely, leaking it -- this assertion is what
+    # would fail if _sidecar_lock were removed.
+    assert victims[0].killed is True
+    assert survivor.killed is False
+
     ov_mod._sidecar_process = None  # reset module state

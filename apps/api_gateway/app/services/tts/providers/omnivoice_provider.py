@@ -3,6 +3,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 import httpx
@@ -30,6 +31,19 @@ _voice_ref_lock = asyncio.Lock()
 # Tracks the currently-running sidecar Popen handle so a settings change can kill
 # it before spawning a replacement. None until the first _spawn_sidecar() call.
 _sidecar_process: subprocess.Popen | None = None
+# Guards the kill-then-spawn critical section in _spawn_sidecar: warm() runs on a
+# background thread-pool thread (asyncio.to_thread) for every new conversation
+# session, so two sessions starting close together -- or a warm()-triggered
+# respawn racing an admin's PUT /v1/system/config -> reset_voice_ref_and_respawn()
+# on the event-loop thread -- can call _spawn_sidecar() concurrently. Without a
+# lock, each thread's check-then-kill-then-Popen-then-assign sequence can
+# interleave: one thread's freshly-spawned process gets silently overwritten in
+# the global by the other thread's spawn, leaking the first process (never
+# killed) and likely colliding on the same host:port. A plain threading.Lock (not
+# asyncio.Lock, since _spawn_sidecar is a sync method called from both the event
+# loop and a thread-pool thread) makes kill+spawn atomic -- same pattern as
+# whisper_provider.py's _MODEL_LOCK.
+_sidecar_lock = threading.Lock()
 
 
 def get_active_omnivoice_model() -> str:
@@ -44,11 +58,9 @@ def set_active_omnivoice_model(model_id: str) -> None:
 def _kill_sidecar_if_running() -> None:
     """Kill the tracked sidecar process (if any) and wait for it to exit.
 
-    Shared by ``_spawn_sidecar`` (kills any previous instance before spawning a
-    replacement -- covers warm()/_ensure_server()'s respawn paths) and
-    ``reset_voice_ref_and_respawn`` (kills explicitly, independent of whichever
-    provider instance ends up calling ``_spawn_sidecar`` next), so the kill
-    always happens even if a caller/test replaces ``_spawn_sidecar`` itself.
+    Only called from inside ``_spawn_sidecar`` while ``_sidecar_lock`` is held --
+    see that method for why the kill and the subsequent Popen assignment must be
+    one atomic critical section.
     """
     global _sidecar_process
     if _sidecar_process is not None and _sidecar_process.poll() is None:
@@ -63,9 +75,11 @@ def reset_voice_ref_and_respawn() -> None:
     """Clear the pinned-voice cache and kill+respawn the sidecar so an admin edit
     to model_id/dtype/device/host/port/instruct/temperature takes effect without a
     process restart. The sidecar has no reload endpoint (see omnivoice_sidecar.py) —
-    a new process with the new CLI args is the only way to pick up the change."""
+    a new process with the new CLI args is the only way to pick up the change.
+    _spawn_sidecar() itself owns the full kill-old-then-spawn-new sequence
+    (under _sidecar_lock), so it's called once here rather than duplicating the
+    kill step."""
     _voice_ref.clear()
-    _kill_sidecar_if_running()
     provider = OmniVoiceProvider()
     provider._spawn_sidecar()
 
@@ -134,30 +148,33 @@ class OmniVoiceProvider(RenderingTTSProvider):
 
     def _spawn_sidecar(self) -> None:
         global _sidecar_process
-        _kill_sidecar_if_running()
-        omnivoice = system_config_store.get().omnivoice
-        # sidecar lives in services/tts/ (one level up from providers/)
-        sidecar = Path(__file__).resolve().parent.parent / "omnivoice_sidecar.py"
-        cmd = [
-            omnivoice.omnivoice_python_path, str(sidecar),
-            "--host", omnivoice.omnivoice_server_host,
-            "--port", str(omnivoice.omnivoice_server_port),
-            "--model", get_active_omnivoice_model(),
-            "--dtype", omnivoice.omnivoice_dtype,
-        ]
-        if omnivoice.omnivoice_device:
-            cmd += ["--device", omnivoice.omnivoice_device]
-        logger.info("Starting OmniVoice sidecar server on port %s", omnivoice.omnivoice_server_port)
-        # Clean env: our app sets PYTHONPATH/VIRTUAL_ENV, which would leak into the
-        # OmniVoice venv interpreter and can break its imports.
-        env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "VIRTUAL_ENV")}
-        log_fh = open(  # noqa: SIM115 - kept open for the child's lifetime
-            Path(settings.artifacts_dir).resolve() / "_omnivoice_sidecar.log", "ab"
-        )
-        _sidecar_process = subprocess.Popen(  # noqa: S603 - local model server
-            cmd, cwd=omnivoice.omnivoice_path, env=env,
-            stdout=log_fh, stderr=log_fh, start_new_session=True,
-        )
+        # Kill-old-then-spawn-new must be one atomic critical section -- see
+        # _sidecar_lock's definition for the race this guards against.
+        with _sidecar_lock:
+            _kill_sidecar_if_running()
+            omnivoice = system_config_store.get().omnivoice
+            # sidecar lives in services/tts/ (one level up from providers/)
+            sidecar = Path(__file__).resolve().parent.parent / "omnivoice_sidecar.py"
+            cmd = [
+                omnivoice.omnivoice_python_path, str(sidecar),
+                "--host", omnivoice.omnivoice_server_host,
+                "--port", str(omnivoice.omnivoice_server_port),
+                "--model", get_active_omnivoice_model(),
+                "--dtype", omnivoice.omnivoice_dtype,
+            ]
+            if omnivoice.omnivoice_device:
+                cmd += ["--device", omnivoice.omnivoice_device]
+            logger.info("Starting OmniVoice sidecar server on port %s", omnivoice.omnivoice_server_port)
+            # Clean env: our app sets PYTHONPATH/VIRTUAL_ENV, which would leak into the
+            # OmniVoice venv interpreter and can break its imports.
+            env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "VIRTUAL_ENV")}
+            log_fh = open(  # noqa: SIM115 - kept open for the child's lifetime
+                Path(settings.artifacts_dir).resolve() / "_omnivoice_sidecar.log", "ab"
+            )
+            _sidecar_process = subprocess.Popen(  # noqa: S603 - local model server
+                cmd, cwd=omnivoice.omnivoice_path, env=env,
+                stdout=log_fh, stderr=log_fh, start_new_session=True,
+            )
 
     def warm(self) -> None:
         """Best-effort: start the sidecar early (fire-and-forget) so it loads while
