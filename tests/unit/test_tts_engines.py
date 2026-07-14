@@ -1,6 +1,7 @@
 import sys
 import types
 
+import numpy as np
 import pytest
 
 from app.core.errors import EngineNotFoundError, ProviderError
@@ -170,3 +171,65 @@ async def test_edge_tts_synthesize_gives_up_after_max_attempts(monkeypatch):
         await EdgeTTSProvider().synthesize(TTSRequest(text="hi"))
 
     assert len(attempts) == edge_tts_provider._MAX_ATTEMPTS
+
+
+def test_pick_device_dtype_attn_prefers_cuda(monkeypatch):
+    import torch
+
+    from app.services.tts.providers.qwen3_tts_provider import _pick_device_dtype_attn
+
+    monkeypatch.delenv("QWEN3_TTS_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+    device, dtype, attn = _pick_device_dtype_attn()
+
+    assert device == "cuda:0"
+    assert dtype is torch.bfloat16
+    assert attn == "flash_attention_2"
+
+
+def test_pick_device_dtype_attn_falls_back_to_mps(monkeypatch):
+    import torch
+
+    from app.services.tts.providers.qwen3_tts_provider import _pick_device_dtype_attn
+
+    monkeypatch.delenv("QWEN3_TTS_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+
+    device, dtype, attn = _pick_device_dtype_attn()
+
+    assert device == "mps"
+    assert dtype is torch.float16
+    assert attn is None
+
+
+def test_pick_device_dtype_attn_falls_back_to_cpu(monkeypatch):
+    import torch
+
+    from app.services.tts.providers.qwen3_tts_provider import _pick_device_dtype_attn
+
+    monkeypatch.delenv("QWEN3_TTS_DEVICE", raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+
+    device, dtype, attn = _pick_device_dtype_attn()
+
+    assert device == "cpu"
+    assert dtype is torch.float32
+    assert attn is None
+
+
+def test_pick_device_dtype_attn_honors_env_override(monkeypatch):
+    import torch
+
+    from app.services.tts.providers.qwen3_tts_provider import _pick_device_dtype_attn
+
+    monkeypatch.setenv("QWEN3_TTS_DEVICE", "cpu")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)  # must be ignored
+
+    device, dtype, attn = _pick_device_dtype_attn()
+
+    assert device == "cpu"
+    assert dtype is torch.float32
+    assert attn is None
