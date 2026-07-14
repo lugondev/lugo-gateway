@@ -4,6 +4,7 @@ from app.services.tts.base import TTSProvider
 from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
 from app.services.tts.providers.extra_engines import EXTRA_TTS_PROVIDERS
 from app.services.tts.providers.omnivoice_provider import OmniVoiceProvider
+from app.services.tts.providers.qwen3_tts_provider import QWEN3_TTS_PROVIDERS
 from app.services.tts.providers.vieneu_provider import VieNeuProvider
 
 
@@ -15,6 +16,8 @@ class TTSService:
             "edge_tts": EdgeTTSProvider(),
         }
         for provider in EXTRA_TTS_PROVIDERS:
+            self.providers[provider.name] = provider
+        for provider in QWEN3_TTS_PROVIDERS:
             self.providers[provider.name] = provider
 
     def get_provider(self, engine: str) -> TTSProvider:

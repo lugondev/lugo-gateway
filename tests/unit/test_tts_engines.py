@@ -233,3 +233,109 @@ def test_pick_device_dtype_attn_honors_env_override(monkeypatch):
     assert device == "cpu"
     assert dtype is torch.float32
     assert attn is None
+
+
+def _install_fake_qwen_tts(monkeypatch, model_cls):
+    """qwen_tts is an optional dependency not installed in this test env, so
+    `from qwen_tts import Qwen3TTSModel` inside _load_model() needs a stub
+    module injected into sys.modules (mirrors _install_fake_edge_tts above)."""
+    fake_mod = types.ModuleType("qwen_tts")
+    fake_mod.Qwen3TTSModel = model_cls
+    monkeypatch.setitem(sys.modules, "qwen_tts", fake_mod)
+
+
+def test_lists_qwen3_tts_engines():
+    engines = {e["engine"] for e in tts_service.list_engines()}
+    assert {"qwen3_tts_0_6b", "qwen3_tts_1_7b"} <= engines
+
+
+def test_qwen3_tts_install_hint_mentions_package():
+    provider = tts_service.get_provider("qwen3_tts_0_6b")
+    assert "qwen-tts" in provider.install_hint()
+
+
+def test_qwen3_tts_voices_are_preset_speakers():
+    from app.services.tts.providers.qwen3_tts_provider import PRESET_SPEAKERS
+
+    voices = tts_service.get_provider("qwen3_tts_1_7b").list_voices()
+    assert voices == PRESET_SPEAKERS
+    assert len(voices) == 9
+    assert {"label", "voice"} <= set(voices[0])
+
+
+async def test_qwen3_tts_custom_voice_path_used_when_no_ref_audio(monkeypatch):
+    from app.services.tts.providers import qwen3_tts_provider
+
+    qwen3_tts_provider._CACHE.clear()
+    calls = {}
+
+    class _FakeModel:
+        def generate_custom_voice(self, text, language, speaker, instruct):
+            calls["custom_voice"] = (text, language, speaker, instruct)
+            return np.array([0.0, 0.1, -0.1], dtype=np.float32), 24000
+
+    class _FakeQwen3TTSModel:
+        @staticmethod
+        def from_pretrained(checkpoint_id, **kwargs):
+            calls["checkpoint_id"] = checkpoint_id
+            return _FakeModel()
+
+    _install_fake_qwen_tts(monkeypatch, _FakeQwen3TTSModel)
+
+    result = await tts_service.get_provider("qwen3_tts_0_6b").synthesize(TTSRequest(text="xin chào"))
+
+    assert result.engine == "qwen3_tts_0_6b"
+    assert result.sample_rate == 24000
+    assert calls["checkpoint_id"] == "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+    assert calls["custom_voice"] == ("xin chào", "Auto", "Vivian", None)
+
+
+async def test_qwen3_tts_voice_clone_path_used_when_ref_audio_present(monkeypatch):
+    from app.services.tts.providers import qwen3_tts_provider
+
+    qwen3_tts_provider._CACHE.clear()
+    calls = {}
+
+    class _FakeModel:
+        def generate_voice_clone(self, text, language, ref_audio, ref_text, x_vector_only_mode):
+            calls["voice_clone"] = (text, language, ref_audio, ref_text, x_vector_only_mode)
+            return np.array([0.2, -0.2], dtype=np.float32), 24000
+
+    class _FakeQwen3TTSModel:
+        @staticmethod
+        def from_pretrained(checkpoint_id, **kwargs):
+            calls["checkpoint_id"] = checkpoint_id
+            return _FakeModel()
+
+    _install_fake_qwen_tts(monkeypatch, _FakeQwen3TTSModel)
+
+    payload = TTSRequest(text="hi", ref_audio_path="/tmp/ref.wav", ref_text="reference text")
+    result = await tts_service.get_provider("qwen3_tts_1_7b").synthesize(payload)
+
+    assert result.sample_rate == 24000
+    assert calls["checkpoint_id"] == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+    assert calls["voice_clone"] == ("hi", "Auto", "/tmp/ref.wav", "reference text", False)
+
+
+async def test_qwen3_tts_custom_voice_honors_explicit_voice_and_instruct(monkeypatch):
+    from app.services.tts.providers import qwen3_tts_provider
+
+    qwen3_tts_provider._CACHE.clear()
+    calls = {}
+
+    class _FakeModel:
+        def generate_custom_voice(self, text, language, speaker, instruct):
+            calls["custom_voice"] = (text, language, speaker, instruct)
+            return np.array([0.0], dtype=np.float32), 24000
+
+    class _FakeQwen3TTSModel:
+        @staticmethod
+        def from_pretrained(checkpoint_id, **kwargs):
+            return _FakeModel()
+
+    _install_fake_qwen_tts(monkeypatch, _FakeQwen3TTSModel)
+
+    payload = TTSRequest(text="hello", voice="Ryan", instruct="cheerful", language="English")
+    await tts_service.get_provider("qwen3_tts_0_6b").synthesize(payload)
+
+    assert calls["custom_voice"] == ("hello", "English", "Ryan", "cheerful")
