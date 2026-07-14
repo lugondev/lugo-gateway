@@ -1,8 +1,12 @@
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core.settings import settings
 from app.main import app
+from app.services.auth.users import user_store
+from app.services.model_registry.store import ModelRegistryStore
 from app.services.profiles.store import ProfileStore, profile_store
 
 
@@ -16,6 +20,21 @@ def _clean_store(tmp_path, monkeypatch):
 @pytest.fixture
 def client():
     return TestClient(app)
+
+
+@pytest.fixture
+def _with_password(monkeypatch):
+    monkeypatch.setattr(settings, "admin_password", "s3cret")
+    yield
+    monkeypatch.setattr(settings, "admin_password", "")
+
+
+def _signup_login(client, username: str, role: str = "user") -> None:
+    client.post("/api/auth/signup", json={"username": username, "password": "pw"})
+    if role == "admin":
+        user = asyncio.run(user_store.get_by_username(username))
+        asyncio.run(user_store.set_fields(user.id, role="admin"))
+    client.post("/api/auth/login", json={"username": username, "password": "pw"})
 
 
 def test_list_profiles_empty(client):
@@ -168,3 +187,46 @@ def test_update_profile_rejects_invalid_stt_model(client):
         "stt": {"engine": "qwen3_asr", "model": "nope"},
     })
     assert resp.status_code == 400
+
+
+def test_llm_options_lists_enabled_stable_entries_for_regular_user(client, _with_password):
+    store = ModelRegistryStore()
+    asyncio.run(store.create("llm", "openai", "gpt-4o-mini", "GPT-4o mini", stage="stable"))
+    _signup_login(client, "toan", role="user")
+    resp = client.get("/v1/profiles/llm-options")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert any(e["engine"] == "openai" and e["model_id"] == "gpt-4o-mini" for e in data)
+    entry = next(e for e in data if e["engine"] == "openai")
+    assert "api_key" not in entry
+    assert "base_url" not in entry
+
+
+def test_llm_options_hides_testing_stage_for_non_tester(client, _with_password):
+    store = ModelRegistryStore()
+    asyncio.run(store.create("llm", "openrouter", "qwen3-instruct", "Qwen3 Instruct", stage="testing"))
+    _signup_login(client, "toan2", role="user")
+    resp = client.get("/v1/profiles/llm-options")
+    assert resp.status_code == 200
+    assert not any(e["engine"] == "openrouter" for e in resp.json()["data"])
+
+
+def test_llm_options_shows_testing_stage_for_tester(client, _with_password):
+    store = ModelRegistryStore()
+    asyncio.run(store.create("llm", "openrouter", "qwen3-instruct-2", "Qwen3 Instruct 2", stage="testing"))
+    _signup_login(client, "toan3", role="user")
+    user = asyncio.run(user_store.get_by_username("toan3"))
+    asyncio.run(user_store.set_fields(user.id, can_use_testing=True))
+    resp = client.get("/v1/profiles/llm-options")
+    assert resp.status_code == 200
+    assert any(e["engine"] == "openrouter" and e["model_id"] == "qwen3-instruct-2" for e in resp.json()["data"])
+
+
+def test_llm_options_hides_disabled_entries(client, _with_password):
+    store = ModelRegistryStore()
+    entry = asyncio.run(store.create("llm", "openai", "gpt-disabled", "Disabled model", stage="stable"))
+    asyncio.run(store.set_fields(entry["id"], enabled=False))
+    _signup_login(client, "toan4", role="user")
+    resp = client.get("/v1/profiles/llm-options")
+    assert resp.status_code == 200
+    assert not any(e["engine"] == "openai" and e["model_id"] == "gpt-disabled" for e in resp.json()["data"])
