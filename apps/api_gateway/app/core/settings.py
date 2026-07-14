@@ -66,15 +66,6 @@ class Settings(BaseSettings):
 
     artifacts_dir: str = "artifacts"
 
-    whisper_service_base_url: str = ""
-    whisper_service_api_key: str = ""
-    whisper_service_model: str = "whisper-1"
-
-    eventlab_base_url: str = ""
-    eventlab_api_key: str = ""
-    eventlab_model: str = "whisper-1"
-    remote_stt_timeout_seconds: float = 60.0
-
     # LLM profiles + MCP tooling
     profiles_path: str = "profiles.json"
     tts_profiles_path: str = "tts_profiles.json"

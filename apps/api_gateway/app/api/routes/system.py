@@ -180,7 +180,11 @@ async def set_system_config(request: Request) -> dict:
         from app.services.vad import clear_pyannote_cache
 
         clear_pyannote_cache()
-    # Remaining cache-invalidation hooks (remote_stt, omnivoice) added in Tasks 6, 7.
+    if current.remote_stt != new_config.remote_stt:
+        from app.services.stt.service import stt_service
+
+        stt_service.reinit_remote_providers(new_config.remote_stt)
+    # Remaining cache-invalidation hook (omnivoice) added in Task 7.
     return {"success": True, "data": _mask_system_config(new_config)}
 
 

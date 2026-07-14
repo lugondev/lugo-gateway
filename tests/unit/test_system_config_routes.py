@@ -204,3 +204,24 @@ def test_unrelated_field_change_does_not_clear_pyannote_cache(client):
     full["base_context"] = "unrelated change"
     client.put("/v1/system/config", json=full)
     assert mod._pyannote_cache.get("pipeline") is sentinel
+
+
+def test_changing_remote_stt_base_url_rebuilds_the_provider(client):
+    from app.services.stt.service import stt_service
+
+    original = stt_service.providers["whisper_service"]
+    full = client.get("/v1/system/config").json()["data"]
+    full["remote_stt"]["whisper_service_base_url"] = "https://changed.example/v1"
+    client.put("/v1/system/config", json=full)
+    assert stt_service.providers["whisper_service"] is not original
+    assert stt_service.providers["whisper_service"].base_url == "https://changed.example/v1"
+
+
+def test_unrelated_field_change_does_not_rebuild_remote_stt_provider(client):
+    from app.services.stt.service import stt_service
+
+    original = stt_service.providers["whisper_service"]
+    full = client.get("/v1/system/config").json()["data"]
+    full["base_context"] = "unrelated change"
+    client.put("/v1/system/config", json=full)
+    assert stt_service.providers["whisper_service"] is original

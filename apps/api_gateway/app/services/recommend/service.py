@@ -83,8 +83,9 @@ def _collect_state() -> tuple[set, set]:
 
 def _augment_config_flags(caps: Capabilities) -> None:
     """Remote/online entries are 'available' when their endpoint is configured."""
-    caps.modules["whisper_service"] = bool(settings.whisper_service_base_url)
-    caps.modules["eventlab"] = bool(settings.eventlab_base_url)
+    remote_stt = system_config_store.get().remote_stt
+    caps.modules["whisper_service"] = bool(remote_stt.whisper_service_base_url)
+    caps.modules["eventlab"] = bool(remote_stt.eventlab_base_url)
     caps.modules["online_llm"] = bool(system_config_store.get().conversation_llm.conversation_llm_base_url)
     caps.modules["openrouter"] = bool(system_config_store.get().openrouter_api_key)
 
