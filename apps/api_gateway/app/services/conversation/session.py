@@ -27,7 +27,7 @@ from app.schemas.tts import TTSRequest
 from app.services.conversation.endpointer import VadEndpointer
 from app.services.conversation.responder import (
     build_responder_ex,
-    get_active_llm_model,
+    resolve_llm_override_from_registry,
     resolve_system_prompt,
 )
 from app.services.conversation.tools.base import ToolContext, ToolRegistry, ToolSource
@@ -181,6 +181,11 @@ class ConversationSession:
         llm_base_url = (profile.llm.base_url or None) if (profile and profile.llm.base_url) else None
         llm_api_key = profile.llm.api_key if (profile and profile.llm.base_url) else None
         llm_model = (profile.llm.model or None) if (profile and profile.llm.model) else None
+        if profile and profile.llm.engine and profile.llm.model:
+            registry_override = await resolve_llm_override_from_registry(profile.llm.engine, profile.llm.model)
+            if registry_override:
+                llm_base_url, llm_api_key = registry_override
+                llm_model = profile.llm.model
         system_prompt = (profile.system_prompt or None) if (profile and profile.system_prompt) else None
         voice_optimized = bool(profile and profile.voice_optimized)
 
@@ -228,7 +233,7 @@ class ConversationSession:
             stt_detail = cfg.stt_engine
         tts_detail = self.tts_provider.detail() if hasattr(self.tts_provider, "detail") else cfg.tts_engine
 
-        model_label = get_active_llm_model() if self.responder.name == "llm" else self.responder.name
+        model_label = self.responder.model if self.responder.name == "llm" else self.responder.name
 
         conv_cfg = system_config_store.get().conversation
         self.endpointer = VadEndpointer(

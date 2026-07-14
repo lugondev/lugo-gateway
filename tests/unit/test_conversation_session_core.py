@@ -142,6 +142,74 @@ async def test_session_start_pins_explicit_stt_model():
 
 
 @pytest.mark.asyncio
+async def test_session_started_reports_the_profiles_actual_llm_model(monkeypatch, tmp_path):
+    """session_started's llm_model must reflect the model the responder was
+    actually built with (self.responder.model), not the unrelated system-wide
+    default (get_active_llm_model()) -- a profile with its own custom LLM
+    model must show ITS model in the UI, not always "gpt-3.5-turbo"."""
+    from app.services.profiles.models import LlmConfig, Profile
+    from app.services.profiles.store import ProfileStore
+
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    fresh_profiles.upsert(Profile(
+        name="custom-model-profile",
+        llm=LlmConfig(base_url="https://api.example.com/v1", api_key="k", model="custom-model-name"),
+    ))
+
+    events = []
+    async def emit(name, **p): events.append((name, p))
+    async def emit_audio(pkt): pass
+
+    sess = ConversationSession(_cfg(profile_name="custom-model-profile"), emit, emit_audio)
+    await sess.start()
+    await sess.close()
+
+    started = next(p for n, p in events if n == "session_started")
+    assert started["llm_model"] == "custom-model-name"
+
+
+@pytest.mark.asyncio
+async def test_session_start_applies_registry_llm_override_for_profile(monkeypatch, tmp_path):
+    """A profile that picks a Model Registry LLM (base_url/api_key cleared,
+    engine+model set -- see profiles.js's registry-select save path) must have
+    its responder built from the registry entry's base_url/api_key, exactly
+    like the already-correct conversation.py/livehost.py call sites do. Before
+    this fix, ConversationSession.start() never called
+    resolve_llm_override_from_registry at all, so a registry-backed profile
+    silently fell back to the system-wide default LLM base_url while still
+    asking for the registry's model name -- producing a bogus offline error
+    even though the registry entry itself is perfectly valid."""
+    from app.services.model_registry.store import ModelRegistryStore
+    from app.services.profiles.models import LlmConfig, Profile
+    from app.services.profiles.store import ProfileStore
+
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    fresh_profiles.upsert(Profile(
+        name="registry-profile",
+        llm=LlmConfig(base_url="", api_key="", model="openrouter/free", engine="openrouter"),
+    ))
+
+    registry = ModelRegistryStore()
+    await registry.create(
+        "llm", "openrouter", "openrouter/free", "OR free",
+        api_key="sk-or-v1-real-key", base_url="https://openrouter.ai/api/v1",
+    )
+
+    async def emit(name, **p): pass
+    async def emit_audio(pkt): pass
+
+    sess = ConversationSession(_cfg(profile_name="registry-profile"), emit, emit_audio)
+    await sess.start()
+    await sess.close()
+
+    assert sess.responder.base_url == "https://openrouter.ai/api/v1"
+    assert sess.responder.api_key == "sk-or-v1-real-key"
+    assert sess.responder.model == "openrouter/free"
+
+
+@pytest.mark.asyncio
 async def test_session_start_skips_apply_when_no_model_set():
     async def emit(name, **p): pass
     async def emit_audio(pkt): pass

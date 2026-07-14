@@ -56,8 +56,11 @@ function renderModelRegistry() {
       {
         key: "api_key",
         label: "API Key",
-        render: (e) => `<input type="password" class="mini" data-registry-apikey="${escapeHtml(e.id)}"
-                 placeholder="${escapeHtml(e.api_key || "not set")}" autocomplete="off" />`,
+        render: (e) => `
+          <code class="hint">${escapeHtml(e.api_key || "not set")}</code>
+          <input type="password" class="mini" data-registry-apikey="${escapeHtml(e.id)}"
+                 placeholder="new key…" autocomplete="off" />
+        `,
       },
       {
         key: "base_url",
