@@ -4,6 +4,8 @@ import { ttsProfileData } from "./tts-profiles.js";
 import { setCurrentSessionId } from "./chat.js";
 import { fetchAuthStatus } from "./session.js";
 import { confirmDialog, promptDialog } from "./modal.js";
+import { resetConvManualOverrides } from "./conversation.js";
+import { resetLhManualOverrides } from "./livehost.js";
 
 export let profileData = {};
 export let profileEditMode = null; // null | "new" | "<profile-name>"
@@ -418,6 +420,10 @@ if (el("profile-select")) {
     setCurrentSessionId(null);
     const dialogue = el("chat-dialogue");
     if (dialogue) dialogue.innerHTML = "";
+    resetConvManualOverrides();
   });
+}
+if (el("lh-profile")) {
+  el("lh-profile").addEventListener("change", () => resetLhManualOverrides());
 }
 

@@ -1,4 +1,4 @@
-import { el, wsUrl, restoreAndBind } from "./helpers.js";
+import { el, wsUrl, restoreAndBind, savePref } from "./helpers.js";
 import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
 import { getPreproc } from "./system-config.js";
 
@@ -8,7 +8,19 @@ export const lh = {
   sessionId: null, statusPollTimer: null, assistantBubble: null, pendingReplyIsSocial: false,
 };
 
-const lhDetails = { stt: {} };
+const lhDetails = { stt: {}, sttAvailable: true };
+
+// Called when the active LLM profile changes: manual STT/TTS overrides must
+// not silently keep beating the newly-selected profile's own config, so drop
+// back to "follow the profile" and forget the sticky localStorage value.
+export function resetLhManualOverrides() {
+  const sttSel = el("lh-stt-engine");
+  if (sttSel) sttSel.value = "";
+  savePref("lh-stt-engine", "");
+  const ttsSel = el("lh-tts-profile");
+  if (ttsSel) ttsSel.value = "";
+  savePref("lh-tts-profile", "");
+}
 
 function setLhStatus(text, state) {
   const node = el("lh-status");
@@ -191,6 +203,7 @@ export async function loadLivehostEngines() {
   try {
     const stt = await (await fetch("/v1/stt/engines")).json();
     stt.data.forEach((e) => (lhDetails.stt[e.engine] = e.detail));
+    lhDetails.sttAvailable = stt.data.some((e) => e.available);
     const sel = el("lh-stt-engine");
     if (sel) {
       sel.innerHTML = "";
@@ -202,8 +215,13 @@ export async function loadLivehostEngines() {
           opt.textContent = e.engine;
           sel.appendChild(opt);
         });
-      const pref = ["whisper_mlx", "whisper"].find((v) => [...sel.options].some((o) => o.value === v));
-      if (pref) sel.value = pref;
+      // Default to "follow profile / server default" — a concrete choice here
+      // always overrides the selected profile's own STT config server-side.
+      const sentinel = document.createElement("option");
+      sentinel.value = "";
+      sentinel.textContent = "(theo profile / mặc định server)";
+      sel.insertBefore(sentinel, sel.firstChild);
+      sel.value = "";
       restoreAndBind("lh-stt-engine");
     }
     restoreAndBind("lh-language");
@@ -222,18 +240,26 @@ export async function startLhSession() {
   setLhTiktokBadge("idle");
   el("lh-tiktok-error").classList.add("hidden");
 
-  const sttEngine = el("lh-stt-engine").value;
-  if (!sttEngine) {
+  if (!lhDetails.sttAvailable) {
     setLhStatus("No STT engine available", "status-error");
     setLhSessionUI("idle");
     return;
   }
+  // Empty selection means "follow the selected profile / server default" —
+  // only a concrete choice here should override the profile's own STT config.
+  const sttEngine = el("lh-stt-engine").value;
+  const profile = el("lh-profile")?.value;
 
   setLhStatus("⏳ starting STT engine…", "status-idle");
   try {
-    const warmRes = await fetch(`/v1/stt/warm?engine=${encodeURIComponent(sttEngine)}`, { method: "POST" });
+    const warmParams = sttEngine
+      ? `engine=${encodeURIComponent(sttEngine)}`
+      : profile
+        ? `profile=${encodeURIComponent(profile)}`
+        : "";
+    const warmRes = await fetch(`/v1/stt/warm?${warmParams}`, { method: "POST" });
     if (!warmRes.ok) {
-      setLhStatus(`STT engine '${sttEngine}' not ready`, "status-error");
+      setLhStatus(`STT engine '${sttEngine || "(profile default)"}' not ready`, "status-error");
       setLhSessionUI("idle");
       return;
     }
@@ -246,9 +272,9 @@ export async function startLhSession() {
   const soloMode = !!el("lh-mode-solo")?.checked;
 
   lh.sessionId = crypto.randomUUID();
-  let params = `stt_engine=${encodeURIComponent(sttEngine)}&session_id=${encodeURIComponent(lh.sessionId)}`;
+  let params = `session_id=${encodeURIComponent(lh.sessionId)}`;
+  if (sttEngine) params += `&stt_engine=${encodeURIComponent(sttEngine)}`;
   params += `&sample_rate=${STREAM_SAMPLE_RATE}`;
-  const profile = el("lh-profile")?.value;
   if (profile) params += `&profile=${encodeURIComponent(profile)}`;
   const ttsProfile = el("lh-tts-profile")?.value;
   if (ttsProfile) params += `&tts_profile=${encodeURIComponent(ttsProfile)}`;
