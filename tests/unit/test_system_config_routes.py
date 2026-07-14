@@ -225,3 +225,33 @@ def test_unrelated_field_change_does_not_rebuild_remote_stt_provider(client):
     full["base_context"] = "unrelated change"
     client.put("/v1/system/config", json=full)
     assert stt_service.providers["whisper_service"] is original
+
+
+def test_changing_omnivoice_model_id_clears_voice_ref_and_respawns(client, monkeypatch):
+    from app.services.tts.providers import omnivoice_provider as ov_mod
+
+    ov_mod._voice_ref.update({"path": "/tmp/old.wav", "text": "old"})
+    spawn_calls = []
+    monkeypatch.setattr(ov_mod.OmniVoiceProvider, "_spawn_sidecar", lambda self: spawn_calls.append(1))
+
+    full = client.get("/v1/system/config").json()["data"]
+    full["omnivoice"]["omnivoice_model_id"] = "k2-fsa/OmniVoice-v2"
+    client.put("/v1/system/config", json=full)
+
+    assert ov_mod._voice_ref == {}
+    assert len(spawn_calls) == 1
+
+
+def test_unrelated_field_change_does_not_respawn_omnivoice_sidecar(client, monkeypatch):
+    from app.services.tts.providers import omnivoice_provider as ov_mod
+
+    ov_mod._voice_ref.update({"path": "/tmp/kept.wav", "text": "kept"})
+    spawn_calls = []
+    monkeypatch.setattr(ov_mod.OmniVoiceProvider, "_spawn_sidecar", lambda self: spawn_calls.append(1))
+
+    full = client.get("/v1/system/config").json()["data"]
+    full["base_context"] = "unrelated change"
+    client.put("/v1/system/config", json=full)
+
+    assert ov_mod._voice_ref == {"path": "/tmp/kept.wav", "text": "kept"}
+    assert len(spawn_calls) == 0

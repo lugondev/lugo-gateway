@@ -13,7 +13,6 @@ import sys
 from dataclasses import asdict, dataclass
 
 from app.core.deps import module_available
-from app.core.settings import settings
 from app.services.system_config import system_config_store
 
 # Optional Python modules probed for the recommender's `requires` flags.
@@ -142,7 +141,7 @@ def detect_capabilities() -> Capabilities:
 
     modules = {m: module_available(m) for m in _PROBE_MODULES}
     try:
-        modules["omnivoice"] = os.path.isdir(settings.omnivoice_path)
+        modules["omnivoice"] = os.path.isdir(system_config_store.get().omnivoice.omnivoice_path)
     except Exception:  # noqa: BLE001
         modules["omnivoice"] = False
 

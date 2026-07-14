@@ -30,35 +30,6 @@ class Settings(BaseSettings):
     admin_bootstrap_username: str = ""
     admin_bootstrap_password: str = ""
 
-    omnivoice_path: str = "/Users/lugon/code/OmniVoice"
-    omnivoice_model_id: str = "k2-fsa/OmniVoice"
-    omnivoice_device: str = ""  # empty = auto-detect (cuda/mps/cpu)
-    omnivoice_dtype: str = "float16"
-    # Python interpreter that can import omnivoice (its own venv). Empty = auto.
-    omnivoice_python: str = ""
-    # Real-time conversation TTS: a single /synth call normally finishes in a
-    # few seconds. A much longer cap (e.g. minutes) makes a stalled sidecar
-    # request indistinguishable from a permanent hang to whoever's talking.
-    omnivoice_timeout_seconds: float = 45.0
-    # Persistent inference server (loads the model once) -> real-time-ish TTS.
-    # Falsey -> fall back to the per-call CLI (reloads the model every call).
-    omnivoice_use_server: bool = True
-    omnivoice_server_host: str = "127.0.0.1"
-    omnivoice_server_port: int = 8762
-    omnivoice_server_startup_seconds: float = 60.0
-    # Pin a consistent voice: auto mode picks a RANDOM voice per call (different
-    # voice per sentence/chunk). A fixed instruct + greedy sampling keeps one voice.
-    # Must use OmniVoice voice-design attributes (gender/age/pitch/accent/style),
-    # comma+space separated, e.g. "female, young adult" or "male, low pitch".
-    omnivoice_default_instruct: str = "female, young adult"
-    omnivoice_class_temperature: float = 0.0  # 0 = deterministic (consistent voice)
-    # A fixed reference voice is generated once (from the instruct above) and then
-    # CLONED for every chunk, so all sentences use exactly the same voice.
-    omnivoice_pin_voice: bool = True
-    omnivoice_ref_text: str = "Xin chào, đây là giọng đọc tham chiếu để giữ giọng nhất quán."
-
-    default_tts_engine_voice: str = ""  # optional VieNeu preset voice
-
     # Allow the /v1/models/install endpoint to pip-install engine packages at runtime.
     # OFF by default — keep it OFF on public deploys (it runs pip on the server). Turn
     # ON for local/Colab convenience. Installs are restricted to a fixed allowlist.
@@ -111,10 +82,6 @@ class Settings(BaseSettings):
     @property
     def auth_enabled(self) -> bool:
         return bool(self.admin_password or self.admin_bootstrap_password)
-
-    @property
-    def omnivoice_python_path(self) -> str:
-        return self.omnivoice_python or f"{self.omnivoice_path.rstrip('/')}/.venv/bin/python"
 
     @property
     def cors_origins_list(self) -> list[str]:

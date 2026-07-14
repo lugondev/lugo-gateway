@@ -53,13 +53,14 @@ async def system_status() -> dict:
     active_whisper = whisper_manager.snapshot()["active"]
     stt_local = system_config_store.get().stt_local
     preprocessing = system_config_store.get().preprocessing
+    omnivoice = system_config_store.get().omnivoice
     data = {
         "app": {"name": settings.app_name, "env": settings.app_env},
         "stt_engines": stt_service.list_engines(),
         "tts_engines": [{"engine": name} for name in tts_service.providers],
         "tts": {
-            "omnivoice_path": settings.omnivoice_path,
-            "omnivoice_present": os.path.isdir(settings.omnivoice_path),
+            "omnivoice_path": omnivoice.omnivoice_path,
+            "omnivoice_present": os.path.isdir(omnivoice.omnivoice_path),
         },
         "whisper_local": {
             "active_model": active_whisper,
@@ -184,7 +185,10 @@ async def set_system_config(request: Request) -> dict:
         from app.services.stt.service import stt_service
 
         stt_service.reinit_remote_providers(new_config.remote_stt)
-    # Remaining cache-invalidation hook (omnivoice) added in Task 7.
+    if current.omnivoice != new_config.omnivoice:
+        from app.services.tts.providers.omnivoice_provider import reset_voice_ref_and_respawn
+
+        reset_voice_ref_and_respawn()
     return {"success": True, "data": _mask_system_config(new_config)}
 
 
