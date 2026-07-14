@@ -240,7 +240,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
     # Only optional noise reduction here — the endpointer already does VAD
     # segmentation and Whisper has its own vad_filter, so an extra VAD gate on the
     # utterance would clip speech and hurt recognition.
-    denoise = _truthy(q.get("denoise"), settings.stt_noise_reduce_enabled)
+    denoise = _truthy(q.get("denoise"), system_config_store.get().preprocessing.stt_noise_reduce_enabled)
 
     try:
         stt_service.get_provider(stt_engine)

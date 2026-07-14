@@ -17,7 +17,7 @@ import numpy as np
 
 from app.core.audio import vad_gate
 from app.core.deps import module_available
-from app.core.settings import settings
+from app.services.system_config import system_config_store
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +30,22 @@ _pyannote_cache: dict[str, object] = {}
 def available_backends() -> dict[str, bool]:
     torch_ok = module_available("torch")
     # pyannote's default VAD pipeline is gated on HF -> needs an auth token.
-    pyannote_ok = torch_ok and module_available("pyannote.audio") and bool(settings.pyannote_auth_token)
+    pyannote_ok = (
+        torch_ok
+        and module_available("pyannote.audio")
+        and bool(system_config_store.get().preprocessing.pyannote_auth_token)
+    )
     return {
         "energy": True,
         "silero": torch_ok and module_available("silero_vad"),
         "pyannote": pyannote_ok,
     }
+
+
+def clear_pyannote_cache() -> None:
+    """Drop the cached pipeline so the next VAD call rebuilds it with the
+    current pyannote_vad_model/pyannote_auth_token."""
+    _pyannote_cache.clear()
 
 
 def _apply_mask(samples: np.ndarray, regions: list[tuple[int, int]]) -> np.ndarray:
@@ -68,9 +78,10 @@ def _pyannote_regions(samples: np.ndarray, sample_rate: int) -> list[tuple[int, 
     from pyannote.audio.pipelines import VoiceActivityDetection
 
     if "pipeline" not in _pyannote_cache:
-        token = settings.pyannote_auth_token or True
+        preprocessing = system_config_store.get().preprocessing
+        token = preprocessing.pyannote_auth_token or True
         # segmentation-3.0 is a Model; wrap it in the VAD pipeline (pyannote 3.1/4.x way).
-        model = Model.from_pretrained(settings.pyannote_vad_model, token=token)
+        model = Model.from_pretrained(preprocessing.pyannote_vad_model, token=token)
         pipeline = VoiceActivityDetection(segmentation=model)
         pipeline.instantiate({"min_duration_on": 0.0, "min_duration_off": 0.0})
         _pyannote_cache["pipeline"] = pipeline

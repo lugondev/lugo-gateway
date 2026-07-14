@@ -66,17 +66,6 @@ class Settings(BaseSettings):
 
     artifacts_dir: str = "artifacts"
 
-    # Extra STT preprocessing (defaults OFF: our energy gate / spectral denoise can
-    # clip or add artifacts and don't help Whisper, which has its own VAD).
-    stt_vad_enabled: bool = False
-    stt_vad_backend: str = "energy"  # energy | silero | pyannote
-    stt_noise_reduce_enabled: bool = False
-    stt_noise_reduce_amount: float = 0.85
-
-    # Pyannote VAD model + optional Hugging Face token (gated models)
-    pyannote_vad_model: str = "pyannote/segmentation-3.0"
-    pyannote_auth_token: str = ""
-
     whisper_service_base_url: str = ""
     whisper_service_api_key: str = ""
     whisper_service_model: str = "whisper-1"

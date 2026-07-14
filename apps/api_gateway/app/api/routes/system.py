@@ -52,6 +52,7 @@ async def system_status() -> dict:
     active_vosk_path = get_active_vosk_path()
     active_whisper = whisper_manager.snapshot()["active"]
     stt_local = system_config_store.get().stt_local
+    preprocessing = system_config_store.get().preprocessing
     data = {
         "app": {"name": settings.app_name, "env": settings.app_env},
         "stt_engines": stt_service.list_engines(),
@@ -73,11 +74,11 @@ async def system_status() -> dict:
         "artifacts": _artifacts_stats(),
         "stream_sample_rate": stt_local.stt_stream_sample_rate,
         "stt_preprocess": {
-            "vad": settings.stt_vad_enabled,
-            "vad_backend": settings.stt_vad_backend,
+            "vad": preprocessing.stt_vad_enabled,
+            "vad_backend": preprocessing.stt_vad_backend,
             "vad_backends_available": available_backends(),
-            "noise_reduce": settings.stt_noise_reduce_enabled,
-            "noise_reduce_amount": settings.stt_noise_reduce_amount,
+            "noise_reduce": preprocessing.stt_noise_reduce_enabled,
+            "noise_reduce_amount": preprocessing.stt_noise_reduce_amount,
         },
     }
     return {"success": True, "data": data}
@@ -172,8 +173,14 @@ async def set_system_config(request: Request) -> dict:
         from app.services.stt.providers.qwen3_asr_provider import clear_model_cache
 
         clear_model_cache()
-    # Remaining cache-invalidation hooks (preprocessing.pyannote_*, remote_stt, omnivoice)
-    # are added here incrementally in Tasks 5, 6, 7.
+    if (
+        current.preprocessing.pyannote_vad_model != new_config.preprocessing.pyannote_vad_model
+        or current.preprocessing.pyannote_auth_token != new_config.preprocessing.pyannote_auth_token
+    ):
+        from app.services.vad import clear_pyannote_cache
+
+        clear_pyannote_cache()
+    # Remaining cache-invalidation hooks (remote_stt, omnivoice) added in Tasks 6, 7.
     return {"success": True, "data": _mask_system_config(new_config)}
 
 

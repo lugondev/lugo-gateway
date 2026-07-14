@@ -14,7 +14,6 @@ from app.core.audio import (
 from app.core.auth_guard import resolve_ws_identity
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
-from app.core.settings import settings
 from app.schemas.common import StreamEvent
 from app.schemas.stt import STTRequest, STTResult
 from app.services.stt.base import STTStream
@@ -57,12 +56,13 @@ async def transcribe(
     provider = stt_service.get_provider(payload.engine)
     audio_bytes = await audio.read()
 
-    backend = vad_backend or settings.stt_vad_backend
+    preprocessing = system_config_store.get().preprocessing
+    backend = vad_backend or preprocessing.stt_vad_backend
     audio_bytes = preprocess_wav_bytes(
         audio_bytes,
-        denoise=_resolve_flag(denoise, settings.stt_noise_reduce_enabled),
-        vad=_resolve_flag(vad, settings.stt_vad_enabled),
-        amount=settings.stt_noise_reduce_amount,
+        denoise=_resolve_flag(denoise, preprocessing.stt_noise_reduce_enabled),
+        vad=_resolve_flag(vad, preprocessing.stt_vad_enabled),
+        amount=preprocessing.stt_noise_reduce_amount,
         vad_fn=lambda s, sr: apply_vad(s, sr, backend),
     )
 
@@ -167,11 +167,12 @@ async def stt_stream(websocket: WebSocket) -> None:
             "sample_rate", system_config_store.get().stt_local.stt_stream_sample_rate
         )
     )
+    preprocessing = system_config_store.get().preprocessing
     denoise = _resolve_flag(
-        _parse_bool(websocket.query_params.get("denoise")), settings.stt_noise_reduce_enabled
+        _parse_bool(websocket.query_params.get("denoise")), preprocessing.stt_noise_reduce_enabled
     )
     vad = _resolve_flag(
-        _parse_bool(websocket.query_params.get("vad")), settings.stt_vad_enabled
+        _parse_bool(websocket.query_params.get("vad")), preprocessing.stt_vad_enabled
     )
 
     try:
@@ -220,7 +221,7 @@ async def stt_stream(websocket: WebSocket) -> None:
                 if denoise or vad:
                     frame = preprocess_pcm16(
                         frame, sample_rate, denoise=denoise, vad=vad,
-                        amount=settings.stt_noise_reduce_amount,
+                        amount=preprocessing.stt_noise_reduce_amount,
                     )
                 try:
                     results = await stream.accept(frame)

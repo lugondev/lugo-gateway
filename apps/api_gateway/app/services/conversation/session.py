@@ -472,7 +472,7 @@ class ConversationSession:
         if cfg.denoise:
             pcm = preprocess_pcm16(
                 audio_pcm, cfg.sample_rate, denoise=True, vad=False,
-                amount=settings.stt_noise_reduce_amount,
+                amount=system_config_store.get().preprocessing.stt_noise_reduce_amount,
             )
         wav = pcm16_to_wav_bytes(pcm, sample_rate=cfg.sample_rate)
 

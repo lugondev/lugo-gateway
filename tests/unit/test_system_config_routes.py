@@ -173,3 +173,34 @@ def test_unrelated_field_change_does_not_clear_qwen3_asr_cache(client):
     full["base_context"] = "unrelated change"
     client.put("/v1/system/config", json=full)
     assert mod._MODEL_CACHE.get("cuda:some-model") is sentinel
+
+
+def test_changing_pyannote_vad_model_clears_the_pyannote_cache(client):
+    from app.services import vad as mod
+
+    mod._pyannote_cache["pipeline"] = object()
+    full = client.get("/v1/system/config").json()["data"]
+    full["preprocessing"]["pyannote_vad_model"] = "pyannote/segmentation-3.1"
+    client.put("/v1/system/config", json=full)
+    assert mod._pyannote_cache == {}
+
+
+def test_changing_pyannote_auth_token_clears_the_pyannote_cache(client):
+    from app.services import vad as mod
+
+    mod._pyannote_cache["pipeline"] = object()
+    full = client.get("/v1/system/config").json()["data"]
+    full["preprocessing"]["pyannote_auth_token"] = "hf_new_token"
+    client.put("/v1/system/config", json=full)
+    assert mod._pyannote_cache == {}
+
+
+def test_unrelated_field_change_does_not_clear_pyannote_cache(client):
+    from app.services import vad as mod
+
+    sentinel = object()
+    mod._pyannote_cache["pipeline"] = sentinel
+    full = client.get("/v1/system/config").json()["data"]
+    full["base_context"] = "unrelated change"
+    client.put("/v1/system/config", json=full)
+    assert mod._pyannote_cache.get("pipeline") is sentinel
