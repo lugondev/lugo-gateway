@@ -53,6 +53,8 @@ def _pick_device_dtype_attn():
 
 
 def _to_mono_f32(wav) -> np.ndarray:
+    if hasattr(wav, "detach"):  # torch tensor
+        wav = wav.detach().cpu().numpy()
     arr = np.asarray(wav, dtype=np.float32)
     if arr.ndim == 2:
         arr = arr.mean(axis=0) if arr.shape[0] < arr.shape[1] else arr.mean(axis=1)
