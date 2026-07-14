@@ -56,7 +56,7 @@ async def system_status() -> dict:
     omnivoice = system_config_store.get().omnivoice
     data = {
         "app": {"name": settings.app_name, "env": settings.app_env},
-        "stt_engines": stt_service.list_engines(),
+        "stt_engines": await stt_service.list_engines(),
         "tts_engines": [{"engine": name} for name in tts_service.providers],
         "tts": {
             "omnivoice_path": omnivoice.omnivoice_path,
@@ -87,8 +87,6 @@ async def system_status() -> dict:
 
 def _mask_system_config(config: SystemConfig) -> dict:
     data = config.model_dump()
-    if data.get("openrouter_api_key"):
-        data["openrouter_api_key"] = "***"
     if data["conversation_llm"].get("conversation_llm_api_key"):
         data["conversation_llm"]["conversation_llm_api_key"] = "***"
     if data["remote_stt"].get("whisper_service_api_key"):
@@ -122,9 +120,6 @@ def _merge_system_config(current: SystemConfig, payload: SystemConfig) -> System
     def _keep_if_blank_or_masked(new_value: str, old_value: str) -> str:
         return old_value if (not new_value or new_value == "***") else new_value
 
-    update["openrouter_api_key"] = _keep_if_blank_or_masked(
-        update["openrouter_api_key"], current.openrouter_api_key
-    )
     update["conversation_llm"]["conversation_llm_api_key"] = _keep_if_blank_or_masked(
         update["conversation_llm"]["conversation_llm_api_key"],
         current.conversation_llm.conversation_llm_api_key,

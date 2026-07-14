@@ -96,7 +96,7 @@ async def transcribe(
 
 @router.get("/engines")
 async def list_stt_engines() -> dict:
-    return {"success": True, "data": stt_service.list_engines()}
+    return {"success": True, "data": await stt_service.list_engines()}
 
 
 @router.get("/models")

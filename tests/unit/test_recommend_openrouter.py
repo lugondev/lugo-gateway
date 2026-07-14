@@ -1,7 +1,6 @@
 from app.services.recommend.capabilities import detect_capabilities
 from app.services.recommend.catalog import CANDIDATES
 from app.services.recommend.service import _augment_config_flags
-from app.services.system_config import SystemConfigStore
 
 
 def test_catalog_has_openrouter_stt_candidates():
@@ -17,18 +16,14 @@ def test_catalog_has_openrouter_stt_candidates():
         assert c.size_gb is None
 
 
-def test_augment_config_flags_unconfigured(tmp_path, monkeypatch):
-    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
-    monkeypatch.setattr("app.services.recommend.service.system_config_store", fresh)
+def test_augment_config_flags_does_not_set_a_system_wide_openrouter_flag():
+    """No system-wide OpenRouter key anymore -- availability is per Model
+    Registry entry (see test_stt_service_openrouter.py's has_key_for_engine
+    coverage), not a global toggle. Capabilities.has() defaults an unset
+    module flag to False, so the "openrouter" requirement on the qwen3_asr_or/
+    whisper_or candidates above still resolves sensibly (not pre-configured)
+    even though _augment_config_flags never sets it."""
     caps = detect_capabilities()
     _augment_config_flags(caps)
-    assert caps.modules["openrouter"] is False
-
-
-def test_augment_config_flags_configured(tmp_path, monkeypatch):
-    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
-    fresh.set_openrouter_api_key("sk-or-test")
-    monkeypatch.setattr("app.services.recommend.service.system_config_store", fresh)
-    caps = detect_capabilities()
-    _augment_config_flags(caps)
-    assert caps.modules["openrouter"] is True
+    assert "openrouter" not in caps.modules
+    assert caps.has("openrouter") is False

@@ -13,6 +13,38 @@ async def test_create_defaults_enabled_true_stable(store):
     entry = await store.create("stt", "whisper", "medium", "Whisper Medium")
     assert entry["enabled"] is True
     assert entry["stage"] == "stable"
+    assert entry["api_key"] == ""
+    assert entry["base_url"] == ""
+
+
+@pytest.mark.asyncio
+async def test_create_persists_api_key_and_base_url(store):
+    entry = await store.create(
+        "llm", "openrouter", "qwen3-asr-flash", "Qwen3 ASR Flash (OpenRouter)",
+        api_key="sk-or-secret", base_url="https://openrouter.ai/api/v1",
+    )
+    assert entry["api_key"] == "sk-or-secret"
+    assert entry["base_url"] == "https://openrouter.ai/api/v1"
+
+    found = await store.find("llm", "openrouter", "qwen3-asr-flash")
+    assert found["api_key"] == "sk-or-secret"
+    assert found["base_url"] == "https://openrouter.ai/api/v1"
+
+
+@pytest.mark.asyncio
+async def test_has_key_for_engine_true_only_when_an_enabled_entry_has_a_key(store):
+    assert await store.has_key_for_engine("stt", "qwen3_asr_or") is False
+
+    await store.create("stt", "qwen3_asr_or", "qwen/qwen3-asr-flash-2026-02-10", "Qwen3 ASR Flash")
+    assert await store.has_key_for_engine("stt", "qwen3_asr_or") is False  # no key yet
+
+    entry = await store.create(
+        "stt", "qwen3_asr_or", "qwen/other-model", "Other model", api_key="sk-or-test"
+    )
+    assert await store.has_key_for_engine("stt", "qwen3_asr_or") is True
+
+    await store.set_fields(entry["id"], enabled=False)
+    assert await store.has_key_for_engine("stt", "qwen3_asr_or") is False  # disabled entries don't count
 
 
 @pytest.mark.asyncio
@@ -33,8 +65,63 @@ async def test_set_fields_updates_enabled_and_stage(store):
 
 
 @pytest.mark.asyncio
+async def test_set_fields_updates_api_key_and_base_url(store):
+    created = await store.create("llm", "openrouter", "qwen3-asr-flash", "Qwen3 ASR Flash (OpenRouter)")
+    updated = await store.set_fields(
+        created["id"], api_key="sk-or-new-key", base_url="https://openrouter.ai/api/v1"
+    )
+    assert updated["api_key"] == "sk-or-new-key"
+    assert updated["base_url"] == "https://openrouter.ai/api/v1"
+
+
+@pytest.mark.asyncio
 async def test_list_all_returns_every_entry(store):
     await store.create("stt", "whisper", "medium", "Whisper Medium")
     await store.create("tts", "omnivoice", "omnivoice", "OmniVoice")
     entries = await store.list_all()
     assert len(entries) == 2
+
+
+@pytest.mark.asyncio
+async def test_reads_are_served_from_cache_without_hitting_the_db_again(store, monkeypatch):
+    """The whole point of caching: find()/list_all()/has_key_for_engine() must
+    not re-query the DB once the cache is warm (create()'s own DB write is the
+    only DB access that should happen here)."""
+    await store.create("stt", "whisper", "medium", "Whisper Medium", api_key="sk-test")
+
+    def _boom(*a, **kw):
+        raise AssertionError("db_session() called again after the cache was already warm")
+
+    monkeypatch.setattr("app.services.model_registry.store.db_session", _boom)
+
+    assert await store.find("stt", "whisper", "medium") is not None
+    assert len(await store.list_all()) == 1
+    assert await store.has_key_for_engine("stt", "whisper") is True
+    assert await store.get((await store.list_all())[0]["id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_invalidate_forces_a_fresh_load_on_next_access(store):
+    await store.create("stt", "whisper", "medium", "Whisper Medium")
+    assert len(await store.list_all()) == 1
+
+    store.invalidate()
+    assert store._by_id is None  # confirms invalidate() actually cleared the cache
+    assert len(await store.list_all()) == 1  # reloads transparently, same data
+
+
+@pytest.mark.asyncio
+async def test_set_fields_update_is_visible_via_find_without_a_reload(store, monkeypatch):
+    """set_fields() must update self._by_id in place -- a subsequent find()
+    should see the change purely from cache, not by re-querying the DB (the
+    only DB access after this point should be set_fields' own required write,
+    which already happened by the time we monkeypatch)."""
+    created = await store.create("stt", "whisper", "medium", "Whisper Medium")
+    await store.set_fields(created["id"], api_key="sk-updated")
+
+    def _boom(*a, **kw):
+        raise AssertionError("db_session() called for a read after set_fields already updated the cache")
+
+    monkeypatch.setattr("app.services.model_registry.store.db_session", _boom)
+    found = await store.find("stt", "whisper", "medium")
+    assert found["api_key"] == "sk-updated"

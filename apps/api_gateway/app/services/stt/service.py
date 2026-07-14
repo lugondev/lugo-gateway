@@ -86,8 +86,9 @@ class STTService:
             raise EngineNotFoundError(f"Unsupported STT engine: {engine}")
         return provider
 
-    def list_engines(self) -> list[dict]:
+    async def list_engines(self) -> list[dict]:
         # Lazy import to avoid any module load-order coupling.
+        from app.services.model_registry.store import model_registry_store
         from app.services.stt.providers.vosk_provider import get_active_vosk_path
         from app.services.whisper_models import whisper_manager
 
@@ -139,7 +140,10 @@ class STTService:
             elif engine == "whisper_gemma":
                 entry = {"mode": "local", "available": fw_available, "detail": provider.detail()}
             elif engine in ("qwen3_asr_or", "whisper_or"):
-                configured = bool(system_config_store.get().openrouter_api_key)
+                # Per-model key (Model Registry entry), not a system-wide toggle --
+                # "configured" here means at least one enabled entry for this engine
+                # has a key set, so it's actually usable for some model.
+                configured = await model_registry_store.has_key_for_engine("stt", engine)
                 entry = {"mode": "remote", "available": configured, "detail": provider.model if configured else None}
             else:
                 base_url, model = remote[engine]

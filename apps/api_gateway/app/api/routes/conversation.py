@@ -16,6 +16,7 @@ from app.services.conversation.responder import (
     get_active_llm_base_url,
     get_active_llm_model,
     reset_active_llm_config,
+    resolve_llm_override_from_registry,
     set_active_llm_config,
 )
 from app.services.conversation.session import (
@@ -99,6 +100,13 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
     llm_base_url = (active_profile.llm.base_url or None) if (active_profile and active_profile.llm.base_url) else None
     llm_api_key = active_profile.llm.api_key if (active_profile and active_profile.llm.base_url) else None
     llm_model = (active_profile.llm.model or None) if (active_profile and active_profile.llm.model) else None
+    if active_profile and active_profile.llm.engine and active_profile.llm.model:
+        registry_override = await resolve_llm_override_from_registry(
+            active_profile.llm.engine, active_profile.llm.model
+        )
+        if registry_override:
+            llm_base_url, llm_api_key = registry_override
+            llm_model = active_profile.llm.model
     system_prompt = (active_profile.system_prompt or None) if (active_profile and active_profile.system_prompt) else None
 
     # Session: resume when session_id given (stored messages prefix the context).

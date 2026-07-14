@@ -23,9 +23,9 @@ async def check_model_allowed(kind: str, engine: str, model_id: str, user: User 
     entry = await model_registry_store.find(kind, engine, model_id)
     if entry is None:
         return
-    if not entry.enabled:
+    if not entry["enabled"]:
         raise ModelNotAllowedError(f"{kind} model '{engine}/{model_id}' is currently disabled")
-    if entry.stage == "testing" and not (user and user.can_use_testing):
+    if entry["stage"] == "testing" and not (user and user.can_use_testing):
         raise ModelNotAllowedError(
             f"{kind} model '{engine}/{model_id}' is in testing and not enabled for your account"
         )

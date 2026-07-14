@@ -30,48 +30,9 @@ if (el("sys-base-context-save")) {
   loadBaseContext();
 }
 
-// OpenRouter API key (used by qwen3_asr_or / whisper_or STT engines). The GET
-// response returns "***" (never the real value) when a key is already stored,
-// so the password field is never pre-filled — leaving it blank on save keeps
-// the existing key (see PUT /v1/system/config: blank openrouter_api_key is a
-// no-op, unlike base_context which is a full overwrite).
-export async function loadOpenrouterKeyStatus() {
-  try {
-    const body = await (await fetch("/v1/system/config")).json();
-    const status = el("sys-openrouter-key-status");
-    status.textContent = body.data.openrouter_api_key ? "Configured (leave blank to keep)" : "Not configured";
-  } catch (error) {
-    print(el("sys-openrouter-key-status"), String(error), true);
-  }
-}
-
-export async function saveOpenrouterKey() {
-  const status = el("sys-openrouter-key-status");
-  try {
-    // PUT overwrites base_context unconditionally, so re-send its current
-    // value here too — otherwise saving just the key would blank it out.
-    const current = await (await fetch("/v1/system/config")).json();
-    const resp = await fetch("/v1/system/config", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        base_context: current.data.base_context,
-        openrouter_api_key: el("sys-openrouter-key").value,
-      }),
-    });
-    const body = await resp.json();
-    if (!resp.ok) { print(status, body.detail || JSON.stringify(body), true); return; }
-    el("sys-openrouter-key").value = "";
-    status.classList.remove("error");
-    status.textContent = body.data.openrouter_api_key ? "Saved ✓ (configured)" : "Saved ✓ (cleared)";
-  } catch (error) {
-    print(status, String(error), true);
-  }
-}
-if (el("sys-openrouter-key-save")) {
-  el("sys-openrouter-key-save").addEventListener("click", saveOpenrouterKey);
-  loadOpenrouterKeyStatus();
-}
+// OpenRouter no longer has a single system-wide key -- each qwen3_asr_or/
+// whisper_or model added in Model Registry carries its own api_key (see
+// model-registry.js), so there is no per-system key panel here anymore.
 
 const GROUPS = [
   { key: "engines", label: "Engine Defaults", open: true },

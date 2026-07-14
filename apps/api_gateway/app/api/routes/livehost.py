@@ -14,7 +14,7 @@ from app.core.identity_watch import build_identity_watchdog, receive_with_watchd
 from app.core.settings import settings
 from app.schemas.tts import TTSRequest
 from app.services.conversation.endpointer import VadEndpointer
-from app.services.conversation.responder import build_responder_ex
+from app.services.conversation.responder import build_responder_ex, resolve_llm_override_from_registry
 from app.services.history.store import session_store
 from app.services.livehost.ingestor import TikTokLiveIngestor
 from app.services.livehost.orchestrator import LiveHostOrchestrator
@@ -94,6 +94,11 @@ async def livehost_stream(websocket: WebSocket) -> None:
     llm_base_url = (profile.llm.base_url or None) if (profile and profile.llm.base_url) else None
     llm_api_key = profile.llm.api_key if (profile and profile.llm.base_url) else None
     llm_model = (profile.llm.model or None) if (profile and profile.llm.model) else None
+    if profile and profile.llm.engine and profile.llm.model:
+        registry_override = await resolve_llm_override_from_registry(profile.llm.engine, profile.llm.model)
+        if registry_override:
+            llm_base_url, llm_api_key = registry_override
+            llm_model = profile.llm.model
     system_prompt = (profile.system_prompt or None) if (profile and profile.system_prompt) else None
 
     # STT resolves from the profile (else server default), same as TTS/LLM above.

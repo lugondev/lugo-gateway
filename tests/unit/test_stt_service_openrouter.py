@@ -1,6 +1,8 @@
+import pytest
+
+from app.services.model_registry.store import model_registry_store
 from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
 from app.services.stt.service import STTService
-from app.services.system_config import SystemConfigStore
 
 
 def test_providers_include_openrouter_engines():
@@ -11,27 +13,29 @@ def test_providers_include_openrouter_engines():
     assert svc.providers["whisper_or"].model == "openai/whisper-large-v3-turbo"
 
 
-def test_list_engines_reports_unconfigured_openrouter(tmp_path, monkeypatch):
-    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
-    monkeypatch.setattr("app.services.stt.service.system_config_store", fresh)
+@pytest.mark.asyncio
+async def test_list_engines_reports_unconfigured_openrouter():
     svc = STTService()
-    entries = {e["engine"]: e for e in svc.list_engines()}
+    entries = {e["engine"]: e for e in await svc.list_engines()}
     assert entries["qwen3_asr_or"]["mode"] == "remote"
     assert entries["qwen3_asr_or"]["available"] is False
     assert entries["whisper_or"]["mode"] == "remote"
     assert entries["whisper_or"]["available"] is False
 
 
-def test_list_engines_reports_configured_openrouter(tmp_path, monkeypatch):
-    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
-    fresh.set_openrouter_api_key("sk-or-test")
-    monkeypatch.setattr("app.services.stt.service.system_config_store", fresh)
+@pytest.mark.asyncio
+async def test_list_engines_reports_configured_openrouter_independently_per_engine():
+    """Per-model keys: configuring qwen3_asr_or's entry must not also mark
+    whisper_or as available -- each engine's "configured" state now comes
+    from its own Model Registry entries, not one shared system-wide flag."""
+    await model_registry_store.create(
+        "stt", "qwen3_asr_or", "qwen/qwen3-asr-flash-2026-02-10", "Qwen3 ASR Flash", api_key="sk-or-test"
+    )
     svc = STTService()
-    entries = {e["engine"]: e for e in svc.list_engines()}
+    entries = {e["engine"]: e for e in await svc.list_engines()}
     assert entries["qwen3_asr_or"]["available"] is True
     assert entries["qwen3_asr_or"]["detail"] == "qwen/qwen3-asr-flash-2026-02-10"
-    assert entries["whisper_or"]["available"] is True
-    assert entries["whisper_or"]["detail"] == "openai/whisper-large-v3-turbo"
+    assert entries["whisper_or"]["available"] is False
 
 
 def test_reinit_remote_providers_rebuilds_whisper_service_and_eventlab():

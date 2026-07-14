@@ -108,6 +108,53 @@ def test_chat_with_voice_optimized_profile_appends_directive(client, monkeypatch
     assert any(VOICE_OPTIMIZATION_DIRECTIVE in sp for sp in captured)
 
 
+@pytest.mark.asyncio
+async def test_chat_uses_model_registry_key_when_profile_engine_and_model_match(client, monkeypatch, tmp_path):
+    """A profile that only names an engine+model (no inline base_url/api_key)
+    should pick up its credentials from a matching Model Registry (kind="llm")
+    entry -- this is what lets an admin set the key once per model instead of
+    duplicating it into every profile."""
+    from app.services.model_registry.store import model_registry_store
+    from app.services.profiles.store import ProfileStore
+
+    await model_registry_store.create(
+        "llm", "openrouter", "openrouter/some-model", "Some Model",
+        base_url="https://openrouter.ai/api/v1", api_key="sk-or-registry-key",
+    )
+
+    fresh = ProfileStore(str(tmp_path / "p4.json"))
+    fresh.upsert(Profile(
+        name="registry-llm",
+        llm=LlmConfig(engine="openrouter", model="openrouter/some-model"),
+        system_prompt="Always say howdy.",
+    ))
+    monkeypatch.setattr("app.api.routes.conversation.profile_store", fresh)
+
+    captured = {}
+    original_init = __import__(
+        "app.services.conversation.responder", fromlist=["OpenAICompatResponder"]
+    ).OpenAICompatResponder.__init__
+
+    def _patched_init(self, base_url, api_key, model, system_prompt, timeout):
+        captured["base_url"] = base_url
+        captured["api_key"] = api_key
+        captured["model"] = model
+        original_init(self, base_url, api_key, model, system_prompt, timeout)
+
+    with patch(
+        "app.services.conversation.responder.OpenAICompatResponder.__init__",
+        _patched_init,
+    ):
+        client.post(
+            "/v1/conversation/chat?profile=registry-llm",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        )
+
+    assert captured["base_url"] == "https://openrouter.ai/api/v1"
+    assert captured["api_key"] == "sk-or-registry-key"
+    assert captured["model"] == "openrouter/some-model"
+
+
 def test_disabled_mcp_server_tools_not_fetched(client, monkeypatch, _hermetic):
     _, servers = _hermetic
     servers.upsert(McpServer(name="off", url="http://off.test", enabled=False))

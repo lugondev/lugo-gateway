@@ -885,6 +885,12 @@
                   </select>
                 </label>
               </div>
+              <div class="row tight" id="registry-add-key-fields">
+                <label>
+                  API Key
+                  <input id="registry-add-key-api-key" type="password" placeholder="only needed for engines that require one (e.g. OpenRouter)" autocomplete="off" />
+                </label>
+              </div>
               <div class="row tight hidden" id="registry-add-llm-fields">
                 <label>
                   Base URL
@@ -921,16 +927,6 @@
                 <button id="sys-base-context-save">Save</button>
               </div>
               <p id="sys-base-context-status" class="meta"></p>
-            </section>
-
-            <section class="card">
-              <h2>OpenRouter API key</h2>
-              <p class="hint">Used by the <code>qwen3_asr_or</code> and <code>whisper_or</code> STT engines (Qwen3-ASR Flash / Whisper Large v3 Turbo via OpenRouter). Leave blank to keep the existing key.</p>
-              <input type="password" id="sys-openrouter-key" placeholder="sk-or-..." autocomplete="off" />
-              <div class="actions end">
-                <button id="sys-openrouter-key-save">Save</button>
-              </div>
-              <p id="sys-openrouter-key-status" class="meta"></p>
             </section>
 
             <section class="card">

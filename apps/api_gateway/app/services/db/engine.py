@@ -67,6 +67,8 @@ async def init_db() -> None:
             await _ensure_column(conn, "sessions", "user_id", "VARCHAR(36)")
             await _ensure_column(conn, "memories", "user_id", "VARCHAR(36)")
             await _ensure_column(conn, "memory_profile_docs", "user_id", "VARCHAR(36)")
+            await _ensure_column(conn, "model_registry_entries", "api_key", "VARCHAR(256) DEFAULT ''")
+            await _ensure_column(conn, "model_registry_entries", "base_url", "VARCHAR(256) DEFAULT ''")
         _initialized = True
 
 

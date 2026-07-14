@@ -8,6 +8,8 @@ import time
 import types
 import wave
 
+import pytest
+
 import app.services.stt.providers.qwen3_asr_provider as q_mod
 from app.services.recommend.catalog import CANDIDATES
 from app.services.stt.providers.qwen3_asr_provider import Qwen3AsrProvider
@@ -74,10 +76,11 @@ def test_neither_backend_hidden(monkeypatch):
     assert p.available() is False
 
 
-def test_listed_reflects_package_presence():
+@pytest.mark.asyncio
+async def test_listed_reflects_package_presence():
     from app.core.deps import module_available
 
-    engines = {e["engine"]: e for e in stt_service.list_engines()}
+    engines = {e["engine"]: e for e in await stt_service.list_engines()}
     assert "qwen3_asr" in engines
     assert engines["qwen3_asr"]["mode"] == "local"
     assert engines["qwen3_asr"]["available"] == module_available("mlx_qwen3_asr")

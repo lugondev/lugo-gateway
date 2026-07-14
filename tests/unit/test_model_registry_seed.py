@@ -30,4 +30,4 @@ async def test_seed_is_idempotent_and_preserves_admin_edits(store):
 
     await seed_known_models()  # re-seed must not overwrite the admin's edit
     refreshed = await store.find("stt", stt_entry["engine"], stt_entry["model_id"])
-    assert refreshed.enabled is False
+    assert refreshed["enabled"] is False

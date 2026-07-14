@@ -134,7 +134,6 @@ class PreprocessingConfig(BaseModel):
 
 class SystemConfig(BaseModel):
     base_context: str = ""
-    openrouter_api_key: str = ""
     engines: EngineDefaults = EngineDefaults()
     stt_local: SttLocalConfig = SttLocalConfig()
     omnivoice: OmnivoiceConfig = OmnivoiceConfig()
@@ -220,14 +219,6 @@ class SystemConfigStore:
         with self._lock:
             self._ensure()
             config = self._cache.model_copy(update={"base_context": value})
-            self._put(config)
-            self._cache = config
-            return config
-
-    def set_openrouter_api_key(self, value: str) -> SystemConfig:
-        with self._lock:
-            self._ensure()
-            config = self._cache.model_copy(update={"openrouter_api_key": value})
             self._put(config)
             self._cache = config
             return config

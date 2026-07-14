@@ -87,7 +87,12 @@ def _augment_config_flags(caps: Capabilities) -> None:
     caps.modules["whisper_service"] = bool(remote_stt.whisper_service_base_url)
     caps.modules["eventlab"] = bool(remote_stt.eventlab_base_url)
     caps.modules["online_llm"] = bool(system_config_store.get().conversation_llm.conversation_llm_base_url)
-    caps.modules["openrouter"] = bool(system_config_store.get().openrouter_api_key)
+    # No system-wide OpenRouter key anymore -- each Model Registry entry has its
+    # own (see model_registry_store.has_key_for_engine, async/DB-backed, not
+    # reachable from this sync capability-detection path). Missing "openrouter"
+    # here just makes `Capabilities.has("openrouter")` default to False
+    # (capabilities.py's `self.modules.get(flag, False)`), same as an unset key
+    # did before -- the wizard just won't claim it's pre-configured.
 
 
 def recommend_all() -> dict:

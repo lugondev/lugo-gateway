@@ -2,27 +2,52 @@ import base64
 
 import pytest
 
+from app.services.model_registry.store import model_registry_store
 from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
-from app.services.system_config import SystemConfigStore
-
-
-@pytest.fixture(autouse=True)
-def _clean_store(tmp_path, monkeypatch):
-    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
-    monkeypatch.setattr("app.services.stt.providers.openrouter_provider.system_config_store", fresh)
-    return fresh
 
 
 @pytest.mark.asyncio
-async def test_transcribe_raises_when_no_api_key_configured():
+async def test_transcribe_raises_when_no_registry_entry_or_key():
     provider = OpenRouterSttProvider(name="whisper_or", model="openai/whisper-large-v3-turbo")
     with pytest.raises(RuntimeError, match="not configured"):
         await provider.transcribe_bytes(b"fake wav bytes")
 
 
 @pytest.mark.asyncio
-async def test_transcribe_sends_correct_request_and_parses_response(monkeypatch, _clean_store):
-    _clean_store.set_openrouter_api_key("sk-or-test")
+async def test_transcribe_uses_explicit_api_key_override_without_registry_lookup(monkeypatch):
+    """The Model Registry's test-before-add flow constructs the provider with
+    an explicit api_key (the entry doesn't exist yet, so there's nothing to
+    look up) -- this must be used as-is, with no registry query at all."""
+    captured = {}
+
+    async def fake_post(self, url, headers=None, json=None):
+        captured["headers"] = headers
+
+        class R:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"choices": [{"message": {"content": "ok"}}]}
+
+        return R()
+
+    import httpx
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    provider = OpenRouterSttProvider(
+        name="whisper_or", model="openai/whisper-large-v3-turbo", api_key="sk-or-override"
+    )
+    await provider.transcribe_bytes(b"fake wav bytes")
+    assert captured["headers"]["Authorization"] == "Bearer sk-or-override"
+
+
+@pytest.mark.asyncio
+async def test_transcribe_looks_up_api_key_from_matching_registry_entry(monkeypatch):
+    await model_registry_store.create(
+        "stt", "qwen3_asr_or", "qwen/qwen3-asr-flash-2026-02-10", "Qwen3 ASR Flash", api_key="sk-or-test"
+    )
     captured = {}
 
     async def fake_post(self, url, headers=None, json=None):
@@ -61,8 +86,22 @@ async def test_transcribe_sends_correct_request_and_parses_response(monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_transcribe_strips_whitespace_from_response(monkeypatch, _clean_store):
-    _clean_store.set_openrouter_api_key("sk-or-test")
+async def test_transcribe_does_not_use_a_different_engines_key():
+    """Per-model keys: configuring whisper_or's key must not make
+    qwen3_asr_or usable -- each engine/model is keyed independently."""
+    await model_registry_store.create(
+        "stt", "whisper_or", "openai/whisper-large-v3-turbo", "Whisper v3 Turbo", api_key="sk-or-whisper-key"
+    )
+    provider = OpenRouterSttProvider(name="qwen3_asr_or", model="qwen/qwen3-asr-flash-2026-02-10")
+    with pytest.raises(RuntimeError, match="not configured"):
+        await provider.transcribe_bytes(b"fake wav bytes")
+
+
+@pytest.mark.asyncio
+async def test_transcribe_strips_whitespace_from_response(monkeypatch):
+    await model_registry_store.create(
+        "stt", "whisper_or", "openai/whisper-large-v3-turbo", "Whisper v3 Turbo", api_key="sk-or-test"
+    )
 
     async def fake_post(self, url, headers=None, json=None):
         class R:
@@ -84,8 +123,10 @@ async def test_transcribe_strips_whitespace_from_response(monkeypatch, _clean_st
 
 
 @pytest.mark.asyncio
-async def test_transcribe_wraps_http_status_error(monkeypatch, _clean_store):
-    _clean_store.set_openrouter_api_key("sk-or-test")
+async def test_transcribe_wraps_http_status_error(monkeypatch):
+    await model_registry_store.create(
+        "stt", "whisper_or", "openai/whisper-large-v3-turbo", "Whisper v3 Turbo", api_key="sk-or-test"
+    )
 
     async def fake_post(self, url, headers=None, json=None):
         import httpx

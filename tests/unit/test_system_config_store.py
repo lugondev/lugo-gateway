@@ -60,32 +60,6 @@ def test_never_falls_back_to_real_default_path(tmp_path, monkeypatch):
     assert store.get().base_context == ""
 
 
-def test_default_openrouter_api_key_is_empty(tmp_path):
-    s = SystemConfigStore(str(tmp_path / "system_config.json"))
-    assert s.get().openrouter_api_key == ""
-
-
-def test_set_openrouter_api_key_persists_across_instances(tmp_path):
-    p = str(tmp_path / "system_config.json")
-    SystemConfigStore(p).set_openrouter_api_key("sk-or-123")
-    assert SystemConfigStore(p).get().openrouter_api_key == "sk-or-123"
-
-
-def test_set_openrouter_api_key_does_not_clear_base_context(tmp_path):
-    s = SystemConfigStore(str(tmp_path / "system_config.json"))
-    s.set_base_context("some context")
-    s.set_openrouter_api_key("sk-or-123")
-    assert s.get().base_context == "some context"
-    assert s.get().openrouter_api_key == "sk-or-123"
-
-
-def test_set_base_context_does_not_clear_openrouter_api_key(tmp_path):
-    s = SystemConfigStore(str(tmp_path / "system_config.json"))
-    s.set_openrouter_api_key("sk-or-123")
-    s.set_base_context("some context")
-    assert s.get().openrouter_api_key == "sk-or-123"
-    assert s.get().base_context == "some context"
-
 
 def test_engine_defaults_have_expected_defaults(tmp_path):
     s = SystemConfigStore(str(tmp_path / "system_config.json"))

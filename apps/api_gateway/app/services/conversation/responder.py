@@ -69,6 +69,24 @@ def reset_active_llm_config() -> None:
     _active_base_url = _active_api_key = _active_model = None
 
 
+async def resolve_llm_override_from_registry(engine: str, model: str) -> tuple[str, str] | None:
+    """Look up a Model Registry entry (kind="llm") for (engine, model). If it
+    exists and carries its own api_key, its (base_url, api_key) take priority
+    over a profile's inline llm.base_url/api_key or the system-wide
+    conversation_llm config -- this is what lets an admin set the key once,
+    per model, in Model Registry instead of duplicating it into every profile.
+    Returns None (no override) when engine/model are blank or no matching,
+    keyed entry exists -- callers should fall back to their prior behavior."""
+    if not engine or not model:
+        return None
+    from app.services.model_registry.store import model_registry_store
+
+    entry = await model_registry_store.find(kind="llm", engine=engine, model_id=model)
+    if entry and entry["api_key"]:
+        return (entry["base_url"], entry["api_key"])
+    return None
+
+
 class Responder(ABC):
     name: str
 

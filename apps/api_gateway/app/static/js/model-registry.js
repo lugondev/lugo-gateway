@@ -54,6 +54,21 @@ function renderModelRegistry() {
         `,
       },
       {
+        key: "api_key",
+        label: "API Key",
+        render: (e) => `<input type="password" class="mini" data-registry-apikey="${escapeHtml(e.id)}"
+                 placeholder="${escapeHtml(e.api_key || "not set")}" autocomplete="off" />`,
+      },
+      {
+        key: "base_url",
+        label: "Base URL",
+        render: (e) =>
+          e.kind === "llm"
+            ? `<input type="text" class="mini" data-registry-baseurl="${escapeHtml(e.id)}"
+                 value="${escapeHtml(e.base_url || "")}" placeholder="https://…" />`
+            : "—",
+      },
+      {
         key: "actions",
         label: "",
         headerClass: "dt-actions-cell",
@@ -81,6 +96,20 @@ function renderModelRegistry() {
       const entry = registryData.find((e) => e.id === id);
       patchEntry(id, { enabled: !entry.enabled });
     })
+  );
+  table.querySelectorAll("[data-registry-apikey]").forEach((input) =>
+    input.addEventListener("change", () => {
+      // Blank = keep the existing key (same "blank means keep" convention used
+      // for every other secret field in this app); only send a PATCH when the
+      // admin actually typed a new value.
+      if (!input.value.trim()) return;
+      patchEntry(input.getAttribute("data-registry-apikey"), { api_key: input.value.trim() });
+    })
+  );
+  table.querySelectorAll("[data-registry-baseurl]").forEach((input) =>
+    input.addEventListener("change", () =>
+      patchEntry(input.getAttribute("data-registry-baseurl"), { base_url: input.value.trim() })
+    )
   );
 }
 
@@ -123,6 +152,8 @@ async function bulkPatchEntries(ids, fields, verb) {
 function _updateKindFields() {
   const kind = el("registry-add-kind").value;
   el("registry-add-llm-fields").classList.toggle("hidden", kind !== "llm");
+  // stt/tts share the same plain "API Key" field; llm has its own (paired with Base URL).
+  el("registry-add-key-fields").classList.toggle("hidden", kind === "llm");
 }
 
 export async function createModelRegistryEntry() {
@@ -140,6 +171,11 @@ export async function createModelRegistryEntry() {
   if (kind === "llm") {
     payload.base_url = el("registry-add-base-url").value.trim();
     payload.api_key = el("registry-add-api-key").value.trim();
+  } else {
+    // stt: only meaningful for OpenRouter-backed engines (qwen3_asr_or/
+    // whisper_or), other stt engines just ignore an empty api_key.
+    // tts: no current engine reads it, stored for a future key-requiring one.
+    payload.api_key = el("registry-add-key-api-key").value.trim();
   }
   status.textContent = "Testing…";
   try {
@@ -157,6 +193,7 @@ export async function createModelRegistryEntry() {
     el("registry-add-engine").value = "";
     el("registry-add-model-id").value = "";
     el("registry-add-label").value = "";
+    if (el("registry-add-key-api-key")) el("registry-add-key-api-key").value = "";
     await loadModelRegistry();
   } catch (error) {
     print(status, String(error), true);

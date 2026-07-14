@@ -99,3 +99,13 @@ class ModelRegistryEntry(Base):
     label: Mapped[str] = mapped_column(String(128))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     stage: Mapped[str] = mapped_column(String(16), default="stable")  # "stable" | "testing"
+    # Per-model credential, looked up by (kind, engine, model_id) at call time
+    # instead of a single system-wide key. Used today by OpenRouter-backed STT
+    # engines (qwen3_asr_or/whisper_or) and by kind="llm" entries (see
+    # conversation/responder.py's resolve_llm_override_from_registry). Stored
+    # for kind="tts" too for UI/schema consistency even though no current TTS
+    # engine reads it (all run local, no auth) -- ready for one that does.
+    api_key: Mapped[str] = mapped_column(String(256), default="")
+    # Endpoint override, meaningful for kind="llm" only (an OpenAI-compatible
+    # base_url paired with this entry's model_id/api_key). Empty otherwise.
+    base_url: Mapped[str] = mapped_column(String(256), default="")

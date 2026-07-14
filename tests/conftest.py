@@ -61,6 +61,7 @@ def _tmp_db(tmp_path, monkeypatch):
     from app.services.db import engine as db_engine
     from app.services.db import sync_engine as cfg_engine
     from app.core.settings import settings
+    from app.services.model_registry.store import model_registry_store
 
     monkeypatch.setattr(settings, "profiles_path", str(tmp_path / "profiles.json"))
     monkeypatch.setattr(settings, "tts_profiles_path", str(tmp_path / "tts_profiles.json"))
@@ -68,6 +69,11 @@ def _tmp_db(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "system_config_path", str(tmp_path / "system_config.json"))
     db_engine.configure(f"sqlite+aiosqlite:///{tmp_path}/test.db")
     cfg_engine.configure(f"sqlite:///{tmp_path}/test.db")
+    # model_registry_store now caches rows in memory (see store.py) -- without
+    # invalidating here, a cache warmed by an earlier test (pointed at ITS tmp
+    # DB) would leak into this test even though the DB underneath just changed.
+    model_registry_store.invalidate()
     yield
     db_engine.configure()
     cfg_engine.configure()
+    model_registry_store.invalidate()
