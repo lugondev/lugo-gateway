@@ -39,7 +39,7 @@ opus = [
 # onnxruntime (torch-free); the heavy GPU modes live in vieneu's own [gpu] extra.
 # soundfile needs system libsndfile1 (apt-get install libsndfile1).
 tts = [
-  "vieneu>=3.0.12",
+  "vieneu>=3.2.3",
 ]
 # Qwen3-ASR on Apple Silicon via MLX (multilingual incl. Vietnamese, torch-free,
 # Metal GPU). Mac-only — the engine auto-hides where mlx-qwen3-asr is absent.
