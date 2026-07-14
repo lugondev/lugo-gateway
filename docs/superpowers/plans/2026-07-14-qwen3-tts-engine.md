@@ -471,3 +471,5 @@ pip install -U qwen-tts
 ```
 
 First real call to either engine will download the relevant checkpoint(s) from HuggingFace (several GB per checkpoint) and, on this Mac, run on MPS with `float16` — expect it to be noticeably slower than the documented CUDA+FlashAttention2 numbers.
+
+**Verify the generation return shape on first real call** (flagged by the final whole-branch review): `_render_wav` assumes `generate_custom_voice`/`generate_voice_clone` return `(wavs, sr)` where `wavs` is a *batch* (`wavs[0]` is one full waveform). This is unverifiable without the real package — the stubbed tests can't catch a wrong assumption here. After the first real synthesis, confirm the output WAV is a full-length utterance (not a near-silent single-sample clip) before relying on either engine.
