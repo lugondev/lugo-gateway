@@ -227,8 +227,22 @@ def test_unrelated_field_change_does_not_rebuild_remote_stt_provider(client):
     assert stt_service.providers["whisper_service"] is original
 
 
-def test_changing_omnivoice_model_id_clears_voice_ref_and_respawns(client, monkeypatch):
+def test_changing_omnivoice_model_id_clears_voice_ref_and_respawns(client, monkeypatch, tmp_path):
+    from app.services.system_config import SystemConfigStore
     from app.services.tts.providers import omnivoice_provider as ov_mod
+
+    # reset_voice_ref_and_respawn() reads omnivoice_provider's own system_config_store
+    # binding (the real global singleton, not the route's `_clean_store` fixture's
+    # fresh one) and skips the respawn when omnivoice_use_server is False -- which
+    # the module-wide conftest hermetic fixture forces by default. Override it back
+    # to True here so the respawn path under test actually runs.
+    fresh = SystemConfigStore(str(tmp_path / "omnivoice_system_config.json"))
+    fresh.set(
+        fresh.get().model_copy(
+            update={"omnivoice": fresh.get().omnivoice.model_copy(update={"omnivoice_use_server": True})}
+        )
+    )
+    monkeypatch.setattr(ov_mod, "system_config_store", fresh)
 
     ov_mod._voice_ref.update({"path": "/tmp/old.wav", "text": "old"})
     spawn_calls = []

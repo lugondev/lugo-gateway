@@ -18,6 +18,7 @@ _ROW_ID = 1
 class EngineDefaults(BaseModel):
     default_stt_engine: str = "vosk"
     default_tts_engine: str = "omnivoice"
+    default_tts_engine_voice: str = ""  # optional VieNeu preset voice
     extra_warmup_stt_engines: str = ""
     extra_warmup_tts_engines: str = ""
     warmup_on_startup: bool = True
@@ -67,7 +68,6 @@ class OmnivoiceConfig(BaseModel):
     omnivoice_class_temperature: float = 0.0
     omnivoice_pin_voice: bool = True
     omnivoice_ref_text: str = "Xin chào, đây là giọng đọc tham chiếu để giữ giọng nhất quán."
-    default_tts_engine_voice: str = ""
 
     @property
     def omnivoice_python_path(self) -> str:

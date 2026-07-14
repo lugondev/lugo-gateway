@@ -30,7 +30,7 @@ QWEN3_ASR_MODELS = {
     "1.7b": "Qwen/Qwen3-ASR-1.7B",
 }
 
-# Runtime-selected model (e.g. benchmark A/B, language profile). None -> settings.
+# Runtime-selected model (e.g. benchmark A/B, language profile). None -> system_config_store.
 _active_model: str | None = None
 
 
@@ -44,7 +44,7 @@ def get_active_qwen3_asr_model() -> str:
 
 
 def set_active_qwen3_asr_model(name: str | None) -> None:
-    """Override the active model at runtime (shorthand resolved); None resets to settings."""
+    """Override the active model at runtime (shorthand resolved); None resets to system_config_store."""
     global _active_model
     _active_model = resolve_qwen3_asr_model(name) if name else None
 

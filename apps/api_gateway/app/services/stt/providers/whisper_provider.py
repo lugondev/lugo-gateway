@@ -16,7 +16,7 @@ _MODEL_CACHE: dict[str, object] = {}
 # latency. A lock makes the build single-flight.
 _MODEL_LOCK = threading.Lock()
 
-# Runtime-selected whisper model size; falls back to settings when unset.
+# Runtime-selected whisper model size; falls back to system_config_store when unset.
 # Reset on restart (not persisted).
 _active_model: str | None = None
 

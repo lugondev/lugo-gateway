@@ -67,7 +67,7 @@ class VieNeuProvider(RenderingTTSProvider):
             payload.text,
             ref_audio=payload.ref_audio_path,
             ref_text=payload.ref_text,
-            voice=payload.voice or (system_config_store.get().omnivoice.default_tts_engine_voice or None),
+            voice=payload.voice or (system_config_store.get().engines.default_tts_engine_voice or None),
         )
         return float_array_to_wav_bytes(audio, sample_rate=_SAMPLE_RATE)
 

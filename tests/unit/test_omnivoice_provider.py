@@ -102,7 +102,18 @@ def test_reset_voice_ref_and_respawn_clears_voice_ref_and_kills_old_sidecar(monk
     """reset_voice_ref_and_respawn() no longer kills the old sidecar itself --
     _spawn_sidecar() owns the whole kill-then-spawn sequence (atomically, under
     _sidecar_lock) so mock subprocess.Popen and let the real _spawn_sidecar run,
-    rather than mocking _spawn_sidecar itself (which would bypass the kill)."""
+    rather than mocking _spawn_sidecar itself (which would bypass the kill).
+    omnivoice_use_server must be True here (the module-wide conftest fixture
+    defaults it to False) since the respawn is gated on server mode."""
+    from app.services.system_config import SystemConfigStore
+
+    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
+    fresh.set(
+        fresh.get().model_copy(
+            update={"omnivoice": fresh.get().omnivoice.model_copy(update={"omnivoice_use_server": True})}
+        )
+    )
+    monkeypatch.setattr(ov_mod, "system_config_store", fresh)
     monkeypatch.setattr(ov_mod.settings, "artifacts_dir", str(tmp_path))
     ov_mod._voice_ref.update({"path": "/tmp/fake.wav", "text": "old"})
 
@@ -137,6 +148,32 @@ def test_reset_voice_ref_and_respawn_clears_voice_ref_and_kills_old_sidecar(monk
     assert len(popen_calls) == 1
     assert ov_mod._sidecar_process is not old_proc  # replaced by the new spawn
     ov_mod._sidecar_process = None  # reset module state
+
+
+def test_reset_voice_ref_and_respawn_skips_spawn_when_use_server_is_false(monkeypatch, tmp_path):
+    """CLI mode (omnivoice_use_server=False) has no persistent sidecar to refresh
+    -- unconditionally respawning here would start an orphan server process
+    that's never actually used until the app exits (mirrors warm()'s own gate
+    on the same setting). The voice-ref cache must still be cleared
+    unconditionally so a later switch back to server mode starts clean."""
+    from app.services.system_config import SystemConfigStore
+
+    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
+    fresh.set(
+        fresh.get().model_copy(
+            update={"omnivoice": fresh.get().omnivoice.model_copy(update={"omnivoice_use_server": False})}
+        )
+    )
+    monkeypatch.setattr(ov_mod, "system_config_store", fresh)
+
+    ov_mod._voice_ref.update({"path": "/tmp/fake.wav", "text": "old"})
+    spawn_calls = []
+    monkeypatch.setattr(ov_mod.OmniVoiceProvider, "_spawn_sidecar", lambda self: spawn_calls.append(1))
+
+    ov_mod.reset_voice_ref_and_respawn()
+
+    assert ov_mod._voice_ref == {}
+    assert len(spawn_calls) == 0
 
 
 def test_spawn_sidecar_serializes_concurrent_calls_via_lock(monkeypatch, tmp_path):

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 _SAMPLE_RATE = 24000  # OmniVoice audio tokenizer rate.
 
-# Runtime-selected model repo id; falls back to settings. Reset on restart.
+# Runtime-selected model repo id; falls back to system_config_store. Reset on restart.
 _active_model: str | None = None
 
 # Process-wide pinned voice reference {"path", "text"} cloned for every chunk.
@@ -78,8 +78,16 @@ def reset_voice_ref_and_respawn() -> None:
     a new process with the new CLI args is the only way to pick up the change.
     _spawn_sidecar() itself owns the full kill-old-then-spawn-new sequence
     (under _sidecar_lock), so it's called once here rather than duplicating the
-    kill step."""
+    kill step.
+
+    The voice-ref cache is always cleared (so a later switch back to server mode
+    starts clean), but the respawn itself is skipped when omnivoice_use_server is
+    False -- in CLI mode (warm() also gates on this) there is no persistent
+    sidecar to refresh, so unconditionally spawning one here would start an
+    orphan server process that's never actually used until the app exits."""
     _voice_ref.clear()
+    if not system_config_store.get().omnivoice.omnivoice_use_server:
+        return
     provider = OmniVoiceProvider()
     provider._spawn_sidecar()
 

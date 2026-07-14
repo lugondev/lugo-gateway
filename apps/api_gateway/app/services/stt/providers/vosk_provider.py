@@ -9,7 +9,7 @@ from app.services.system_config import system_config_store
 
 _MODEL_CACHE: dict[str, object] = {}
 
-# Runtime-selected active Vosk model path; falls back to settings when unset.
+# Runtime-selected active Vosk model path; falls back to system_config_store when unset.
 # Reset on restart (not persisted).
 _active_path: str | None = None
 

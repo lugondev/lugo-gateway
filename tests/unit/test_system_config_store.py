@@ -92,6 +92,7 @@ def test_engine_defaults_have_expected_defaults(tmp_path):
     e = s.get().engines
     assert e.default_stt_engine == "vosk"
     assert e.default_tts_engine == "omnivoice"
+    assert e.default_tts_engine_voice == ""
     assert e.extra_warmup_stt_engines == ""
     assert e.extra_warmup_tts_engines == ""
     assert e.warmup_on_startup is True
@@ -141,7 +142,6 @@ def test_omnivoice_config_has_expected_defaults(tmp_path):
     assert o.omnivoice_class_temperature == 0.0
     assert o.omnivoice_pin_voice is True
     assert "giọng đọc tham chiếu" in o.omnivoice_ref_text
-    assert o.default_tts_engine_voice == ""
 
 
 def test_conversation_llm_config_has_expected_defaults(tmp_path):
