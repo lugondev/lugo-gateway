@@ -4,7 +4,6 @@ import logging
 import pytest
 from unittest.mock import AsyncMock
 
-from app.core.settings import settings
 from app.services.system_config import system_config_store
 from app.services.tts.providers.omnivoice_provider import OmniVoiceProvider
 from app.services.tts.providers import omnivoice_provider as ov_mod
