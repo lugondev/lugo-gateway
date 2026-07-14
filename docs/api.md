@@ -59,9 +59,9 @@ Batch transcription. `multipart/form-data`:
 | `audio` | file | WAV PCM16 mono required for `vosk`; whisper accepts common formats |
 | `engine` | string | `vosk` \| `whisper` \| `whisper_local` \| `whisper_mlx` \| `whisper_gemma` \| `whisper_service` \| `eventlab` |
 | `language` | string? | optional hint, e.g. `en`, `vi` |
-| `denoise` | bool? | spectral noise reduction (default `STT_NOISE_REDUCE_ENABLED`) |
-| `vad` | bool? | VAD gate (default `STT_VAD_ENABLED`) |
-| `vad_backend` | string? | `energy` \| `silero` \| `pyannote` (default `STT_VAD_BACKEND`) — see runbook "VAD backends" |
+| `denoise` | bool? | spectral noise reduction (default from admin System settings > preprocessing) |
+| `vad` | bool? | VAD gate (default from admin System settings > preprocessing) |
+| `vad_backend` | string? | `energy` \| `silero` \| `pyannote` (default from admin System settings > preprocessing) — see runbook "VAD backends" |
 
 Preprocessing (`denoise`/`vad`) applies to mono PCM16 WAV input; other formats pass
 through. `vad` also drives faster-whisper's internal `vad_filter`.
@@ -83,8 +83,8 @@ ws://localhost:8000/v1/stt/stream?engine=vosk&language=en&sample_rate=16000&deno
 
 `denoise` and `vad` toggle per-frame noise reduction / VAD gating (defaults from settings).
 
-**Audio contract:** raw PCM signed-16, mono, at `sample_rate` (default
-`STT_STREAM_SAMPLE_RATE`, 16 kHz).
+**Audio contract:** raw PCM signed-16, mono, at `sample_rate` (default from the
+admin System tab's configured stream sample rate, 16 kHz).
 
 Client → server:
 - Binary frames: raw PCM chunks.
@@ -414,8 +414,9 @@ Poll this endpoint while a download is active.
 
 ### Vosk
 - `POST /v1/models/vosk/download` — body `{ "name": "vosk-model-small-vn-0.4" }`. Downloads
-  `{VOSK_MODEL_BASE_URL}/{name}.zip` in the background, extracts into `STT_MODEL_DIR`.
-  Invalid names → `400`; a missing model surfaces as a job `error` (HTTP 404).
+  `{vosk_model_base_url}/{name}.zip` in the background, extracts into the configured
+  STT model dir (admin System tab > stt_local group). Invalid names → `400`; a missing
+  model surfaces as a job `error` (HTTP 404).
 - `DELETE /v1/models/vosk/{name}` — removes an installed model dir (traversal-protected);
   not installed → `400`.
 

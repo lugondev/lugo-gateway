@@ -24,7 +24,7 @@ Open the playground at `http://localhost:8000/ui`. Interactive API docs are at `
 ```
 
 Without a Vosk model, `vosk` requests return a clear error (the gateway does not crash).
-Set `VOSK_MODEL_PATH` to use a different model.
+Set the Vosk model path in the admin **System** tab (System settings) to use a different model.
 
 ### Apple-GPU STT (whisper_mlx, ~7x faster)
 
@@ -32,13 +32,14 @@ Set `VOSK_MODEL_PATH` to use a different model.
 .venv/bin/pip install -e ".[mlx]"     # Apple Silicon only
 ./scripts/convert_phowhisper_mlx.sh   # builds models/stt/phowhisper-medium-mlx
 ```
-Then set `CONVERSATION_STT_ENGINE=whisper_mlx` (or pick it in the UI). The engine
+Then set the conversation STT engine to `whisper_mlx` in the admin System tab (or
+`conversation.conversation_stt_engine` via `PUT /v1/system/config`). The engine
 auto-hides on non-Mac hosts, so callers fall back to the CPU `whisper` engine.
 
 ### Conversation LLM (local Ollama or online)
 
-Local: run Ollama, set `CONVERSATION_LLM_BASE_URL=http://localhost:11434/v1` +
-`CONVERSATION_LLM_MODEL=gemma2:9b`; manage/activate models in the System tab.
+Local: run Ollama, set the conversation LLM base url/model in the System tab
+(`http://localhost:11434/v1` + `gemma2:9b`, for example); manage/activate models there too.
 Online: pick a provider (OpenAI/Groq/Together) in the System tab "Online" card (or
 `POST /v1/conversation/llm`) — the API key is kept in memory only, never persisted.
 
@@ -74,49 +75,39 @@ ruff check apps tests
 
 ## Configuration
 
-All settings are environment variables (or `.env`). See `.env.example` for the full list.
+Bootstrap settings (process identity, networking, auth, storage paths) are environment
+variables (or `.env`). See `.env.example` for the full list.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | bind address |
 | `LOG_LEVEL` | `INFO` | logging level |
 | `CORS_ALLOW_ORIGINS` | `*` | comma-separated origins, or `*` |
-| `DEFAULT_STT_ENGINE` | `vosk` | default for `/transcribe` and WS |
-| `STT_STREAM_SAMPLE_RATE` | `16000` | streaming audio contract rate (Hz) |
-| `VOSK_MODEL_PATH` | `models/stt/vosk-model-small-en-us-0.15` | local Vosk model dir |
-| `WHISPER_LOCAL_MODEL` | `phowhisper-medium` | size (`small`/`medium`/`large-v3`) or VinAI Vietnamese fine-tune `phowhisper-{tiny,base,small,medium,large}` |
-| `WHISPER_LOCAL_DEVICE` | `cpu` | `cpu` \| `cuda` |
-| `WHISPER_LOCAL_COMPUTE_TYPE` | `int8` | quantization |
-| `WHISPER_BEAM_SIZE` | `1` | beam search width (1 = greedy; ~17% faster, no measured accuracy loss) |
-| `WHISPER_CONDITION_ON_PREVIOUS_TEXT` | `false` | off avoids hallucination drift across silent gaps |
-| `WHISPER_INITIAL_PROMPT` | — | seed text to bias Vietnamese orthography (empty = off) |
-| `WHISPER_MLX_MODEL_PATH` | `models/stt/phowhisper-medium-mlx` | MLX model dir for the `whisper_mlx` engine (Apple-GPU, ~7x faster). Build with `scripts/convert_phowhisper_mlx.sh`; engine auto-hides if `mlx-whisper`/model absent |
-| `WHISPER_SERVICE_BASE_URL` / `_API_KEY` / `_MODEL` | — | remote OpenAI-compatible STT |
-| `EVENTLAB_BASE_URL` / `_API_KEY` / `_MODEL` | — | second remote STT provider |
-| `REMOTE_STT_TIMEOUT_SECONDS` | `60` | remote request timeout |
-| `OMNIVOICE_PATH` | `/Users/lugon/code/OmniVoice` | OmniVoice source checkout |
-| `OMNIVOICE_MODEL_ID` | `k2-fsa/OmniVoice` | HF model id |
-| `OMNIVOICE_DEVICE` | _(auto)_ | `cuda:0` \| `mps` \| `cpu` |
-| `OMNIVOICE_DTYPE` | `float16` | torch dtype |
+| `ADMIN_PASSWORD` | — | browser control-panel login |
 | `ARTIFACTS_DIR` | `artifacts` | where generated WAVs are written |
-| `CONVERSATION_STT_ENGINE` | `whisper` | STT engine for the voice loop (`whisper_mlx`/…) |
-| `CONVERSATION_TTS_ENGINE` | `vieneu` | TTS engine for the voice loop |
-| `CONVERSATION_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | — / — / `gpt-3.5-turbo` | OpenAI-compatible chat endpoint (Ollama / online); empty base url → echo responder |
+
+STT/TTS engine choice, Whisper/Vosk/OmniVoice/Qwen3 model settings, remote STT provider
+endpoints/keys, conversation LLM endpoint, conversation tuning, and VAD/noise
+preprocessing all live in the admin UI now (**System** tab > System settings, backed by
+`GET`/`PUT /v1/system/config`) — they are no longer environment variables. See
+`docs/superpowers/specs/2026-07-13-env-to-admin-system-settings-design.md` for the full
+field-by-field mapping from the old env vars to their new config-store location.
 
 ## Enabling real TTS
 
-1. Ensure the OmniVoice checkout at `OMNIVOICE_PATH` is importable and its dependencies
-   (torch, etc.) are installed in the active environment.
-2. Pick a device via `OMNIVOICE_DEVICE` (Apple Silicon: `mps`; NVIDIA: `cuda:0`).
+1. Ensure the OmniVoice checkout at the configured OmniVoice path (System tab) is
+   importable and its dependencies (torch, etc.) are installed in the active environment.
+2. Pick a device in the System tab (Apple Silicon: `mps`; NVIDIA: `cuda:0`).
 
 Every request runs real synthesis. If the model fails to load, the provider returns
 a `ProviderError` (502) instead of placeholder audio.
 
 ## VAD backends (STT preprocessing)
 
-`STT_VAD_BACKEND` selects how voice activity is detected for batch transcription
-(`/v1/stt/transcribe`, also overridable per request via the `vad_backend` form field).
-All backends run **locally** — none call an external service at inference time.
+The VAD backend (admin System tab > preprocessing) selects how voice activity is
+detected for batch transcription (`/v1/stt/transcribe`, also overridable per request
+via the `vad_backend` form field). All backends run **locally** — none call an
+external service at inference time.
 
 | Backend | Install | Token | Notes |
 |---------|---------|:-----:|-------|
@@ -128,17 +119,18 @@ All backends run **locally** — none call an external service at inference time
 
 pyannote.audio runs entirely on your machine. The token is **only used once to download
 the model weights** from the Hugging Face Hub, because `pyannote/segmentation-3.0`
-(`PYANNOTE_VAD_MODEL`) is a **gated repository** (HF requires you to accept the model
-license before downloading). After the weights are cached locally, inference is fully
-offline — no per-request API call. The VAD pipeline is built from this segmentation
-model (`VoiceActivityDetection`), not the legacy `pyannote/voice-activity-detection`
-pipeline (incompatible with pyannote.audio 4.x).
+(the default pyannote VAD model, configurable in the System tab) is a **gated
+repository** (HF requires you to accept the model license before downloading). After
+the weights are cached locally, inference is fully offline — no per-request API call.
+The VAD pipeline is built from this segmentation model (`VoiceActivityDetection`), not
+the legacy `pyannote/voice-activity-detection` pipeline (incompatible with
+pyannote.audio 4.x).
 
 To enable pyannote:
 1. `pip install pyannote.audio` (pulls `torch`).
 2. Create a token at <https://huggingface.co/settings/tokens>.
 3. Click **Agree** on `pyannote/segmentation-3.0`.
-4. Set `PYANNOTE_AUTH_TOKEN=hf_...`.
+4. Set the pyannote auth token in the admin System tab (preprocessing group).
 
 `silero` needs no token and is the recommended neural VAD when you don't want to deal with
 HF gating. If a selected backend is unavailable it falls back to `energy`.
