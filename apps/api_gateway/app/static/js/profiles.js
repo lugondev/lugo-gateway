@@ -7,6 +7,16 @@ import { confirmDialog, promptDialog } from "./modal.js";
 
 export let profileData = {};
 export let profileEditMode = null; // null | "new" | "<profile-name>"
+export let llmOptionData = [];
+
+export async function loadLlmOptions() {
+  try {
+    const body = await (await fetch("/v1/profiles/llm-options")).json();
+    llmOptionData = body.data || [];
+  } catch {
+    llmOptionData = [];
+  }
+}
 
 export async function loadProfiles() {
   try {
@@ -62,6 +72,31 @@ export function renderProfileTtsSelect() {
   if (ttsProfileData[prev]) sel.value = prev;
 }
 
+export function renderProfileLlmSelect() {
+  const sel = el("pf-llm-select");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = "";
+  llmOptionData.forEach((entry) => {
+    const opt = document.createElement("option");
+    opt.value = entry.id;
+    opt.textContent = `${entry.label} (${entry.engine}/${entry.model_id})`;
+    sel.appendChild(opt);
+  });
+  const customOpt = document.createElement("option");
+  customOpt.value = "__custom__";
+  customOpt.textContent = "— Custom… —";
+  sel.appendChild(customOpt);
+  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
+
+export function toggleLlmCustomFields() {
+  const sel = el("pf-llm-select");
+  const fields = el("pf-llm-custom-fields");
+  if (!sel || !fields) return;
+  fields.classList.toggle("hidden", sel.value !== "__custom__");
+}
+
 export async function openProfilePanel(mode, name) {
   profileEditMode = mode === "new" ? "new" : name;
   const panel = el("profile-panel");
@@ -69,6 +104,8 @@ export async function openProfilePanel(mode, name) {
 
   let selectedMcpServers = [];
   renderProfileTtsSelect();
+  await loadLlmOptions();
+  renderProfileLlmSelect();
 
   if (mode === "new") {
     el("pf-name").value = "";
@@ -76,9 +113,11 @@ export async function openProfilePanel(mode, name) {
     el("pf-nickname").value = "";
     el("pf-system-prompt").value = "";
     if (el("pf-voice-optimized")) el("pf-voice-optimized").checked = false;
+    el("pf-llm-select").value = "__custom__";
     el("pf-llm-url").value = "";
     el("pf-llm-model").value = "";
     el("pf-llm-key").value = "";
+    toggleLlmCustomFields();
     if (el("pf-stt-profile")) el("pf-stt-profile").value = "";
     if (el("pf-tts-profile")) el("pf-tts-profile").value = "";
     if (el("pf-idle-timeout")) el("pf-idle-timeout").value = 30;
@@ -96,9 +135,14 @@ export async function openProfilePanel(mode, name) {
     el("pf-nickname").value = p.nickname || "";
     el("pf-system-prompt").value = p.system_prompt || "";
     if (el("pf-voice-optimized")) el("pf-voice-optimized").checked = p.voice_optimized ?? false;
+    const matchedOption = llmOptionData.find(
+      (o) => o.engine === p.llm?.engine && o.model_id === p.llm?.model
+    );
+    el("pf-llm-select").value = matchedOption ? matchedOption.id : "__custom__";
     el("pf-llm-url").value = p.llm?.base_url || "";
     el("pf-llm-model").value = p.llm?.model || "";
     el("pf-llm-key").value = "";
+    toggleLlmCustomFields();
     if (el("pf-stt-profile")) el("pf-stt-profile").value = p.stt?.profile || "";
     if (el("pf-tts-profile")) el("pf-tts-profile").value = p.tts?.profile_name || "";
     if (el("pf-idle-timeout")) el("pf-idle-timeout").value = p.session?.idle_timeout_s ?? 30;
@@ -164,11 +208,19 @@ export async function saveProfile() {
   const payload = {
     name,
     nickname: el("pf-nickname").value.trim(),
-    llm: {
-      base_url: el("pf-llm-url").value.trim(),
-      api_key: el("pf-llm-key").value,
-      model: el("pf-llm-model").value.trim(),
-    },
+    llm: (() => {
+      const selectedId = el("pf-llm-select")?.value;
+      const selected = llmOptionData.find((o) => o.id === selectedId);
+      if (selected) {
+        return { base_url: "", api_key: "", model: selected.model_id, engine: selected.engine };
+      }
+      return {
+        base_url: el("pf-llm-url").value.trim(),
+        api_key: el("pf-llm-key").value,
+        model: el("pf-llm-model").value.trim(),
+        engine: "",
+      };
+    })(),
     system_prompt: el("pf-system-prompt").value,
     voice_optimized: el("pf-voice-optimized")?.checked ?? false,
     stt: {
@@ -355,6 +407,7 @@ if (el("profile-edit-btn")) {
   });
 }
 if (el("profile-new-btn")) el("profile-new-btn").addEventListener("click", () => openProfilePanel("new"));
+if (el("pf-llm-select")) el("pf-llm-select").addEventListener("change", toggleLlmCustomFields);
 if (el("profile-close-btn")) el("profile-close-btn").addEventListener("click", closeProfilePanel);
 if (el("pf-cancel-btn")) el("pf-cancel-btn").addEventListener("click", closeProfilePanel);
 if (el("pf-save-btn")) el("pf-save-btn").addEventListener("click", saveProfile);

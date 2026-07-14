@@ -188,17 +188,25 @@
                 </div>
                 <div class="pf-right">
                   <label>
-                    LLM Base URL
-                    <input id="pf-llm-url" type="text" placeholder="https://api.openai.com/v1" />
+                    LLM
+                    <select id="pf-llm-select">
+                      <option value="__custom__">— Custom… —</option>
+                    </select>
                   </label>
-                  <label>
-                    LLM Model
-                    <input id="pf-llm-model" type="text" placeholder="gpt-4o-mini" />
-                  </label>
-                  <label>
-                    LLM API Key
-                    <input id="pf-llm-key" type="password" placeholder="sk-&#8230; (leave blank to keep existing)" autocomplete="off" />
-                  </label>
+                  <div id="pf-llm-custom-fields">
+                    <label>
+                      LLM Base URL
+                      <input id="pf-llm-url" type="text" placeholder="https://api.openai.com/v1" />
+                    </label>
+                    <label>
+                      LLM Model
+                      <input id="pf-llm-model" type="text" placeholder="gpt-4o-mini" />
+                    </label>
+                    <label>
+                      LLM API Key
+                      <input id="pf-llm-key" type="password" placeholder="sk-&#8230; (leave blank to keep existing)" autocomplete="off" />
+                    </label>
+                  </div>
                   <label>
                     STT (speech-to-text)
                     <select id="pf-stt-profile">
