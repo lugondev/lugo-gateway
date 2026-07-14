@@ -189,7 +189,7 @@ export async function loadConversationEngines() {
     if (sttSel) {
       const sentinel = document.createElement("option");
       sentinel.value = "";
-      sentinel.textContent = "(theo profile / mặc định server)";
+      sentinel.textContent = "(profile / server default)";
       sttSel.insertBefore(sentinel, sttSel.firstChild);
       sttSel.value = "";
     }

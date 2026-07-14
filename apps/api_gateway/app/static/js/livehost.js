@@ -219,7 +219,7 @@ export async function loadLivehostEngines() {
       // always overrides the selected profile's own STT config server-side.
       const sentinel = document.createElement("option");
       sentinel.value = "";
-      sentinel.textContent = "(theo profile / mặc định server)";
+      sentinel.textContent = "(profile / server default)";
       sel.insertBefore(sentinel, sel.firstChild);
       sel.value = "";
       restoreAndBind("lh-stt-engine");
