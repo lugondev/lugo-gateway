@@ -44,3 +44,71 @@ async def migrate_conversation_llm_to_registry() -> None:
         base_url=base_url,
         api_key=old.get("conversation_llm_api_key") or "",
     )
+
+
+async def migrate_remote_stt_to_registry() -> None:
+    """One-time: whisper_service/eventlab used to live in
+    SystemConfig.remote_stt. Seed a registry entry per engine from the
+    current values if none is enabled yet for that engine -- no-op once
+    migrated (including a fresh install with nothing configured)."""
+    remote_stt = system_config_store.get().remote_stt
+    if (
+        await model_registry_store.find_enabled("stt", "whisper_service") is None
+        and remote_stt.whisper_service_base_url.strip()
+    ):
+        await model_registry_store.create(
+            "stt", "whisper_service", remote_stt.whisper_service_model,
+            "Whisper Service (migrated from System settings)",
+            base_url=remote_stt.whisper_service_base_url,
+            api_key=remote_stt.whisper_service_api_key,
+            config={"timeout_seconds": remote_stt.remote_stt_timeout_seconds},
+        )
+    if (
+        await model_registry_store.find_enabled("stt", "eventlab") is None
+        and remote_stt.eventlab_base_url.strip()
+    ):
+        await model_registry_store.create(
+            "stt", "eventlab", remote_stt.eventlab_model,
+            "Eventlab (migrated from System settings)",
+            base_url=remote_stt.eventlab_base_url,
+            api_key=remote_stt.eventlab_api_key,
+            config={"timeout_seconds": remote_stt.remote_stt_timeout_seconds},
+        )
+
+
+async def migrate_stt_local_device_to_registry() -> None:
+    """One-time: whisper_local/qwen3_asr device+compute_type used to live in
+    SystemConfig.stt_local. Seed one engine-level registry entry each
+    (model_id="" -- distinct from the per-size governance rows
+    seed_known_models() already creates) from the current values. No-op once
+    an enabled entry already exists for that engine."""
+    stt_local = system_config_store.get().stt_local
+    if await model_registry_store.find_enabled("stt", "whisper_local") is None:
+        await model_registry_store.create(
+            "stt", "whisper_local", "", "Whisper Local (device/compute config)",
+            config={
+                "device": stt_local.whisper_local_device,
+                "compute_type": stt_local.whisper_local_compute_type,
+            },
+        )
+    if await model_registry_store.find_enabled("stt", "qwen3_asr") is None:
+        await model_registry_store.create(
+            "stt", "qwen3_asr", "", "Qwen3-ASR (device config)",
+            config={"device": stt_local.qwen3_asr_device},
+        )
+
+
+async def migrate_omnivoice_to_registry() -> None:
+    """One-time: OmniVoice's whole config used to live in
+    SystemConfig.omnivoice (a single sidecar, so a single registry entry).
+    No-op once an enabled tts/omnivoice entry already exists."""
+    if await model_registry_store.find_enabled("tts", "omnivoice") is not None:
+        return
+    omnivoice = system_config_store.get().omnivoice
+    config = omnivoice.model_dump()
+    config.pop("omnivoice_model_id")  # lives in the entry's model_id column, not config
+    await model_registry_store.create(
+        "tts", "omnivoice", omnivoice.omnivoice_model_id,
+        "OmniVoice (migrated from System settings)",
+        config=config,
+    )
