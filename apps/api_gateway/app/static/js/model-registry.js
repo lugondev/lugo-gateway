@@ -66,10 +66,18 @@ function renderModelRegistry() {
         key: "base_url",
         label: "Base URL",
         render: (e) =>
-          e.kind === "llm"
+          e.kind === "llm" || e.kind === "stt"
             ? `<input type="text" class="mini" data-registry-baseurl="${escapeHtml(e.id)}"
                  value="${escapeHtml(e.base_url || "")}" placeholder="https://…" />`
             : "—",
+      },
+      {
+        key: "config",
+        label: "Config",
+        render: (e) =>
+          Object.keys(e.config || {}).length
+            ? `<textarea class="mini" rows="2" data-registry-config="${escapeHtml(e.id)}">${escapeHtml(JSON.stringify(e.config))}</textarea>`
+            : `<textarea class="mini" rows="2" data-registry-config="${escapeHtml(e.id)}" placeholder="{}"></textarea>`,
       },
       {
         key: "actions",
@@ -114,6 +122,18 @@ function renderModelRegistry() {
       patchEntry(input.getAttribute("data-registry-baseurl"), { base_url: input.value.trim() })
     )
   );
+  table.querySelectorAll("[data-registry-config]").forEach((textarea) =>
+    textarea.addEventListener("change", () => {
+      let parsed;
+      try {
+        parsed = textarea.value.trim() ? JSON.parse(textarea.value) : {};
+      } catch {
+        print(el("model-registry-status"), "Config must be valid JSON", true);
+        return;
+      }
+      patchEntry(textarea.getAttribute("data-registry-config"), { config: parsed });
+    })
+  );
 }
 
 async function _patchEntryRaw(id, fields) {
@@ -154,9 +174,10 @@ async function bulkPatchEntries(ids, fields, verb) {
 
 function _updateKindFields() {
   const kind = el("registry-add-kind").value;
-  el("registry-add-llm-fields").classList.toggle("hidden", kind !== "llm");
-  // stt/tts share the same plain "API Key" field; llm has its own (paired with Base URL).
-  el("registry-add-key-fields").classList.toggle("hidden", kind === "llm");
+  el("registry-add-llm-fields").classList.toggle("hidden", !(kind === "llm" || kind === "stt"));
+  // tts is the only kind still using the plain "API Key" field; llm/stt have
+  // their own (paired with Base URL).
+  el("registry-add-key-fields").classList.toggle("hidden", kind === "llm" || kind === "stt");
 }
 
 export async function createModelRegistryEntry() {
@@ -171,13 +192,14 @@ export async function createModelRegistryEntry() {
     return;
   }
   const payload = { kind, engine, model_id: modelId, label, stage };
-  if (kind === "llm") {
+  if (kind === "llm" || kind === "stt") {
+    // stt: base_url is only meaningful for remote engines (whisper_service,
+    // eventlab); api_key only for OpenRouter-backed engines (qwen3_asr_or/
+    // whisper_or) -- other stt engines just ignore either being empty.
     payload.base_url = el("registry-add-base-url").value.trim();
     payload.api_key = el("registry-add-api-key").value.trim();
   } else {
-    // stt: only meaningful for OpenRouter-backed engines (qwen3_asr_or/
-    // whisper_or), other stt engines just ignore an empty api_key.
-    // tts: no current engine reads it, stored for a future key-requiring one.
+    // tts: no current engine reads api_key, stored for a future key-requiring one.
     payload.api_key = el("registry-add-key-api-key").value.trim();
   }
   status.textContent = "Testing…";

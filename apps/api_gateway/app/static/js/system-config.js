@@ -37,15 +37,11 @@ if (el("sys-base-context-save")) {
 const GROUPS = [
   { key: "engines", label: "Engine Defaults", open: true },
   { key: "stt_local", label: "STT (Local Models)", open: false },
-  { key: "omnivoice", label: "OmniVoice (TTS)", open: false },
-  { key: "remote_stt", label: "Remote STT Providers", open: false },
   { key: "conversation", label: "Conversation Tuning", open: false },
   { key: "preprocessing", label: "Preprocessing (VAD/Noise)", open: false },
 ];
 
 const SECRET_FIELDS = new Set([
-  "remote_stt.whisper_service_api_key",
-  "remote_stt.eventlab_api_key",
   "preprocessing.pyannote_auth_token",
 ]);
 
@@ -108,7 +104,7 @@ export async function saveSystemConfigGroups() {
     const body = await resp.json();
     if (!resp.ok) { print(status, body.detail || JSON.stringify(body), true); return; }
     status.classList.remove("error");
-    status.textContent = "Saved ✓ (remote STT / OmniVoice / VAD changes apply automatically, no restart needed)";
+    status.textContent = "Saved ✓ (VAD changes apply automatically, no restart needed)";
     await loadSystemConfigGroups();
   } catch (error) {
     print(status, String(error), true);
