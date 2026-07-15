@@ -18,6 +18,7 @@ import tempfile
 
 from app.core.deps import module_available
 from app.schemas.stt import STTResult
+from app.services.model_registry.resolve import resolve_stt_local_device
 from app.services.stt.base import STTProvider
 from app.services.system_config import system_config_store
 
@@ -142,7 +143,7 @@ class Qwen3AsrProvider(STTProvider):
             _MODEL_CACHE[key] = Qwen3ASRModel.from_pretrained(
                 resolved,
                 dtype=_cuda_dtype(torch),  # bf16 on Ampere+, fp16 on T4/Turing
-                device_map=system_config_store.get().stt_local.qwen3_asr_device or "cuda:0",
+                device_map=resolve_stt_local_device("qwen3_asr")["device"] or "cuda:0",
                 max_new_tokens=256,
             )
         return _MODEL_CACHE[key]

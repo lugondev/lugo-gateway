@@ -5,6 +5,7 @@ import threading
 from pathlib import Path
 
 from app.schemas.stt import STTResult
+from app.services.model_registry.resolve import resolve_stt_local_device
 from app.services.stt.base import STTProvider
 from app.services.stt.glossary import resolve_initial_prompt
 from app.services.system_config import system_config_store
@@ -64,8 +65,8 @@ class WhisperProvider(STTProvider):
     name = "whisper_local"
 
     def _cache_key(self, model: str) -> str:
-        stt_local = system_config_store.get().stt_local
-        return ":".join([model, stt_local.whisper_local_device, stt_local.whisper_local_compute_type])
+        device_cfg = resolve_stt_local_device("whisper_local")
+        return ":".join([model, device_cfg["device"], device_cfg["compute_type"]])
 
     def _load_model(self, model: str | None = None):
         try:
@@ -80,11 +81,11 @@ class WhisperProvider(STTProvider):
         if key not in _MODEL_CACHE:
             with _MODEL_LOCK:
                 if key not in _MODEL_CACHE:
-                    stt_local = system_config_store.get().stt_local
+                    device_cfg = resolve_stt_local_device("whisper_local")
                     _MODEL_CACHE[key] = WhisperModel(
                         resolve_whisper_model(model_name),
-                        device=stt_local.whisper_local_device,
-                        compute_type=stt_local.whisper_local_compute_type,
+                        device=device_cfg["device"],
+                        compute_type=device_cfg["compute_type"],
                     )
         return _MODEL_CACHE[key]
 

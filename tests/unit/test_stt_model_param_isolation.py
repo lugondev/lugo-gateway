@@ -168,3 +168,16 @@ def test_qwen3_resolves_shorthand_model_id_passed_explicitly(monkeypatch):
     assert result.text == "ok"
     assert built_with == ["Qwen/Qwen3-ASR-1.7B"], f"expected resolved repo id, got {built_with}"
     q_mod._MODEL_CACHE.clear()
+
+
+@pytest.mark.asyncio
+async def test_cache_key_uses_registry_device_and_compute_type(monkeypatch):
+    from app.services.model_registry.store import model_registry_store
+    from app.services.stt.providers import whisper_provider
+
+    await model_registry_store.create(
+        "stt", "whisper_local", "", "Whisper Local",
+        config={"device": "cuda", "compute_type": "float16"},
+    )
+    provider = whisper_provider.WhisperProvider()
+    assert provider._cache_key("medium") == "medium:cuda:float16"

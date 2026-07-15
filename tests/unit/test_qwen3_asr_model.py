@@ -1,3 +1,6 @@
+import sys
+import types
+
 import pytest
 
 from app.services.stt.providers import qwen3_asr_provider as q
@@ -42,3 +45,35 @@ def test_clear_model_cache_empties_the_cache():
     q._MODEL_CACHE["cuda:Qwen/Qwen3-ASR-0.6B"] = object()
     q.clear_model_cache()
     assert q._MODEL_CACHE == {}
+
+
+@pytest.mark.asyncio
+async def test_uses_registry_device_over_default(monkeypatch):
+    from app.services.model_registry.store import model_registry_store
+
+    await model_registry_store.create("stt", "qwen3_asr", "", "Qwen3-ASR", config={"device": "mps"})
+
+    # Force the CUDA backend path (the one that reads device_map) regardless of
+    # host — same fake-module technique used for the mlx backend elsewhere in
+    # this suite (see tests/test_qwen3_asr.py, test_stt_model_param_isolation.py).
+    monkeypatch.setattr(q, "_is_apple_silicon", lambda: False)
+    monkeypatch.setattr(q, "module_available", lambda m: m == "qwen_asr")
+
+    captured: dict = {}
+
+    class FakeQwen3ASRModel:
+        @classmethod
+        def from_pretrained(cls, model_id, **kwargs):
+            captured.update(kwargs)
+            return cls()
+
+    fake_mod = types.ModuleType("qwen_asr")
+    fake_mod.Qwen3ASRModel = FakeQwen3ASRModel
+    monkeypatch.setitem(sys.modules, "qwen_asr", fake_mod)
+
+    q._MODEL_CACHE.clear()
+    provider = q.Qwen3AsrProvider()
+    provider._cuda_model()
+
+    assert captured["device_map"] == "mps"
+    q._MODEL_CACHE.clear()
