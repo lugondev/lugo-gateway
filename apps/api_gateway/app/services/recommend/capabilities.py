@@ -141,7 +141,9 @@ def detect_capabilities() -> Capabilities:
 
     modules = {m: module_available(m) for m in _PROBE_MODULES}
     try:
-        modules["omnivoice"] = os.path.isdir(system_config_store.get().omnivoice.omnivoice_path)
+        from app.services.model_registry.resolve import resolve_omnivoice_config
+
+        modules["omnivoice"] = os.path.isdir(resolve_omnivoice_config().omnivoice_path)
     except Exception:  # noqa: BLE001
         modules["omnivoice"] = False
 

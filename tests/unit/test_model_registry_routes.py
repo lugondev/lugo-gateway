@@ -34,6 +34,20 @@ def _signup_login(client, username: str, role: str = "user") -> None:
     client.post("/api/auth/login", json={"username": username, "password": "pw"})
 
 
+async def _signup_login_async(client, username: str, role: str = "user") -> None:
+    """Same as `_signup_login`, but await-based rather than `asyncio.run()` --
+    needed by `@pytest.mark.asyncio` tests, where `asyncio.run()` blows up
+    with "cannot be called from a running event loop" since pytest-asyncio
+    already has one running for the test itself."""
+    client.post("/api/auth/signup", json={"username": username, "password": "pw"})
+    if role == "admin":
+        from app.services.auth.users import user_store
+
+        user = await user_store.get_by_username(username)
+        await user_store.set_fields(user.id, role="admin")
+    client.post("/api/auth/login", json={"username": username, "password": "pw"})
+
+
 class _OkStub(STTProvider):
     name = "stub-registry-ok"
 
@@ -214,3 +228,100 @@ def test_patch_non_blank_api_key_updates_it(client, _with_password):
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["api_key"] == "sk-or-v1-new...999"
+
+
+def test_create_stt_entry_accepts_base_url_and_config(client, _with_password):
+    _signup_login(client, "root", role="admin")
+    resp = client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "stub-registry-ok", "model_id": "v1",
+        "label": "Stub OK", "base_url": "https://api.example.com",
+        "config": {"timeout_seconds": 45.0},
+    })
+    assert resp.status_code == 200
+    assert resp.json()["data"]["base_url"] == "https://api.example.com"
+    assert resp.json()["data"]["config"] == {"timeout_seconds": 45.0}
+
+
+@pytest.mark.asyncio
+async def test_patch_entry_can_update_config(client, _with_password):
+    await _signup_login_async(client, "root", role="admin")
+    from app.services.model_registry.store import model_registry_store
+
+    entry = await model_registry_store.create("tts", "omnivoice", "k2-fsa/OmniVoice", "OmniVoice")
+    resp = client.patch(f"/v1/model_registry/{entry['id']}", json={"config": {"omnivoice_device": "mps"}})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["config"] == {"omnivoice_device": "mps"}
+
+
+@pytest.mark.asyncio
+async def test_patch_qwen3_asr_config_clears_the_model_cache(client, _with_password):
+    """Ported from test_system_config_routes.py's
+    test_changing_qwen3_asr_device_clears_the_model_cache -- the reinit trigger
+    moved from PUT /v1/system/config (which read SystemConfig.stt_local, now
+    removed) to PATCH /v1/model_registry/{id} (Task 7)."""
+    await _signup_login_async(client, "root", role="admin")
+    from app.services.model_registry.store import model_registry_store
+    from app.services.stt.providers import qwen3_asr_provider as mod
+
+    entry = await model_registry_store.create("stt", "qwen3_asr", "", "Qwen3-ASR (device config)")
+    mod._MODEL_CACHE["cuda:some-model"] = object()
+
+    resp = client.patch(f"/v1/model_registry/{entry['id']}", json={"config": {"device": "cuda:1"}})
+    assert resp.status_code == 200
+    assert mod._MODEL_CACHE == {}
+
+
+@pytest.mark.asyncio
+async def test_patch_unrelated_qwen3_asr_field_does_not_clear_the_model_cache(client, _with_password):
+    await _signup_login_async(client, "root", role="admin")
+    from app.services.model_registry.store import model_registry_store
+    from app.services.stt.providers import qwen3_asr_provider as mod
+
+    entry = await model_registry_store.create("stt", "qwen3_asr", "", "Qwen3-ASR (device config)")
+    sentinel = object()
+    mod._MODEL_CACHE["cuda:some-model"] = sentinel
+
+    resp = client.patch(f"/v1/model_registry/{entry['id']}", json={"stage": "testing"})
+    assert resp.status_code == 200
+    assert mod._MODEL_CACHE.get("cuda:some-model") is sentinel
+
+
+@pytest.mark.asyncio
+async def test_patch_whisper_service_entry_rebuilds_the_provider(client, _with_password):
+    """Ported from test_system_config_routes.py's
+    test_changing_remote_stt_base_url_rebuilds_the_provider -- moved to
+    PATCH /v1/model_registry/{id} (Task 7 removed SystemConfig.remote_stt)."""
+    await _signup_login_async(client, "root", role="admin")
+    from app.services.model_registry.store import model_registry_store
+    from app.services.stt.service import stt_service
+
+    entry = await model_registry_store.create("stt", "whisper_service", "whisper-1", "Whisper Service")
+    original = stt_service.providers["whisper_service"]
+
+    resp = client.patch(f"/v1/model_registry/{entry['id']}", json={"base_url": "https://changed.example/v1"})
+    assert resp.status_code == 200
+    assert stt_service.providers["whisper_service"] is not original
+    assert stt_service.providers["whisper_service"].base_url == "https://changed.example/v1"
+
+
+@pytest.mark.asyncio
+async def test_patch_omnivoice_entry_respawns_the_sidecar(client, _with_password, monkeypatch):
+    """Ported from test_system_config_routes.py's
+    test_changing_omnivoice_model_id_clears_voice_ref_and_respawns -- moved to
+    PATCH /v1/model_registry/{id} (Task 7 removed SystemConfig.omnivoice).
+    omnivoice_use_server defaults to True on a freshly-created entry (no
+    `config` override), so -- unlike the old test -- no extra setup is needed
+    to land in the respawn branch."""
+    await _signup_login_async(client, "root", role="admin")
+    from app.services.model_registry.store import model_registry_store
+    from app.services.tts.providers import omnivoice_provider as ov_mod
+
+    entry = await model_registry_store.create("tts", "omnivoice", "k2-fsa/OmniVoice", "OmniVoice")
+    ov_mod._voice_ref.update({"path": "/tmp/old.wav", "text": "old"})
+    spawn_calls = []
+    monkeypatch.setattr(ov_mod.OmniVoiceProvider, "_spawn_sidecar", lambda self: spawn_calls.append(1))
+
+    resp = client.patch(f"/v1/model_registry/{entry['id']}", json={"config": {"omnivoice_device": "mps"}})
+    assert resp.status_code == 200
+    assert ov_mod._voice_ref == {}
+    assert len(spawn_calls) == 1

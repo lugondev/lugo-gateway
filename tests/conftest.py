@@ -8,12 +8,13 @@ def _hermetic(monkeypatch):
     call a real LLM.
     """
     # Don't load real STT/TTS models when TestClient(app) runs the app lifespan.
-    # warmup_on_startup and omnivoice_use_server live on system_config_store
-    # (Task 2 / Task 7), not Settings. The conversation LLM's base_url now
-    # lives in a Model Registry `kind="llm"` entry, not SystemConfig -- no
-    # override needed here since each test's fresh tmp DB (see `_tmp_db`
-    # below) starts with zero registry entries, so it's unconfigured/echo by
-    # construction unless a test explicitly enables one.
+    # warmup_on_startup lives on system_config_store (Task 2), not Settings.
+    # omnivoice_use_server and the conversation LLM's base_url now live in
+    # Model Registry entries (`kind="tts"`/`kind="llm"`), not SystemConfig
+    # (Task 7 removed the `omnivoice` group entirely) -- no override needed
+    # here for either since each test's fresh tmp DB (see `_tmp_db` below)
+    # starts with zero registry entries; tests that exercise the real
+    # OmniVoice sidecar path mock it explicitly (see test_omnivoice_provider.py).
     # Patch the *instance method* (not `.set()`/the DB row) so this never writes
     # through to the shared config_system DB row -- system_config_store is a
     # true singleton shared by every test in the run (and by any test that
@@ -62,7 +63,6 @@ def _hermetic(monkeypatch):
         cfg = _real_get()
         return cfg.model_copy(update={
             "engines": cfg.engines.model_copy(update={"warmup_on_startup": False}),
-            "omnivoice": cfg.omnivoice.model_copy(update={"omnivoice_use_server": False}),
         })
 
     monkeypatch.setattr(system_config_store, "get", _get_with_warmup_off)

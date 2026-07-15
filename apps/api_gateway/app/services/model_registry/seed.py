@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from app.services.model_registry.store import model_registry_store
 from app.services.stt.model_registry import STT_MODEL_REGISTRIES
-from app.services.system_config import system_config_store
+from app.services.system_config import OmnivoiceConfig, RemoteSttConfig, system_config_store
 from app.services.tts.service import tts_service
 
 
@@ -48,10 +48,13 @@ async def migrate_conversation_llm_to_registry() -> None:
 
 async def migrate_remote_stt_to_registry() -> None:
     """One-time: whisper_service/eventlab used to live in
-    SystemConfig.remote_stt. Seed a registry entry per engine from the
-    current values if none is enabled yet for that engine -- no-op once
+    SystemConfig.remote_stt -- removed from the schema (Task 7) in favor of
+    Model Registry entries, so the legacy values (if any) are only reachable
+    via the raw, still-persisted JSON group (see
+    SystemConfigStore.get_raw_group). Seed a registry entry per engine from
+    the current values if none is enabled yet for that engine -- no-op once
     migrated (including a fresh install with nothing configured)."""
-    remote_stt = system_config_store.get().remote_stt
+    remote_stt = RemoteSttConfig(**system_config_store.get_raw_group("remote_stt"))
     if (
         await model_registry_store.find_enabled("stt", "whisper_service") is None
         and remote_stt.whisper_service_base_url.strip()
@@ -77,34 +80,40 @@ async def migrate_remote_stt_to_registry() -> None:
 
 
 async def migrate_stt_local_device_to_registry() -> None:
-    """One-time: whisper_local/qwen3_asr device+compute_type used to live in
-    SystemConfig.stt_local. Seed one engine-level registry entry each
-    (model_id="" -- distinct from the per-size governance rows
+    """One-time: whisper_local/qwen3_asr device+compute_type used to live on
+    SttLocalConfig -- 3 fields removed from that schema (Task 7) in favor of
+    Model Registry entries, so the legacy values (if any) are only reachable
+    via the raw, still-persisted JSON group (see
+    SystemConfigStore.get_raw_group). Seed one engine-level registry entry
+    each (model_id="" -- distinct from the per-size governance rows
     seed_known_models() already creates) from the current values. No-op once
     an enabled entry already exists for that engine."""
-    stt_local = system_config_store.get().stt_local
+    stt_local_raw = system_config_store.get_raw_group("stt_local")
     if await model_registry_store.find_enabled("stt", "whisper_local") is None:
         await model_registry_store.create(
             "stt", "whisper_local", "", "Whisper Local (device/compute config)",
             config={
-                "device": stt_local.whisper_local_device,
-                "compute_type": stt_local.whisper_local_compute_type,
+                "device": stt_local_raw.get("whisper_local_device", "cpu"),
+                "compute_type": stt_local_raw.get("whisper_local_compute_type", "int8"),
             },
         )
     if await model_registry_store.find_enabled("stt", "qwen3_asr") is None:
         await model_registry_store.create(
             "stt", "qwen3_asr", "", "Qwen3-ASR (device config)",
-            config={"device": stt_local.qwen3_asr_device},
+            config={"device": stt_local_raw.get("qwen3_asr_device", "")},
         )
 
 
 async def migrate_omnivoice_to_registry() -> None:
     """One-time: OmniVoice's whole config used to live in
-    SystemConfig.omnivoice (a single sidecar, so a single registry entry).
-    No-op once an enabled tts/omnivoice entry already exists."""
+    SystemConfig.omnivoice -- removed from the schema (Task 7) in favor of a
+    single Model Registry entry, so the legacy values (if any) are only
+    reachable via the raw, still-persisted JSON group (see
+    SystemConfigStore.get_raw_group). No-op once an enabled tts/omnivoice
+    entry already exists."""
     if await model_registry_store.find_enabled("tts", "omnivoice") is not None:
         return
-    omnivoice = system_config_store.get().omnivoice
+    omnivoice = OmnivoiceConfig(**system_config_store.get_raw_group("omnivoice"))
     config = omnivoice.model_dump()
     config.pop("omnivoice_model_id")  # lives in the entry's model_id column, not config
     await model_registry_store.create(

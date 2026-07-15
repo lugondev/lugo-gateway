@@ -20,7 +20,7 @@ from app.services.stt.providers.whisper_provider import (
     resolve_whisper_model,
     set_active_whisper_model,
 )
-from app.services.system_config import system_config_store
+from app.services.model_registry.resolve import resolve_stt_local_device
 
 _SIZE_RE = re.compile(r"^[A-Za-z0-9.\-]+$")
 
@@ -113,11 +113,11 @@ class WhisperManager:
 
         # resolve_whisper_model downloads the PhoWhisper subfolder (or passes a
         # standard size through) and returns a path faster-whisper can load.
-        stt_local = system_config_store.get().stt_local
+        device_cfg = resolve_stt_local_device("whisper_local")
         WhisperModel(
             resolve_whisper_model(size),
-            device=stt_local.whisper_local_device,
-            compute_type=stt_local.whisper_local_compute_type,
+            device=device_cfg["device"] or "cpu",
+            compute_type=device_cfg["compute_type"],
         )
 
     def delete(self, size: str) -> None:

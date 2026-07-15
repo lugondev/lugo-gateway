@@ -44,6 +44,7 @@ class CreateEntryRequest(BaseModel):
     stage: str = "stable"
     base_url: str = ""
     api_key: str = ""
+    config: dict = {}
     sample_text: str = "xin chào"
 
 
@@ -52,6 +53,7 @@ class UpdateEntryRequest(BaseModel):
     stage: str | None = None
     api_key: str | None = None
     base_url: str | None = None
+    config: dict | None = None
 
 
 @router.get("")
@@ -97,7 +99,8 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
     created = await model_registry_store.create(
         payload.kind, payload.engine, payload.model_id, payload.label, stage=payload.stage,
         api_key=payload.api_key,
-        base_url=payload.base_url if payload.kind == "llm" else "",
+        base_url=payload.base_url if payload.kind in ("llm", "stt") else "",
+        config=payload.config,
     )
     created["api_key"] = _mask_api_key(created["api_key"])
     return {"success": True, "data": created}
@@ -114,5 +117,17 @@ async def update_entry(entry_id: str, payload: UpdateEntryRequest) -> dict:
     updated = await model_registry_store.set_fields(entry_id, **fields)
     if updated is None:
         raise HTTPException(status_code=404, detail=f"model registry entry '{entry_id}' not found")
+
+    if updated["kind"] == "stt" and updated["engine"] in ("whisper_service", "eventlab"):
+        stt_service.reinit_remote_providers()
+    elif updated["kind"] == "stt" and updated["engine"] == "qwen3_asr" and "config" in fields:
+        from app.services.stt.providers.qwen3_asr_provider import clear_model_cache
+
+        clear_model_cache()
+    elif updated["kind"] == "tts" and updated["engine"] == "omnivoice":
+        from app.services.tts.providers.omnivoice_provider import reset_voice_ref_and_respawn
+
+        reset_voice_ref_and_respawn()
+
     updated["api_key"] = _mask_api_key(updated["api_key"])
     return {"success": True, "data": updated}

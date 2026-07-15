@@ -35,8 +35,6 @@ class SttLocalConfig(BaseModel):
     vosk_model_base_url: str = "https://alphacephei.com/vosk/models"
     stt_stream_sample_rate: int = 16000
     whisper_local_model: str = "phowhisper-medium"
-    whisper_local_device: str = "cpu"
-    whisper_local_compute_type: str = "int8"
     whisper_vad_filter: bool = True
     whisper_beam_size: int = 1
     whisper_condition_on_previous_text: bool = False
@@ -45,7 +43,6 @@ class SttLocalConfig(BaseModel):
     stt_profile: str = ""
     whisper_mlx_model_path: str = "models/stt/phowhisper-medium-mlx"
     qwen3_asr_model: str = "Qwen/Qwen3-ASR-0.6B"
-    qwen3_asr_device: str = ""
     stt_segment_long_enabled: bool = False
     stt_segment_min_seconds: float = 30.0
     stt_segment_concurrency: int = 4
@@ -131,8 +128,6 @@ class SystemConfig(BaseModel):
     base_context: str = ""
     engines: EngineDefaults = EngineDefaults()
     stt_local: SttLocalConfig = SttLocalConfig()
-    omnivoice: OmnivoiceConfig = OmnivoiceConfig()
-    remote_stt: RemoteSttConfig = RemoteSttConfig()
     conversation: ConversationTuningConfig = ConversationTuningConfig()
     preprocessing: PreprocessingConfig = PreprocessingConfig()
 

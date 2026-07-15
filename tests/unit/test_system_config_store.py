@@ -82,8 +82,6 @@ def test_stt_local_config_has_expected_defaults(tmp_path):
     assert c.vosk_model_base_url == "https://alphacephei.com/vosk/models"
     assert c.stt_stream_sample_rate == 16000
     assert c.whisper_local_model == "phowhisper-medium"
-    assert c.whisper_local_device == "cpu"
-    assert c.whisper_local_compute_type == "int8"
     assert c.whisper_vad_filter is True
     assert c.whisper_beam_size == 1
     assert c.whisper_condition_on_previous_text is False
@@ -92,41 +90,26 @@ def test_stt_local_config_has_expected_defaults(tmp_path):
     assert c.stt_profile == ""
     assert c.whisper_mlx_model_path == "models/stt/phowhisper-medium-mlx"
     assert c.qwen3_asr_model == "Qwen/Qwen3-ASR-0.6B"
-    assert c.qwen3_asr_device == ""
     assert c.stt_segment_long_enabled is False
     assert c.stt_segment_min_seconds == 30.0
     assert c.stt_segment_concurrency == 4
 
 
-def test_omnivoice_config_has_expected_defaults(tmp_path):
-    s = SystemConfigStore(str(tmp_path / "system_config.json"))
-    o = s.get().omnivoice
-    assert o.omnivoice_path == "/Users/lugon/code/OmniVoice"
-    assert o.omnivoice_model_id == "k2-fsa/OmniVoice"
-    assert o.omnivoice_device == ""
-    assert o.omnivoice_dtype == "float16"
-    assert o.omnivoice_python == ""
-    assert o.omnivoice_timeout_seconds == 45.0
-    assert o.omnivoice_use_server is True
-    assert o.omnivoice_server_host == "127.0.0.1"
-    assert o.omnivoice_server_port == 8762
-    assert o.omnivoice_server_startup_seconds == 60.0
-    assert o.omnivoice_default_instruct == "female, young adult"
-    assert o.omnivoice_class_temperature == 0.0
-    assert o.omnivoice_pin_voice is True
-    assert "giọng đọc tham chiếu" in o.omnivoice_ref_text
+def test_system_config_has_no_stt_local_device_fields():
+    from app.services.system_config import SystemConfig
+
+    dumped = SystemConfig().model_dump()
+    assert "whisper_local_device" not in dumped["stt_local"]
+    assert "whisper_local_compute_type" not in dumped["stt_local"]
+    assert "qwen3_asr_device" not in dumped["stt_local"]
 
 
-def test_remote_stt_config_has_expected_defaults(tmp_path):
-    s = SystemConfigStore(str(tmp_path / "system_config.json"))
-    c = s.get().remote_stt
-    assert c.whisper_service_base_url == ""
-    assert c.whisper_service_api_key == ""
-    assert c.whisper_service_model == "whisper-1"
-    assert c.eventlab_base_url == ""
-    assert c.eventlab_api_key == ""
-    assert c.eventlab_model == "whisper-1"
-    assert c.remote_stt_timeout_seconds == 60.0
+def test_system_config_has_no_omnivoice_or_remote_stt_groups():
+    from app.services.system_config import SystemConfig
+
+    dumped = SystemConfig().model_dump()
+    assert "omnivoice" not in dumped
+    assert "remote_stt" not in dumped
 
 
 def test_conversation_tuning_config_has_expected_defaults(tmp_path):

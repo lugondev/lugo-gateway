@@ -1,5 +1,9 @@
+import json
+
 import pytest
 
+from app.services.db.config_models import SystemRow
+from app.services.db.sync_engine import session_scope
 from app.services.model_registry.seed import (
     migrate_omnivoice_to_registry,
     migrate_remote_stt_to_registry,
@@ -29,17 +33,32 @@ def _reset_system_config_cache():
     system_config_store._cache = None
 
 
+def _set_raw_group(group: str, values: dict) -> None:
+    """Write directly into a SystemRow's raw JSON, bypassing the current
+    `SystemConfig` Pydantic schema -- needed here because Task 7 removed the
+    `omnivoice`/`remote_stt` groups and 3 `stt_local` device fields from that
+    schema entirely, so they're no longer reachable via
+    `system_config_store.get().<group>`. `.get()` alone (unlike `.set()`)
+    never writes a row through to the DB when none exists yet and there's no
+    legacy JSON file to import -- it just caches a bare `SystemConfig()` in
+    memory -- so `.set(.get())` is used here to force a real row onto disk
+    before this function reads/writes it directly."""
+    system_config_store.set(system_config_store.get())  # ensure the SystemRow exists on disk
+    with session_scope() as s:
+        row = s.get(SystemRow, 1)
+        data = json.loads(row.data)
+        data[group] = {**data.get(group, {}), **values}
+        row.data = json.dumps(data)
+    system_config_store._cache = None  # force reload from the DB row
+
+
 @pytest.mark.asyncio
 async def test_migrate_remote_stt_seeds_from_existing_config():
-    system_config_store.set(
-        system_config_store.get().model_copy(update={
-            "remote_stt": system_config_store.get().remote_stt.model_copy(update={
-                "whisper_service_base_url": "https://api.example.com",
-                "whisper_service_api_key": "sk-old",
-                "whisper_service_model": "whisper-1",
-            })
-        })
-    )
+    _set_raw_group("remote_stt", {
+        "whisper_service_base_url": "https://api.example.com",
+        "whisper_service_api_key": "sk-old",
+        "whisper_service_model": "whisper-1",
+    })
     await migrate_remote_stt_to_registry()
     entry = await model_registry_store.find_enabled("stt", "whisper_service")
     assert entry is not None
@@ -61,14 +80,10 @@ async def test_migrate_remote_stt_is_a_noop_once_migrated():
 
 @pytest.mark.asyncio
 async def test_migrate_stt_local_device_seeds_whisper_local_and_qwen3_asr():
-    system_config_store.set(
-        system_config_store.get().model_copy(update={
-            "stt_local": system_config_store.get().stt_local.model_copy(update={
-                "whisper_local_device": "cuda", "whisper_local_compute_type": "float16",
-                "qwen3_asr_device": "mps",
-            })
-        })
-    )
+    _set_raw_group("stt_local", {
+        "whisper_local_device": "cuda", "whisper_local_compute_type": "float16",
+        "qwen3_asr_device": "mps",
+    })
     await migrate_stt_local_device_to_registry()
     whisper_entry = await model_registry_store.find_enabled("stt", "whisper_local")
     qwen_entry = await model_registry_store.find_enabled("stt", "qwen3_asr")
@@ -78,13 +93,9 @@ async def test_migrate_stt_local_device_seeds_whisper_local_and_qwen3_asr():
 
 @pytest.mark.asyncio
 async def test_migrate_omnivoice_seeds_from_existing_config():
-    system_config_store.set(
-        system_config_store.get().model_copy(update={
-            "omnivoice": system_config_store.get().omnivoice.model_copy(update={
-                "omnivoice_device": "mps", "omnivoice_dtype": "bfloat16",
-            })
-        })
-    )
+    _set_raw_group("omnivoice", {
+        "omnivoice_device": "mps", "omnivoice_dtype": "bfloat16",
+    })
     await migrate_omnivoice_to_registry()
     entry = await model_registry_store.find_enabled("tts", "omnivoice")
     assert entry["model_id"] == "k2-fsa/OmniVoice"

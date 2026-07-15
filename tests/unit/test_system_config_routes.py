@@ -40,8 +40,6 @@ def test_get_config_includes_nested_groups_with_defaults(client):
     data = client.get("/v1/system/config").json()["data"]
     assert data["engines"]["default_stt_engine"] == "vosk"
     assert data["stt_local"]["whisper_local_model"] == "phowhisper-medium"
-    assert data["omnivoice"]["omnivoice_model_id"] == "k2-fsa/OmniVoice"
-    assert data["remote_stt"]["whisper_service_model"] == "whisper-1"
     assert data["conversation"]["conversation_silence_ms"] == 700
     assert data["preprocessing"]["stt_vad_backend"] == "energy"
 
@@ -58,8 +56,6 @@ def test_put_updates_a_nested_field_and_preserves_others(client):
 @pytest.mark.parametrize(
     "group,field",
     [
-        ("remote_stt", "whisper_service_api_key"),
-        ("remote_stt", "eventlab_api_key"),
         ("preprocessing", "pyannote_auth_token"),
     ],
 )
@@ -126,27 +122,6 @@ def test_non_dict_json_body_returns_422_not_500(client):
     assert resp.json()["detail"]
 
 
-def test_changing_qwen3_asr_device_clears_the_model_cache(client, monkeypatch):
-    from app.services.stt.providers import qwen3_asr_provider as mod
-
-    mod._MODEL_CACHE["cuda:some-model"] = object()
-    full = client.get("/v1/system/config").json()["data"]
-    full["stt_local"]["qwen3_asr_device"] = "cuda:1"
-    client.put("/v1/system/config", json=full)
-    assert mod._MODEL_CACHE == {}
-
-
-def test_unrelated_field_change_does_not_clear_qwen3_asr_cache(client):
-    from app.services.stt.providers import qwen3_asr_provider as mod
-
-    sentinel = object()
-    mod._MODEL_CACHE["cuda:some-model"] = sentinel
-    full = client.get("/v1/system/config").json()["data"]
-    full["base_context"] = "unrelated change"
-    client.put("/v1/system/config", json=full)
-    assert mod._MODEL_CACHE.get("cuda:some-model") is sentinel
-
-
 def test_changing_pyannote_vad_model_clears_the_pyannote_cache(client):
     from app.services import vad as mod
 
@@ -178,66 +153,13 @@ def test_unrelated_field_change_does_not_clear_pyannote_cache(client):
     assert mod._pyannote_cache.get("pipeline") is sentinel
 
 
-def test_changing_remote_stt_base_url_rebuilds_the_provider(client):
-    from app.services.stt.service import stt_service
-
-    original = stt_service.providers["whisper_service"]
-    full = client.get("/v1/system/config").json()["data"]
-    full["remote_stt"]["whisper_service_base_url"] = "https://changed.example/v1"
-    client.put("/v1/system/config", json=full)
-    assert stt_service.providers["whisper_service"] is not original
-    assert stt_service.providers["whisper_service"].base_url == "https://changed.example/v1"
-
-
-def test_unrelated_field_change_does_not_rebuild_remote_stt_provider(client):
-    from app.services.stt.service import stt_service
-
-    original = stt_service.providers["whisper_service"]
-    full = client.get("/v1/system/config").json()["data"]
-    full["base_context"] = "unrelated change"
-    client.put("/v1/system/config", json=full)
-    assert stt_service.providers["whisper_service"] is original
-
-
-def test_changing_omnivoice_model_id_clears_voice_ref_and_respawns(client, monkeypatch, tmp_path):
-    from app.services.system_config import SystemConfigStore
-    from app.services.tts.providers import omnivoice_provider as ov_mod
-
-    # reset_voice_ref_and_respawn() reads omnivoice_provider's own system_config_store
-    # binding (the real global singleton, not the route's `_clean_store` fixture's
-    # fresh one) and skips the respawn when omnivoice_use_server is False -- which
-    # the module-wide conftest hermetic fixture forces by default. Override it back
-    # to True here so the respawn path under test actually runs.
-    fresh = SystemConfigStore(str(tmp_path / "omnivoice_system_config.json"))
-    fresh.set(
-        fresh.get().model_copy(
-            update={"omnivoice": fresh.get().omnivoice.model_copy(update={"omnivoice_use_server": True})}
-        )
-    )
-    monkeypatch.setattr(ov_mod, "system_config_store", fresh)
-
-    ov_mod._voice_ref.update({"path": "/tmp/old.wav", "text": "old"})
-    spawn_calls = []
-    monkeypatch.setattr(ov_mod.OmniVoiceProvider, "_spawn_sidecar", lambda self: spawn_calls.append(1))
-
-    full = client.get("/v1/system/config").json()["data"]
-    full["omnivoice"]["omnivoice_model_id"] = "k2-fsa/OmniVoice-v2"
-    client.put("/v1/system/config", json=full)
-
-    assert ov_mod._voice_ref == {}
-    assert len(spawn_calls) == 1
-
-
-def test_unrelated_field_change_does_not_respawn_omnivoice_sidecar(client, monkeypatch):
-    from app.services.tts.providers import omnivoice_provider as ov_mod
-
-    ov_mod._voice_ref.update({"path": "/tmp/kept.wav", "text": "kept"})
-    spawn_calls = []
-    monkeypatch.setattr(ov_mod.OmniVoiceProvider, "_spawn_sidecar", lambda self: spawn_calls.append(1))
-
-    full = client.get("/v1/system/config").json()["data"]
-    full["base_context"] = "unrelated change"
-    client.put("/v1/system/config", json=full)
-
-    assert ov_mod._voice_ref == {"path": "/tmp/kept.wav", "text": "kept"}
-    assert len(spawn_calls) == 0
+## NOTE: the qwen3_asr_device/remote_stt/omnivoice reinit-trigger tests that used to
+## live here were removed in Task 7 along with the SystemConfig fields/groups they
+## exercised. The equivalent reinit side-effects (clear_model_cache/
+## reinit_remote_providers/reset_voice_ref_and_respawn) now live on
+## PATCH /v1/model_registry/{id} -- see the ported tests in test_model_registry_routes.py:
+## test_patch_qwen3_asr_config_clears_the_model_cache,
+## test_patch_unrelated_qwen3_asr_field_does_not_clear_the_model_cache,
+## test_patch_whisper_service_entry_rebuilds_the_provider,
+## test_patch_entry_can_update_config (omnivoice config PATCH),
+## test_patch_omnivoice_entry_respawns_the_sidecar.

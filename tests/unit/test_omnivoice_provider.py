@@ -5,7 +5,7 @@ import threading
 import pytest
 from unittest.mock import AsyncMock
 
-from app.services.system_config import system_config_store
+from app.services.system_config import OmnivoiceConfig
 from app.services.tts.providers.omnivoice_provider import OmniVoiceProvider
 from app.services.tts.providers import omnivoice_provider as ov_mod
 
@@ -13,8 +13,11 @@ from app.services.tts.providers import omnivoice_provider as ov_mod
 def test_omnivoice_timeout_is_not_absurdly_long():
     # Real-time conversation TTS; a 600s (10 min) timeout was functionally
     # indistinguishable from a permanent hang if the sidecar ever stalls on a
-    # request. Cap it to something a user could plausibly tolerate.
-    assert system_config_store.get().omnivoice.omnivoice_timeout_seconds <= 60
+    # request. Cap it to something a user could plausibly tolerate. (Task 7
+    # removed `omnivoice` from SystemConfig -- OmnivoiceConfig's own default
+    # is the source of truth now, both for a fresh Model Registry entry and
+    # as resolve_omnivoice_config()'s fallback when none is enabled.)
+    assert OmnivoiceConfig().omnivoice_timeout_seconds <= 60
 
 
 @pytest.mark.asyncio
@@ -232,21 +235,12 @@ def test_spawn_sidecar_serializes_concurrent_calls_via_lock(monkeypatch, tmp_pat
 @pytest.mark.asyncio
 async def test_available_reads_python_path_from_registry(monkeypatch, tmp_path):
     from app.services.model_registry.store import model_registry_store
-    from app.services.system_config import OmnivoiceConfig, SystemConfig, system_config_store
 
-    # This dev machine has a real OmniVoice checkout with a real .venv/bin/python
-    # on disk, so SystemConfig's default omnivoice path would accidentally
-    # satisfy available() even if the provider never consulted the registry at
-    # all. Point system_config_store's default at a path that can't possibly
-    # exist so this test actually fails if `available()` ever regresses to
-    # reading system_config_store instead of resolve_omnivoice_config().
-    monkeypatch.setattr(
-        system_config_store, "get",
-        lambda: SystemConfig(
-            omnivoice=OmnivoiceConfig(omnivoice_path=str(tmp_path / "no-such-omnivoice-checkout"))
-        ),
-    )
-
+    # The provider only ever consults resolve_omnivoice_config() (Model
+    # Registry), never system_config_store -- Task 7 removed `omnivoice` from
+    # SystemConfig entirely, so there's no longer a SystemConfig-backed
+    # fallback path this test needs to guard against. The registry entry
+    # created below is the only source `available()` can read from.
     fake_python = tmp_path / "python"
     fake_python.write_text("")
     await model_registry_store.create(

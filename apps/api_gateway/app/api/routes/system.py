@@ -47,13 +47,15 @@ def _artifacts_stats() -> dict:
 
 @router.get("/system/status")
 async def system_status() -> dict:
+    from app.services.model_registry.resolve import resolve_omnivoice_config, resolve_stt_local_device
     from app.services.stt.providers.vosk_provider import get_active_vosk_path
 
     active_vosk_path = get_active_vosk_path()
     active_whisper = whisper_manager.snapshot()["active"]
     stt_local = system_config_store.get().stt_local
     preprocessing = system_config_store.get().preprocessing
-    omnivoice = system_config_store.get().omnivoice
+    omnivoice = resolve_omnivoice_config()
+    whisper_device_cfg = resolve_stt_local_device("whisper_local")
     data = {
         "app": {"name": settings.app_name, "env": settings.app_env},
         "stt_engines": await stt_service.list_engines(),
@@ -64,7 +66,7 @@ async def system_status() -> dict:
         },
         "whisper_local": {
             "active_model": active_whisper,
-            "device": stt_local.whisper_local_device,
+            "device": whisper_device_cfg["device"],
             "cached": whisper_manager._cached(active_whisper),
         },
         "vosk": {
@@ -87,10 +89,6 @@ async def system_status() -> dict:
 
 def _mask_system_config(config: SystemConfig) -> dict:
     data = config.model_dump()
-    if data["remote_stt"].get("whisper_service_api_key"):
-        data["remote_stt"]["whisper_service_api_key"] = "***"
-    if data["remote_stt"].get("eventlab_api_key"):
-        data["remote_stt"]["eventlab_api_key"] = "***"
     if data["preprocessing"].get("pyannote_auth_token"):
         data["preprocessing"]["pyannote_auth_token"] = "***"
     return data
@@ -118,13 +116,6 @@ def _merge_system_config(current: SystemConfig, payload: SystemConfig) -> System
     def _keep_if_blank_or_masked(new_value: str, old_value: str) -> str:
         return old_value if (not new_value or new_value == "***") else new_value
 
-    update["remote_stt"]["whisper_service_api_key"] = _keep_if_blank_or_masked(
-        update["remote_stt"]["whisper_service_api_key"],
-        current.remote_stt.whisper_service_api_key,
-    )
-    update["remote_stt"]["eventlab_api_key"] = _keep_if_blank_or_masked(
-        update["remote_stt"]["eventlab_api_key"], current.remote_stt.eventlab_api_key
-    )
     update["preprocessing"]["pyannote_auth_token"] = _keep_if_blank_or_masked(
         update["preprocessing"]["pyannote_auth_token"],
         current.preprocessing.pyannote_auth_token,
@@ -159,10 +150,6 @@ async def set_system_config(request: Request) -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     merged = _merge_system_config(current, payload)
     new_config = system_config_store.set(merged)
-    if current.stt_local.qwen3_asr_device != new_config.stt_local.qwen3_asr_device:
-        from app.services.stt.providers.qwen3_asr_provider import clear_model_cache
-
-        clear_model_cache()
     if (
         current.preprocessing.pyannote_vad_model != new_config.preprocessing.pyannote_vad_model
         or current.preprocessing.pyannote_auth_token != new_config.preprocessing.pyannote_auth_token
@@ -170,14 +157,6 @@ async def set_system_config(request: Request) -> dict:
         from app.services.vad import clear_pyannote_cache
 
         clear_pyannote_cache()
-    if current.remote_stt != new_config.remote_stt:
-        from app.services.stt.service import stt_service
-
-        stt_service.reinit_remote_providers(new_config.remote_stt)
-    if current.omnivoice != new_config.omnivoice:
-        from app.services.tts.providers.omnivoice_provider import reset_voice_ref_and_respawn
-
-        reset_voice_ref_and_respawn()
     return {"success": True, "data": _mask_system_config(new_config)}
 
 
