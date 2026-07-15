@@ -515,6 +515,7 @@ List all model registry entries.
 ```
 
 Fields:
+- `id` — unique identifier for the entry
 - `kind` — `"stt"`, `"tts"`, or `"llm"`
 - `engine` — provider name, e.g. `whisper_service`, `eventlab`, `qwen3_asr`, `whisper_local`, `omnivoice`, `vieneu`, `openai`
 - `model_id` — model identifier (HF repo, OpenAI model name, etc.)
@@ -544,6 +545,7 @@ Request body:
 
 The endpoint validates the configuration by making a test call to the provider (e.g. transcribing
 a silent WAV for STT, synthesizing sample text for TTS, or querying a chat endpoint for LLM).
+Optional `sample_text` (default `"xin chào"`) customizes the validation text; used for TTS synthesis and LLM chat test calls.
 If validation fails → `400` with the provider's error detail.
 
 On success, returns the created entry with a masked `api_key`.
@@ -565,7 +567,7 @@ Fields to update:
 - `stage` — change to `"stable"` or `"experimental"`
 - `base_url` — update endpoint URL (for remote providers)
 - `api_key` — update credentials; blank or absent means "keep existing"
-- `config` — merge into existing engine-specific config dict
+- `config` — replaces the entire config dict (not a merge) — submit the full desired config, not just the changed keys
 
 If the entry is not found → `404`. On success, returns the updated entry with a masked `api_key`.
 
