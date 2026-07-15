@@ -109,3 +109,8 @@ class ModelRegistryEntry(Base):
     # Endpoint override, meaningful for kind="llm" only (an OpenAI-compatible
     # base_url paired with this entry's model_id/api_key). Empty otherwise.
     base_url: Mapped[str] = mapped_column(String(256), default="")
+    # Engine-specific settings (device, compute_type, timeouts, server host/port,
+    # ...) validated against a per-(kind, engine) Pydantic model -- see
+    # app/services/model_registry/config_schemas.py. Shape varies by engine, so
+    # this stays a free-form JSON blob rather than dedicated columns.
+    config: Mapped[dict] = mapped_column(JSON, default=dict)

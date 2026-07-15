@@ -55,7 +55,6 @@ def test_qwen3_registry_select_changes_active():
 def test_registries_dict_covers_whisper_family_and_qwen3():
     assert STT_MODEL_REGISTRIES["whisper"] is whisper_manager
     assert STT_MODEL_REGISTRIES["whisper_local"] is whisper_manager
-    assert STT_MODEL_REGISTRIES["whisper_gemma"] is whisper_manager
     assert STT_MODEL_REGISTRIES["qwen3_asr"] is qwen3_asr_model_registry
     assert "vosk" not in STT_MODEL_REGISTRIES
     assert "whisper_mlx" not in STT_MODEL_REGISTRIES
@@ -82,7 +81,7 @@ def test_apply_stt_model_raises_for_invalid_model_on_known_engine():
 
 
 def test_resolve_default_stt_model_whisper_family_matches_active_global():
-    for engine in ("whisper", "whisper_local", "whisper_gemma"):
+    for engine in ("whisper", "whisper_local"):
         assert resolve_default_stt_model(engine) == get_active_whisper_model()
 
 

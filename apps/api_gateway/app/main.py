@@ -127,9 +127,10 @@ async def lifespan(app: FastAPI):
     # DB is configured at that moment -- in practice, the real data/app.db.
     seed_default_servers(mcp_server_store)
 
-    from app.services.model_registry.seed import seed_known_models
+    from app.services.model_registry.seed import migrate_conversation_llm_to_registry, seed_known_models
 
     await seed_known_models()
+    await migrate_conversation_llm_to_registry()
 
     if not settings.auth_enabled and settings.app_env != "dev":
         logger.warning(

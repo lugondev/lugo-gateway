@@ -57,7 +57,7 @@ Batch transcription. `multipart/form-data`:
 | field | type | notes |
 |-------|------|-------|
 | `audio` | file | WAV PCM16 mono required for `vosk`; whisper accepts common formats |
-| `engine` | string | `vosk` \| `whisper` \| `whisper_local` \| `whisper_mlx` \| `whisper_gemma` \| `whisper_service` \| `eventlab` |
+| `engine` | string | `vosk` \| `whisper` \| `whisper_local` \| `whisper_mlx` \| `whisper_service` \| `eventlab` |
 | `language` | string? | optional hint, e.g. `en`, `vi` |
 | `denoise` | bool? | spectral noise reduction (default from admin System settings > preprocessing) |
 | `vad` | bool? | VAD gate (default from admin System settings > preprocessing) |

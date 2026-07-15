@@ -46,14 +46,16 @@ export function renderTtsEnginesStatus(engines) {
   const host = el("tts-engines-status");
   if (!host) return;
   host.innerHTML = engines
-    .map((e) =>
-      modelRow({
+    .map((e) => {
+      const canInstall = !e.available && e.install_package && e.install_enabled;
+      const btn = canInstall ? ` <button class="mini" data-pip-install="${e.install_package}">Install</button>` : "";
+      return modelRow({
         title: e.engine,
         code: e.detail,
         badges: e.available ? `<span class="badge mock">ready</span>` : `<span class="badge">not installed</span>`,
-        err: !e.available && e.install_hint ? `<span class="model-err">${e.install_hint}</span>` : "",
-      })
-    )
+        err: !e.available && e.install_hint ? `<span class="model-err">${e.install_hint}${btn}</span>` : "",
+      });
+    })
     .join("");
 }
 

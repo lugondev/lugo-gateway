@@ -8,16 +8,15 @@ from app.services.stt.base import STTProvider
 
 _BASE_URL = "https://openrouter.ai/api/v1"
 
-_PROMPT = "Transcribe this audio recording verbatim. Respond with only the transcript text, no extra commentary."
-
 
 class OpenRouterSttProvider(STTProvider):
-    """STT via OpenRouter chat/completions with an `input_audio` content part.
+    """STT via OpenRouter's dedicated /audio/transcriptions endpoint.
 
-    OpenRouter has no dedicated /audio/transcriptions endpoint (unlike OpenAI-
-    compatible whisper_service): audio is sent as a base64 `input_audio` part
-    of a chat message, and the transcript is read back from the assistant's
-    reply text.
+    Audio is sent as a base64 `input_audio` field of the (non-chat) JSON body;
+    the transcript comes back directly as `{"text": ...}`. This endpoint is
+    purpose-built for transcription models (Whisper, GPT-4o Transcribe, Chirp 3,
+    Qwen3-ASR, ...) -- unlike /chat/completions, which some transcription-only
+    models (e.g. openai/whisper-large-v3-turbo) reject outright.
 
     No system-wide OpenRouter key: each Model Registry entry for this engine
     (kind="stt", engine=self.name, model_id=<model>) carries its own api_key,
@@ -52,34 +51,21 @@ class OpenRouterSttProvider(STTProvider):
                 "in Model Registry."
             )
 
-        prompt = _PROMPT
-        if language:
-            prompt += f" The spoken language is {language}."
-
         body = {
             "model": effective_model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "input_audio",
-                            "input_audio": {
-                                "data": base64.b64encode(audio_bytes).decode("ascii"),
-                                "format": "wav",
-                            },
-                        },
-                    ],
-                }
-            ],
+            "input_audio": {
+                "data": base64.b64encode(audio_bytes).decode("ascii"),
+                "format": "wav",
+            },
         }
+        if language:
+            body["language"] = language
         headers = {"Authorization": f"Bearer {api_key}"}
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.post(
-                    f"{_BASE_URL}/chat/completions", headers=headers, json=body
+                    f"{_BASE_URL}/audio/transcriptions", headers=headers, json=body
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -90,5 +76,5 @@ class OpenRouterSttProvider(STTProvider):
         except httpx.HTTPError as exc:
             raise RuntimeError(f"{self.name} request failed: {exc}") from exc
 
-        text = str(payload["choices"][0]["message"]["content"]).strip()
+        text = str(payload["text"]).strip()
         return STTResult(engine=self.name, text=text, is_final=True, confidence=None)

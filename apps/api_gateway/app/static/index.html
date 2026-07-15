@@ -875,7 +875,7 @@
                 </label>
                 <label>
                   Engine
-                  <input id="registry-add-engine" type="text" placeholder="openrouter" />
+                  <input id="registry-add-engine" type="text" placeholder="qwen3_asr_or (stt) · vieneu (tts) · openai (llm)" />
                 </label>
                 <label>
                   Model ID
@@ -945,18 +945,6 @@
                 <button id="sys-config-groups-save">Save</button>
               </div>
               <p id="sys-config-groups-status" class="meta"></p>
-            </section>
-
-            <section class="card">
-              <h2>STT preprocessing</h2>
-              <p class="hint">Shared defaults for noise reduction &amp; VAD, applied across STT (file / streaming) and Conversation.</p>
-              <div class="checks">
-                <label class="check"><input type="checkbox" id="pp-denoise" /> Noise reduce</label>
-                <label class="check"><input type="checkbox" id="pp-vad" /> VAD</label>
-                <label class="check">backend
-                  <select id="pp-vad-backend" class="inline-select"></select>
-                </label>
-              </div>
             </section>
           </div>
 

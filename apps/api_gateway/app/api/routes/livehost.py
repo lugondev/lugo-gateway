@@ -165,7 +165,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
             audio_out = "url"
             logger.warning("client requested opus output but server has no libopus; using url")
 
-    responder = build_responder_ex(
+    responder = await build_responder_ex(
         base_url=llm_base_url, api_key=llm_api_key, model=llm_model, system_prompt=system_prompt,
         voice_optimized=bool(profile and profile.voice_optimized),
     )

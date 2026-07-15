@@ -117,7 +117,7 @@ def _libopus() -> bool:
 
 def _ollama() -> bool:
     try:
-        ollama_bin = system_config_store.get().conversation_llm.ollama_bin
+        ollama_bin = system_config_store.get().engines.ollama_bin
         if ollama_bin and os.path.exists(ollama_bin):
             return True
         return shutil.which("ollama") is not None or os.path.exists(

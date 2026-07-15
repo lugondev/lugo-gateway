@@ -52,7 +52,7 @@ class MemoryCompactor:
             else {}
         )
         async with httpx.AsyncClient(
-            timeout=system_config_store.get().conversation_llm.conversation_llm_timeout_seconds
+            timeout=system_config_store.get().conversation.llm_timeout_seconds
         ) as client:
             resp = await client.post(
                 f"{profile.llm.base_url.rstrip('/')}/chat/completions",

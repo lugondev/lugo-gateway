@@ -67,6 +67,7 @@ class _Qwen3TTSProviderBase(RenderingTTSProvider):
     _size: str = ""
     _modules = ("qwen_tts", "torch")
     sample_rate = 24000  # overwritten with the real value after the first synth call
+    install_package = "qwen_tts"  # shared package for both the 0.6B and 1.7B sizes
 
     def available(self) -> bool:
         return all(module_available(m) for m in self._modules)

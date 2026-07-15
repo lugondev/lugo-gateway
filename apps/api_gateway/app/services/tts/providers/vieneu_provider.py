@@ -31,6 +31,7 @@ def set_active_vieneu_mode(mode: str) -> None:
 class VieNeuProvider(RenderingTTSProvider):
     name = "vieneu"
     sample_rate = _SAMPLE_RATE
+    install_package = "vieneu"
 
     def available(self) -> bool:
         return module_available("vieneu")

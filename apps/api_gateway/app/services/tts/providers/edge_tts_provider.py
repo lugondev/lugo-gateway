@@ -31,6 +31,7 @@ def _estimate_duration_seconds(mp3_bytes: bytes) -> float:
 
 class EdgeTTSProvider(TTSProvider):
     name = "edge_tts"
+    install_package = "edge_tts"
 
     DEFAULT_VOICE = "vi-VN-HoaiMyNeural"
     VOICES = [

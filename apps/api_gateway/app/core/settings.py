@@ -31,9 +31,10 @@ class Settings(BaseSettings):
     admin_bootstrap_password: str = ""
 
     # Allow the /v1/models/install endpoint to pip-install engine packages at runtime.
-    # OFF by default — keep it OFF on public deploys (it runs pip on the server). Turn
-    # ON for local/Colab convenience. Installs are restricted to a fixed allowlist.
-    allow_runtime_install: bool = False
+    # ON by default for this self-hosted deploy; set ALLOW_RUNTIME_INSTALL=false on
+    # public deploys (it runs pip on the server). Installs are restricted to a fixed
+    # allowlist.
+    allow_runtime_install: bool = True
 
     artifacts_dir: str = "artifacts"
 

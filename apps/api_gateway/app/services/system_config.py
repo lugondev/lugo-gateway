@@ -23,6 +23,10 @@ class EngineDefaults(BaseModel):
     extra_warmup_tts_engines: str = ""
     warmup_on_startup: bool = True
     warmup_startup_timeout_s: int = 180
+    # Path to the local `ollama` CLI, used for capability detection and to
+    # spawn `ollama serve` -- not per-LLM config (it's an environment fact
+    # checked before any Model Registry LLM entry may even exist yet).
+    ollama_bin: str = ""
 
 
 class SttLocalConfig(BaseModel):
@@ -42,12 +46,6 @@ class SttLocalConfig(BaseModel):
     whisper_mlx_model_path: str = "models/stt/phowhisper-medium-mlx"
     qwen3_asr_model: str = "Qwen/Qwen3-ASR-0.6B"
     qwen3_asr_device: str = ""
-    stt_enhance_timeout_seconds: float = 30.0
-    stt_enhance_prompt: str = (
-        "You are an ASR post-editor. Fix spelling, casing, punctuation and obvious "
-        "speech-recognition errors in the transcript. Do NOT translate, do NOT answer it, "
-        "do NOT add or remove meaning. Return ONLY the corrected transcript text."
-    )
     stt_segment_long_enabled: bool = False
     stt_segment_min_seconds: float = 30.0
     stt_segment_concurrency: int = 4
@@ -72,14 +70,6 @@ class OmnivoiceConfig(BaseModel):
     @property
     def omnivoice_python_path(self) -> str:
         return self.omnivoice_python or f"{self.omnivoice_path.rstrip('/')}/.venv/bin/python"
-
-
-class ConversationLlmConfig(BaseModel):
-    conversation_llm_base_url: str = ""
-    conversation_llm_api_key: str = ""
-    conversation_llm_model: str = "gpt-3.5-turbo"
-    conversation_llm_timeout_seconds: float = 60.0
-    ollama_bin: str = ""
 
 
 class RemoteSttConfig(BaseModel):
@@ -111,6 +101,11 @@ class ConversationTuningConfig(BaseModel):
     conversation_opus_pace: bool = False
     conversation_opus_prebuffer_frames: int = 5
     conversation_language: str = "vi"
+    # Shared HTTP timeout for every OpenAI-compatible LLM call (chat responder,
+    # memory extraction/compaction, embeddings) -- not tied to one Model
+    # Registry entry since some of these calls target a per-profile LLM, not
+    # "the" conversation LLM.
+    llm_timeout_seconds: float = 60.0
     conversation_system_prompt: str = (
         "You are a helpful, concise voice assistant. Reply in the user's language, "
         "in 2-4 short sentences suitable for being spoken aloud. "
@@ -137,7 +132,6 @@ class SystemConfig(BaseModel):
     engines: EngineDefaults = EngineDefaults()
     stt_local: SttLocalConfig = SttLocalConfig()
     omnivoice: OmnivoiceConfig = OmnivoiceConfig()
-    conversation_llm: ConversationLlmConfig = ConversationLlmConfig()
     remote_stt: RemoteSttConfig = RemoteSttConfig()
     conversation: ConversationTuningConfig = ConversationTuningConfig()
     preprocessing: PreprocessingConfig = PreprocessingConfig()
@@ -184,6 +178,23 @@ class SystemConfigStore:
                 self._cache = self._import_legacy(path)
             else:
                 self._cache = SystemConfig()
+
+    def get_raw_group(self, group: str) -> dict:
+        """Read a group's raw, persisted JSON dict directly off the DB row,
+        bypassing the current `SystemConfig` schema. For one-time migrations
+        that need a field *removed* from the Pydantic model (e.g. a group
+        deleted in favor of Model Registry entries) -- `model_validate_json`
+        silently drops unknown keys, so by the time `.get()` returns, the old
+        value is unreachable. Returns {} if the row or group key is absent."""
+        with self._lock:
+            init_config_tables()
+            with session_scope() as s:
+                row = s.get(SystemRow, _ROW_ID)
+                if row is None:
+                    return {}
+                import json
+
+                return json.loads(row.data).get(group) or {}
 
     def _import_legacy(self, path: str) -> SystemConfig:
         """One-time, best-effort import of the legacy JSON file. Never

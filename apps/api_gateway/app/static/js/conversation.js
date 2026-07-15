@@ -1,6 +1,5 @@
 import { el, wsUrl, restoreAndBind, savePref } from "./helpers.js";
 import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
-import { getPreproc } from "./system-config.js";
 import { currentSessionId, setCurrentSessionId } from "./chat.js";
 
 export const conv = { ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null, assistantBubble: null, opusMode: false, opusDec: null, opusTs: 0, outRate: 24000 };
@@ -256,8 +255,6 @@ export async function startConversation() {
   if (ttsProfile) params += `&tts_profile=${encodeURIComponent(ttsProfile)}`;
   if (currentSessionId) params += `&session_id=${encodeURIComponent(currentSessionId)}`;
   if (el("conv-language").value.trim()) params += `&language=${encodeURIComponent(el("conv-language").value.trim())}`;
-  const cpp = getPreproc();
-  params += `&denoise=${cpp.denoise}&vad=${cpp.vad}&vad_backend=${encodeURIComponent(cpp.backend)}`;
 
   // Opus downlink: stream reply audio as Opus frames decoded in-browser (WebCodecs).
   // Falls back to the default URL/WAV path if unchecked or unsupported.

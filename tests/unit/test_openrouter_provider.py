@@ -28,7 +28,7 @@ async def test_transcribe_uses_explicit_api_key_override_without_registry_lookup
                 pass
 
             def json(self):
-                return {"choices": [{"message": {"content": "ok"}}]}
+                return {"text": "ok"}
 
         return R()
 
@@ -60,7 +60,7 @@ async def test_transcribe_looks_up_api_key_from_matching_registry_entry(monkeypa
                 pass
 
             def json(self):
-                return {"choices": [{"message": {"content": "xin chào"}}]}
+                return {"text": "xin chào"}
 
         return R()
 
@@ -71,14 +71,13 @@ async def test_transcribe_looks_up_api_key_from_matching_registry_entry(monkeypa
     provider = OpenRouterSttProvider(name="qwen3_asr_or", model="qwen/qwen3-asr-flash-2026-02-10")
     result = await provider.transcribe_bytes(b"fake wav bytes")
 
-    assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert captured["url"] == "https://openrouter.ai/api/v1/audio/transcriptions"
     assert captured["headers"]["Authorization"] == "Bearer sk-or-test"
     assert captured["json"]["model"] == "qwen/qwen3-asr-flash-2026-02-10"
 
-    content = captured["json"]["messages"][0]["content"]
-    audio_part = next(p for p in content if p["type"] == "input_audio")
-    assert audio_part["input_audio"]["format"] == "wav"
-    assert base64.b64decode(audio_part["input_audio"]["data"]) == b"fake wav bytes"
+    audio_part = captured["json"]["input_audio"]
+    assert audio_part["format"] == "wav"
+    assert base64.b64decode(audio_part["data"]) == b"fake wav bytes"
 
     assert result.engine == "qwen3_asr_or"
     assert result.text == "xin chào"
@@ -109,7 +108,7 @@ async def test_transcribe_strips_whitespace_from_response(monkeypatch):
                 pass
 
             def json(self):
-                return {"choices": [{"message": {"content": "  hello world  \n"}}]}
+                return {"text": "  hello world  \n"}
 
         return R()
 
@@ -120,6 +119,64 @@ async def test_transcribe_strips_whitespace_from_response(monkeypatch):
     provider = OpenRouterSttProvider(name="whisper_or", model="openai/whisper-large-v3-turbo")
     result = await provider.transcribe_bytes(b"fake wav bytes")
     assert result.text == "hello world"
+
+
+@pytest.mark.asyncio
+async def test_transcribe_passes_language_hint_when_given(monkeypatch):
+    await model_registry_store.create(
+        "stt", "whisper_or", "openai/whisper-large-v3-turbo", "Whisper v3 Turbo", api_key="sk-or-test"
+    )
+    captured = {}
+
+    async def fake_post(self, url, headers=None, json=None):
+        captured["json"] = json
+
+        class R:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"text": "hola"}
+
+        return R()
+
+    import httpx
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    provider = OpenRouterSttProvider(name="whisper_or", model="openai/whisper-large-v3-turbo")
+    await provider.transcribe_bytes(b"fake wav bytes", language="es")
+
+    assert captured["json"]["language"] == "es"
+
+
+@pytest.mark.asyncio
+async def test_transcribe_omits_language_field_when_not_given(monkeypatch):
+    await model_registry_store.create(
+        "stt", "whisper_or", "openai/whisper-large-v3-turbo", "Whisper v3 Turbo", api_key="sk-or-test"
+    )
+    captured = {}
+
+    async def fake_post(self, url, headers=None, json=None):
+        captured["json"] = json
+
+        class R:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"text": "hi"}
+
+        return R()
+
+    import httpx
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    provider = OpenRouterSttProvider(name="whisper_or", model="openai/whisper-large-v3-turbo")
+    await provider.transcribe_bytes(b"fake wav bytes")
+
+    assert "language" not in captured["json"]
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.core.audio import pcm16_to_wav_bytes
 from app.schemas.tts import TTSRequest
 from app.services.conversation.responder import OpenAICompatResponder
 from app.services.model_registry.store import model_registry_store
@@ -10,10 +11,12 @@ from app.services.tts.service import tts_service
 
 router = APIRouter(prefix="/v1/model_registry", tags=["model_registry"])
 
-# Short silence buffer, same shape as other STT test fixtures in this codebase
-# (raw 16-bit PCM, mono) -- enough to exercise the provider without needing a
-# real recorded sample.
-_SAMPLE_PCM16 = b"\x00\x00" * 1600
+# Short silence WAV, same shape as other STT test fixtures in this codebase --
+# enough to exercise the provider without needing a real recorded sample. Must
+# be a real WAV container (not bare PCM): remote HTTP providers (OpenRouter,
+# whisper_service) upload/declare this as an actual .wav file, which a strict
+# backend will reject if it's just headerless PCM.
+_SAMPLE_WAV = pcm16_to_wav_bytes(b"\x00\x00" * 1600, sample_rate=16000)
 
 # OpenRouter-backed STT engines: each Model Registry entry carries its own
 # api_key (no system-wide OpenRouter key), so the add-time test call must use
@@ -69,7 +72,7 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
                 )
             else:
                 provider = stt_service.get_provider(payload.engine)
-            await provider.transcribe_bytes(_SAMPLE_PCM16)
+            await provider.transcribe_bytes(_SAMPLE_WAV)
         elif payload.kind == "tts":
             provider = tts_service.get_provider(payload.engine)
             await provider.synthesize(TTSRequest(text=payload.sample_text, engine=payload.engine))

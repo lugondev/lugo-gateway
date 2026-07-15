@@ -71,6 +71,7 @@ def test_engine_defaults_have_expected_defaults(tmp_path):
     assert e.extra_warmup_tts_engines == ""
     assert e.warmup_on_startup is True
     assert e.warmup_startup_timeout_s == 180
+    assert e.ollama_bin == ""
 
 
 def test_stt_local_config_has_expected_defaults(tmp_path):
@@ -92,8 +93,6 @@ def test_stt_local_config_has_expected_defaults(tmp_path):
     assert c.whisper_mlx_model_path == "models/stt/phowhisper-medium-mlx"
     assert c.qwen3_asr_model == "Qwen/Qwen3-ASR-0.6B"
     assert c.qwen3_asr_device == ""
-    assert c.stt_enhance_timeout_seconds == 30.0
-    assert "ASR post-editor" in c.stt_enhance_prompt
     assert c.stt_segment_long_enabled is False
     assert c.stt_segment_min_seconds == 30.0
     assert c.stt_segment_concurrency == 4
@@ -116,16 +115,6 @@ def test_omnivoice_config_has_expected_defaults(tmp_path):
     assert o.omnivoice_class_temperature == 0.0
     assert o.omnivoice_pin_voice is True
     assert "giọng đọc tham chiếu" in o.omnivoice_ref_text
-
-
-def test_conversation_llm_config_has_expected_defaults(tmp_path):
-    s = SystemConfigStore(str(tmp_path / "system_config.json"))
-    c = s.get().conversation_llm
-    assert c.conversation_llm_base_url == ""
-    assert c.conversation_llm_api_key == ""
-    assert c.conversation_llm_model == "gpt-3.5-turbo"
-    assert c.conversation_llm_timeout_seconds == 60.0
-    assert c.ollama_bin == ""
 
 
 def test_remote_stt_config_has_expected_defaults(tmp_path):
@@ -161,6 +150,7 @@ def test_conversation_tuning_config_has_expected_defaults(tmp_path):
     assert c.conversation_opus_pace is False
     assert c.conversation_opus_prebuffer_frames == 5
     assert c.conversation_language == "vi"
+    assert c.llm_timeout_seconds == 60.0
     assert "helpful, concise voice assistant" in c.conversation_system_prompt
 
 

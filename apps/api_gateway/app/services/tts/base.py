@@ -12,6 +12,11 @@ logger = logging.getLogger(__name__)
 class TTSProvider(ABC):
     name: str
 
+    # Key into install_manager.ALLOWLIST for a one-click UI install; None when the
+    # engine isn't a plain `pip install <pkg>` (e.g. gated by a config path, or
+    # installed from a git URL rather than a PyPI name).
+    install_package: str | None = None
+
     @abstractmethod
     async def synthesize(self, payload: TTSRequest) -> TTSResult:
         raise NotImplementedError

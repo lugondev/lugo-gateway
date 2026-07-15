@@ -64,33 +64,33 @@ class LlmConfig(BaseModel):
     model: str = ""
 
 
-def _llm_config_view() -> dict:
+async def _llm_config_view() -> dict:
     """Current conversation LLM config (api key masked, never echoed back)."""
     return {
-        "base_url": get_active_llm_base_url(),
-        "model": get_active_llm_model(),
-        "api_key_set": bool(get_active_llm_api_key()),
-        "responder": build_responder().name,
+        "base_url": await get_active_llm_base_url(),
+        "model": await get_active_llm_model(),
+        "api_key_set": bool(await get_active_llm_api_key()),
+        "responder": (await build_responder()).name,
     }
 
 
 @router.get("/llm")
 async def get_llm_config() -> dict:
-    return {"success": True, "data": _llm_config_view()}
+    return {"success": True, "data": await _llm_config_view()}
 
 
 @router.post("/llm")
 async def set_llm_config(payload: LlmConfig) -> dict:
     """Point the conversation LLM at any OpenAI-compatible endpoint (online or local)."""
-    set_active_llm_config(payload.base_url, payload.api_key, payload.model)
-    return {"success": True, "data": _llm_config_view()}
+    await set_active_llm_config(payload.base_url, payload.api_key, payload.model)
+    return {"success": True, "data": await _llm_config_view()}
 
 
 @router.post("/llm/reset")
 async def reset_llm_config() -> dict:
-    """Revert to the .env-configured conversation LLM."""
-    reset_active_llm_config()
-    return {"success": True, "data": _llm_config_view()}
+    """Turn off the conversation LLM (falls back to the built-in echo responder)."""
+    await reset_active_llm_config()
+    return {"success": True, "data": await _llm_config_view()}
 
 
 @router.post("/chat")
@@ -141,7 +141,7 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
         else system_prompt
     )
 
-    responder = build_responder_ex(
+    responder = await build_responder_ex(
         base_url=llm_base_url,
         api_key=llm_api_key,
         model=llm_model,
@@ -176,7 +176,7 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
         "data": {
             "reply": reply,
             "responder": responder.name,
-            "model": get_active_llm_model(),
+            "model": await get_active_llm_model(),
             "profile": profile,
             "session_id": sid,
         },

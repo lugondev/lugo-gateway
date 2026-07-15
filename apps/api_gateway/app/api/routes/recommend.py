@@ -18,7 +18,7 @@ async def models_recommend() -> dict:
     Read-only: each item carries a fit score, runnable status, reason, and the
     download/install action — the UI filters (recommended-only) and groups (by chip).
     """
-    return {"success": True, "data": recommend_all()}
+    return {"success": True, "data": await recommend_all()}
 
 
 @router.post("/models/install")

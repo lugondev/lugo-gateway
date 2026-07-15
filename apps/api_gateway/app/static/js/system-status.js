@@ -1,4 +1,4 @@
-import { el, fmtBytes, setBadge, restoreAndBind } from "./helpers.js";
+import { el, fmtBytes, setBadge } from "./helpers.js";
 
 export async function loadSystemStatus() {
   const host = el("system-status");
@@ -35,33 +35,8 @@ export async function loadSystemStatus() {
     // Update header/footer status badges
     setBadge("badge-stt", sttOk); setBadge("foot-stt", sttOk);
     setBadge("badge-tts", ttsOk); setBadge("foot-tts", ttsOk);
-
-    // Initialize the shared preprocessing config from server defaults (once).
-    if (!preprocessInit && d.stt_preprocess) {
-      preprocessInit = true;
-      if (el("pp-denoise")) el("pp-denoise").checked = d.stt_preprocess.noise_reduce;
-      if (el("pp-vad")) el("pp-vad").checked = d.stt_preprocess.vad;
-
-      const sel = el("pp-vad-backend");
-      const avail = d.stt_preprocess.vad_backends_available || { energy: true };
-      if (sel) {
-        sel.innerHTML = "";
-        ["energy", "silero", "pyannote"].forEach((b) => {
-          const opt = document.createElement("option");
-          opt.value = b;
-          opt.textContent = avail[b] ? b : `${b} (not installed)`;
-          opt.disabled = !avail[b];
-          sel.appendChild(opt);
-        });
-        const want = d.stt_preprocess.vad_backend;
-        sel.value = want && avail[want] ? want : "energy";
-      }
-      // Saved user prefs override server defaults.
-      ["pp-denoise", "pp-vad", "pp-vad-backend"].forEach(restoreAndBind);
-    }
   } catch (error) {
     host.innerHTML = `<div class="stat warn"><span>status</span><strong>error</strong></div>`;
   }
 }
-export let preprocessInit = false;
 

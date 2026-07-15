@@ -41,7 +41,6 @@ def test_get_config_includes_nested_groups_with_defaults(client):
     assert data["engines"]["default_stt_engine"] == "vosk"
     assert data["stt_local"]["whisper_local_model"] == "phowhisper-medium"
     assert data["omnivoice"]["omnivoice_model_id"] == "k2-fsa/OmniVoice"
-    assert data["conversation_llm"]["conversation_llm_model"] == "gpt-3.5-turbo"
     assert data["remote_stt"]["whisper_service_model"] == "whisper-1"
     assert data["conversation"]["conversation_silence_ms"] == 700
     assert data["preprocessing"]["stt_vad_backend"] == "energy"
@@ -59,7 +58,6 @@ def test_put_updates_a_nested_field_and_preserves_others(client):
 @pytest.mark.parametrize(
     "group,field",
     [
-        ("conversation_llm", "conversation_llm_api_key"),
         ("remote_stt", "whisper_service_api_key"),
         ("remote_stt", "eventlab_api_key"),
         ("preprocessing", "pyannote_auth_token"),

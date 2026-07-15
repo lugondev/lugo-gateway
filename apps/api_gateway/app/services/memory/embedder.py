@@ -12,7 +12,7 @@ async def embed_texts(
 ) -> list[list[float]]:
     """Embed texts via an OpenAI-compatible /embeddings endpoint. Raises on failure."""
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    timeout = system_config_store.get().conversation_llm.conversation_llm_timeout_seconds
+    timeout = system_config_store.get().conversation.llm_timeout_seconds
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
             f"{base_url.rstrip('/')}/embeddings",

@@ -1,4 +1,5 @@
 from app.core.errors import EngineNotFoundError
+from app.core.settings import settings
 from app.services.system_config import system_config_store
 from app.services.tts.base import TTSProvider
 from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
@@ -36,6 +37,8 @@ class TTSService:
                     "available": provider.available(),
                     "detail": provider.detail(),
                     "install_hint": provider.install_hint(),
+                    "install_package": provider.install_package,
+                    "install_enabled": settings.allow_runtime_install,
                     "default": name == default_engine,
                 }
             )

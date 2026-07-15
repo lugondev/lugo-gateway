@@ -130,6 +130,7 @@ export async function recAct(action) {
       if (typeof loadTtsEngines === "function") loadTtsEngines();
       if (typeof loadConversationEngines === "function") loadConversationEngines();
     }
+    if (action.type === "install") setTimeout(loadTtsEngines, 8000);
     setTimeout(loadRecommend, { select: 300, install: 8000 }[action.type] || 1500);
   } catch (error) {
     print(el("model-msg"), String(error), true);

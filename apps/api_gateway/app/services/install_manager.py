@@ -21,6 +21,9 @@ ALLOWLIST: dict[str, str] = {
     "mlx_qwen3_asr": "mlx-qwen3-asr",
     "silero_vad": "silero-vad",
     "pyannote.audio": "pyannote.audio",
+    "qwen_tts": "qwen-tts",
+    "voxcpm": "voxcpm",
+    "edge_tts": "edge-tts",
 }
 
 

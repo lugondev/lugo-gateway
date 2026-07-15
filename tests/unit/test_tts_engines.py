@@ -18,7 +18,24 @@ def test_lists_omnivoice_and_vieneu():
 
 def test_engine_entries_have_expected_keys():
     for e in tts_service.list_engines():
-        assert {"engine", "available", "detail", "default"} <= set(e)
+        assert {"engine", "available", "detail", "default", "install_package", "install_enabled"} <= set(e)
+
+
+def test_engine_entries_expose_install_package_for_pip_installable_engines(monkeypatch):
+    from app.core.settings import settings
+
+    monkeypatch.setattr(settings, "allow_runtime_install", True)
+    entries = {e["engine"]: e for e in tts_service.list_engines()}
+    assert entries["vieneu"]["install_package"] == "vieneu"
+    assert entries["edge_tts"]["install_package"] == "edge_tts"
+    assert entries["qwen3_tts_0_6b"]["install_package"] == "qwen_tts"
+    assert entries["qwen3_tts_1_7b"]["install_package"] == "qwen_tts"
+    assert entries["voxcpm2"]["install_package"] == "voxcpm"
+    assert all(e["install_enabled"] is True for e in entries.values())
+    # kokoro_vi installs from a git URL, not a plain pip spec -- no one-click install.
+    assert entries["kokoro_vi"]["install_package"] is None
+    # omnivoice is gated by a config path, not a pip package.
+    assert entries["omnivoice"]["install_package"] is None
 
 
 def test_get_provider_resolves_and_rejects():

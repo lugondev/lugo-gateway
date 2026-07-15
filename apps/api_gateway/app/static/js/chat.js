@@ -1,7 +1,6 @@
 import { el, wsUrl } from "./helpers.js";
 import { conv, convStopAudio } from "./conversation.js";
 import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
-import { getPreproc } from "./system-config.js";
 
 export const CHAT_MODES = {
   "text-text":   { title: "Text Chat",      hint: "Text chat with the configured LLM." },
@@ -137,10 +136,8 @@ export async function startV2t() {
   if (el("v2t-partial")) el("v2t-partial").textContent = "—";
   if (el("v2t-log")) el("v2t-log").textContent = "";
 
-  const pp = getPreproc();
   let params = `engine=${encodeURIComponent(engine)}&sample_rate=${STREAM_SAMPLE_RATE}`;
   if (language) params += `&language=${encodeURIComponent(language)}`;
-  params += `&denoise=${pp.denoise}&vad=${pp.vad}&vad_backend=${encodeURIComponent(pp.backend)}`;
 
   let capture;
   try {

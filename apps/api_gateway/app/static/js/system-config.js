@@ -38,14 +38,12 @@ const GROUPS = [
   { key: "engines", label: "Engine Defaults", open: true },
   { key: "stt_local", label: "STT (Local Models)", open: false },
   { key: "omnivoice", label: "OmniVoice (TTS)", open: false },
-  { key: "conversation_llm", label: "Conversation LLM", open: false },
   { key: "remote_stt", label: "Remote STT Providers", open: false },
   { key: "conversation", label: "Conversation Tuning", open: false },
   { key: "preprocessing", label: "Preprocessing (VAD/Noise)", open: false },
 ];
 
 const SECRET_FIELDS = new Set([
-  "conversation_llm.conversation_llm_api_key",
   "remote_stt.whisper_service_api_key",
   "remote_stt.eventlab_api_key",
   "preprocessing.pyannote_auth_token",
@@ -119,14 +117,5 @@ export async function saveSystemConfigGroups() {
 if (el("sys-config-groups-save")) {
   el("sys-config-groups-save").addEventListener("click", saveSystemConfigGroups);
   loadSystemConfigGroups();
-}
-
-// Shared STT preprocessing config (System tab) used by batch / streaming / conversation.
-export function getPreproc() {
-  return {
-    denoise: el("pp-denoise") ? el("pp-denoise").checked : false,
-    vad: el("pp-vad") ? el("pp-vad").checked : false,
-    backend: el("pp-vad-backend") ? el("pp-vad-backend").value || "energy" : "energy",
-  };
 }
 

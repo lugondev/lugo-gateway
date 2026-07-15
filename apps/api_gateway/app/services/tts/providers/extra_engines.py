@@ -62,6 +62,7 @@ class VoxCPM2Provider(_ExtraTTSProvider):
     sample_rate = 48000
     _modules = ("voxcpm",)
     _hint = "pip install voxcpm  (CPU/MPS; CUDA recommended)"
+    install_package = "voxcpm"
 
     def detail(self) -> str:
         return os.environ.get("OMNIVOICE_VOXCPM_MODEL", "openbmb/VoxCPM2")

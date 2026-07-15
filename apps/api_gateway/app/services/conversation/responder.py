@@ -25,58 +25,78 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Runtime conversation LLM config; each falls back to settings when None.
-# Reset on restart (not persisted). base_url/api_key let the UI point the
-# conversation at any OpenAI-compatible endpoint (local Ollama OR an online
-# provider like OpenAI/Groq/together); empty base_url -> built-in echo.
-_active_model: str | None = None
-_active_base_url: str | None = None
-_active_api_key: str | None = None
+# The conversation LLM's base_url/api_key/model live in the single Model
+# Registry entry with kind="llm" that's marked `enabled` -- there is no
+# separate system-wide default and no in-memory override anymore; picking a
+# different LLM (or pointing at a different endpoint) means enabling a
+# different registry entry (see set_active_llm_config below).
 
 
-def get_active_llm_model() -> str:
-    return _active_model or system_config_store.get().conversation_llm.conversation_llm_model
+async def _active_llm_entry() -> dict | None:
+    from app.services.model_registry.store import model_registry_store
+
+    return await model_registry_store.find_enabled(kind="llm")
 
 
-def set_active_llm_model(model: str) -> None:
-    global _active_model
-    _active_model = model
+async def get_active_llm_model() -> str:
+    entry = await _active_llm_entry()
+    return entry["model_id"] if entry else ""
 
 
-def get_active_llm_base_url() -> str:
-    if _active_base_url is not None:
-        return _active_base_url
-    return system_config_store.get().conversation_llm.conversation_llm_base_url
+async def get_active_llm_base_url() -> str:
+    entry = await _active_llm_entry()
+    return entry["base_url"] if entry else ""
 
 
-def get_active_llm_api_key() -> str:
-    if _active_api_key is not None:
-        return _active_api_key
-    return system_config_store.get().conversation_llm.conversation_llm_api_key
+async def get_active_llm_api_key() -> str:
+    entry = await _active_llm_entry()
+    return entry["api_key"] if entry else ""
 
 
-def set_active_llm_config(base_url: str, api_key: str, model: str) -> None:
-    """Point the conversation responder at an OpenAI-compatible endpoint."""
-    global _active_base_url, _active_api_key, _active_model
-    _active_base_url = (base_url or "").strip()
-    _active_api_key = (api_key or "").strip()
-    _active_model = (model or "").strip() or None
+async def set_active_llm_config(base_url: str, api_key: str, model: str, engine: str = "custom") -> None:
+    """Point the conversation responder at an OpenAI-compatible endpoint --
+    creates the registry entry if none is enabled yet, else updates the
+    currently-enabled one in place (so re-pointing the same "slot" doesn't
+    pile up rows)."""
+    from app.services.model_registry.store import model_registry_store
+
+    base_url = (base_url or "").strip()
+    api_key = (api_key or "").strip()
+    model = (model or "").strip()
+    entry = await _active_llm_entry()
+    if entry:
+        # Leave `engine` untouched on an update -- it's a cosmetic label (only
+        # `kind="llm" + enabled` matters for resolution), and always defaulting
+        # the caller's `engine` param to "custom" here would stomp a more
+        # specific tag (e.g. "ollama") set when the entry was first created.
+        await model_registry_store.set_fields(
+            entry["id"], base_url=base_url, api_key=api_key, model_id=model
+        )
+    else:
+        await model_registry_store.create(
+            kind="llm", engine=engine, model_id=model, label="Conversation LLM",
+            base_url=base_url, api_key=api_key,
+        )
 
 
-def reset_active_llm_config() -> None:
-    """Revert to the .env-configured conversation LLM."""
-    global _active_base_url, _active_api_key, _active_model
-    _active_base_url = _active_api_key = _active_model = None
+async def reset_active_llm_config() -> None:
+    """Turn off the conversation LLM (disables the currently-enabled entry --
+    conversation falls back to the built-in echo responder)."""
+    from app.services.model_registry.store import model_registry_store
+
+    entry = await _active_llm_entry()
+    if entry:
+        await model_registry_store.set_fields(entry["id"], enabled=False)
 
 
 async def resolve_llm_override_from_registry(engine: str, model: str) -> tuple[str, str] | None:
     """Look up a Model Registry entry (kind="llm") for (engine, model). If it
     exists and carries its own api_key, its (base_url, api_key) take priority
-    over a profile's inline llm.base_url/api_key or the system-wide
-    conversation_llm config -- this is what lets an admin set the key once,
-    per model, in Model Registry instead of duplicating it into every profile.
-    Returns None (no override) when engine/model are blank or no matching,
-    keyed entry exists -- callers should fall back to their prior behavior."""
+    over a profile's inline llm.base_url/api_key -- this is what lets an admin
+    set the key once, per model, in Model Registry instead of duplicating it
+    into every profile. Returns None (no override) when engine/model are blank
+    or no matching, keyed entry exists -- callers should fall back to their
+    prior behavior."""
     if not engine or not model:
         return None
     from app.services.model_registry.store import model_registry_store
@@ -306,37 +326,38 @@ def resolve_system_prompt(system_prompt: str | None, voice_optimized: bool = Fal
     return prompt
 
 
-def build_responder() -> Responder:
-    base_url = get_active_llm_base_url()
+async def build_responder() -> Responder:
+    base_url = await get_active_llm_base_url()
     if base_url:
         return OpenAICompatResponder(
             base_url=base_url,
-            api_key=get_active_llm_api_key(),
-            model=get_active_llm_model(),
+            api_key=await get_active_llm_api_key(),
+            model=await get_active_llm_model(),
             system_prompt=resolve_system_prompt(None),
-            timeout=system_config_store.get().conversation_llm.conversation_llm_timeout_seconds,
+            timeout=system_config_store.get().conversation.llm_timeout_seconds,
         )
     return EchoResponder()
 
 
-def build_responder_ex(
+async def build_responder_ex(
     base_url: str | None = None,
     api_key: str | None = None,
     model: str | None = None,
     system_prompt: str | None = None,
     voice_optimized: bool = False,
 ) -> Responder:
-    """Build a responder with optional overrides; falls back to .env defaults.
+    """Build a responder with optional overrides; falls back to the active
+    Model Registry LLM entry.
 
-    Passing None for any arg uses the current global active config value.
+    Passing None for any arg uses the current active config value.
     """
-    effective_url = base_url if base_url is not None else get_active_llm_base_url()
+    effective_url = base_url if base_url is not None else await get_active_llm_base_url()
     if effective_url:
         return OpenAICompatResponder(
             base_url=effective_url,
-            api_key=api_key if api_key is not None else get_active_llm_api_key(),
-            model=model if model is not None else get_active_llm_model(),
+            api_key=api_key if api_key is not None else await get_active_llm_api_key(),
+            model=model if model is not None else await get_active_llm_model(),
             system_prompt=resolve_system_prompt(system_prompt, voice_optimized),
-            timeout=system_config_store.get().conversation_llm.conversation_llm_timeout_seconds,
+            timeout=system_config_store.get().conversation.llm_timeout_seconds,
         )
     return EchoResponder()

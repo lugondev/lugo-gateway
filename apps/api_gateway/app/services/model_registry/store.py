@@ -13,7 +13,7 @@ def _entry_dict(e: ModelRegistryEntry) -> dict:
     return {
         "id": e.id, "kind": e.kind, "engine": e.engine, "model_id": e.model_id,
         "label": e.label, "enabled": e.enabled, "stage": e.stage,
-        "api_key": e.api_key, "base_url": e.base_url,
+        "api_key": e.api_key, "base_url": e.base_url, "config": e.config or {},
     }
 
 
@@ -49,8 +49,16 @@ class ModelRegistryStore:
         """Force the next access to reload from the DB. Tests call this when
         they repoint the DB at a fresh file (see tests/conftest.py::_tmp_db) --
         without it, a lazily-loaded cache from a previous test's DB would
-        silently leak into the next one."""
+        silently leak into the next one.
+
+        Also replaces `_lock`: each pytest-asyncio test runs its own event
+        loop, and an `asyncio.Lock` first acquired under a now-closed loop
+        raises "bound to a different event loop" (or, depending on timing,
+        hangs) if a later test's loop tries to acquire it -- see
+        asyncio.mixins._LoopBoundMixin. A fresh Lock binds to whichever loop
+        acquires it next."""
         self._by_id = None
+        self._lock = asyncio.Lock()
 
     async def list_all(self) -> list[dict]:
         await self._ensure_loaded()
@@ -66,6 +74,19 @@ class ModelRegistryStore:
     async def get(self, entry_id: str) -> dict | None:
         await self._ensure_loaded()
         return self._by_id.get(entry_id)
+
+    async def find_enabled(self, kind: str, engine: str | None = None) -> dict | None:
+        """The single enabled entry for this kind (optionally scoped to one
+        engine) -- the "active" config source convention used by kinds with
+        no per-profile selection (e.g. the default conversation LLM). If more
+        than one entry is enabled, the first found wins; callers should treat
+        multiple-enabled as a UI misconfiguration to fix, not rely on the
+        tie-break order."""
+        await self._ensure_loaded()
+        for entry in self._by_id.values():
+            if entry["kind"] == kind and entry["enabled"] and (engine is None or entry["engine"] == engine):
+                return entry
+        return None
 
     async def has_key_for_engine(self, kind: str, engine: str) -> bool:
         """True if any enabled entry for this (kind, engine) has a non-empty api_key."""
@@ -85,12 +106,15 @@ class ModelRegistryStore:
         stage: str = "stable",
         api_key: str = "",
         base_url: str = "",
+        config: dict | None = None,
+        enabled: bool = True,
     ) -> dict:
         await self._ensure_loaded()
         async with db_session() as s:
             row = ModelRegistryEntry(
                 id=str(uuid.uuid4()), kind=kind, engine=engine, model_id=model_id,
-                label=label, enabled=True, stage=stage, api_key=api_key, base_url=base_url,
+                label=label, enabled=enabled, stage=stage, api_key=api_key, base_url=base_url,
+                config=config or {},
             )
             s.add(row)
             await s.commit()

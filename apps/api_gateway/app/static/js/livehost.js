@@ -1,6 +1,5 @@
 import { el, wsUrl, restoreAndBind, savePref } from "./helpers.js";
 import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
-import { getPreproc } from "./system-config.js";
 
 export const lh = {
   ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null,
@@ -279,8 +278,6 @@ export async function startLhSession() {
   const ttsProfile = el("lh-tts-profile")?.value;
   if (ttsProfile) params += `&tts_profile=${encodeURIComponent(ttsProfile)}`;
   if (el("lh-language").value.trim()) params += `&language=${encodeURIComponent(el("lh-language").value.trim())}`;
-  const cpp = getPreproc();
-  params += `&denoise=${cpp.denoise}&vad=${cpp.vad}&vad_backend=${encodeURIComponent(cpp.backend)}`;
 
   lh.opusMode = !!el("lh-opus")?.checked && lhOpusSupported();
   if (el("lh-opus")?.checked && !lh.opusMode) {

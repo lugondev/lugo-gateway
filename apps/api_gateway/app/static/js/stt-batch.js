@@ -1,6 +1,5 @@
 import { el, print } from "./helpers.js";
 import { createMicCapture } from "./audio-capture.js";
-import { getPreproc } from "./system-config.js";
 
 export let sttBatchRecorder = null;
 export let sttRecordedBlob = null;
@@ -69,10 +68,6 @@ el("stt-submit").addEventListener("click", async () => {
   }
   form.append("engine", el("stt-engine").value || "vosk");
   if (el("stt-language").value.trim()) form.append("language", el("stt-language").value.trim());
-  const pp = getPreproc();
-  form.append("denoise", pp.denoise ? "true" : "false");
-  form.append("vad", pp.vad ? "true" : "false");
-  form.append("vad_backend", pp.backend);
 
   print(sttResult, `Transcribing ${file ? "file" : "recording"}...`);
   try {

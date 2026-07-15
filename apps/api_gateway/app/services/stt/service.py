@@ -8,7 +8,6 @@ from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
 from app.services.stt.providers.remote_whisper_provider import RemoteWhisperProvider
 from app.services.stt.providers.vosk_provider import VoskProvider
 from app.services.stt.providers.qwen3_asr_provider import Qwen3AsrProvider
-from app.services.stt.providers.whisper_gemma_provider import WhisperGemmaProvider
 from app.services.stt.providers.whisper_mlx_provider import WhisperMlxProvider
 from app.services.stt.providers.whisper_provider import WhisperProvider
 from app.services.system_config import system_config_store
@@ -24,7 +23,6 @@ class STTService:
             "whisper_local": whisper_local,
             "whisper_mlx": WhisperMlxProvider(),
             "qwen3_asr": Qwen3AsrProvider(),
-            "whisper_gemma": WhisperGemmaProvider(),
             "whisper_service": RemoteWhisperProvider(
                 name="whisper_service",
                 base_url=remote_stt.whisper_service_base_url,
@@ -137,8 +135,6 @@ class STTService:
                     "available": q_ok,
                     "detail": provider.detail() if q_ok else "needs mlx-qwen3-asr (Apple) or qwen-asr (NVIDIA GPU)",
                 }
-            elif engine == "whisper_gemma":
-                entry = {"mode": "local", "available": fw_available, "detail": provider.detail()}
             elif engine in ("qwen3_asr_or", "whisper_or"):
                 # Per-model key (Model Registry entry), not a system-wide toggle --
                 # "configured" here means at least one enabled entry for this engine

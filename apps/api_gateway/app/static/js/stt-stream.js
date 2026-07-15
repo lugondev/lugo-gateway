@@ -1,6 +1,5 @@
 import { el, wsUrl } from "./helpers.js";
 import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
-import { getPreproc } from "./system-config.js";
 
 export const sttStream = { ws: null, capture: null, transcript: "", logLines: [] };
 
@@ -39,10 +38,8 @@ export async function startStreaming() {
   el("stt-stream-partial").textContent = "—";
   el("stt-stream-log").textContent = "";
 
-  const pp = getPreproc();
   let params = `engine=${encodeURIComponent(engine)}&sample_rate=${STREAM_SAMPLE_RATE}`;
   if (language) params += `&language=${encodeURIComponent(language)}`;
-  params += `&denoise=${pp.denoise}&vad=${pp.vad}&vad_backend=${encodeURIComponent(pp.backend)}`;
 
   let capture;
   try {

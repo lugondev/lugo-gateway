@@ -81,12 +81,15 @@ def _collect_state() -> tuple[set, set]:
     return installed, active
 
 
-def _augment_config_flags(caps: Capabilities) -> None:
+async def _augment_config_flags(caps: Capabilities) -> None:
     """Remote/online entries are 'available' when their endpoint is configured."""
+    from app.services.model_registry.store import model_registry_store
+
     remote_stt = system_config_store.get().remote_stt
     caps.modules["whisper_service"] = bool(remote_stt.whisper_service_base_url)
     caps.modules["eventlab"] = bool(remote_stt.eventlab_base_url)
-    caps.modules["online_llm"] = bool(system_config_store.get().conversation_llm.conversation_llm_base_url)
+    llm_entry = await model_registry_store.find_enabled(kind="llm")
+    caps.modules["online_llm"] = bool(llm_entry and llm_entry["base_url"])
     # No system-wide OpenRouter key anymore -- each Model Registry entry has its
     # own (see model_registry_store.has_key_for_engine, async/DB-backed, not
     # reachable from this sync capability-detection path). Missing "openrouter"
@@ -95,9 +98,9 @@ def _augment_config_flags(caps: Capabilities) -> None:
     # did before -- the wizard just won't claim it's pre-configured.
 
 
-def recommend_all() -> dict:
+async def recommend_all() -> dict:
     caps = detect_capabilities()
-    _augment_config_flags(caps)
+    await _augment_config_flags(caps)
     installed, active = _collect_state()
 
     categories: dict = {"stt": [], "tts": [], "llm": [], "vad": []}

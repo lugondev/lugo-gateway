@@ -121,8 +121,6 @@ Every TTS request runs real synthesis; a failing engine reports an `error` event
 - **whisper_mlx**: PhoWhisper on the Apple-Silicon **GPU** via MLX — ~0.5s/utterance
   (~7× faster than CPU), same accuracy. Mac only; auto-falls back to `whisper`
   elsewhere. Build the model with `scripts/convert_phowhisper_mlx.sh`.
-- whisper_gemma: faster-whisper transcript refined by the conversation LLM (Gemma) —
-  fixes spelling/diacritics/punctuation. Falls back to raw Whisper text if no LLM.
 - whisper_service: Remote OpenAI-compatible Whisper endpoint.
 - eventlab: Remote provider using the same OpenAI-compatible transcription API.
 

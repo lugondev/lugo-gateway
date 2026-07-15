@@ -16,6 +16,7 @@ import { loadTtsProfiles } from "./tts-profiles.js";
 import { loadMcpServers } from "./mcp-servers.js";
 // Side-effect-only modules: they register DOM event listeners at import time but
 // export nothing consumed above, so import them for their side effects.
+import "./system-config.js";
 import "./tts-batch.js";
 import "./tts-stream.js";
 import "./sessions.js";

@@ -25,7 +25,10 @@ def test_validate_rejects_non_allowlist(monkeypatch):
 
 def test_validate_allows_known_when_enabled(monkeypatch):
     monkeypatch.setattr(settings, "allow_runtime_install", True)
-    for pkg in ("vieneu", "qwen_asr", "mlx_qwen3_asr", "silero_vad", "pyannote.audio"):
+    for pkg in (
+        "vieneu", "qwen_asr", "mlx_qwen3_asr", "silero_vad", "pyannote.audio",
+        "qwen_tts", "voxcpm", "edge_tts",
+    ):
         install_manager.validate(pkg)  # must not raise
 
 

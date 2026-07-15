@@ -87,8 +87,6 @@ async def system_status() -> dict:
 
 def _mask_system_config(config: SystemConfig) -> dict:
     data = config.model_dump()
-    if data["conversation_llm"].get("conversation_llm_api_key"):
-        data["conversation_llm"]["conversation_llm_api_key"] = "***"
     if data["remote_stt"].get("whisper_service_api_key"):
         data["remote_stt"]["whisper_service_api_key"] = "***"
     if data["remote_stt"].get("eventlab_api_key"):
@@ -120,10 +118,6 @@ def _merge_system_config(current: SystemConfig, payload: SystemConfig) -> System
     def _keep_if_blank_or_masked(new_value: str, old_value: str) -> str:
         return old_value if (not new_value or new_value == "***") else new_value
 
-    update["conversation_llm"]["conversation_llm_api_key"] = _keep_if_blank_or_masked(
-        update["conversation_llm"]["conversation_llm_api_key"],
-        current.conversation_llm.conversation_llm_api_key,
-    )
     update["remote_stt"]["whisper_service_api_key"] = _keep_if_blank_or_masked(
         update["remote_stt"]["whisper_service_api_key"],
         current.remote_stt.whisper_service_api_key,
@@ -200,7 +194,7 @@ async def list_models() -> dict:
             "whisper": whisper_manager.snapshot(),
             "omnivoice": tts["omnivoice"],
             "vieneu": tts["vieneu"],
-            "llm": llm_manager.snapshot(),
+            "llm": await llm_manager.snapshot(),
             "tts_engines": tts_engines,
             "install_enabled": settings.allow_runtime_install,
         },
@@ -307,7 +301,7 @@ async def stop_llm() -> dict:
 
 @router.post("/models/llm/select")
 async def select_llm(payload: LlmModelRequest) -> dict:
-    llm_manager.select(payload.model)
+    await llm_manager.select(payload.model)
     return {"success": True, "data": {"active": payload.model}}
 
 

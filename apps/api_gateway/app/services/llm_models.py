@@ -1,11 +1,12 @@
 """Conversation LLM (Ollama) model management.
 
-Talks to a local Ollama daemon's native API (derived from
-CONVERSATION_LLM_BASE_URL by stripping the trailing ``/v1``):
+Talks to a local Ollama daemon's native API (derived from the active Model
+Registry `kind="llm"` entry's base_url by stripping the trailing ``/v1``):
 - list installed models      GET  /api/tags
 - pull (download) a model     POST /api/pull   (streams progress)
 - delete a model              DELETE /api/delete
-Active selection is a runtime override on the conversation responder.
+Active selection updates that same registry entry (see responder.py's
+set_active_llm_config).
 """
 
 import asyncio
@@ -18,7 +19,11 @@ import subprocess
 import httpx
 
 from app.core.errors import AppError
-from app.services.conversation.responder import get_active_llm_model, set_active_llm_config
+from app.services.conversation.responder import (
+    _active_llm_entry,
+    get_active_llm_model,
+    set_active_llm_config,
+)
 from app.services.system_config import system_config_store
 
 logger = logging.getLogger(__name__)
@@ -26,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 def _ollama_bin() -> str | None:
     candidates = [
-        system_config_store.get().conversation_llm.ollama_bin,
+        system_config_store.get().engines.ollama_bin,
         shutil.which("ollama"),
         "/opt/homebrew/opt/ollama/bin/ollama",
     ]
@@ -44,15 +49,20 @@ LLM_SUGGESTIONS = [
 ]
 
 
-def _ollama_base() -> str:
-    base = system_config_store.get().conversation_llm.conversation_llm_base_url.rstrip("/")
+async def _active_llm_base_url() -> str:
+    entry = await _active_llm_entry()
+    return entry["base_url"] if entry else ""
+
+
+async def _ollama_base() -> str:
+    base = (await _active_llm_base_url()).rstrip("/")
     return base[:-3].rstrip("/") if base.endswith("/v1") else base
 
 
-def _is_remote_endpoint() -> bool:
+async def _is_remote_endpoint() -> bool:
     """True when base_url points at a cloud API (not localhost/LAN Ollama)."""
     from urllib.parse import urlparse
-    host = urlparse(system_config_store.get().conversation_llm.conversation_llm_base_url).hostname or ""
+    host = urlparse(await _active_llm_base_url()).hostname or ""
     return bool(host) and host not in ("localhost", "127.0.0.1", "0.0.0.0", "::1") \
         and not host.startswith("192.168.") and not host.endswith(".local")
 
@@ -65,11 +75,11 @@ class LlmManager:
         if not _MODEL_RE.match(model):
             raise AppError(f"Invalid model name: {model!r}")
 
-    def available(self) -> bool:
-        if _is_remote_endpoint():
-            cl = system_config_store.get().conversation_llm
-            return bool(cl.conversation_llm_base_url and cl.conversation_llm_api_key)
-        base = _ollama_base()
+    async def available(self) -> bool:
+        if await _is_remote_endpoint():
+            entry = await _active_llm_entry()
+            return bool(entry and entry["base_url"] and entry["api_key"])
+        base = await _ollama_base()
         if not base:
             return False
         try:
@@ -77,8 +87,8 @@ class LlmManager:
         except httpx.HTTPError:
             return False
 
-    def _installed(self) -> list[dict]:
-        base = _ollama_base()
+    async def _installed(self) -> list[dict]:
+        base = await _ollama_base()
         try:
             resp = httpx.get(f"{base}/api/tags", timeout=3.0)
             resp.raise_for_status()
@@ -87,9 +97,9 @@ class LlmManager:
             return []
         return [{"model": m.get("name", ""), "size_bytes": m.get("size", 0)} for m in models]
 
-    def _running_models(self) -> set[str]:
+    async def _running_models(self) -> set[str]:
         """Models currently loaded in memory (Ollama /api/ps)."""
-        base = _ollama_base()
+        base = await _ollama_base()
         try:
             resp = httpx.get(f"{base}/api/ps", timeout=2.0)
             resp.raise_for_status()
@@ -97,17 +107,17 @@ class LlmManager:
         except httpx.HTTPError:
             return set()
 
-    def snapshot(self) -> dict:
-        remote = _is_remote_endpoint()
-        available = self.available()
-        installed = self._installed() if (available and not remote) else []
-        running = self._running_models() if (available and not remote) else set()
+    async def snapshot(self) -> dict:
+        remote = await _is_remote_endpoint()
+        available = await self.available()
+        installed = await self._installed() if (available and not remote) else []
+        running = await self._running_models() if (available and not remote) else set()
         names = {m["model"] for m in installed}
-        active = get_active_llm_model()
+        active = await get_active_llm_model()
         return {
             "available": available,
             "remote": remote,
-            "base_url": system_config_store.get().conversation_llm.conversation_llm_base_url,
+            "base_url": await _active_llm_base_url(),
             "active": active,
             "running": active in running,
             "installed": [
@@ -131,7 +141,7 @@ class LlmManager:
         if self._jobs.get(model, {}).get("state") == "downloading":
             return
         self._jobs[model] = {"state": "downloading", "progress": 0.0, "status": "starting", "error": None}
-        base = _ollama_base()
+        base = await _ollama_base()
         if not base:
             self._jobs[model] = {
                 "state": "error", "progress": 0.0, "status": "error",
@@ -168,17 +178,18 @@ class LlmManager:
         if total:
             job["progress"] = round(completed / total, 4) if completed else 0.0
 
-    def select(self, model: str) -> None:
+    async def select(self, model: str) -> None:
         self.validate(model)
         # Selecting a local model also pins the conversation to the Ollama endpoint,
         # overriding any stale online (e.g. OpenAI) base_url so the model and endpoint
         # can never mismatch (which surfaces as "model not found" errors).
-        cl = system_config_store.get().conversation_llm
-        base = cl.conversation_llm_base_url or "http://localhost:11434/v1"
-        set_active_llm_config(base, cl.conversation_llm_api_key, model)
+        entry = await _active_llm_entry()
+        base = (entry["base_url"] if entry else "") or "http://localhost:11434/v1"
+        api_key = entry["api_key"] if entry else ""
+        await set_active_llm_config(base, api_key, model, engine="ollama")
 
     async def _is_up(self) -> bool:
-        base = _ollama_base()
+        base = await _ollama_base()
         if not base:
             return False
         try:
@@ -189,7 +200,7 @@ class LlmManager:
 
     async def _warm(self, model: str) -> bool:
         """Load the model into memory so the first conversation reply isn't slow."""
-        base = _ollama_base()
+        base = await _ollama_base()
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 resp = await client.post(
@@ -204,8 +215,9 @@ class LlmManager:
     async def start_service(self, warm: bool = True) -> dict:
         """Ensure the Ollama (OpenAI-compatible) service is running; optionally warm
         the active model. Spawns `ollama serve` detached when not reachable."""
-        if not system_config_store.get().conversation_llm.conversation_llm_base_url:
-            raise AppError("conversation_llm.conversation_llm_base_url is not set")
+        base_url = await _active_llm_base_url()
+        if not base_url:
+            raise AppError("No conversation LLM configured -- add/enable one in Model Registry (kind=llm)")
 
         started = False
         if not await self._is_up():
@@ -226,14 +238,14 @@ class LlmManager:
             if not await self._is_up():
                 raise AppError("Ollama did not become ready in time")
 
-        active = get_active_llm_model()
+        active = await get_active_llm_model()
         warmed = await self._warm(active) if warm else False
         return {
             "available": True,
             "started": started,
             "warmed": warmed,
             "active": active,
-            "base_url": system_config_store.get().conversation_llm.conversation_llm_base_url,
+            "base_url": base_url,
         }
 
     async def stop(self) -> dict:
@@ -254,7 +266,7 @@ class LlmManager:
 
     async def delete(self, model: str) -> None:
         self.validate(model)
-        base = _ollama_base()
+        base = await _ollama_base()
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.request("DELETE", f"{base}/api/delete", json={"name": model})

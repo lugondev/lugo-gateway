@@ -8,6 +8,7 @@ explicit startup hook.
 from __future__ import annotations
 
 import asyncio
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -27,10 +28,25 @@ _initialized = False
 
 
 def configure(url: str | None = None) -> None:
-    """(Re)point the DB at a URL. Tests pass a tmp path; prod uses settings."""
-    global _engine, _factory, _initialized
+    """(Re)point the DB at a URL. Tests pass a tmp path; prod uses settings.
+
+    Each test's pytest-asyncio run gets its own event loop, and the aiosqlite
+    connections opened against the *previous* engine are still tied to the
+    *previous* (now-closed) loop. `sync_engine.dispose()` alone doesn't close
+    those async connections properly, leaving a stale one for the garbage
+    collector to finalize later -- sometimes mid-query in a later test, which
+    manifests as a hang rather than a clean error. Dispose the old engine
+    async (`asyncio.run` is safe here: this is only ever called from a plain
+    sync fixture, never from inside a running loop) so no connection survives
+    into the next test's loop.
+    """
+    global _engine, _factory, _initialized, _init_lock
     if _engine is not None:
-        _engine.sync_engine.dispose()
+        try:
+            asyncio.run(_engine.dispose())
+        except RuntimeError:
+            # Already inside a running loop somehow -- best-effort fallback.
+            _engine.sync_engine.dispose()
     url = url or settings.database_url
     if url.startswith("sqlite"):
         db_file = url.split("///", 1)[-1]
@@ -39,6 +55,10 @@ def configure(url: str | None = None) -> None:
     _engine = create_async_engine(url)
     _factory = async_sessionmaker(_engine, expire_on_commit=False)
     _initialized = False
+    # A fresh lock too -- an asyncio.Lock first acquired under a now-closed
+    # event loop raises "bound to a different event loop" if reused under a
+    # new one (see asyncio.mixins._LoopBoundMixin).
+    _init_lock = asyncio.Lock()
 
 
 async def _ensure_column(conn, table: str, column: str, ddl_type: str) -> None:
@@ -69,6 +89,7 @@ async def init_db() -> None:
             await _ensure_column(conn, "memory_profile_docs", "user_id", "VARCHAR(36)")
             await _ensure_column(conn, "model_registry_entries", "api_key", "VARCHAR(256) DEFAULT ''")
             await _ensure_column(conn, "model_registry_entries", "base_url", "VARCHAR(256) DEFAULT ''")
+            await _ensure_column(conn, "model_registry_entries", "config", "JSON DEFAULT '{}'")
         _initialized = True
 
 

@@ -1,6 +1,6 @@
 """Common model-variant registry for STT engines that support multiple sizes.
 
-Bridges whisper_manager (whisper/whisper_local/whisper_gemma all share the same
+Bridges whisper_manager (whisper/whisper_local share the same
 process-global active whisper model — see whisper_provider.get_active_whisper_model)
 and Qwen3-ASR's own module-level active-model global, so profile-driven model
 selection (SttConfig.model) can validate/select/list against either engine the
@@ -52,7 +52,6 @@ qwen3_asr_model_registry = Qwen3AsrModelRegistry()
 STT_MODEL_REGISTRIES: dict[str, object] = {
     "whisper": whisper_manager,
     "whisper_local": whisper_manager,
-    "whisper_gemma": whisper_manager,
     "qwen3_asr": qwen3_asr_model_registry,
 }
 
@@ -76,7 +75,7 @@ def resolve_default_stt_model(engine: str) -> str | None:
     """The model id a session should snapshot when its profile/query didn't pin
     one — whatever this engine's process-global default currently is. None for
     engines with no variant registry (single fixed model, e.g. vosk/whisper_mlx)."""
-    if engine in ("whisper", "whisper_local", "whisper_gemma"):
+    if engine in ("whisper", "whisper_local"):
         return get_active_whisper_model()
     if engine == "qwen3_asr":
         return get_active_qwen3_asr_model()

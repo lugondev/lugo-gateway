@@ -214,7 +214,7 @@ class ConversationSession:
                 self.audio_out = "url"
                 logger.warning("client requested opus output but server has no libopus; using url")
 
-        self.responder = build_responder_ex(
+        self.responder = await build_responder_ex(
             base_url=llm_base_url,
             api_key=llm_api_key,
             model=llm_model,
@@ -226,7 +226,7 @@ class ConversationSession:
 
         # Detail strings so the UI can show exactly WHICH models are active this session.
         if hasattr(self.stt_provider, "detail"):
-            stt_detail = self.stt_provider.detail()  # whisper_mlx / whisper_gemma expose this
+            stt_detail = self.stt_provider.detail()  # whisper_mlx / qwen3_asr expose this
         elif cfg.stt_engine in {"whisper", "whisper_local"}:
             stt_detail = get_active_whisper_model()
         else:
