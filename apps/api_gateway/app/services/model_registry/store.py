@@ -88,6 +88,32 @@ class ModelRegistryStore:
                 return entry
         return None
 
+    def find_sync(self, kind: str, engine: str, model_id: str) -> dict | None:
+        """Synchronous, cache-only equivalent of `find()` for call sites that
+        can't `await` -- provider code that builds a model off the event loop
+        via `asyncio.to_thread`, or module-level singletons constructed at
+        import time before anything has awaited this store. Returns None if
+        the cache hasn't been warmed yet (nothing has awaited any store
+        method since process start / last `invalidate()`) -- callers must
+        treat that exactly like "no matching entry", the same fallback they
+        already need for a genuinely-missing entry."""
+        if self._by_id is None:
+            return None
+        for entry in self._by_id.values():
+            if entry["kind"] == kind and entry["engine"] == engine and entry["model_id"] == model_id:
+                return entry
+        return None
+
+    def find_enabled_sync(self, kind: str, engine: str | None = None) -> dict | None:
+        """Synchronous, cache-only equivalent of `find_enabled()` -- see
+        `find_sync` for why a sync path is needed."""
+        if self._by_id is None:
+            return None
+        for entry in self._by_id.values():
+            if entry["kind"] == kind and entry["enabled"] and (engine is None or entry["engine"] == engine):
+                return entry
+        return None
+
     async def has_key_for_engine(self, kind: str, engine: str) -> bool:
         """True if any enabled entry for this (kind, engine) has a non-empty api_key."""
         await self._ensure_loaded()

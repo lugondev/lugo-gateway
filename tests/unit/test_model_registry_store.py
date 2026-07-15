@@ -125,3 +125,26 @@ async def test_set_fields_update_is_visible_via_find_without_a_reload(store, mon
     monkeypatch.setattr("app.services.model_registry.store.db_session", _boom)
     found = await store.find("stt", "whisper", "medium")
     assert found["api_key"] == "sk-updated"
+
+
+def test_find_sync_returns_none_before_cache_warmed():
+    store = ModelRegistryStore()
+    assert store.find_sync("stt", "whisper_local", "") is None
+    assert store.find_enabled_sync("stt", "whisper_local") is None
+
+
+@pytest.mark.asyncio
+async def test_find_sync_reads_the_warmed_cache():
+    store = ModelRegistryStore()
+    created = await store.create("stt", "whisper_local", "", "Whisper Local", config={"device": "cuda"})
+    assert store.find_sync("stt", "whisper_local", "") == created
+    assert store.find_enabled_sync("stt", "whisper_local") == created
+    assert store.find_enabled_sync("stt", "qwen3_asr") is None
+
+
+@pytest.mark.asyncio
+async def test_find_enabled_sync_skips_disabled_entries():
+    store = ModelRegistryStore()
+    entry = await store.create("tts", "omnivoice", "k2-fsa/OmniVoice", "OmniVoice")
+    await store.set_fields(entry["id"], enabled=False)
+    assert store.find_enabled_sync("tts", "omnivoice") is None
