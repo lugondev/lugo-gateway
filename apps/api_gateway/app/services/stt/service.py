@@ -3,6 +3,7 @@ from pathlib import Path
 
 from app.core.deps import module_available
 from app.core.errors import EngineNotFoundError
+from app.services.model_registry.resolve import resolve_remote_stt_config
 from app.services.stt.base import STTProvider
 from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
 from app.services.stt.providers.remote_whisper_provider import RemoteWhisperProvider
@@ -10,13 +11,12 @@ from app.services.stt.providers.vosk_provider import VoskProvider
 from app.services.stt.providers.qwen3_asr_provider import Qwen3AsrProvider
 from app.services.stt.providers.whisper_mlx_provider import WhisperMlxProvider
 from app.services.stt.providers.whisper_provider import WhisperProvider
-from app.services.system_config import system_config_store
 
 
 class STTService:
     def __init__(self) -> None:
         whisper_local = WhisperProvider()
-        remote_stt = system_config_store.get().remote_stt
+        remote_stt = resolve_remote_stt_config()
         self.providers: dict[str, STTProvider] = {
             "vosk": VoskProvider(),
             "whisper": whisper_local,
@@ -49,10 +49,11 @@ class STTService:
             ),
         }
 
-    def reinit_remote_providers(self, remote_stt) -> None:
+    def reinit_remote_providers(self) -> None:
         """Rebuild whisper_service/eventlab/qwen3_asr_or/whisper_or with fresh
         settings — these providers cache base_url/api_key/model/timeout as
         instance attributes at construction and never re-read afterward."""
+        remote_stt = resolve_remote_stt_config()
         self.providers["whisper_service"] = RemoteWhisperProvider(
             name="whisper_service",
             base_url=remote_stt.whisper_service_base_url,
@@ -99,7 +100,7 @@ class STTService:
         whisper_cached = whisper_manager._cached(active_whisper)
         whisper_detail = active_whisper + (" · cached" if whisper_cached else " · downloads on first use")
 
-        remote_stt = system_config_store.get().remote_stt
+        remote_stt = resolve_remote_stt_config()
         remote = {
             "whisper_service": (remote_stt.whisper_service_base_url, remote_stt.whisper_service_model),
             "eventlab": (remote_stt.eventlab_base_url, remote_stt.eventlab_model),

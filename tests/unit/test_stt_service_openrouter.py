@@ -38,24 +38,27 @@ async def test_list_engines_reports_configured_openrouter_independently_per_engi
     assert entries["whisper_or"]["available"] is False
 
 
-def test_reinit_remote_providers_rebuilds_whisper_service_and_eventlab():
-    from app.services.system_config import RemoteSttConfig
+@pytest.mark.asyncio
+async def test_reinit_remote_providers_rebuilds_whisper_service_and_eventlab():
     from app.services.stt.providers.remote_whisper_provider import RemoteWhisperProvider
 
     svc = STTService()
     original_whisper_service = svc.providers["whisper_service"]
     original_eventlab = svc.providers["eventlab"]
 
-    new_cfg = RemoteSttConfig(
-        whisper_service_base_url="https://new-endpoint.example/v1",
-        whisper_service_api_key="new-key",
-        whisper_service_model="whisper-2",
-        eventlab_base_url="https://eventlab.example/v1",
-        eventlab_api_key="ev-key",
-        eventlab_model="whisper-1",
-        remote_stt_timeout_seconds=15.0,
+    # Rebuild reads fresh from the Model Registry now, so seed the entries
+    # it'll resolve instead of handing it a RemoteSttConfig directly.
+    await model_registry_store.create(
+        "stt", "whisper_service", "whisper-2", "Whisper Service",
+        base_url="https://new-endpoint.example/v1", api_key="new-key",
+        config={"timeout_seconds": 15.0},
     )
-    svc.reinit_remote_providers(new_cfg)
+    await model_registry_store.create(
+        "stt", "eventlab", "whisper-1", "Eventlab",
+        base_url="https://eventlab.example/v1", api_key="ev-key",
+    )
+
+    svc.reinit_remote_providers()
 
     assert svc.providers["whisper_service"] is not original_whisper_service
     assert isinstance(svc.providers["whisper_service"], RemoteWhisperProvider)

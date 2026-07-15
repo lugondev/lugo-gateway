@@ -9,7 +9,6 @@ from app.core.settings import settings
 from app.services.recommend.capabilities import Capabilities, detect_capabilities
 from app.services.recommend.catalog import CANDIDATES
 from app.services.recommend.recommender import rank
-from app.services.system_config import system_config_store
 
 
 def _safe(fn, default):
@@ -83,9 +82,10 @@ def _collect_state() -> tuple[set, set]:
 
 async def _augment_config_flags(caps: Capabilities) -> None:
     """Remote/online entries are 'available' when their endpoint is configured."""
+    from app.services.model_registry.resolve import resolve_remote_stt_config
     from app.services.model_registry.store import model_registry_store
 
-    remote_stt = system_config_store.get().remote_stt
+    remote_stt = resolve_remote_stt_config()
     caps.modules["whisper_service"] = bool(remote_stt.whisper_service_base_url)
     caps.modules["eventlab"] = bool(remote_stt.eventlab_base_url)
     llm_entry = await model_registry_store.find_enabled(kind="llm")
