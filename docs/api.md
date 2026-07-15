@@ -29,7 +29,7 @@ Browser playground (static HTML/JS at `/static`).
 ## STT — Speech to Text
 
 ### `GET /v1/stt/engines`
-List configured engines.
+List configured engines and their availability.
 
 ```json
 {
@@ -37,15 +37,19 @@ List configured engines.
   "data": [
     { "engine": "vosk", "mode": "local", "available": true, "configured": true, "detail": "vosk-model-small-en-us-0.15" },
     { "engine": "whisper", "mode": "local", "available": true, "configured": true, "detail": "small · cached" },
-    { "engine": "whisper_service", "mode": "remote", "available": false, "configured": false, "detail": null }
+    { "engine": "whisper_service", "mode": "remote", "available": true, "configured": true, "detail": "whisper-1" }
   ]
 }
 ```
 
 `available` reflects whether the engine is usable now: Vosk needs its model on disk,
 whisper needs faster-whisper installed, `whisper_mlx` needs mlx + a built model
-(Apple Silicon), remote engines need a base URL. `detail` is the specific
-model/version. Clients should list only `available` engines.
+(Apple Silicon), remote engines need a Model Registry entry with valid credentials.
+`detail` is the specific model/version. Clients should list only `available` engines.
+
+**Remote STT configuration:** To enable `whisper_service` or `eventlab`, create a Model Registry
+entry via `POST /v1/model_registry` with `kind="stt"`, `engine="whisper_service"` (or
+`"eventlab"`), and supply `base_url` and `api_key` (see Model Registry section).
 
 ### `POST /v1/stt/warm?engine=<engine>`
 Preload a heavy model into memory (~10–20s the first time; cached after). The UI
@@ -311,9 +315,15 @@ message and `wakeup` shape already reserve room for these.
 ## TTS — Text to Speech
 
 ### `GET /v1/tts/engines`
-Lists TTS engines with `available`, `detail` (model/version), `mock`, `default`.
-Engines: `omnivoice` (24 kHz, multilingual, run via its own venv subprocess) and
-`vieneu` (VieNeu-TTS v3 turbo, 48 kHz, Vietnamese, `pip install vieneu`).
+List configured TTS engines.
+
+Returns engines with `available`, `detail` (model/version), `mock`, `default` fields.
+Available engines: `omnivoice` (24 kHz, multilingual, subprocess-based), `vieneu` (VieNeu-TTS v3 turbo,
+48 kHz, Vietnamese), and others defined via Model Registry.
+
+**OmniVoice configuration:** To use OmniVoice, create a Model Registry entry via `POST /v1/model_registry`
+with `kind="tts"`, `engine="omnivoice"`, and optional engine-specific config in the `config` dict
+(e.g. `device`, `dtype`). See Model Registry section for details.
 
 ### `GET /v1/tts/voices?engine=vieneu`
 Lists VieNeu preset voices `[{ "label", "voice" }]`.
@@ -387,6 +397,184 @@ TTS job event sequence:
 Aggregated runtime status: app env, STT engines (+ remote `configured`), TTS mock flag
 and OmniVoice presence, whisper-local cache state, active Vosk model + installed Vosk
 models, and artifact count/size.
+
+### `GET /v1/system/config`
+Fetch the system configuration (preprocessing, conversation tuning, engine defaults).
+
+Response `data`:
+```json
+{
+  "base_context": "...",
+  "engines": {
+    "default_stt_engine": "vosk",
+    "default_tts_engine": "omnivoice",
+    "default_tts_engine_voice": "",
+    "extra_warmup_stt_engines": "",
+    "extra_warmup_tts_engines": "",
+    "warmup_on_startup": true,
+    "warmup_startup_timeout_s": 180,
+    "ollama_bin": ""
+  },
+  "stt_local": {
+    "stt_model_dir": "models/stt",
+    "vosk_model_path": "models/stt/vosk-model-small-en-us-0.15",
+    "vosk_model_base_url": "https://alphacephei.com/vosk/models",
+    "stt_stream_sample_rate": 16000,
+    "whisper_local_model": "phowhisper-medium",
+    "whisper_vad_filter": true,
+    "whisper_beam_size": 1,
+    "whisper_condition_on_previous_text": false,
+    "whisper_initial_prompt": "",
+    "stt_glossary_path": "",
+    "stt_profile": "",
+    "whisper_mlx_model_path": "models/stt/phowhisper-medium-mlx",
+    "qwen3_asr_model": "Qwen/Qwen3-ASR-0.6B",
+    "stt_segment_long_enabled": false,
+    "stt_segment_min_seconds": 30.0,
+    "stt_segment_concurrency": 4
+  },
+  "conversation": { ... },
+  "preprocessing": { ... }
+}
+```
+
+Key changes from earlier API versions:
+- **Remote STT config** (`whisper_service`, `eventlab`) is no longer stored in SystemConfig.
+  Configure remote STT engines via `POST /v1/model_registry` with `kind="stt"` entries (see below).
+- **OmniVoice TTS config** is no longer stored in SystemConfig. Configure OmniVoice via
+  `POST /v1/model_registry` with `kind="tts"` entries and store engine-specific settings in the
+  `config` dict.
+- **stt_local device/compute_type fields** have been removed. Configure device & compute_type
+  per STT-local engine via Model Registry entries (`kind="stt"`, `engine="whisper_local"` or
+  `engine="qwen3_asr"`, etc.), stored in the `config` dict.
+
+`stt_local` now holds only model paths, defaults, and tuning parameters (not per-engine device config).
+
+### `PUT /v1/system/config`
+Update the system configuration. Send a partial or full body; absent fields retain their current
+values. Secret fields (`pyannote_auth_token`) that are blank or `"***"` are not updated.
+
+---
+
+## Model Registry
+
+The **Model Registry** stores engine configurations for STT, TTS, and LLM providers. Each entry
+binds an engine to credentials, connection details, and engine-specific parameters.
+
+### `GET /v1/model_registry`
+List all model registry entries.
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "whisper_service_prod",
+      "kind": "stt",
+      "engine": "whisper_service",
+      "model_id": "whisper-1",
+      "label": "Whisper API (prod)",
+      "stage": "stable",
+      "enabled": true,
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "sk-...abc",
+      "config": { }
+    },
+    {
+      "id": "qwen3_asr_local",
+      "kind": "stt",
+      "engine": "qwen3_asr",
+      "model_id": "Qwen/Qwen3-ASR-0.6B",
+      "label": "Qwen3 ASR (0.6B)",
+      "stage": "stable",
+      "enabled": true,
+      "base_url": "",
+      "api_key": "",
+      "config": {
+        "device": "mps",
+        "compute_type": "float16"
+      }
+    },
+    {
+      "id": "omnivoice_standard",
+      "kind": "tts",
+      "engine": "omnivoice",
+      "model_id": "k2-fsa/OmniVoice",
+      "label": "OmniVoice",
+      "stage": "stable",
+      "enabled": true,
+      "base_url": "",
+      "api_key": "",
+      "config": {
+        "device": "mps",
+        "dtype": "float16"
+      }
+    }
+  ]
+}
+```
+
+Fields:
+- `kind` — `"stt"`, `"tts"`, or `"llm"`
+- `engine` — provider name, e.g. `whisper_service`, `eventlab`, `qwen3_asr`, `whisper_local`, `omnivoice`, `vieneu`, `openai`
+- `model_id` — model identifier (HF repo, OpenAI model name, etc.)
+- `label` — human-readable label for the UI
+- `stage` — `"stable"` or `"experimental"`
+- `enabled` — whether the entry is active
+- `base_url` — for remote (STT/LLM) providers; OpenAI-compatible base URL
+- `api_key` — masked on read (e.g. `sk-...abc`); updated only if non-blank
+- `config` — engine-specific parameters dict (device, compute_type, dtype, timeout, etc.)
+
+### `POST /v1/model_registry`
+Create a new model registry entry.
+
+Request body:
+```json
+{
+  "kind": "stt",
+  "engine": "whisper_service",
+  "model_id": "whisper-1",
+  "label": "Whisper API",
+  "stage": "stable",
+  "base_url": "https://api.openai.com/v1",
+  "api_key": "sk-...",
+  "config": {}
+}
+```
+
+The endpoint validates the configuration by making a test call to the provider (e.g. transcribing
+a silent WAV for STT, synthesizing sample text for TTS, or querying a chat endpoint for LLM).
+If validation fails → `400` with the provider's error detail.
+
+On success, returns the created entry with a masked `api_key`.
+
+### `PATCH /v1/model_registry/{id}`
+Update a model registry entry (partial update).
+
+Request body:
+```json
+{
+  "enabled": false,
+  "stage": "experimental",
+  "config": { "device": "cuda" }
+}
+```
+
+Fields to update:
+- `enabled` — toggle entry on/off
+- `stage` — change to `"stable"` or `"experimental"`
+- `base_url` — update endpoint URL (for remote providers)
+- `api_key` — update credentials; blank or absent means "keep existing"
+- `config` — merge into existing engine-specific config dict
+
+If the entry is not found → `404`. On success, returns the updated entry with a masked `api_key`.
+
+**Side effects:** Updating certain entries triggers runtime reinitialization:
+- `kind="stt"` with `engine="whisper_service"` or `engine="eventlab"` → reinit remote STT providers
+- `kind="stt"` with `engine="qwen3_asr"` and `config` changed → clear model cache
+- `kind="tts"` with `engine="omnivoice"` → reset OmniVoice subprocess
+
+---
 
 ### `GET /v1/models`
 Vosk and Whisper model catalogs and state:
