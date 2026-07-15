@@ -33,7 +33,10 @@ def _patch_conversation(monkeypatch, **overrides):
 
 
 @pytest.fixture(autouse=True)
-def _hermetic(monkeypatch, tmp_path):
+def _local_hermetic(monkeypatch, tmp_path):
+    # Named distinctly from conftest.py's `_hermetic` so both autouse fixtures
+    # run (a same-named fixture here would shadow, not compose with, the
+    # global one -- see conftest.py's _hermetic for what that one handles).
     # Default: no spoken farewell (tests that want it opt in). Keeps the plain
     # idle tests from depending on a TTS provider.
     _patch_conversation(monkeypatch, conversation_stt_engine="stub-idle-stt", conversation_goodbye_text="")

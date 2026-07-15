@@ -11,8 +11,10 @@ from app.services.profiles.store import ProfileStore
 
 
 @pytest.fixture(autouse=True)
-def _hermetic(monkeypatch, tmp_path):
-    # conversation_llm_base_url and omnivoice_use_server now live on
+def _local_hermetic(monkeypatch, tmp_path):
+    # Named distinctly from conftest.py's `_hermetic` so both autouse fixtures
+    # run (a same-named fixture here would shadow, not compose with, the
+    # global one). conversation_llm_base_url and omnivoice_use_server live on
     # system_config_store (Task 3 / Task 7), not Settings; the module-level
     # conftest._hermetic fixture already zeroes/disables them.
     fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
@@ -155,8 +157,8 @@ async def test_chat_uses_model_registry_key_when_profile_engine_and_model_match(
     assert captured["model"] == "openrouter/some-model"
 
 
-def test_disabled_mcp_server_tools_not_fetched(client, monkeypatch, _hermetic):
-    _, servers = _hermetic
+def test_disabled_mcp_server_tools_not_fetched(client, monkeypatch, _local_hermetic):
+    _, servers = _local_hermetic
     servers.upsert(McpServer(name="off", url="http://off.test", enabled=False))
     mock_pool = AsyncMock()
     mock_pool.get_tools = AsyncMock(return_value=[{"name": "t", "description": "d"}])
@@ -166,8 +168,8 @@ def test_disabled_mcp_server_tools_not_fetched(client, monkeypatch, _hermetic):
     mock_pool.get_tools.assert_not_called()
 
 
-def test_enabled_mcp_server_tools_are_fetched(client, monkeypatch, _hermetic):
-    _, servers = _hermetic
+def test_enabled_mcp_server_tools_are_fetched(client, monkeypatch, _local_hermetic):
+    _, servers = _local_hermetic
     servers.upsert(McpServer(name="on", url="http://on.test", enabled=True))
     mock_pool = AsyncMock()
     mock_pool.get_tools = AsyncMock(return_value=[{"name": "t", "description": "d"}])
@@ -177,8 +179,8 @@ def test_enabled_mcp_server_tools_are_fetched(client, monkeypatch, _hermetic):
     mock_pool.get_tools.assert_called_once_with("http://on.test", headers={})
 
 
-def test_chat_endpoint_fetches_enabled_mcp_tools(client, monkeypatch, _hermetic):
-    _, servers = _hermetic
+def test_chat_endpoint_fetches_enabled_mcp_tools(client, monkeypatch, _local_hermetic):
+    _, servers = _local_hermetic
     servers.upsert(McpServer(name="on", url="http://on.test", enabled=True))
     mock_pool = AsyncMock()
     mock_pool.get_tools = AsyncMock(return_value=[{"name": "t", "description": "d"}])
@@ -188,8 +190,8 @@ def test_chat_endpoint_fetches_enabled_mcp_tools(client, monkeypatch, _hermetic)
     mock_pool.get_tools.assert_called_once_with("http://on.test", headers={})
 
 
-def test_chat_endpoint_skips_disabled_mcp_tools(client, monkeypatch, _hermetic):
-    _, servers = _hermetic
+def test_chat_endpoint_skips_disabled_mcp_tools(client, monkeypatch, _local_hermetic):
+    _, servers = _local_hermetic
     servers.upsert(McpServer(name="off", url="http://off.test", enabled=False))
     mock_pool = AsyncMock()
     mock_pool.get_tools = AsyncMock(return_value=[{"name": "t", "description": "d"}])

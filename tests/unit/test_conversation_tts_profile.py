@@ -39,7 +39,10 @@ class _RecordingTTS(TTSProvider):
 
 
 @pytest.fixture(autouse=True)
-def _hermetic(monkeypatch, tmp_path):
+def _local_hermetic(monkeypatch, tmp_path):
+    # Named distinctly from conftest.py's `_hermetic` so both autouse fixtures
+    # run (a same-named fixture here would shadow, not compose with, the
+    # global one).
     # conversation_llm_base_url now lives on system_config_store (Task 3), not
     # Settings; the module-level conftest._hermetic fixture already zeroes it.
     stt_service.providers["stub-conv-ttsp"] = _StubSTT()
@@ -81,8 +84,8 @@ def _run_one_turn(ws):
             return
 
 
-def test_tts_profile_linked_from_llm_profile_resolves_clone_fields(client, _hermetic):
-    stub_tts, profiles, tts_profiles = _hermetic
+def test_tts_profile_linked_from_llm_profile_resolves_clone_fields(client, _local_hermetic):
+    stub_tts, profiles, tts_profiles = _local_hermetic
     tts_profiles.upsert(TtsProfile(
         name="cloned-host", engine="stub-conv-ttsp-tts", voice_mode="clone",
         ref_audio_path="artifacts/refs/host.wav", ref_text="hello there",
@@ -104,8 +107,8 @@ def test_tts_profile_linked_from_llm_profile_resolves_clone_fields(client, _herm
     assert payload.language == "vi"
 
 
-def test_query_param_tts_profile_overrides_llm_profile(client, _hermetic):
-    stub_tts, profiles, tts_profiles = _hermetic
+def test_query_param_tts_profile_overrides_llm_profile(client, _local_hermetic):
+    stub_tts, profiles, tts_profiles = _local_hermetic
     tts_profiles.upsert(TtsProfile(name="from-llm-profile", engine="stub-conv-ttsp-tts", voice="v1"))
     tts_profiles.upsert(TtsProfile(
         name="pinned", engine="stub-conv-ttsp-tts", voice_mode="clone",
@@ -126,11 +129,11 @@ def test_query_param_tts_profile_overrides_llm_profile(client, _hermetic):
     assert payload.ref_text == "pinned voice"
 
 
-def test_profile_only_connection_resolves_stt_from_profile(client, _hermetic):
+def test_profile_only_connection_resolves_stt_from_profile(client, _local_hermetic):
     # A device connecting with just ?profile=<name> (no stt_engine/tts query params)
     # must resolve STT + TTS entirely from the profile — the whole point of the
     # profile-driven device config.
-    stub_tts, profiles, tts_profiles = _hermetic
+    stub_tts, profiles, tts_profiles = _local_hermetic
     tts_profiles.upsert(TtsProfile(name="host-voice", engine="stub-conv-ttsp-tts", voice="v1"))
     profiles.upsert(Profile(
         name="device",
@@ -150,8 +153,8 @@ def test_profile_only_connection_resolves_stt_from_profile(client, _hermetic):
     assert stub_tts.calls, "TTS provider was never invoked"
 
 
-def test_no_tts_profile_falls_back_to_legacy_query_params(client, _hermetic):
-    stub_tts, _profiles, _tts_profiles = _hermetic
+def test_no_tts_profile_falls_back_to_legacy_query_params(client, _local_hermetic):
+    stub_tts, _profiles, _tts_profiles = _local_hermetic
     url = (
         "/v1/conversation/stream?stt_engine=stub-conv-ttsp"
         "&tts_engine=stub-conv-ttsp-tts&voice=manual-voice&sample_rate=16000"

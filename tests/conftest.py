@@ -8,14 +8,52 @@ def _hermetic(monkeypatch):
     call a real LLM.
     """
     # Don't load real STT/TTS models when TestClient(app) runs the app lifespan.
-    # warmup_on_startup, conversation_llm_base_url, and omnivoice_use_server now
-    # live on system_config_store (Task 2 / Task 3 / Task 7), not Settings.
+    # warmup_on_startup and omnivoice_use_server live on system_config_store
+    # (Task 2 / Task 7), not Settings. The conversation LLM's base_url now
+    # lives in a Model Registry `kind="llm"` entry, not SystemConfig -- no
+    # override needed here since each test's fresh tmp DB (see `_tmp_db`
+    # below) starts with zero registry entries, so it's unconfigured/echo by
+    # construction unless a test explicitly enables one.
     # Patch the *instance method* (not `.set()`/the DB row) so this never writes
     # through to the shared config_system DB row -- system_config_store is a
     # true singleton shared by every test in the run (and by any test that
     # builds its own SystemConfigStore pointed at the same test DB, since the
     # row is keyed by a fixed id, not by path), so a `.set()` write here would
     # leak into and corrupt unrelated tests' expectations.
+    # Auth must default to disabled regardless of the developer's real .env --
+    # otherwise a dev machine with ADMIN_PASSWORD/ADMIN_BOOTSTRAP_PASSWORD set
+    # makes settings.auth_enabled True during the run, and every WS/HTTP test
+    # that doesn't itself log in gets rejected with 401/403. Tests that need
+    # auth explicitly monkeypatch these back on (see test_ws_auth.py,
+    # test_lugo_auth.py's `_with_password` fixture) -- since that happens
+    # later in the same test function, it overrides this default fine.
+    from app.core.settings import settings
+
+    monkeypatch.setattr(settings, "admin_password", "")
+    monkeypatch.setattr(settings, "admin_bootstrap_password", "")
+    monkeypatch.setattr(settings, "device_auth_token", "")
+
+    # Every WS session spawns an untracked `asyncio.create_task(_warm_and_notify())`
+    # (ConversationSession.__init__, livehost's connect handler) that calls
+    # warm_providers() -> provider.warm() in a thread. Boot-time warmup is
+    # already disabled above, so in tests this per-session warm is never a
+    # no-op cache-hit -- it always attempts a REAL model load for whatever the
+    # default STT/TTS engine is, for any test that doesn't itself override
+    # stt_engine/tts_engine to a stub. That real load can hang (e.g. a model
+    # fetch with no network route in a sandboxed run), and since the task is
+    # never tracked/cancelled, the WS test's TestClient portal thread then
+    # blocks forever joining it on teardown -- indistinguishable from a plain
+    # hung test. Neutralize only these two call sites (both bind the name at
+    # module-import time, so patching source app.services.warmup.warm_providers
+    # wouldn't reach them anyway) -- NOT the source function itself, since
+    # app.main._warm_default_engines() re-imports it fresh per call and
+    # test_warmup.py tests that boot-warmup path directly with spy providers.
+    async def _no_op_warm(*_providers: object) -> None:
+        return None
+
+    monkeypatch.setattr("app.services.conversation.session.warm_providers", _no_op_warm)
+    monkeypatch.setattr("app.api.routes.livehost.warm_providers", _no_op_warm)
+
     from app.services.system_config import system_config_store
 
     _real_get = system_config_store.get
@@ -24,7 +62,6 @@ def _hermetic(monkeypatch):
         cfg = _real_get()
         return cfg.model_copy(update={
             "engines": cfg.engines.model_copy(update={"warmup_on_startup": False}),
-            "conversation_llm": cfg.conversation_llm.model_copy(update={"conversation_llm_base_url": ""}),
             "omnivoice": cfg.omnivoice.model_copy(update={"omnivoice_use_server": False}),
         })
 

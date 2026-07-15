@@ -43,7 +43,7 @@ async def test_disabled_llm_model_rejected_on_profile_create():
     store = ModelRegistryStore()
     await store.create("llm", "openrouter", "qwen3-asr-flash", "Qwen3 ASR Flash", stage="stable")
     created = await store.find("llm", "openrouter", "qwen3-asr-flash")
-    await store.set_fields(created.id, enabled=False)
+    await store.set_fields(created["id"], enabled=False)
 
 
 def test_profile_create_rejects_disabled_llm_engine(client, _with_password):
