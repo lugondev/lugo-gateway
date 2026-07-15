@@ -225,7 +225,10 @@ export async function createModelRegistryEntry() {
   }
 }
 
-if (el("registry-add-kind")) el("registry-add-kind").addEventListener("change", _updateKindFields);
+if (el("registry-add-kind")) {
+  el("registry-add-kind").addEventListener("change", _updateKindFields);
+  _updateKindFields();
+}
 if (el("registry-add-btn")) el("registry-add-btn").addEventListener("click", createModelRegistryEntry);
 if (el("model-registry-refresh")) el("model-registry-refresh").addEventListener("click", loadModelRegistry);
 if (el("registry-filter-kind")) el("registry-filter-kind").addEventListener("change", renderModelRegistry);
