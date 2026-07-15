@@ -104,16 +104,14 @@ def test_reset_voice_ref_and_respawn_clears_voice_ref_and_kills_old_sidecar(monk
     _sidecar_lock) so mock subprocess.Popen and let the real _spawn_sidecar run,
     rather than mocking _spawn_sidecar itself (which would bypass the kill).
     omnivoice_use_server must be True here (the module-wide conftest fixture
-    defaults it to False) since the respawn is gated on server mode."""
-    from app.services.system_config import SystemConfigStore
+    forced the old system_config_store-backed default to False; now that the
+    provider reads via resolve_omnivoice_config() instead, that conftest
+    override no longer applies, but we still pin it explicitly for clarity)
+    since the respawn is gated on server mode."""
+    from app.services.system_config import OmnivoiceConfig
 
-    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
-    fresh.set(
-        fresh.get().model_copy(
-            update={"omnivoice": fresh.get().omnivoice.model_copy(update={"omnivoice_use_server": True})}
-        )
-    )
-    monkeypatch.setattr(ov_mod, "system_config_store", fresh)
+    cfg = OmnivoiceConfig(omnivoice_use_server=True)
+    monkeypatch.setattr(ov_mod, "resolve_omnivoice_config", lambda: cfg)
     monkeypatch.setattr(ov_mod.settings, "artifacts_dir", str(tmp_path))
     ov_mod._voice_ref.update({"path": "/tmp/fake.wav", "text": "old"})
 
@@ -156,15 +154,10 @@ def test_reset_voice_ref_and_respawn_skips_spawn_when_use_server_is_false(monkey
     that's never actually used until the app exits (mirrors warm()'s own gate
     on the same setting). The voice-ref cache must still be cleared
     unconditionally so a later switch back to server mode starts clean."""
-    from app.services.system_config import SystemConfigStore
+    from app.services.system_config import OmnivoiceConfig
 
-    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
-    fresh.set(
-        fresh.get().model_copy(
-            update={"omnivoice": fresh.get().omnivoice.model_copy(update={"omnivoice_use_server": False})}
-        )
-    )
-    monkeypatch.setattr(ov_mod, "system_config_store", fresh)
+    cfg = OmnivoiceConfig(omnivoice_use_server=False)
+    monkeypatch.setattr(ov_mod, "resolve_omnivoice_config", lambda: cfg)
 
     ov_mod._voice_ref.update({"path": "/tmp/fake.wav", "text": "old"})
     spawn_calls = []
@@ -234,3 +227,31 @@ def test_spawn_sidecar_serializes_concurrent_calls_via_lock(monkeypatch, tmp_pat
     assert survivor.killed is False
 
     ov_mod._sidecar_process = None  # reset module state
+
+
+@pytest.mark.asyncio
+async def test_available_reads_python_path_from_registry(monkeypatch, tmp_path):
+    from app.services.model_registry.store import model_registry_store
+    from app.services.system_config import OmnivoiceConfig, SystemConfig, system_config_store
+
+    # This dev machine has a real OmniVoice checkout with a real .venv/bin/python
+    # on disk, so SystemConfig's default omnivoice path would accidentally
+    # satisfy available() even if the provider never consulted the registry at
+    # all. Point system_config_store's default at a path that can't possibly
+    # exist so this test actually fails if `available()` ever regresses to
+    # reading system_config_store instead of resolve_omnivoice_config().
+    monkeypatch.setattr(
+        system_config_store, "get",
+        lambda: SystemConfig(
+            omnivoice=OmnivoiceConfig(omnivoice_path=str(tmp_path / "no-such-omnivoice-checkout"))
+        ),
+    )
+
+    fake_python = tmp_path / "python"
+    fake_python.write_text("")
+    await model_registry_store.create(
+        "tts", "omnivoice", "k2-fsa/OmniVoice", "OmniVoice",
+        config={"omnivoice_python": str(fake_python)},
+    )
+    provider = OmniVoiceProvider()
+    assert provider.available() is True

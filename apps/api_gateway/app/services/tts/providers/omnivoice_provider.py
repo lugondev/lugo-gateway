@@ -10,14 +10,14 @@ import httpx
 
 from app.core.settings import settings
 from app.schemas.tts import TTSRequest
-from app.services.system_config import system_config_store
+from app.services.model_registry.resolve import resolve_omnivoice_config
 from app.services.tts.base import RenderingTTSProvider
 
 logger = logging.getLogger(__name__)
 
 _SAMPLE_RATE = 24000  # OmniVoice audio tokenizer rate.
 
-# Runtime-selected model repo id; falls back to system_config_store. Reset on restart.
+# Runtime-selected model repo id; falls back to resolve_omnivoice_config(). Reset on restart.
 _active_model: str | None = None
 
 # Process-wide pinned voice reference {"path", "text"} cloned for every chunk.
@@ -47,7 +47,7 @@ _sidecar_lock = threading.Lock()
 
 
 def get_active_omnivoice_model() -> str:
-    return _active_model or system_config_store.get().omnivoice.omnivoice_model_id
+    return _active_model or resolve_omnivoice_config().omnivoice_model_id
 
 
 def set_active_omnivoice_model(model_id: str) -> None:
@@ -86,7 +86,7 @@ def reset_voice_ref_and_respawn() -> None:
     sidecar to refresh, so unconditionally spawning one here would start an
     orphan server process that's never actually used until the app exits."""
     _voice_ref.clear()
-    if not system_config_store.get().omnivoice.omnivoice_use_server:
+    if not resolve_omnivoice_config().omnivoice_use_server:
         return
     provider = OmniVoiceProvider()
     provider._spawn_sidecar()
@@ -97,7 +97,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
     sample_rate = _SAMPLE_RATE
 
     def available(self) -> bool:
-        return os.path.isfile(system_config_store.get().omnivoice.omnivoice_python_path)
+        return os.path.isfile(resolve_omnivoice_config().omnivoice_python_path)
 
     def detail(self) -> str:
         return get_active_omnivoice_model()
@@ -106,13 +106,13 @@ class OmniVoiceProvider(RenderingTTSProvider):
     async def _synth(
         self, text: str, *, instruct=None, ref_audio=None, ref_text=None, speed=None
     ) -> bytes:
-        if system_config_store.get().omnivoice.omnivoice_use_server:
+        if resolve_omnivoice_config().omnivoice_use_server:
             return await self._server_synth(text, instruct, ref_audio, ref_text, speed)
         return await self._cli_synth(text, instruct, ref_audio, ref_text, speed)
 
     async def _render_wav(self, payload: TTSRequest) -> bytes:
         logger.info("DEBUG_HANG _render_wav: text_len=%d", len(payload.text or ""))
-        omnivoice = system_config_store.get().omnivoice
+        omnivoice = resolve_omnivoice_config()
         instruct, ref_audio, ref_text = payload.instruct, payload.ref_audio_path, payload.ref_text
         if omnivoice.omnivoice_pin_voice and not ref_audio and not instruct:
             # Clone a fixed reference so every chunk shares exactly one voice.
@@ -131,7 +131,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
         async with _voice_ref_lock:
             if _voice_ref.get("path") and os.path.isfile(_voice_ref["path"]):
                 return _voice_ref
-            omnivoice = system_config_store.get().omnivoice
+            omnivoice = resolve_omnivoice_config()
             ref_dir = Path(settings.artifacts_dir).resolve()
             ref_dir.mkdir(parents=True, exist_ok=True)
             ref_path = str(ref_dir / "_omnivoice_voice_ref.wav")
@@ -144,7 +144,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
 
     # ---------------------------------------------------------------- server mode
     def _server_base(self) -> str:
-        omnivoice = system_config_store.get().omnivoice
+        omnivoice = resolve_omnivoice_config()
         return f"http://{omnivoice.omnivoice_server_host}:{omnivoice.omnivoice_server_port}"
 
     async def _server_up(self) -> bool:
@@ -160,7 +160,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
         # _sidecar_lock's definition for the race this guards against.
         with _sidecar_lock:
             _kill_sidecar_if_running()
-            omnivoice = system_config_store.get().omnivoice
+            omnivoice = resolve_omnivoice_config()
             # sidecar lives in services/tts/ (one level up from providers/)
             sidecar = Path(__file__).resolve().parent.parent / "omnivoice_sidecar.py"
             cmd = [
@@ -187,7 +187,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
     def warm(self) -> None:
         """Best-effort: start the sidecar early (fire-and-forget) so it loads while
         the user speaks, instead of paying the cold start on the first reply."""
-        if not system_config_store.get().omnivoice.omnivoice_use_server:
+        if not resolve_omnivoice_config().omnivoice_use_server:
             return
         try:
             if httpx.get(f"{self._server_base()}/health", timeout=1.0).status_code == 200:
@@ -200,7 +200,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
         if await self._server_up():
             return
         self._spawn_sidecar()
-        deadline = system_config_store.get().omnivoice.omnivoice_server_startup_seconds
+        deadline = resolve_omnivoice_config().omnivoice_server_startup_seconds
         waited = 0.0
         while waited < deadline:
             await asyncio.sleep(1.0)
@@ -211,7 +211,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
 
     async def _server_synth(self, text, instruct, ref_audio, ref_text, speed) -> bytes:
         await self._ensure_server()
-        omnivoice = system_config_store.get().omnivoice
+        omnivoice = resolve_omnivoice_config()
         body = {
             "text": text,
             "language": None,
@@ -239,7 +239,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
 
     # ---------------------------------------------------------------- CLI mode (fallback)
     def _build_cmd(self, text, instruct, ref_audio, ref_text, speed, output_path) -> list[str]:
-        omnivoice = system_config_store.get().omnivoice
+        omnivoice = resolve_omnivoice_config()
         cmd = [
             omnivoice.omnivoice_python_path, "-m", "omnivoice.cli.infer",
             "--model", get_active_omnivoice_model(), "--text", text, "--output", output_path,
@@ -258,7 +258,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
         return cmd
 
     async def _cli_synth(self, text, instruct, ref_audio, ref_text, speed) -> bytes:
-        omnivoice = system_config_store.get().omnivoice
+        omnivoice = resolve_omnivoice_config()
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             output_path = tmp.name
         try:
