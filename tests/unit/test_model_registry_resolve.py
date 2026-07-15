@@ -22,6 +22,24 @@ async def test_resolve_stt_local_device_reads_registry_config():
     assert resolve_stt_local_device("whisper_local") == {"device": "cuda", "compute_type": "float16"}
 
 
+@pytest.mark.asyncio
+async def test_resolve_stt_local_device_ignores_seed_governance_row():
+    """Regression guard: seed_known_models() creates one ENABLED row per known
+    model size under the same (kind="stt", engine="whisper_local") pair (e.g.
+    model_id="phowhisper-tiny", config={}) -- these must never shadow the
+    real model_id="" config row. Before the fix, resolve_stt_local_device()
+    used find_enabled_sync("stt", engine), which ignores model_id and would
+    return whichever of these two rows the cache happened to iterate first."""
+    await model_registry_store.create(
+        "stt", "whisper_local", "phowhisper-tiny", "PhoWhisper Tiny", config={},
+    )
+    await model_registry_store.create(
+        "stt", "whisper_local", "", "Whisper Local",
+        config={"device": "cuda", "compute_type": "float16"},
+    )
+    assert resolve_stt_local_device("whisper_local") == {"device": "cuda", "compute_type": "float16"}
+
+
 def test_resolve_omnivoice_config_defaults_when_no_entry():
     assert resolve_omnivoice_config() == OmnivoiceConfig()
 
@@ -29,14 +47,38 @@ def test_resolve_omnivoice_config_defaults_when_no_entry():
 @pytest.mark.asyncio
 async def test_resolve_omnivoice_config_reads_registry_entry():
     await model_registry_store.create(
-        "tts", "omnivoice", "k2-fsa/OmniVoice-custom", "OmniVoice",
-        config={"omnivoice_device": "mps", "omnivoice_dtype": "bfloat16"},
+        "tts", "omnivoice", "", "OmniVoice",
+        config={
+            "omnivoice_model_id": "k2-fsa/OmniVoice-custom",
+            "omnivoice_device": "mps",
+            "omnivoice_dtype": "bfloat16",
+        },
     )
     cfg = resolve_omnivoice_config()
     assert cfg.omnivoice_model_id == "k2-fsa/OmniVoice-custom"
     assert cfg.omnivoice_device == "mps"
     assert cfg.omnivoice_dtype == "bfloat16"
     assert cfg.omnivoice_server_host == "127.0.0.1"  # untouched default
+
+
+@pytest.mark.asyncio
+async def test_resolve_omnivoice_config_ignores_seed_governance_row():
+    """Regression guard: seed_known_models() creates one ENABLED
+    tts/omnivoice/omnivoice governance row (config={}) -- it must never
+    shadow the real model_id="" config row. Before the fix,
+    resolve_omnivoice_config() used find_enabled_sync("tts", "omnivoice"),
+    which ignores model_id and would return whichever of these two rows the
+    cache happened to iterate first."""
+    await model_registry_store.create(
+        "tts", "omnivoice", "omnivoice", "OmniVoice", config={},
+    )
+    await model_registry_store.create(
+        "tts", "omnivoice", "", "OmniVoice",
+        config={"omnivoice_model_id": "k2-fsa/OmniVoice-custom", "omnivoice_device": "mps"},
+    )
+    cfg = resolve_omnivoice_config()
+    assert cfg.omnivoice_model_id == "k2-fsa/OmniVoice-custom"
+    assert cfg.omnivoice_device == "mps"
 
 
 def test_resolve_remote_stt_config_defaults_when_no_entries():

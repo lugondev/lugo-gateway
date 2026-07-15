@@ -89,7 +89,7 @@ async def migrate_stt_local_device_to_registry() -> None:
     seed_known_models() already creates) from the current values. No-op once
     an enabled entry already exists for that engine."""
     stt_local_raw = system_config_store.get_raw_group("stt_local")
-    if await model_registry_store.find_enabled("stt", "whisper_local") is None:
+    if await model_registry_store.find("stt", "whisper_local", "") is None:
         await model_registry_store.create(
             "stt", "whisper_local", "", "Whisper Local (device/compute config)",
             config={
@@ -97,7 +97,7 @@ async def migrate_stt_local_device_to_registry() -> None:
                 "compute_type": stt_local_raw.get("whisper_local_compute_type", "int8"),
             },
         )
-    if await model_registry_store.find_enabled("stt", "qwen3_asr") is None:
+    if await model_registry_store.find("stt", "qwen3_asr", "") is None:
         await model_registry_store.create(
             "stt", "qwen3_asr", "", "Qwen3-ASR (device config)",
             config={"device": stt_local_raw.get("qwen3_asr_device", "")},
@@ -109,15 +109,17 @@ async def migrate_omnivoice_to_registry() -> None:
     SystemConfig.omnivoice -- removed from the schema (Task 7) in favor of a
     single Model Registry entry, so the legacy values (if any) are only
     reachable via the raw, still-persisted JSON group (see
-    SystemConfigStore.get_raw_group). No-op once an enabled tts/omnivoice
-    entry already exists."""
-    if await model_registry_store.find_enabled("tts", "omnivoice") is not None:
+    SystemConfigStore.get_raw_group). Seeded under the reserved model_id=""
+    sentinel (distinct from the tts/omnivoice/omnivoice governance row
+    seed_known_models() already creates) -- resolve_omnivoice_config() reads
+    omnivoice_model_id back out of `config`, so it must stay in there.
+    No-op once a model_id="" entry already exists."""
+    if await model_registry_store.find("tts", "omnivoice", "") is not None:
         return
     omnivoice = OmnivoiceConfig(**system_config_store.get_raw_group("omnivoice"))
     config = omnivoice.model_dump()
-    config.pop("omnivoice_model_id")  # lives in the entry's model_id column, not config
     await model_registry_store.create(
-        "tts", "omnivoice", omnivoice.omnivoice_model_id,
+        "tts", "omnivoice", "",
         "OmniVoice (migrated from System settings)",
         config=config,
     )

@@ -244,7 +244,7 @@ async def test_available_reads_python_path_from_registry(monkeypatch, tmp_path):
     fake_python = tmp_path / "python"
     fake_python.write_text("")
     await model_registry_store.create(
-        "tts", "omnivoice", "k2-fsa/OmniVoice", "OmniVoice",
+        "tts", "omnivoice", "", "OmniVoice",
         config={"omnivoice_python": str(fake_python)},
     )
     provider = OmniVoiceProvider()

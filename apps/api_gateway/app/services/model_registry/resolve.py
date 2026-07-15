@@ -17,8 +17,12 @@ from app.services.system_config import OmnivoiceConfig, RemoteSttConfig
 
 def resolve_stt_local_device(engine: str) -> dict:
     """{'device': str, 'compute_type': str} for a local STT engine (only
-    whisper_local uses compute_type; qwen3_asr's caller just ignores it)."""
-    entry = model_registry_store.find_enabled_sync("stt", engine)
+    whisper_local uses compute_type; qwen3_asr's caller just ignores it).
+    Looked up by the reserved model_id="" sentinel, which is distinct from
+    the per-model-size governance rows seed_known_models() creates under the
+    same (kind, engine) pair -- using find_enabled_sync here instead would
+    silently match one of those governance rows (empty config) instead."""
+    entry = model_registry_store.find_sync("stt", engine, "")
     config = (entry or {}).get("config") or {}
     return {
         "device": config.get("device", ""),
@@ -27,11 +31,15 @@ def resolve_stt_local_device(engine: str) -> dict:
 
 
 def resolve_omnivoice_config() -> OmnivoiceConfig:
-    entry = model_registry_store.find_enabled_sync("tts", "omnivoice")
+    """Looked up by the reserved model_id="" sentinel -- see
+    resolve_stt_local_device's docstring for why (seed_known_models() creates
+    a separate tts/omnivoice/omnivoice governance row that would otherwise be
+    ambiguous with this config row)."""
+    entry = model_registry_store.find_sync("tts", "omnivoice", "")
     if entry is None:
         return OmnivoiceConfig()
     config = entry.get("config") or {}
-    return OmnivoiceConfig(omnivoice_model_id=entry["model_id"]).model_copy(update=config)
+    return OmnivoiceConfig().model_copy(update=config)
 
 
 def resolve_remote_stt_config() -> RemoteSttConfig:

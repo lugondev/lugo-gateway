@@ -181,3 +181,40 @@ async def test_cache_key_uses_registry_device_and_compute_type(monkeypatch):
     )
     provider = whisper_provider.WhisperProvider()
     assert provider._cache_key("medium") == "medium:cuda:float16"
+
+
+@pytest.mark.asyncio
+async def test_cache_key_falls_back_to_cpu_when_no_registry_entry():
+    """No stt/whisper_local/"" config entry at all (e.g. resolve_stt_local_device
+    resolving an empty device because the migration was shadowed, or a genuinely
+    fresh install) must not leave the device empty -- faster-whisper's
+    WhisperModel(device="") is not a valid device string. whisper_models.py's
+    _warm() already guards this the same way (`device_cfg["device"] or "cpu"`)."""
+    from app.services.stt.providers import whisper_provider
+
+    provider = whisper_provider.WhisperProvider()
+    assert provider._cache_key("medium") == "medium:cpu:int8"
+
+
+def test_load_model_falls_back_to_cpu_when_no_registry_entry(monkeypatch):
+    """Same guard as test_cache_key_falls_back_to_cpu_when_no_registry_entry,
+    but for the actual WhisperModel(...) construction in _load_model -- the
+    call site that matters for the real "device resolves to '' instead of
+    'cpu'" bug found in final review."""
+    from app.services.stt.providers import whisper_provider
+
+    monkeypatch.setattr(whisper_provider, "resolve_whisper_model", lambda m: m)
+    captured = {}
+
+    class _Recording(_FakeModel):
+        def __init__(self, resolved_path, **kw):
+            captured.update(kw)
+            super().__init__(resolved_path, **kw)
+
+    import faster_whisper
+    monkeypatch.setattr(faster_whisper, "WhisperModel", _Recording)
+
+    provider = whisper_provider.WhisperProvider()
+    provider._load_model("medium")
+
+    assert captured["device"] == "cpu"

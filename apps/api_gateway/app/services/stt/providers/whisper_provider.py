@@ -66,7 +66,10 @@ class WhisperProvider(STTProvider):
 
     def _cache_key(self, model: str) -> str:
         device_cfg = resolve_stt_local_device("whisper_local")
-        return ":".join([model, device_cfg["device"], device_cfg["compute_type"]])
+        # Normalize with the same "cpu" fallback _load_model applies below --
+        # otherwise an unset device ("") and an explicitly-configured "cpu"
+        # (functionally identical) would cache under two different keys.
+        return ":".join([model, device_cfg["device"] or "cpu", device_cfg["compute_type"]])
 
     def _load_model(self, model: str | None = None):
         try:
@@ -84,7 +87,7 @@ class WhisperProvider(STTProvider):
                     device_cfg = resolve_stt_local_device("whisper_local")
                     _MODEL_CACHE[key] = WhisperModel(
                         resolve_whisper_model(model_name),
-                        device=device_cfg["device"],
+                        device=device_cfg["device"] or "cpu",
                         compute_type=device_cfg["compute_type"],
                     )
         return _MODEL_CACHE[key]

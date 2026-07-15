@@ -85,10 +85,39 @@ async def test_migrate_stt_local_device_seeds_whisper_local_and_qwen3_asr():
         "qwen3_asr_device": "mps",
     })
     await migrate_stt_local_device_to_registry()
-    whisper_entry = await model_registry_store.find_enabled("stt", "whisper_local")
-    qwen_entry = await model_registry_store.find_enabled("stt", "qwen3_asr")
+    whisper_entry = await model_registry_store.find("stt", "whisper_local", "")
+    qwen_entry = await model_registry_store.find("stt", "qwen3_asr", "")
     assert whisper_entry["config"] == {"device": "cuda", "compute_type": "float16"}
     assert qwen_entry["config"] == {"device": "mps"}
+
+
+@pytest.mark.asyncio
+async def test_migrate_stt_local_device_not_shadowed_by_seed_known_models_row():
+    """Regression guard for the exact bug found in final review: seed_known_models()
+    runs BEFORE this migration at boot and creates an ENABLED governance row per
+    known model size (e.g. model_id="phowhisper-medium", config={}) under the
+    same (kind="stt", engine="whisper_local") pair. The migration's guard used to
+    be find_enabled("stt", "whisper_local") -- which ignores model_id and would
+    see that governance row, conclude "already migrated", and skip creating its
+    own model_id="" config row entirely."""
+    await model_registry_store.create(
+        "stt", "whisper_local", "phowhisper-medium", "PhoWhisper Medium", config={},
+    )
+    await model_registry_store.create(
+        "stt", "qwen3_asr", "0.6b", "Qwen3-ASR 0.6B", config={},
+    )
+    _set_raw_group("stt_local", {
+        "whisper_local_device": "cuda", "whisper_local_compute_type": "float16",
+        "qwen3_asr_device": "mps",
+    })
+    await migrate_stt_local_device_to_registry()
+
+    whisper_config_entry = await model_registry_store.find("stt", "whisper_local", "")
+    qwen_config_entry = await model_registry_store.find("stt", "qwen3_asr", "")
+    assert whisper_config_entry is not None, "migration was shadowed by the seed governance row"
+    assert whisper_config_entry["config"] == {"device": "cuda", "compute_type": "float16"}
+    assert qwen_config_entry is not None, "migration was shadowed by the seed governance row"
+    assert qwen_config_entry["config"] == {"device": "mps"}
 
 
 @pytest.mark.asyncio
@@ -97,7 +126,28 @@ async def test_migrate_omnivoice_seeds_from_existing_config():
         "omnivoice_device": "mps", "omnivoice_dtype": "bfloat16",
     })
     await migrate_omnivoice_to_registry()
-    entry = await model_registry_store.find_enabled("tts", "omnivoice")
-    assert entry["model_id"] == "k2-fsa/OmniVoice"
+    entry = await model_registry_store.find("tts", "omnivoice", "")
+    assert entry is not None
+    assert entry["model_id"] == ""
+    assert entry["config"]["omnivoice_model_id"] == "k2-fsa/OmniVoice"  # default, kept in config
     assert entry["config"]["omnivoice_device"] == "mps"
     assert entry["config"]["omnivoice_dtype"] == "bfloat16"
+
+
+@pytest.mark.asyncio
+async def test_migrate_omnivoice_not_shadowed_by_seed_known_models_row():
+    """Regression guard for the exact bug found in final review: seed_known_models()
+    runs BEFORE this migration at boot and creates an ENABLED
+    tts/omnivoice/omnivoice governance row (config={}). The migration's guard
+    used to be find_enabled("tts", "omnivoice") -- which ignores model_id and
+    would see that governance row, conclude "already migrated", and skip
+    creating its own model_id="" config row entirely."""
+    await model_registry_store.create("tts", "omnivoice", "omnivoice", "OmniVoice", config={})
+    _set_raw_group("omnivoice", {"omnivoice_device": "mps", "omnivoice_dtype": "bfloat16"})
+
+    await migrate_omnivoice_to_registry()
+
+    config_entry = await model_registry_store.find("tts", "omnivoice", "")
+    assert config_entry is not None, "migration was shadowed by the seed governance row"
+    assert config_entry["config"]["omnivoice_device"] == "mps"
+    assert config_entry["config"]["omnivoice_dtype"] == "bfloat16"
