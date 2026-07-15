@@ -61,3 +61,16 @@ async def test_resolve_remote_stt_config_reads_both_registry_entries():
     assert cfg.eventlab_base_url == "https://eventlab.example.com"
     assert cfg.eventlab_api_key == "sk-def"
     assert cfg.remote_stt_timeout_seconds == 90.0
+
+
+@pytest.mark.asyncio
+async def test_resolve_remote_stt_config_honors_explicit_zero_timeout():
+    """Verify that an explicitly-configured timeout_seconds: 0.0 is honored,
+    not silently treated as "not configured" and replaced by the default."""
+    await model_registry_store.create(
+        "stt", "whisper_service", "gpt-4o-transcribe", "Whisper Service",
+        base_url="https://api.example.com/v1", api_key="sk-abc",
+        config={"timeout_seconds": 0.0},
+    )
+    cfg = resolve_remote_stt_config()
+    assert cfg.remote_stt_timeout_seconds == 0.0

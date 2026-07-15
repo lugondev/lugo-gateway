@@ -50,10 +50,9 @@ def resolve_remote_stt_config() -> RemoteSttConfig:
             "eventlab_api_key": eventlab.get("api_key", ""),
             "eventlab_model": eventlab.get("model_id") or "whisper-1",
         })
-    timeout = (
-        (whisper or {}).get("config", {}).get("timeout_seconds")
-        or (eventlab or {}).get("config", {}).get("timeout_seconds")
-    )
-    if timeout:
+    whisper_timeout = (whisper or {}).get("config", {}).get("timeout_seconds")
+    eventlab_timeout = (eventlab or {}).get("config", {}).get("timeout_seconds")
+    timeout = whisper_timeout if whisper_timeout is not None else eventlab_timeout
+    if timeout is not None:
         cfg = cfg.model_copy(update={"remote_stt_timeout_seconds": timeout})
     return cfg
