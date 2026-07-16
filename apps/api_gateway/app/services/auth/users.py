@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from sqlalchemy import select
@@ -43,9 +44,12 @@ class UserStore:
             ).scalar_one_or_none()
             if existing is not None:
                 raise UsernameTakenError(f"username '{username}' is already taken")
+            # PBKDF2 at 600k iterations is ~100-300ms of pure CPU -- off the
+            # loop, or every hash/verify stalls all live voice sessions.
+            password_hash = await asyncio.to_thread(hash_password, password)
             row = User(
                 id=str(uuid.uuid4()), username=username,
-                password_hash=hash_password(password), role=role,
+                password_hash=password_hash, role=role,
             )
             s.add(row)
             await s.commit()
@@ -63,7 +67,9 @@ class UserStore:
 
     async def verify_login(self, username: str, password: str) -> User | None:
         user = await self.get_by_username(username)
-        if user is None or not verify_password(password, user.password_hash):
+        if user is None:
+            return None
+        if not await asyncio.to_thread(verify_password, password, user.password_hash):
             return None
         return user
 
@@ -87,7 +93,7 @@ class UserStore:
             row = await s.get(User, user_id)
             if row is None:
                 return False
-            row.password_hash = hash_password(new_password)
+            row.password_hash = await asyncio.to_thread(hash_password, new_password)
             await s.commit()
             return True
 

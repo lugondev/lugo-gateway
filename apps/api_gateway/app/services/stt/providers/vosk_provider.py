@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import os
@@ -50,6 +51,13 @@ class VoskStream(STTStream):
         self._recognizer = KaldiRecognizer(_load_vosk_model(), sample_rate)
 
     async def accept(self, pcm: bytes) -> list[STTResult]:
+        # Kaldi decode is CPU work -- off the loop, or every other WS session
+        # stalls for the duration of each chunk's decode. Calls are serialized
+        # by the caller's `await`, so the recognizer is never used from two
+        # threads at once.
+        return await asyncio.to_thread(self._accept_sync, pcm)
+
+    def _accept_sync(self, pcm: bytes) -> list[STTResult]:
         if self._recognizer.AcceptWaveform(pcm):
             text = json.loads(self._recognizer.Result()).get("text", "").strip()
             if text:
@@ -61,7 +69,7 @@ class VoskStream(STTStream):
         return []
 
     async def finalize(self) -> STTResult | None:
-        text = json.loads(self._recognizer.FinalResult()).get("text", "").strip()
+        text = json.loads(await asyncio.to_thread(self._recognizer.FinalResult)).get("text", "").strip()
         if text:
             return STTResult(engine=self._engine_name, text=text, is_final=True)
         return None
@@ -73,6 +81,12 @@ class VoskProvider(STTProvider):
     async def transcribe_bytes(
         self, audio_bytes: bytes, language: str | None = None, model: str | None = None
     ) -> STTResult:
+        # Whole-utterance Kaldi decode (plus a multi-second model load on the
+        # first call) is CPU-bound -- run it off the loop like the other local
+        # providers (whisper/whisper_mlx/qwen3) already do.
+        return await asyncio.to_thread(self._transcribe_sync, audio_bytes)
+
+    def _transcribe_sync(self, audio_bytes: bytes) -> STTResult:
         try:
             from vosk import KaldiRecognizer
         except ImportError as exc:
