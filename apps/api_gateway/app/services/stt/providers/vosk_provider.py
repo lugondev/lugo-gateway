@@ -2,13 +2,29 @@ import asyncio
 import io
 import json
 import os
+import threading
 import wave
+from concurrent.futures import ThreadPoolExecutor
 
 from app.schemas.stt import STTResult
 from app.services.model_registry.resolve import resolve_stt_engine_config
 from app.services.stt.base import STTProvider, STTStream
 
 _MODEL_CACHE: dict[str, object] = {}
+# Decode now runs on worker threads (to_thread / the stream executor), so the
+# cold-cache check-then-insert below can race: without the lock two concurrent
+# first calls would BOTH run the multi-second, multi-hundred-MB Model() load
+# (transient double RAM -- OOM risk on the RPi target). Same double-checked
+# pattern as whisper_provider._MODEL_LOCK.
+_MODEL_LOCK = threading.Lock()
+
+# Per-frame stream decodes (16-50 dispatches/s, single-digit ms each, latency-
+# sensitive) get their own single thread instead of the shared to_thread pool,
+# where they would queue behind 100-300ms PBKDF2 hashes and whole-utterance
+# decodes whenever the pool is busy. One thread is enough: per-stream calls
+# are serialized by the caller's await, and Kaldi decode of a 20-60ms frame
+# is far faster than real time even with several concurrent sessions.
+_STREAM_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="vosk-stream")
 
 # Runtime-selected active Vosk model path; falls back to the Model Registry
 # engine-config sentinel row when unset. Reset on restart (not persisted).
@@ -37,39 +53,61 @@ def _load_vosk_model():
         )
 
     if model_path not in _MODEL_CACHE:
-        _MODEL_CACHE[model_path] = Model(model_path)
+        with _MODEL_LOCK:
+            if model_path not in _MODEL_CACHE:  # lost the race to another thread
+                _MODEL_CACHE[model_path] = Model(model_path)
     return _MODEL_CACHE[model_path]
 
 
 class VoskStream(STTStream):
-    """Native incremental decoding: emits partials, then finals per utterance."""
+    """Native incremental decoding: emits partials, then finals per utterance.
+
+    The recognizer (and with it the multi-second model load on a cold cache)
+    is built lazily on the first accept(), which runs on the stream executor:
+    __init__ is called synchronously on the event loop by the WS handler
+    (routes/stt.py open_stream), and vosk has no warm(), so an eager load
+    here would freeze every live session on the first stream after boot."""
 
     def __init__(self, engine_name: str, sample_rate: int) -> None:
-        from vosk import KaldiRecognizer
-
         self._engine_name = engine_name
-        self._recognizer = KaldiRecognizer(_load_vosk_model(), sample_rate)
+        self._sample_rate = sample_rate
+        self._recognizer = None
+
+    def _ensure_recognizer(self):
+        if self._recognizer is None:
+            from vosk import KaldiRecognizer
+
+            self._recognizer = KaldiRecognizer(_load_vosk_model(), self._sample_rate)
+        return self._recognizer
 
     async def accept(self, pcm: bytes) -> list[STTResult]:
         # Kaldi decode is CPU work -- off the loop, or every other WS session
         # stalls for the duration of each chunk's decode. Calls are serialized
         # by the caller's `await`, so the recognizer is never used from two
         # threads at once.
-        return await asyncio.to_thread(self._accept_sync, pcm)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_STREAM_EXECUTOR, self._accept_sync, pcm)
 
     def _accept_sync(self, pcm: bytes) -> list[STTResult]:
-        if self._recognizer.AcceptWaveform(pcm):
-            text = json.loads(self._recognizer.Result()).get("text", "").strip()
+        recognizer = self._ensure_recognizer()
+        if recognizer.AcceptWaveform(pcm):
+            text = json.loads(recognizer.Result()).get("text", "").strip()
             if text:
                 return [STTResult(engine=self._engine_name, text=text, is_final=True)]
             return []
-        partial = json.loads(self._recognizer.PartialResult()).get("partial", "").strip()
+        partial = json.loads(recognizer.PartialResult()).get("partial", "").strip()
         if partial:
             return [STTResult(engine=self._engine_name, text=partial, is_final=False)]
         return []
 
     async def finalize(self) -> STTResult | None:
-        text = json.loads(await asyncio.to_thread(self._recognizer.FinalResult)).get("text", "").strip()
+        if self._recognizer is None:
+            return None  # no audio ever accepted -- nothing to finalize
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_STREAM_EXECUTOR, self._finalize_sync)
+
+    def _finalize_sync(self) -> STTResult | None:
+        text = json.loads(self._recognizer.FinalResult()).get("text", "").strip()
         if text:
             return STTResult(engine=self._engine_name, text=text, is_final=True)
         return None

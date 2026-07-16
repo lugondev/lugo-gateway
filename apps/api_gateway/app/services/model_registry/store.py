@@ -110,20 +110,27 @@ class ModelRegistryStore:
         the cache hasn't been warmed yet (nothing has awaited any store
         method since process start / last `invalidate()`) -- callers must
         treat that exactly like "no matching entry", the same fallback they
-        already need for a genuinely-missing entry."""
-        if self._by_id is None:
+        already need for a genuinely-missing entry.
+
+        Runs on worker threads while the event-loop thread may mutate the
+        cache (create() inserts a key; invalidate() nulls the dict), so grab
+        a local reference and iterate a snapshot -- iterating the live dict
+        would raise "dictionary changed size during iteration"."""
+        by_id = self._by_id
+        if by_id is None:
             return None
-        for entry in self._by_id.values():
+        for entry in list(by_id.values()):
             if entry["kind"] == kind and entry["engine"] == engine and entry["model_id"] == model_id:
                 return _copy(entry)
         return None
 
     def find_enabled_sync(self, kind: str, engine: str | None = None) -> dict | None:
         """Synchronous, cache-only equivalent of `find_enabled()` -- see
-        `find_sync` for why a sync path is needed."""
-        if self._by_id is None:
+        `find_sync` for why a sync path is needed and why it snapshots."""
+        by_id = self._by_id
+        if by_id is None:
             return None
-        for entry in self._by_id.values():
+        for entry in list(by_id.values()):
             if entry["kind"] == kind and entry["enabled"] and (engine is None or entry["engine"] == engine):
                 return _copy(entry)
         return None

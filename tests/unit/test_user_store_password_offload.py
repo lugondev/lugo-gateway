@@ -4,6 +4,7 @@ These tests spy on the hash/verify entry points used by UserStore and assert
 they execute on a worker thread, not the loop thread.
 """
 
+import asyncio
 import threading
 
 import pytest
@@ -56,6 +57,27 @@ async def test_verify_login_verifies_off_the_event_loop(verify_threads):
     loop_thread = threading.get_ident()
     assert verify_threads, "verify_password was never called"
     assert all(t != loop_thread for t in verify_threads)
+
+
+async def test_concurrent_duplicate_signups_map_to_username_taken():
+    """The off-loop hash opened a 100-300ms window between the uniqueness
+    check and the INSERT: two concurrent signups for the same username both
+    passed the check and the loser surfaced a raw IntegrityError (HTTP 500)
+    instead of UsernameTakenError. The unique-constraint violation must be
+    mapped, and neither request may 500."""
+    from app.core.errors import UsernameTakenError
+
+    store = UserStore()
+    results = await asyncio.gather(
+        store.create("dupe", "pw-one"),
+        store.create("dupe", "pw-two"),
+        return_exceptions=True,
+    )
+
+    successes = [r for r in results if isinstance(r, dict)]
+    taken = [r for r in results if isinstance(r, UsernameTakenError)]
+    assert len(successes) == 1, f"expected exactly one winner, got {results!r}"
+    assert len(taken) == 1, f"loser must raise UsernameTakenError, got {results!r}"
 
 
 async def test_reset_password_hashes_off_the_event_loop(hash_threads):
