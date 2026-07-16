@@ -16,7 +16,7 @@ def test_catalog_has_openrouter_stt_candidates():
         assert c.size_gb is None
 
 
-def test_augment_config_flags_does_not_set_a_system_wide_openrouter_flag():
+async def test_augment_config_flags_does_not_set_a_system_wide_openrouter_flag():
     """No system-wide OpenRouter key anymore -- availability is per Model
     Registry entry (see test_stt_service_openrouter.py's has_key_for_engine
     coverage), not a global toggle. Capabilities.has() defaults an unset
@@ -24,6 +24,6 @@ def test_augment_config_flags_does_not_set_a_system_wide_openrouter_flag():
     whisper_or candidates above still resolves sensibly (not pre-configured)
     even though _augment_config_flags never sets it."""
     caps = detect_capabilities()
-    _augment_config_flags(caps)
+    await _augment_config_flags(caps)
     assert "openrouter" not in caps.modules
     assert caps.has("openrouter") is False
