@@ -1,24 +1,42 @@
 from starlette.requests import Request
 
-from app.core.actor import current_role, current_user_id
+from app.core.actor import Actor, current_role, current_user_id
 
 
-class _FakeRequest:
-    def __init__(self, session: dict):
-        self.session = session
+def _request(session: dict, actor: Actor | None = None) -> Request:
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "headers": [],
+        "session": session,
+        "state": {},
+    }
+    request = Request(scope)
+    if actor is not None:
+        request.state.actor = actor
+    return request
 
 
-def test_current_role_defaults_to_admin_when_session_empty():
-    assert current_role(_FakeRequest({})) == "admin"
+def test_session_path_unchanged_for_admin():
+    request = _request({"user_id": "u1", "role": "admin"})
+    assert current_user_id(request) == "u1"
+    assert current_role(request) == "admin"
 
 
-def test_current_role_returns_actual_role_when_present():
-    assert current_role(_FakeRequest({"role": "user"})) == "user"
+def test_session_missing_role_still_falls_back_to_admin():
+    """Hành vi dev-mode cũ giữ nguyên -- task này không sửa nhánh session."""
+    request = _request({"user_id": "u1"})
+    assert current_role(request) == "admin"
 
 
-def test_current_user_id_returns_none_when_absent():
-    assert current_user_id(_FakeRequest({})) is None
+def test_state_actor_takes_precedence_over_session():
+    request = _request({"user_id": "u1", "role": "admin"}, actor=Actor(user_id="u2", role="user"))
+    assert current_user_id(request) == "u2"
+    assert current_role(request) == "user"
 
 
-def test_current_user_id_returns_value_when_present():
-    assert current_user_id(_FakeRequest({"user_id": "u1"})) == "u1"
+def test_state_actor_with_empty_session():
+    request = _request({}, actor=Actor(user_id="u2", role="user"))
+    assert current_user_id(request) == "u2"
+    assert current_role(request) == "user"
