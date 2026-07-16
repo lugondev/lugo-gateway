@@ -161,7 +161,20 @@ async def lifespan(app: FastAPI):
                 "boot warm-up exceeded %ss — serving anyway; the first turn may be cold",
                 engine_defaults.warmup_startup_timeout_s,
             )
+
+    # Hourly artifact janitor: each TTS sentence writes a wav into artifacts/
+    # and nothing else deletes them. Reference kept (and cancelled on
+    # shutdown) so the task can't be GC'd mid-flight.
+    prune_task: asyncio.Task | None = None
+    if settings.artifacts_ttl_hours > 0:
+        from app.services.artifacts import prune_loop
+
+        prune_task = asyncio.create_task(
+            prune_loop(artifact_store, max_age_s=settings.artifacts_ttl_hours * 3600, interval_s=3600)
+        )
     yield
+    if prune_task is not None:
+        prune_task.cancel()
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)

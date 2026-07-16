@@ -1,4 +1,63 @@
-from app.services.artifacts import artifact_store
+import asyncio
+import os
+import time
+
+from app.services.artifacts import ArtifactStore, artifact_store, prune_loop
+
+
+def _age_file(path, seconds: float) -> None:
+    stale = time.time() - seconds
+    os.utime(path, (stale, stale))
+
+
+def test_prune_removes_only_files_older_than_max_age(tmp_path):
+    """Every TTS sentence writes a wav into artifacts/ and nothing ever deleted
+    them -- disk grew without bound. prune() reclaims files past the TTL while
+    leaving fresh ones (still referenced by live playback URLs) alone."""
+    store = ArtifactStore(str(tmp_path))
+    _, fresh_url = store.save_wav(b"fresh-wav")
+    old = tmp_path / "old.wav"
+    old.write_bytes(b"old-wav")
+    _age_file(old, seconds=7200)
+
+    removed = store.prune(max_age_s=3600)
+
+    assert removed == 1
+    assert not old.exists()
+    fresh_name = fresh_url.rsplit("/", 1)[-1]
+    assert (tmp_path / fresh_name).exists()
+
+
+def test_prune_ignores_subdirectories(tmp_path):
+    store = ArtifactStore(str(tmp_path))
+    sub = tmp_path / "keep-dir"
+    sub.mkdir()
+    _age_file(sub, seconds=7200)
+
+    assert store.prune(max_age_s=3600) == 0
+    assert sub.exists()
+
+
+async def test_prune_loop_prunes_periodically_and_sleeps_first(tmp_path):
+    """The loop sleeps BEFORE the first prune so that merely starting the app
+    (including test lifespans pointed at the real artifacts dir) doesn't
+    immediately delete files."""
+    store = ArtifactStore(str(tmp_path))
+    old = tmp_path / "old.wav"
+    old.write_bytes(b"old-wav")
+    _age_file(old, seconds=7200)
+
+    task = asyncio.create_task(prune_loop(store, max_age_s=3600, interval_s=0.02))
+    await asyncio.sleep(0)  # let the loop start; it must not have pruned yet
+    assert old.exists()
+
+    for _ in range(50):  # up to ~1s for the first interval to elapse
+        if not old.exists():
+            break
+        await asyncio.sleep(0.02)
+    task.cancel()
+
+    assert not old.exists()
 
 
 def test_save_mp3_writes_file_and_returns_url():

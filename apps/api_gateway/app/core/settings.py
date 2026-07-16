@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     allow_runtime_install: bool = True
 
     artifacts_dir: str = "artifacts"
+    # Generated audio artifacts older than this are pruned hourly (each TTS
+    # sentence writes one file; without pruning, disk grows without bound).
+    # 0 disables pruning. Old chat sessions' audio URLs 404 after their files
+    # are pruned -- raise this if long-lived playback history matters.
+    artifacts_ttl_hours: float = 24.0
 
     # LLM profiles + MCP tooling
     profiles_path: str = "profiles.json"
