@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from app.core.auth_guard import resolve_ws_identity
+from app.core.auth_guard import resolve_ws_identity, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
@@ -189,7 +189,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
     if identity is None:
         await websocket.close(code=4401, reason="unauthorized")
         return
-    await websocket.accept()
+    await websocket.accept(subprotocol=ws_subprotocol(websocket))
     requested_sid = websocket.query_params.get("session_id")
     session_id = requested_sid or str(uuid.uuid4())
     q = websocket.query_params

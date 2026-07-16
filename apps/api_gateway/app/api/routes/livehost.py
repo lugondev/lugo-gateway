@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from app.core.audio import pcm16_to_wav_bytes, wav_file_to_pcm16
-from app.core.auth_guard import resolve_ws_identity
+from app.core.auth_guard import resolve_ws_identity, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
@@ -85,7 +85,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
     if identity is None:
         await websocket.close(code=4401, reason="unauthorized")
         return
-    await websocket.accept()
+    await websocket.accept(subprotocol=ws_subprotocol(websocket))
     session_id = websocket.query_params.get("session_id") or str(uuid.uuid4())
     q = websocket.query_params
 

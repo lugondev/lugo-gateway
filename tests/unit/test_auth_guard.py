@@ -118,9 +118,15 @@ def test_guard_enforces_when_only_bootstrap_password_set(client, monkeypatch):
 
 
 class _FakeWebSocket:
-    def __init__(self, session: dict | None = None, query_params: dict | None = None):
+    def __init__(
+        self,
+        session: dict | None = None,
+        query_params: dict | None = None,
+        subprotocols: list | None = None,
+    ):
         self.session = session or {}
         self.query_params = query_params or {}
+        self.scope = {"subprotocols": subprotocols or []}
 
 
 @pytest.mark.asyncio

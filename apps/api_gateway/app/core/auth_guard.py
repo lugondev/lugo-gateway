@@ -112,6 +112,16 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
     if not settings.auth_enabled:
         return WsIdentity(user_id=None, device_id=None)
 
+    bearer = _bearer_from_subprotocols(websocket)
+    if bearer:
+        user_id = verify_access_token(bearer)
+        if not user_id:
+            return None
+        user = await user_store.get_by_id(user_id)
+        if user is None or user.disabled:
+            return None
+        return WsIdentity(user_id=user.id, device_id=None)
+
     session_user_id = websocket.session.get("user_id")
     if session_user_id:
         user = await user_store.get_by_id(session_user_id)
@@ -136,3 +146,19 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
     if settings.device_auth_token and hmac.compare_digest(token, settings.device_auth_token):
         return WsIdentity(user_id=None, device_id=None)
     return None
+
+
+def _bearer_from_subprotocols(websocket: WebSocket) -> str | None:
+    """Client chào: Sec-WebSocket-Protocol: bearer, <token>. Token nằm ở phần
+    tử ngay sau "bearer"."""
+    protocols = websocket.scope.get("subprotocols") or []
+    for index, proto in enumerate(protocols):
+        if proto == "bearer" and index + 1 < len(protocols):
+            return protocols[index + 1]
+    return None
+
+
+def ws_subprotocol(websocket: WebSocket) -> str | None:
+    """Subprotocol mà server phải echo lại khi accept. Trình duyệt đóng kết
+    nối nếu server không echo đúng cái nó chào."""
+    return "bearer" if _bearer_from_subprotocols(websocket) else None

@@ -11,7 +11,7 @@ from app.core.audio import (
     read_wav,
     wav_duration_seconds,
 )
-from app.core.auth_guard import resolve_ws_identity
+from app.core.auth_guard import resolve_ws_identity, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.schemas.common import StreamEvent
@@ -155,7 +155,7 @@ async def stt_stream(websocket: WebSocket) -> None:
     if identity is None:
         await websocket.close(code=4401, reason="unauthorized")
         return
-    await websocket.accept()
+    await websocket.accept(subprotocol=ws_subprotocol(websocket))
     session_id = str(uuid.uuid4())
     channel = f"session:{session_id}"
     sequence = 0
