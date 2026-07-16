@@ -38,10 +38,10 @@ def test_endpoint_403_when_disabled(monkeypatch):
     assert resp.status_code == 403
 
 
-def test_recommend_reflects_install_enabled(monkeypatch):
+async def test_recommend_reflects_install_enabled(monkeypatch):
     from app.services.recommend.service import recommend_all
 
     monkeypatch.setattr(settings, "allow_runtime_install", False)
-    assert recommend_all()["install_enabled"] is False
+    assert (await recommend_all())["install_enabled"] is False
     monkeypatch.setattr(settings, "allow_runtime_install", True)
-    assert recommend_all()["install_enabled"] is True
+    assert (await recommend_all())["install_enabled"] is True

@@ -18,7 +18,14 @@ def _safe(fn, default):
         return default
 
 
-def _collect_state() -> tuple[set, set]:
+async def _safe_async(fn, default):
+    try:
+        return await fn()
+    except Exception:  # noqa: BLE001
+        return default
+
+
+async def _collect_state() -> tuple[set, set]:
     """Ids the managers report as installed and as active (matches catalog ids)."""
     installed: set = set()
     active: set = set()
@@ -60,18 +67,19 @@ def _collect_state() -> tuple[set, set]:
                 active.add(mid)
         active.add(vieneu.get("active"))
 
-    def llm() -> None:
+    async def llm() -> None:
         from app.services.llm_models import llm_manager
 
-        snap = llm_manager.snapshot()
+        snap = await llm_manager.snapshot()
         for m in snap.get("installed", []):
             installed.add(m.get("model"))
             if m.get("active"):
                 active.add(m.get("model"))
         active.add(snap.get("active"))
 
-    for fn in (whisper, vosk, tts, llm):
+    for fn in (whisper, vosk, tts):
         _safe(fn, None)
+    await _safe_async(llm, None)
 
     # Built-in VAD is always available.
     installed.add("energy")
@@ -101,7 +109,7 @@ async def _augment_config_flags(caps: Capabilities) -> None:
 async def recommend_all() -> dict:
     caps = detect_capabilities()
     await _augment_config_flags(caps)
-    installed, active = _collect_state()
+    installed, active = await _collect_state()
 
     categories: dict = {"stt": [], "tts": [], "llm": [], "vad": []}
     for cat in categories:
