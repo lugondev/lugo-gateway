@@ -127,6 +127,45 @@ async def test_set_fields_update_is_visible_via_find_without_a_reload(store, mon
     assert found["api_key"] == "sk-updated"
 
 
+@pytest.mark.asyncio
+async def test_mutating_returned_entries_does_not_corrupt_the_cache(store):
+    """Routes mask api_key on the dicts the store hands back (see
+    routes/model_registry.py). If those are the cached objects themselves,
+    the mask overwrites the real key in the cache and every hot-path find()
+    (responder/openrouter_provider) reads the masked garbage until restart."""
+    created = await store.create(
+        "llm", "openrouter", "some-model", "Some Model", api_key="sk-or-v1-realkey"
+    )
+
+    created["api_key"] = "MASKED"
+    (await store.list_all())[0]["api_key"] = "MASKED"
+    (await store.get(created["id"]))["api_key"] = "MASKED"
+    (await store.find("llm", "openrouter", "some-model"))["api_key"] = "MASKED"
+    (await store.find_enabled("llm"))["api_key"] = "MASKED"
+
+    found = await store.find("llm", "openrouter", "some-model")
+    assert found["api_key"] == "sk-or-v1-realkey"
+
+
+@pytest.mark.asyncio
+async def test_mutating_set_fields_result_does_not_corrupt_the_cache(store):
+    created = await store.create("llm", "openrouter", "some-model", "Some Model")
+    updated = await store.set_fields(created["id"], api_key="sk-or-v1-realkey")
+    updated["api_key"] = "MASKED"
+
+    found = await store.find("llm", "openrouter", "some-model")
+    assert found["api_key"] == "sk-or-v1-realkey"
+
+
+@pytest.mark.asyncio
+async def test_mutating_returned_nested_config_does_not_corrupt_the_cache(store):
+    await store.create("stt", "qwen3_asr", "", "Qwen3", config={"device": "mps"})
+    (await store.find("stt", "qwen3_asr", ""))["config"]["device"] = "corrupted"
+    store.find_sync("stt", "qwen3_asr", "")["config"]["device"] = "corrupted"
+
+    assert (await store.find("stt", "qwen3_asr", ""))["config"] == {"device": "mps"}
+
+
 def test_find_sync_returns_none_before_cache_warmed():
     store = ModelRegistryStore()
     assert store.find_sync("stt", "whisper_local", "") is None

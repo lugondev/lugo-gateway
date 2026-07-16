@@ -142,6 +142,28 @@ def test_create_stt_entry_persists_and_masks_api_key(client, _with_password):
     assert entry["api_key"] == "sk-or-v1-abc...345"
 
 
+@pytest.mark.asyncio
+async def test_listing_entries_does_not_mask_the_cached_key_read_by_hot_paths(client, _with_password):
+    """Regression: GET /v1/model_registry used to mask api_key in place on the
+    store's cached dicts, so after an admin merely OPENED the registry UI the
+    LLM/STT hot paths (responder.py, openrouter_provider.py) resolved the
+    masked string as the real key and failed provider auth until restart."""
+    await _signup_login_async(client, "root", role="admin")
+    real_key = "sk-or-v1-abcdefghijklmnopqrstuvwxyz012345"
+    client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "stub-registry-ok", "model_id": "v1", "label": "Stub OK",
+        "api_key": real_key,
+    })
+
+    listed = client.get("/v1/model_registry").json()["data"]
+    assert listed[0]["api_key"] == "sk-or-v1-abc...345"  # response IS masked
+
+    from app.services.model_registry.store import model_registry_store
+
+    entry = await model_registry_store.find("stt", "stub-registry-ok", "v1")
+    assert entry["api_key"] == real_key  # ...but the cache must keep the real key
+
+
 def test_create_openrouter_stt_entry_uses_submitted_key_for_the_test_call(client, _with_password, monkeypatch):
     """qwen3_asr_or/whisper_or aren't backed by the stub providers registered
     for other tests -- the route must build a temporary OpenRouterSttProvider

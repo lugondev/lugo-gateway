@@ -17,6 +17,18 @@ def _entry_dict(e: ModelRegistryEntry) -> dict:
     }
 
 
+def _copy(entry: dict) -> dict:
+    """Detached copy handed to callers. Every read/write method returns one of
+    these instead of the cached dict itself: routes mutate what they get back
+    (masking api_key, see routes/model_registry.py), and doing that on the
+    cached object would overwrite the real key for every later hot-path
+    find(). `config` is the only nested container, so copying it one level
+    deep makes the copy fully independent."""
+    out = dict(entry)
+    out["config"] = dict(entry["config"])
+    return out
+
+
 class ModelRegistryStore:
     """In-memory cache (keyed by row id) + write-through to the DB, so a hot
     path like `find()` (called once per STT/LLM request to resolve a model's
@@ -62,18 +74,20 @@ class ModelRegistryStore:
 
     async def list_all(self) -> list[dict]:
         await self._ensure_loaded()
-        return sorted(self._by_id.values(), key=lambda e: (e["kind"], e["engine"], e["model_id"]))
+        entries = sorted(self._by_id.values(), key=lambda e: (e["kind"], e["engine"], e["model_id"]))
+        return [_copy(e) for e in entries]
 
     async def find(self, kind: str, engine: str, model_id: str) -> dict | None:
         await self._ensure_loaded()
         for entry in self._by_id.values():
             if entry["kind"] == kind and entry["engine"] == engine and entry["model_id"] == model_id:
-                return entry
+                return _copy(entry)
         return None
 
     async def get(self, entry_id: str) -> dict | None:
         await self._ensure_loaded()
-        return self._by_id.get(entry_id)
+        entry = self._by_id.get(entry_id)
+        return None if entry is None else _copy(entry)
 
     async def find_enabled(self, kind: str, engine: str | None = None) -> dict | None:
         """The single enabled entry for this kind (optionally scoped to one
@@ -85,7 +99,7 @@ class ModelRegistryStore:
         await self._ensure_loaded()
         for entry in self._by_id.values():
             if entry["kind"] == kind and entry["enabled"] and (engine is None or entry["engine"] == engine):
-                return entry
+                return _copy(entry)
         return None
 
     def find_sync(self, kind: str, engine: str, model_id: str) -> dict | None:
@@ -101,7 +115,7 @@ class ModelRegistryStore:
             return None
         for entry in self._by_id.values():
             if entry["kind"] == kind and entry["engine"] == engine and entry["model_id"] == model_id:
-                return entry
+                return _copy(entry)
         return None
 
     def find_enabled_sync(self, kind: str, engine: str | None = None) -> dict | None:
@@ -111,7 +125,7 @@ class ModelRegistryStore:
             return None
         for entry in self._by_id.values():
             if entry["kind"] == kind and entry["enabled"] and (engine is None or entry["engine"] == engine):
-                return entry
+                return _copy(entry)
         return None
 
     async def has_key_for_engine(self, kind: str, engine: str) -> bool:
@@ -146,7 +160,7 @@ class ModelRegistryStore:
             await s.commit()
             entry = _entry_dict(row)
         self._by_id[entry["id"]] = entry
-        return entry
+        return _copy(entry)
 
     async def set_fields(self, entry_id: str, **fields) -> dict | None:
         await self._ensure_loaded()
@@ -159,7 +173,7 @@ class ModelRegistryStore:
             await s.commit()
             entry = _entry_dict(row)
         self._by_id[entry_id] = entry
-        return entry
+        return _copy(entry)
 
 
 model_registry_store = ModelRegistryStore()
