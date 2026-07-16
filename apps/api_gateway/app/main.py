@@ -178,6 +178,25 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
+# Starlette's add_middleware inserts at index 0, so the LAST middleware added is
+# OUTERMOST in the resulting chain. We add CORSMiddleware last so it wraps
+# everything else -- including AuthGuardMiddleware's 401/403 short-circuits.
+# If CORS were added first (and thus ended up innermost), any response
+# AuthGuardMiddleware returns before reaching a route (401 expired/invalid
+# bearer, 403 wrong role) would carry no Access-Control-Allow-Origin header.
+# A cross-origin SPA can't read such a response at all -- the browser reports
+# an opaque network failure instead of a 401/403, so token-refresh logic that
+# depends on seeing the 401 never fires. See test_cors_bearer.py for the
+# regression test that pins this ordering.
+app.add_middleware(AuthGuardMiddleware)
+_session_secret = settings.effective_session_secret
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_session_secret,
+    same_site="lax",
+    https_only=settings.app_env != "dev",
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -189,15 +208,6 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-)
-
-app.add_middleware(AuthGuardMiddleware)
-_session_secret = settings.effective_session_secret
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=_session_secret,
-    same_site="lax",
-    https_only=settings.app_env != "dev",
 )
 
 
