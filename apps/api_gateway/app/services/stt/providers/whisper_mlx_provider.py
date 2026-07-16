@@ -15,6 +15,7 @@ import os
 import tempfile
 
 from app.schemas.stt import STTResult
+from app.services.model_registry.resolve import resolve_stt_engine_config
 from app.services.stt.base import STTProvider
 from app.services.stt.glossary import resolve_initial_prompt
 from app.services.system_config import system_config_store
@@ -37,23 +38,24 @@ class WhisperMlxProvider(STTProvider):
             import mlx_whisper  # noqa: F401
         except ImportError:
             return False
-        return os.path.isdir(system_config_store.get().stt_local.whisper_mlx_model_path)
+        return os.path.isdir(resolve_stt_engine_config("whisper_mlx")["model_path"])
 
     def detail(self) -> str:
-        path = system_config_store.get().stt_local.whisper_mlx_model_path
+        path = resolve_stt_engine_config("whisper_mlx")["model_path"]
         return f"{os.path.basename(path)} · Apple GPU (MLX)"
 
     def _transcribe(self, wav_path: str, language: str | None) -> str:
         import mlx_whisper
 
-        stt_local = system_config_store.get().stt_local
+        engine_cfg = resolve_stt_engine_config("whisper_mlx")
         result = mlx_whisper.transcribe(
             wav_path,
-            path_or_hf_repo=stt_local.whisper_mlx_model_path,
+            path_or_hf_repo=engine_cfg["model_path"],
             language=language,
-            condition_on_previous_text=stt_local.whisper_condition_on_previous_text,
+            condition_on_previous_text=engine_cfg["condition_on_previous_text"],
             initial_prompt=resolve_initial_prompt(
-                stt_local.whisper_initial_prompt, stt_local.stt_glossary_path
+                engine_cfg["initial_prompt"],
+                system_config_store.get().stt_local.stt_glossary_path,
             ),
         )
         return (result.get("text") or "").strip()

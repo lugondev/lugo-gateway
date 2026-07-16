@@ -18,9 +18,11 @@ import tempfile
 
 from app.core.deps import module_available
 from app.schemas.stt import STTResult
-from app.services.model_registry.resolve import resolve_stt_local_device
+from app.services.model_registry.resolve import (
+    resolve_stt_engine_config,
+    resolve_stt_local_device,
+)
 from app.services.stt.base import STTProvider
-from app.services.system_config import system_config_store
 
 _MODEL_CACHE: dict[str, object] = {}
 
@@ -31,7 +33,8 @@ QWEN3_ASR_MODELS = {
     "1.7b": "Qwen/Qwen3-ASR-1.7B",
 }
 
-# Runtime-selected model (e.g. benchmark A/B, language profile). None -> system_config_store.
+# Runtime-selected model (e.g. benchmark A/B, language profile). None -> the
+# Model Registry engine-config sentinel row.
 _active_model: str | None = None
 
 
@@ -41,11 +44,11 @@ def resolve_qwen3_asr_model(name: str) -> str:
 
 
 def get_active_qwen3_asr_model() -> str:
-    return _active_model or system_config_store.get().stt_local.qwen3_asr_model
+    return _active_model or resolve_stt_engine_config("qwen3_asr")["default_model"]
 
 
 def set_active_qwen3_asr_model(name: str | None) -> None:
-    """Override the active model at runtime (shorthand resolved); None resets to system_config_store."""
+    """Override the active model at runtime (shorthand resolved); None resets to the registry default."""
     global _active_model
     _active_model = resolve_qwen3_asr_model(name) if name else None
 

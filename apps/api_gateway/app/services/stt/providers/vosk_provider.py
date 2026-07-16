@@ -4,18 +4,18 @@ import os
 import wave
 
 from app.schemas.stt import STTResult
+from app.services.model_registry.resolve import resolve_stt_engine_config
 from app.services.stt.base import STTProvider, STTStream
-from app.services.system_config import system_config_store
 
 _MODEL_CACHE: dict[str, object] = {}
 
-# Runtime-selected active Vosk model path; falls back to system_config_store when unset.
-# Reset on restart (not persisted).
+# Runtime-selected active Vosk model path; falls back to the Model Registry
+# engine-config sentinel row when unset. Reset on restart (not persisted).
 _active_path: str | None = None
 
 
 def get_active_vosk_path() -> str:
-    return _active_path or system_config_store.get().stt_local.vosk_model_path
+    return _active_path or resolve_stt_engine_config("vosk")["model_path"]
 
 
 def set_active_vosk_path(path: str) -> None:

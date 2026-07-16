@@ -15,6 +15,39 @@ from app.services.model_registry.store import model_registry_store
 from app.services.system_config import OmnivoiceConfig, RemoteSttConfig
 
 
+# Per-engine engine-level settings that used to be SttLocalConfig fields
+# (whisper_local_model, vosk_model_path, whisper tuning, ...). They live in the
+# model_id="" sentinel row's config now, next to device/compute_type; these
+# defaults apply key-by-key when the row (or a key) is absent. Also the seed
+# source for migrate_stt_local_models_to_registry().
+STT_ENGINE_CONFIG_DEFAULTS: dict[str, dict] = {
+    "whisper_local": {
+        "default_model": "phowhisper-medium",
+        "vad_filter": True,
+        "beam_size": 1,
+        "condition_on_previous_text": False,
+        "initial_prompt": "",
+    },
+    "whisper_mlx": {
+        "model_path": "models/stt/phowhisper-medium-mlx",
+        "condition_on_previous_text": False,
+        "initial_prompt": "",
+    },
+    "qwen3_asr": {"default_model": "Qwen/Qwen3-ASR-0.6B"},
+    "vosk": {"model_path": "models/stt/vosk-model-small-en-us-0.15"},
+}
+
+
+def resolve_stt_engine_config(engine: str) -> dict:
+    """Engine-level config for a local STT engine (default model, whisper
+    decode tuning), merged over the per-engine defaults above. Looked up by
+    the reserved model_id="" sentinel -- see resolve_stt_local_device's
+    docstring for why the per-model-size governance rows must not match."""
+    entry = model_registry_store.find_sync("stt", engine, "")
+    config = (entry or {}).get("config") or {}
+    return {**STT_ENGINE_CONFIG_DEFAULTS.get(engine, {}), **config}
+
+
 def resolve_stt_local_device(engine: str) -> dict:
     """{'device': str, 'compute_type': str} for a local STT engine (only
     whisper_local uses compute_type; qwen3_asr's caller just ignores it).

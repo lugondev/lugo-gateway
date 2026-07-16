@@ -36,7 +36,9 @@ if (el("sys-base-context-save")) {
 
 const GROUPS = [
   { key: "engines", label: "Engine Defaults", open: true },
-  { key: "stt_local", label: "STT (Local Models)", open: false },
+  // Per-engine model/tuning/device settings live in Model Registry entries;
+  // this group only holds engine-agnostic STT settings.
+  { key: "stt_local", label: "STT (Shared Settings)", open: false },
   { key: "conversation", label: "Conversation Tuning", open: false },
   { key: "preprocessing", label: "Preprocessing (VAD/Noise)", open: false },
 ];
@@ -45,17 +47,91 @@ const SECRET_FIELDS = new Set([
   "preprocessing.pyannote_auth_token",
 ]);
 
+// Engine-name fields must be picked from the live engine lists, not typed
+// free-text (a typo'd engine only fails at request time). kind selects which
+// list to render from; optional means "" is a valid value.
+const ENGINE_SELECT_FIELDS = {
+  "engines.default_stt_engine": { kind: "stt" },
+  "engines.default_tts_engine": { kind: "tts" },
+  "conversation.conversation_stt_engine": { kind: "stt" },
+  "conversation.conversation_fast_stt_engine": { kind: "stt", optional: true },
+  "conversation.conversation_tts_engine": { kind: "tts" },
+};
+
+// Voice list depends on the engine chosen in the sibling select, so it is
+// rendered as a shell here and (re)populated by populateVoiceOptions().
+const VOICE_FIELD = "engines.default_tts_engine_voice";
+const VOICE_SELECT_ID = "sys-engines-default_tts_engine_voice";
+const TTS_ENGINE_SELECT_ID = "sys-engines-default_tts_engine";
+
 function fieldInputType(value) {
   if (typeof value === "boolean") return "checkbox";
   if (typeof value === "number") return "number";
   return "text";
 }
 
-function renderGroupFields(groupKey, groupValue) {
+function renderEngineSelect(id, current, engines, optional) {
+  const options = [];
+  if (optional) options.push(`<option value=""${current === "" ? " selected" : ""}>(none)</option>`);
+  let hasCurrent = optional && current === "";
+  for (const e of engines) {
+    const selected = e.engine === current;
+    if (selected) hasCurrent = true;
+    // Unavailable engines stay visible but unpickable -- unless one is the
+    // saved value, which must survive a round-trip through Save.
+    const disabled = e.available || selected ? "" : " disabled";
+    const label = e.available ? e.engine : `${e.engine} (not installed)`;
+    options.push(`<option value="${e.engine}"${selected ? " selected" : ""}${disabled}>${label}</option>`);
+  }
+  if (!hasCurrent && current) options.unshift(`<option value="${current}" selected>${current} (unknown)</option>`);
+  return `<select id="${id}">${options.join("")}</select>`;
+}
+
+async function populateVoiceOptions() {
+  const voiceSel = el(VOICE_SELECT_ID);
+  const engineInput = el(TTS_ENGINE_SELECT_ID);
+  if (!voiceSel || !engineInput) return;
+  const current = voiceSel.value;
+  let voices = [];
+  try {
+    const body = await (await fetch(`/v1/tts/voices?engine=${encodeURIComponent(engineInput.value)}`)).json();
+    voices = body.data || [];
+  } catch (error) {
+    /* voices optional */
+  }
+  voiceSel.innerHTML = '<option value="">(auto)</option>';
+  voices.forEach((v) => {
+    const opt = document.createElement("option");
+    opt.value = v.voice;
+    opt.textContent = v.label;
+    voiceSel.appendChild(opt);
+  });
+  if (current && !voices.some((v) => v.voice === current)) {
+    const opt = document.createElement("option");
+    opt.value = current;
+    opt.textContent = `${current} (current)`;
+    voiceSel.appendChild(opt);
+  }
+  voiceSel.value = current;
+}
+
+function renderGroupFields(groupKey, groupValue, engineLists) {
   return Object.entries(groupValue)
     .map(([field, value]) => {
       const id = `sys-${groupKey}-${field}`;
-      const isSecret = SECRET_FIELDS.has(`${groupKey}.${field}`);
+      const key = `${groupKey}.${field}`;
+      const spec = ENGINE_SELECT_FIELDS[key];
+      if (spec && engineLists[spec.kind] && engineLists[spec.kind].length) {
+        return `<label class="field">${field}
+        ${renderEngineSelect(id, String(value), engineLists[spec.kind], spec.optional)}
+      </label>`;
+      }
+      if (key === VOICE_FIELD) {
+        return `<label class="field">${field}
+        <select id="${id}"><option value="${value}" selected>${value || "(auto)"}</option></select>
+      </label>`;
+      }
+      const isSecret = SECRET_FIELDS.has(key);
       const type = isSecret ? "password" : fieldInputType(value);
       const checked = type === "checkbox" && value ? "checked" : "";
       const val = type === "checkbox" ? "" : `value="${isSecret ? "" : String(value)}"`;
@@ -67,16 +143,34 @@ function renderGroupFields(groupKey, groupValue) {
     .join("\n");
 }
 
+async function fetchEngineList(url) {
+  try {
+    const body = await (await fetch(url)).json();
+    return body.data || null;
+  } catch (error) {
+    return null; // fall back to a plain text input for engine fields
+  }
+}
+
 export async function loadSystemConfigGroups() {
-  const body = await (await fetch("/v1/system/config")).json();
   const root = el("sys-config-groups");
   if (!root) return;
+  const [body, stt, tts] = await Promise.all([
+    fetch("/v1/system/config").then((r) => r.json()),
+    fetchEngineList("/v1/stt/engines"),
+    fetchEngineList("/v1/tts/engines"),
+  ]);
+  const engineLists = { stt: stt || [], tts: tts || [] };
   root.innerHTML = GROUPS.map(
     (g) => `<details ${g.open ? "open" : ""}>
       <summary>${g.label}</summary>
-      <div class="fields">${renderGroupFields(g.key, body.data[g.key])}</div>
+      <div class="fields">${renderGroupFields(g.key, body.data[g.key], engineLists)}</div>
     </details>`
   ).join("\n");
+  populateVoiceOptions();
+  const engineSel = el(TTS_ENGINE_SELECT_ID);
+  // innerHTML above recreated the element, so a fresh listener each load.
+  if (engineSel) engineSel.addEventListener("change", populateVoiceOptions);
 }
 
 export async function saveSystemConfigGroups() {

@@ -5,7 +5,10 @@ import threading
 from pathlib import Path
 
 from app.schemas.stt import STTResult
-from app.services.model_registry.resolve import resolve_stt_local_device
+from app.services.model_registry.resolve import (
+    resolve_stt_engine_config,
+    resolve_stt_local_device,
+)
 from app.services.stt.base import STTProvider
 from app.services.stt.glossary import resolve_initial_prompt
 from app.services.system_config import system_config_store
@@ -17,8 +20,8 @@ _MODEL_CACHE: dict[str, object] = {}
 # latency. A lock makes the build single-flight.
 _MODEL_LOCK = threading.Lock()
 
-# Runtime-selected whisper model size; falls back to system_config_store when unset.
-# Reset on restart (not persisted).
+# Runtime-selected whisper model size; falls back to the Model Registry
+# engine-config sentinel row when unset. Reset on restart (not persisted).
 _active_model: str | None = None
 
 # PhoWhisper (VinAI) Vietnamese fine-tune, pre-converted to CTranslate2 so it loads
@@ -53,7 +56,7 @@ def resolve_whisper_model(model: str) -> str:
 
 
 def get_active_whisper_model() -> str:
-    return _active_model or system_config_store.get().stt_local.whisper_local_model
+    return _active_model or resolve_stt_engine_config("whisper_local")["default_model"]
 
 
 def set_active_whisper_model(model: str) -> None:
@@ -103,15 +106,16 @@ class WhisperProvider(STTProvider):
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 f.write(audio_bytes)
                 temp_file_path = f.name
-            stt_local = system_config_store.get().stt_local
+            engine_cfg = resolve_stt_engine_config("whisper_local")
             segments, _ = whisper_model.transcribe(
                 temp_file_path,
                 language=language,
-                vad_filter=stt_local.whisper_vad_filter,
-                beam_size=stt_local.whisper_beam_size,
-                condition_on_previous_text=stt_local.whisper_condition_on_previous_text,
+                vad_filter=engine_cfg["vad_filter"],
+                beam_size=engine_cfg["beam_size"],
+                condition_on_previous_text=engine_cfg["condition_on_previous_text"],
                 initial_prompt=resolve_initial_prompt(
-                    stt_local.whisper_initial_prompt, stt_local.stt_glossary_path
+                    engine_cfg["initial_prompt"],
+                    system_config_store.get().stt_local.stt_glossary_path,
                 ),
             )
             return " ".join(s.text.strip() for s in segments if s.text.strip())

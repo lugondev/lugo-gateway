@@ -8,6 +8,7 @@ from app.services.model_registry.seed import (
     migrate_omnivoice_to_registry,
     migrate_remote_stt_to_registry,
     migrate_stt_local_device_to_registry,
+    migrate_stt_local_models_to_registry,
 )
 from app.services.model_registry.store import model_registry_store
 from app.services.system_config import system_config_store
@@ -118,6 +119,85 @@ async def test_migrate_stt_local_device_not_shadowed_by_seed_known_models_row():
     assert whisper_config_entry["config"] == {"device": "cuda", "compute_type": "float16"}
     assert qwen_config_entry is not None, "migration was shadowed by the seed governance row"
     assert qwen_config_entry["config"] == {"device": "mps"}
+
+
+@pytest.mark.asyncio
+async def test_migrate_stt_local_models_seeds_all_four_engines_from_legacy_values():
+    _set_raw_group("stt_local", {
+        "whisper_local_model": "phowhisper-large",
+        "whisper_vad_filter": False,
+        "whisper_beam_size": 5,
+        "whisper_condition_on_previous_text": True,
+        "whisper_initial_prompt": "xin chào",
+        "whisper_mlx_model_path": "models/stt/custom-mlx",
+        "qwen3_asr_model": "Qwen/Qwen3-ASR-1.7B",
+        "vosk_model_path": "models/stt/vosk-vn",
+    })
+    await migrate_stt_local_models_to_registry()
+
+    whisper = await model_registry_store.find("stt", "whisper_local", "")
+    assert whisper["config"] == {
+        "default_model": "phowhisper-large",
+        "vad_filter": False,
+        "beam_size": 5,
+        "condition_on_previous_text": True,
+        "initial_prompt": "xin chào",
+    }
+    mlx = await model_registry_store.find("stt", "whisper_mlx", "")
+    assert mlx["config"] == {
+        "model_path": "models/stt/custom-mlx",
+        "condition_on_previous_text": True,
+        "initial_prompt": "xin chào",
+    }
+    qwen = await model_registry_store.find("stt", "qwen3_asr", "")
+    assert qwen["config"] == {"default_model": "Qwen/Qwen3-ASR-1.7B"}
+    vosk = await model_registry_store.find("stt", "vosk", "")
+    assert vosk["config"] == {"model_path": "models/stt/vosk-vn"}
+
+
+@pytest.mark.asyncio
+async def test_migrate_stt_local_models_seeds_defaults_when_no_legacy_values():
+    await migrate_stt_local_models_to_registry()
+    whisper = await model_registry_store.find("stt", "whisper_local", "")
+    assert whisper["config"]["default_model"] == "phowhisper-medium"
+    vosk = await model_registry_store.find("stt", "vosk", "")
+    assert vosk["config"]["model_path"] == "models/stt/vosk-model-small-en-us-0.15"
+
+
+@pytest.mark.asyncio
+async def test_migrate_stt_local_models_adds_missing_keys_into_existing_sentinel_row():
+    """The device migration already created stt/whisper_local/"" and
+    stt/qwen3_asr/"" sentinel rows on existing installs -- this migration must
+    ADD its keys into those rows, never replace them (device/compute_type must
+    survive)."""
+    await model_registry_store.create(
+        "stt", "whisper_local", "", "Whisper Local (device/compute config)",
+        config={"device": "cuda", "compute_type": "float16"},
+    )
+    _set_raw_group("stt_local", {"whisper_local_model": "phowhisper-large"})
+    await migrate_stt_local_models_to_registry()
+
+    whisper = await model_registry_store.find("stt", "whisper_local", "")
+    assert whisper["config"]["device"] == "cuda"
+    assert whisper["config"]["compute_type"] == "float16"
+    assert whisper["config"]["default_model"] == "phowhisper-large"
+
+
+@pytest.mark.asyncio
+async def test_migrate_stt_local_models_never_overwrites_admin_edited_keys():
+    """Idempotency: re-running the migration (every boot) must not clobber a
+    value the admin has since edited in the Model Registry UI."""
+    _set_raw_group("stt_local", {"whisper_local_model": "phowhisper-large"})
+    await migrate_stt_local_models_to_registry()
+    entry = await model_registry_store.find("stt", "whisper_local", "")
+    await model_registry_store.set_fields(
+        entry["id"], config={**entry["config"], "default_model": "phowhisper-small"},
+    )
+
+    await migrate_stt_local_models_to_registry()
+
+    entry = await model_registry_store.find("stt", "whisper_local", "")
+    assert entry["config"]["default_model"] == "phowhisper-small"
 
 
 @pytest.mark.asyncio

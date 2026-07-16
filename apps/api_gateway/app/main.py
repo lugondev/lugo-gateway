@@ -132,6 +132,7 @@ async def lifespan(app: FastAPI):
         migrate_omnivoice_to_registry,
         migrate_remote_stt_to_registry,
         migrate_stt_local_device_to_registry,
+        migrate_stt_local_models_to_registry,
         seed_known_models,
     )
 
@@ -139,6 +140,7 @@ async def lifespan(app: FastAPI):
     await migrate_conversation_llm_to_registry()
     await migrate_remote_stt_to_registry()
     await migrate_stt_local_device_to_registry()
+    await migrate_stt_local_models_to_registry()
     await migrate_omnivoice_to_registry()
 
     if not settings.auth_enabled and settings.app_env != "dev":

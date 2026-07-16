@@ -104,6 +104,60 @@ async def migrate_stt_local_device_to_registry() -> None:
         )
 
 
+# New sentinel-config key -> the legacy SttLocalConfig field it migrates from.
+_STT_LOCAL_LEGACY_FIELDS: dict[str, dict[str, str]] = {
+    "whisper_local": {
+        "default_model": "whisper_local_model",
+        "vad_filter": "whisper_vad_filter",
+        "beam_size": "whisper_beam_size",
+        "condition_on_previous_text": "whisper_condition_on_previous_text",
+        "initial_prompt": "whisper_initial_prompt",
+    },
+    "whisper_mlx": {
+        "model_path": "whisper_mlx_model_path",
+        "condition_on_previous_text": "whisper_condition_on_previous_text",
+        "initial_prompt": "whisper_initial_prompt",
+    },
+    "qwen3_asr": {"default_model": "qwen3_asr_model"},
+    "vosk": {"model_path": "vosk_model_path"},
+}
+
+_STT_LOCAL_SENTINEL_LABELS = {
+    "whisper_local": "Whisper Local (engine config)",
+    "whisper_mlx": "Whisper MLX (engine config)",
+    "qwen3_asr": "Qwen3-ASR (engine config)",
+    "vosk": "Vosk (engine config)",
+}
+
+
+async def migrate_stt_local_models_to_registry() -> None:
+    """One-time-per-key: the per-engine default model and whisper decode
+    tuning used to live on SttLocalConfig -- 8 fields removed from that
+    schema in favor of the model_id="" sentinel rows' config, next to the
+    device/compute_type keys migrate_stt_local_device_to_registry() already
+    put there (so this must MERGE into an existing row, never replace it).
+    Key-by-key: a key already present in the row's config (seeded on an
+    earlier boot, or admin-edited since) is never overwritten, which is what
+    makes re-running on every boot a no-op."""
+    from app.services.model_registry.resolve import STT_ENGINE_CONFIG_DEFAULTS
+
+    raw = system_config_store.get_raw_group("stt_local")
+    for engine, fields in _STT_LOCAL_LEGACY_FIELDS.items():
+        values = {
+            key: raw.get(legacy_field, STT_ENGINE_CONFIG_DEFAULTS[engine][key])
+            for key, legacy_field in fields.items()
+        }
+        entry = await model_registry_store.find("stt", engine, "")
+        if entry is None:
+            await model_registry_store.create(
+                "stt", engine, "", _STT_LOCAL_SENTINEL_LABELS[engine], config=values,
+            )
+            continue
+        merged = {**values, **(entry["config"] or {})}
+        if merged != entry["config"]:
+            await model_registry_store.set_fields(entry["id"], config=merged)
+
+
 async def migrate_omnivoice_to_registry() -> None:
     """One-time: OmniVoice's whole config used to live in
     SystemConfig.omnivoice -- removed from the schema (Task 7) in favor of a

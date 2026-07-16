@@ -78,18 +78,10 @@ def test_stt_local_config_has_expected_defaults(tmp_path):
     s = SystemConfigStore(str(tmp_path / "system_config.json"))
     c = s.get().stt_local
     assert c.stt_model_dir == "models/stt"
-    assert c.vosk_model_path == "models/stt/vosk-model-small-en-us-0.15"
     assert c.vosk_model_base_url == "https://alphacephei.com/vosk/models"
     assert c.stt_stream_sample_rate == 16000
-    assert c.whisper_local_model == "phowhisper-medium"
-    assert c.whisper_vad_filter is True
-    assert c.whisper_beam_size == 1
-    assert c.whisper_condition_on_previous_text is False
-    assert c.whisper_initial_prompt == ""
     assert c.stt_glossary_path == ""
     assert c.stt_profile == ""
-    assert c.whisper_mlx_model_path == "models/stt/phowhisper-medium-mlx"
-    assert c.qwen3_asr_model == "Qwen/Qwen3-ASR-0.6B"
     assert c.stt_segment_long_enabled is False
     assert c.stt_segment_min_seconds == 30.0
     assert c.stt_segment_concurrency == 4
@@ -102,6 +94,26 @@ def test_system_config_has_no_stt_local_device_fields():
     assert "whisper_local_device" not in dumped["stt_local"]
     assert "whisper_local_compute_type" not in dumped["stt_local"]
     assert "qwen3_asr_device" not in dumped["stt_local"]
+
+
+def test_stt_local_has_no_per_engine_model_or_tuning_fields():
+    """Every model is a Model Registry entry now -- no engine gets its own
+    SystemConfig fields for default model / model path / decode tuning (all
+    moved to the model_id="" sentinel rows' config)."""
+    from app.services.system_config import SystemConfig
+
+    dumped = SystemConfig().model_dump()
+    for field in (
+        "vosk_model_path",
+        "whisper_local_model",
+        "whisper_vad_filter",
+        "whisper_beam_size",
+        "whisper_condition_on_previous_text",
+        "whisper_initial_prompt",
+        "whisper_mlx_model_path",
+        "qwen3_asr_model",
+    ):
+        assert field not in dumped["stt_local"], field
 
 
 def test_system_config_has_no_omnivoice_or_remote_stt_groups():

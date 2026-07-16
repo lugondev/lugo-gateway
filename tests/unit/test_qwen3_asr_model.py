@@ -22,10 +22,10 @@ def test_resolve_full_repo_passthrough():
     assert q.resolve_qwen3_asr_model("Qwen/Qwen3-ASR-1.7B") == "Qwen/Qwen3-ASR-1.7B"
 
 
-def test_get_active_defaults_to_system_config():
-    from app.services.system_config import system_config_store
+def test_get_active_defaults_to_registry_engine_config():
+    from app.services.model_registry.resolve import resolve_stt_engine_config
 
-    assert q.get_active_qwen3_asr_model() == system_config_store.get().stt_local.qwen3_asr_model
+    assert q.get_active_qwen3_asr_model() == resolve_stt_engine_config("qwen3_asr")["default_model"]
 
 
 def test_set_active_resolves_shorthand_and_roundtrips():
@@ -33,12 +33,12 @@ def test_set_active_resolves_shorthand_and_roundtrips():
     assert q.get_active_qwen3_asr_model() == "Qwen/Qwen3-ASR-1.7B"
 
 
-def test_set_active_none_resets_to_system_config():
-    from app.services.system_config import system_config_store
+def test_set_active_none_resets_to_registry_engine_config():
+    from app.services.model_registry.resolve import resolve_stt_engine_config
 
     q.set_active_qwen3_asr_model("1.7b")
     q.set_active_qwen3_asr_model(None)
-    assert q.get_active_qwen3_asr_model() == system_config_store.get().stt_local.qwen3_asr_model
+    assert q.get_active_qwen3_asr_model() == resolve_stt_engine_config("qwen3_asr")["default_model"]
 
 
 def test_clear_model_cache_empties_the_cache():

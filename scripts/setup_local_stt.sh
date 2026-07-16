@@ -18,15 +18,20 @@ pip install -e .
 echo "Warming up faster-whisper model (this downloads model weights)..."
 PYTHONPATH=apps/api_gateway python - <<'PY'
 from faster_whisper import WhisperModel
-from app.services.system_config import system_config_store
-
-stt_local = system_config_store.get().stt_local
-model = WhisperModel(
-    stt_local.whisper_local_model,
-    device=stt_local.whisper_local_device,
-    compute_type=stt_local.whisper_local_compute_type,
+from app.services.model_registry.resolve import (
+    resolve_stt_engine_config,
+    resolve_stt_local_device,
 )
-print("Whisper local model is ready:", stt_local.whisper_local_model)
+from app.services.stt.providers.whisper_provider import resolve_whisper_model
+
+model_name = resolve_stt_engine_config("whisper_local")["default_model"]
+device_cfg = resolve_stt_local_device("whisper_local")
+model = WhisperModel(
+    resolve_whisper_model(model_name),
+    device=device_cfg["device"] or "cpu",
+    compute_type=device_cfg["compute_type"],
+)
+print("Whisper local model is ready:", model_name)
 _ = model
 PY
 

@@ -60,10 +60,10 @@ _prompt_cache: dict[tuple[str, str], str | None] = {}
 def resolve_initial_prompt(base: str, glossary_path: str) -> str | None:
     """Build (and cache) the Whisper initial prompt from a base + glossary file.
 
-    This is the entry point providers call: it merges ``base`` (e.g.
-    ``system_config_store.get().stt_local.whisper_initial_prompt``) with the terms
-    in ``glossary_path`` and caches the result so the file isn't re-read on every
-    transcription.
+    This is the entry point providers call: it merges ``base`` (e.g. the
+    ``initial_prompt`` key of ``resolve_stt_engine_config("whisper_local")``)
+    with the terms in ``glossary_path`` and caches the result so the file
+    isn't re-read on every transcription.
     """
     key = (base or "", glossary_path or "")
     if key not in _prompt_cache:

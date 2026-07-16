@@ -417,18 +417,10 @@ Response `data`:
   },
   "stt_local": {
     "stt_model_dir": "models/stt",
-    "vosk_model_path": "models/stt/vosk-model-small-en-us-0.15",
     "vosk_model_base_url": "https://alphacephei.com/vosk/models",
     "stt_stream_sample_rate": 16000,
-    "whisper_local_model": "phowhisper-medium",
-    "whisper_vad_filter": true,
-    "whisper_beam_size": 1,
-    "whisper_condition_on_previous_text": false,
-    "whisper_initial_prompt": "",
     "stt_glossary_path": "",
     "stt_profile": "",
-    "whisper_mlx_model_path": "models/stt/phowhisper-medium-mlx",
-    "qwen3_asr_model": "Qwen/Qwen3-ASR-0.6B",
     "stt_segment_long_enabled": false,
     "stt_segment_min_seconds": 30.0,
     "stt_segment_concurrency": 4
@@ -444,11 +436,20 @@ Key changes from earlier API versions:
 - **OmniVoice TTS config** is no longer stored in SystemConfig. Configure OmniVoice via
   `POST /v1/model_registry` with `kind="tts"` entries and store engine-specific settings in the
   `config` dict.
-- **stt_local device/compute_type fields** have been removed. Configure device & compute_type
-  per STT-local engine via Model Registry entries (`kind="stt"`, `engine="whisper_local"` or
-  `engine="qwen3_asr"`, etc.), stored in the `config` dict.
+- **stt_local per-engine fields** have been removed — device/compute_type first, then the
+  default model / model path and whisper decode tuning (`vosk_model_path`,
+  `whisper_local_model`, `whisper_vad_filter`, `whisper_beam_size`,
+  `whisper_condition_on_previous_text`, `whisper_initial_prompt`,
+  `whisper_mlx_model_path`, `qwen3_asr_model`). Configure them per engine via the
+  Model Registry `model_id=""` sentinel entries (`kind="stt"`, `engine="whisper_local"` /
+  `"whisper_mlx"` / `"qwen3_asr"` / `"vosk"`), stored in the `config` dict — e.g.
+  `{"default_model": "phowhisper-medium", "vad_filter": true, "beam_size": 1,
+  "condition_on_previous_text": false, "initial_prompt": "", "device": "cpu",
+  "compute_type": "int8"}` for `whisper_local`, `{"model_path": "..."}` for
+  `vosk`/`whisper_mlx`.
 
-`stt_local` now holds only model paths, defaults, and tuning parameters (not per-engine device config).
+`stt_local` now holds only engine-agnostic settings (model dir, sample rate, glossary,
+profile preset, long-audio segmentation).
 
 ### `PUT /v1/system/config`
 Update the system configuration. Send a partial or full body; absent fields retain their current

@@ -30,19 +30,16 @@ class EngineDefaults(BaseModel):
 
 
 class SttLocalConfig(BaseModel):
+    """Engine-agnostic STT settings only. Per-engine settings (default model,
+    model path, whisper decode tuning, device/compute_type) live in the Model
+    Registry model_id="" sentinel rows -- see
+    app/services/model_registry/resolve.py."""
+
     stt_model_dir: str = "models/stt"
-    vosk_model_path: str = "models/stt/vosk-model-small-en-us-0.15"
     vosk_model_base_url: str = "https://alphacephei.com/vosk/models"
     stt_stream_sample_rate: int = 16000
-    whisper_local_model: str = "phowhisper-medium"
-    whisper_vad_filter: bool = True
-    whisper_beam_size: int = 1
-    whisper_condition_on_previous_text: bool = False
-    whisper_initial_prompt: str = ""
     stt_glossary_path: str = ""
     stt_profile: str = ""
-    whisper_mlx_model_path: str = "models/stt/phowhisper-medium-mlx"
-    qwen3_asr_model: str = "Qwen/Qwen3-ASR-0.6B"
     stt_segment_long_enabled: bool = False
     stt_segment_min_seconds: float = 30.0
     stt_segment_concurrency: int = 4
