@@ -6,7 +6,9 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 from starlette.websockets import WebSocket
 
+from app.core.actor import Actor
 from app.core.settings import settings
+from app.services.auth.tokens import verify_access_token
 
 _STATIC_ALLOWLIST = {"/static/login.html", "/static/js/auth.js", "/static/styles.css"}
 # Unauthenticated device-side pairing handshake (the device itself has no login).
@@ -32,6 +34,27 @@ def _matches(path: str, prefixes: tuple[str, ...]) -> bool:
     return any(path == prefix or path.startswith(prefix) for prefix in prefixes)
 
 
+async def _bearer_actor(request: Request) -> "Actor | None":
+    """Phân giải danh tính từ Authorization: Bearer. LUÔN trả role="user" --
+    role trong token không được đọc, vì không tồn tại. Đây là lý do web client
+    không thể leo thang lên admin dù người dùng là admin trong DB."""
+    from app.services.auth.users import user_store
+
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+
+    user_id = verify_access_token(token.strip())
+    if not user_id:
+        return None
+
+    user = await user_store.get_by_id(user_id)
+    if user is None or user.disabled:
+        return None
+    return Actor(user_id=user.id, role="user")
+
+
 class AuthGuardMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.method == "OPTIONS":
@@ -44,7 +67,10 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         if path in _STATIC_ALLOWLIST or path.startswith("/api/auth") or _matches(path, _NO_AUTH_PREFIXES):
             return await call_next(request)
 
-        user_id = request.session.get("user_id")
+        actor = await _bearer_actor(request)
+        if actor is not None:
+            request.state.actor = actor
+        user_id = actor.user_id if actor is not None else request.session.get("user_id")
 
         if _matches(path, _USER_PREFIXES):
             if not user_id:
@@ -54,7 +80,8 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         if _matches(path, _ADMIN_PREFIXES):
             if not user_id:
                 return self._unauthenticated(request)
-            if request.session.get("role") != "admin":
+            role = actor.role if actor is not None else request.session.get("role")
+            if role != "admin":
                 return JSONResponse({"success": False, "error": "admin only"}, status_code=403)
             return await call_next(request)
 
