@@ -10,26 +10,38 @@ class InMemoryEventBus:
     Replay fixes the race where a producer publishes before the SSE client
     subscribes: a late subscriber receives the buffered history first, then
     live events. Channels are marked closed on a terminal event so subscribers
-    can stop, and history is reclaimed once no subscribers remain.
+    can stop.
 
-    History reclamation happens two ways: immediately when the last subscriber
-    of a closed channel unsubscribes, and -- for the common case where NO SSE
-    client ever subscribes (every /v1/stt/stream session and /v1/tts/stream
-    job mirrors events here unconditionally) -- via a TTL timer armed at
-    close(). Without the timer, each finished session leaked up to
-    `history_limit` events forever. The TTL is the replay grace window: a
-    subscriber arriving later than `closed_history_ttl_s` after the channel
-    closed gets nothing.
+    Memory is reclaimed in two layers with different lifetimes:
+
+    - History (the heavy part -- up to `history_limit` events per channel) is
+      purged when the last subscriber of a closed channel unsubscribes, and
+      otherwise by a TTL timer armed at close() -- the common case, since
+      every /v1/stt/stream session and /v1/tts/stream job mirrors events here
+      and usually no SSE client ever subscribes. The TTL is the replay grace
+      window: a subscriber arriving later gets no replay.
+    - The closed MARKER (just the channel name) deliberately outlives the
+      history: subscribe() relies on it to hand late subscribers an immediate
+      end-of-stream sentinel. Without it they'd be registered as live queues
+      on a dead channel and their SSE response would hang forever. Markers
+      are bounded by `closed_channels_limit` with FIFO eviction.
 
     Upgrade path: swap this for Redis Pub/Sub + streams when scaling out.
     """
 
-    def __init__(self, history_limit: int = 1000, closed_history_ttl_s: float = 60.0) -> None:
+    def __init__(
+        self,
+        history_limit: int = 1000,
+        closed_history_ttl_s: float = 60.0,
+        closed_channels_limit: int = 4096,
+    ) -> None:
         self._subscribers: dict[str, list[asyncio.Queue[StreamEvent | None]]] = defaultdict(list)
         self._history: dict[str, deque[StreamEvent]] = {}
-        self._closed: set[str] = set()
+        # Insertion-ordered so FIFO eviction drops the oldest channel first.
+        self._closed: dict[str, None] = {}
         self._history_limit = history_limit
         self._closed_history_ttl_s = closed_history_ttl_s
+        self._closed_channels_limit = closed_channels_limit
 
     def subscribe(self, channel: str) -> asyncio.Queue[StreamEvent | None]:
         queue: asyncio.Queue[StreamEvent | None] = asyncio.Queue()
@@ -49,10 +61,7 @@ class InMemoryEventBus:
             subscribers.remove(queue)
         if not subscribers:
             self._subscribers.pop(channel, None)
-            # Reclaim history once the channel is done and nobody is listening.
-            if channel in self._closed:
-                self._history.pop(channel, None)
-                self._closed.discard(channel)
+            self._purge_history(channel)
 
     async def publish(self, channel: str, event: StreamEvent) -> None:
         history = self._history.setdefault(channel, deque(maxlen=self._history_limit))
@@ -63,30 +72,35 @@ class InMemoryEventBus:
             self.close(channel)
 
     def close(self, channel: str) -> None:
-        """Mark a channel terminated and wake subscribers to stop."""
-        self._closed.add(channel)
+        """Mark a channel terminated and wake subscribers to stop. Idempotent:
+        clean STT sessions close twice (terminal publish, then the WS finally
+        block) and the second call must not arm a duplicate purge timer."""
+        if channel in self._closed:
+            return
+        self._closed[channel] = None
+        while len(self._closed) > self._closed_channels_limit:
+            evicted = next(iter(self._closed))
+            del self._closed[evicted]
+            self._history.pop(evicted, None)
         for queue in list(self._subscribers.get(channel, [])):
             queue.put_nowait(None)
         self._subscribers.pop(channel, None)
-        self._schedule_history_purge(channel)
-
-    def _schedule_history_purge(self, channel: str) -> None:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             # No loop (sync teardown path) -- nothing can subscribe for a
-            # replay without a loop either, so reclaim immediately.
-            self._purge_if_closed(channel)
+            # replay without a loop either, so reclaim the history now.
+            self._purge_history(channel)
             return
-        loop.call_later(self._closed_history_ttl_s, self._purge_if_closed, channel)
+        loop.call_later(self._closed_history_ttl_s, self._purge_history, channel)
 
-    def _purge_if_closed(self, channel: str) -> None:
-        # Subscribers that attached during the grace window replay from their
-        # own queue copies (subscribe() never registers queues on a closed
-        # channel), so dropping the shared history is safe unconditionally.
-        if channel in self._closed:
+    def _purge_history(self, channel: str) -> None:
+        """Drop a closed channel's replay buffer -- but keep the closed marker
+        (see class docstring). Subscribers that attached during the grace
+        window replay from their own queue copies, so this is safe while
+        they're still draining."""
+        if channel in self._closed and not self._subscribers.get(channel):
             self._history.pop(channel, None)
-            self._closed.discard(channel)
 
 
 event_bus = InMemoryEventBus()

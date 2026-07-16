@@ -59,7 +59,10 @@ async def test_history_reclaimed_after_unsubscribe():
     await bus.publish("job:1", _event("done", 1))
     bus.unsubscribe("job:1", queue)
     assert "job:1" not in bus._history
-    assert "job:1" not in bus._closed
+    # The closed marker must OUTLIVE the history: it's what guarantees a late
+    # subscriber gets an immediate end-of-stream sentinel instead of being
+    # registered as a live queue on a dead channel (SSE hang).
+    assert "job:1" in bus._closed
 
 
 async def test_closed_channel_history_purged_after_ttl_when_no_subscriber_attaches():
@@ -72,7 +75,7 @@ async def test_closed_channel_history_purged_after_ttl_when_no_subscriber_attach
     assert "job:1" in bus._history  # replay window still open right after close
     await asyncio.sleep(0.2)
     assert "job:1" not in bus._history
-    assert "job:1" not in bus._closed
+    assert "job:1" in bus._closed  # marker survives so late subscribers still terminate
 
 
 async def test_explicit_close_without_terminal_event_purges_history_after_ttl():
@@ -84,7 +87,45 @@ async def test_explicit_close_without_terminal_event_purges_history_after_ttl():
 
     await asyncio.sleep(0.2)
     assert "job:1" not in bus._history
-    assert "job:1" not in bus._closed
+    assert "job:1" in bus._closed
+
+
+async def test_subscriber_arriving_after_ttl_purge_gets_immediate_end_of_stream():
+    """Regression: the TTL purge used to drop the _closed marker too, so a
+    subscriber arriving later than the grace window (page reload, SSE
+    reconnect after a sleep) was registered as a live queue on a channel
+    nothing would ever publish to again -- the SSE response hung forever."""
+    bus = InMemoryEventBus(closed_history_ttl_s=0.05)
+    await bus.publish("job:1", _event("done", 1))
+    await asyncio.sleep(0.2)  # TTL purge has fired
+
+    queue = bus.subscribe("job:1")
+    sentinel = await asyncio.wait_for(queue.get(), timeout=1)
+    assert sentinel is None  # immediate clean end-of-stream, no replay, NO hang
+    assert not bus._subscribers.get("job:1")  # not registered as a live queue
+
+
+async def test_close_is_idempotent_and_arms_a_single_purge_timer():
+    """Every clean STT session double-closes: publish('done') closes via
+    TERMINAL_EVENT_TYPES, then the WS finally block calls close() again.
+    The second close must be a no-op (one sentinel, one purge timer)."""
+    bus = InMemoryEventBus(closed_history_ttl_s=60.0)
+    queue = bus.subscribe("job:1")
+    bus.close("job:1")
+    bus.close("job:1")
+
+    assert queue.get_nowait() is None
+    assert queue.empty()  # exactly one sentinel despite two close() calls
+
+
+async def test_closed_markers_are_bounded_fifo():
+    bus = InMemoryEventBus(closed_channels_limit=3)
+    for i in range(5):
+        await bus.publish(f"job:{i}", _event("done", 1))
+
+    assert len(bus._closed) == 3
+    assert "job:0" not in bus._closed  # oldest evicted first
+    assert "job:4" in bus._closed
 
 
 async def test_late_subscriber_within_ttl_still_gets_replay():
