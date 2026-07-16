@@ -1,4 +1,30 @@
+import os
+import sys
+from pathlib import Path
+
 import pytest
+
+sys.path.insert(0, str(Path(__file__).parent))  # for concurrency_guard import
+
+from concurrency_guard import running_foreign_pytest_pids  # noqa: E402
+
+
+def pytest_sessionstart(session):
+    """Fail fast if another pytest is already running: concurrent runs of
+    this suite deadlock each other (both wedge at 0% CPU mid-run -- shared
+    model caches), so starting a second one buys a silent multi-minute hang,
+    not results. Set PYTEST_ALLOW_CONCURRENT=1 to bypass deliberately."""
+    if os.environ.get("PYTEST_ALLOW_CONCURRENT"):
+        return
+    pids = running_foreign_pytest_pids()
+    if pids:
+        pid_list = " ".join(str(p) for p in pids)
+        pytest.exit(
+            f"another pytest is already running (PIDs: {pid_list}). Concurrent runs "
+            f"deadlock this suite mid-run. Kill it first (kill {pid_list}) or set "
+            "PYTEST_ALLOW_CONCURRENT=1 to bypass.",
+            returncode=2,
+        )
 
 
 @pytest.fixture(autouse=True)

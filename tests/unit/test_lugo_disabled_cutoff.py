@@ -71,7 +71,21 @@ def _poll_no_message(ws, duration_s: float, poll_interval_s: float = 0.01) -> No
             time.sleep(poll_interval_s)
             continue
         ws._raise_on_close(message)
-        raise AssertionError(f"unexpected message arrived: {json.loads(message['text'])}")
+        data = json.loads(message["text"]) if message.get("text") else {}
+        if data.get("type") == "engines_ready":
+            continue  # informational warm-state notice, not a goodbye
+        raise AssertionError(f"unexpected message arrived: {data}")
+
+
+def _receive_until(ws, msg_type: str, attempts: int = 20) -> dict:
+    """Drain messages until `msg_type` arrives -- the protocol may interleave
+    informational messages (e.g. `engines_ready`) at any point, and this
+    test's failure path used to wedge the suite at portal teardown."""
+    for _ in range(attempts):
+        msg = ws.receive_json()
+        if msg["type"] == msg_type:
+            return msg
+    raise AssertionError(f"no '{msg_type}' message within {attempts} messages")
 
 
 def test_disabled_owner_cuts_off_paired_device():
@@ -86,8 +100,7 @@ def test_disabled_owner_cuts_off_paired_device():
                       "audio_params": {"format": "opus", "sample_rate": 16000}})
         assert ws.receive_json()["type"] == "welcome"
         asyncio.run(user_store.set_fields(user["id"], disabled=True))
-        msg = ws.receive_json()
-        assert msg["type"] == "goodbye"
+        msg = _receive_until(ws, "goodbye")
         assert msg["reason"] == "account_disabled"
 
 
@@ -138,6 +151,5 @@ def test_idle_timeout_zero_never_fires_for_identity_owned_connection(monkeypatch
         # arrive, proving the watchdog was running the whole time (for
         # identity reasons) while the idle-timeout branch stayed dormant.
         asyncio.run(user_store.set_fields(user["id"], disabled=True))
-        msg = ws.receive_json()
-        assert msg["type"] == "goodbye"
+        msg = _receive_until(ws, "goodbye")
         assert msg["reason"] == "account_disabled"

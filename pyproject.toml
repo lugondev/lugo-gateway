@@ -24,6 +24,7 @@ dependencies = [
 dev = [
   "pytest>=8.3.0",
   "pytest-asyncio>=0.23.0",
+  "pytest-timeout>=2.3.0",
   "ruff>=0.6.0",
 ]
 # Apple-Silicon GPU STT (whisper_mlx ~7x faster). Mac only.
@@ -67,6 +68,15 @@ edge-tts = [
 asyncio_mode = "auto"
 pythonpath = ["apps/api_gateway"]
 testpaths = ["tests"]
+# Hang protection, two layers (the whole suite runs in ~47s, so nothing
+# legitimate gets close to either limit):
+# - faulthandler dumps every thread's stack at 100s stuck -- the diagnosis.
+# - pytest-timeout hard-kills the run at 120s stuck -- the backstop, so a
+#   wedged test (e.g. a WS TestClient portal teardown deadlock) costs 2
+#   minutes and a stack trace, never an indefinite silent hang.
+faulthandler_timeout = 100
+timeout = 120
+timeout_method = "thread"
 
 [build-system]
 requires = ["hatchling"]

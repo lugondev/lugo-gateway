@@ -50,14 +50,26 @@ def _local_hermetic(monkeypatch, tmp_path):
     stt_service.providers.pop("stub-idle-stt", None)
 
 
+def _receive_until(ws, msg_type: str, attempts: int = 20) -> dict:
+    """Drain messages until `msg_type` arrives. The protocol may interleave
+    informational messages (e.g. `engines_ready` when the configured TTS
+    engine isn't warm) at any point, so asserting on the literal next message
+    makes the test depend on machine warm state -- and its failure path is
+    what used to wedge the whole suite at TestClient portal teardown."""
+    for _ in range(attempts):
+        msg = ws.receive_json()
+        if msg["type"] == msg_type:
+            return msg
+    raise AssertionError(f"no '{msg_type}' message within {attempts} messages")
+
+
 def test_idle_timeout_emits_goodbye():
     with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
         ws.send_json({"type": "wakeup", "profile": "fast",
                       "audio_params": {"format": "opus", "sample_rate": 16000}})
         assert ws.receive_json()["type"] == "welcome"
         # say nothing; within ~1s the server should give up
-        msg = ws.receive_json()
-        assert msg["type"] == "goodbye"
+        msg = _receive_until(ws, "goodbye")
         assert msg["reason"] == "idle_timeout"
 
 

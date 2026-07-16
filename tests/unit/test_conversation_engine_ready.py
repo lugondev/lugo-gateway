@@ -3,12 +3,34 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.stt.service import stt_service
+from app.services.system_config import system_config_store
 from app.services.tts.service import tts_service
 
 
 @pytest.fixture
 def client():
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _pin_conversation_engines(monkeypatch):
+    """Pin the session's engines to the ones these tests stub. The readiness
+    check consults the CONFIGURED conversation engines (system config), so
+    when the default tts engine changed (vieneu -> omnivoice) these tests
+    silently started probing the real omnivoice provider's warm state instead
+    of the fakes -- failing on any machine where it isn't warm."""
+    _real_get = system_config_store.get
+
+    def _get_pinned():
+        cfg = _real_get()
+        return cfg.model_copy(update={
+            "conversation": cfg.conversation.model_copy(update={
+                "conversation_stt_engine": "whisper",
+                "conversation_tts_engine": "vieneu",
+            })
+        })
+
+    monkeypatch.setattr(system_config_store, "get", _get_pinned)
 
 
 class _ColdProvider:
