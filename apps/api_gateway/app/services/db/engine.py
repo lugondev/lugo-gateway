@@ -48,11 +48,23 @@ def configure(url: str | None = None) -> None:
             # Already inside a running loop somehow -- best-effort fallback.
             _engine.sync_engine.dispose()
     url = url or settings.database_url
+    engine_kwargs: dict = {}
     if url.startswith("sqlite"):
         db_file = url.split("///", 1)[-1]
         if db_file and db_file != ":memory:":
             Path(db_file).parent.mkdir(parents=True, exist_ok=True)
-    _engine = create_async_engine(url)
+        # NEVER pool aiosqlite connections: each one is bound to the event
+        # loop that created it, and this process runs many loops (pytest's
+        # per-test loops, TestClient portals, asyncio.run() in sync test
+        # helpers). A pooled connection checked out under a different loop
+        # wedges forever mid-await -- observed as WS tests hanging at
+        # TestClient portal teardown while a watchdog awaited get_by_id() on
+        # a connection created by an earlier asyncio.run(). Opening a local
+        # SQLite file per session is microseconds; pooling buys nothing here.
+        from sqlalchemy.pool import NullPool
+
+        engine_kwargs["poolclass"] = NullPool
+    _engine = create_async_engine(url, **engine_kwargs)
     _factory = async_sessionmaker(_engine, expire_on_commit=False)
     _initialized = False
     # A fresh lock too -- an asyncio.Lock first acquired under a now-closed
