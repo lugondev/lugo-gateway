@@ -918,34 +918,46 @@
 
           <!-- ============================== SYSTEM ============================== -->
           <div class="section" id="section-system">
-            <section class="card">
-              <div class="card-head">
-                <h2>System status &amp; config</h2>
-                <button id="status-refresh" class="ghost mini">Refresh</button>
-              </div>
-              <div id="system-status" class="status-groups"></div>
-              <p class="hint">Manage downloadable models in the <strong>Models</strong> section. Engine/model/LLM/tuning config has moved to System settings below.</p>
-            </section>
+            <div class="subtabs">
+              <button class="subtab-item active" data-subtab="status">Status</button>
+              <button class="subtab-item" data-subtab="context">Base context</button>
+              <button class="subtab-item" data-subtab="settings">Settings</button>
+            </div>
 
-            <section class="card">
-              <h2>Base context</h2>
-              <p class="hint">Introduces the platform/software and any guardrail rules to the assistant. Always prepended to every conversation's system prompt, ahead of profile-specific prompts.</p>
-              <textarea id="sys-base-context" rows="6" placeholder="e.g. This is TeguVoice, an on-device voice assistant. Never give medical, legal, or financial advice."></textarea>
-              <div class="actions end">
-                <button id="sys-base-context-save">Save</button>
-              </div>
-              <p id="sys-base-context-status" class="meta"></p>
-            </section>
+            <div class="subtab-pane active" id="subtab-system-status">
+              <section class="card">
+                <div class="card-head">
+                  <h2>System status &amp; config</h2>
+                  <button id="status-refresh" class="ghost mini">Refresh</button>
+                </div>
+                <div id="system-status" class="status-groups"></div>
+                <p class="hint">Manage downloadable models in the <strong>Models</strong> section. Engine/model/LLM/tuning config has moved to the Settings tab.</p>
+              </section>
+            </div>
 
-            <section class="card">
-              <h2>System settings</h2>
-              <p class="hint">Engine choices, model paths, and conversation tuning. Changes take effect immediately — no restart needed.</p>
-              <div id="sys-config-groups"></div>
-              <div class="actions end">
-                <button id="sys-config-groups-save">Save</button>
-              </div>
-              <p id="sys-config-groups-status" class="meta"></p>
-            </section>
+            <div class="subtab-pane" id="subtab-system-context">
+              <section class="card">
+                <h2>Base context</h2>
+                <p class="hint">Introduces the platform/software and any guardrail rules to the assistant. Always prepended to every conversation's system prompt, ahead of profile-specific prompts.</p>
+                <textarea id="sys-base-context" rows="6" placeholder="e.g. This is TeguVoice, an on-device voice assistant. Never give medical, legal, or financial advice."></textarea>
+                <div class="actions end">
+                  <button id="sys-base-context-save">Save</button>
+                </div>
+                <p id="sys-base-context-status" class="meta"></p>
+              </section>
+            </div>
+
+            <div class="subtab-pane" id="subtab-system-settings">
+              <section class="card">
+                <h2>System settings</h2>
+                <p class="hint">Engine choices, model paths, and conversation tuning. Changes take effect immediately — no restart needed.</p>
+                <div id="sys-config-groups"></div>
+                <div class="actions end">
+                  <button id="sys-config-groups-save">Save</button>
+                </div>
+                <p id="sys-config-groups-status" class="meta"></p>
+              </section>
+            </div>
           </div>
 
         </main>

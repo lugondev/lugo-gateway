@@ -1,6 +1,7 @@
 import "./auth.js";
 import { restoreAndBind } from "./helpers.js";
 import { initSidebar } from "./sidebar-nav.js";
+import { initSystemSubtabs } from "./system-subtabs.js";
 import { loadSttEngines } from "./stt-engines.js";
 import { initSttMode } from "./stt-batch.js";
 import { initChatModes } from "./chat.js";
@@ -25,6 +26,7 @@ import "./devices.js";
 import "./model-registry.js";
 
 initSidebar();
+initSystemSubtabs();
 initSttMode();
 initChatModes();
 setStreamUI("idle");

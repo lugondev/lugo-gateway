@@ -269,6 +269,46 @@ body {
   animation: fadeUp 300ms ease;
 }
 
+/* ---- In-section sub-tabs (e.g. System: Status / Base context / Settings) ---- */
+.subtabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--surface-hover);
+  padding-bottom: 0;
+}
+.subtab-item {
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 130ms, color 130ms, border-color 130ms;
+}
+.subtab-item:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  transform: none;
+  filter: none;
+}
+.subtab-item.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.subtab-pane {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+}
+.subtab-pane.active {
+  display: flex;
+  animation: fadeUp 300ms ease;
+}
+
 /* ---- Footer ---- */
 .app-footer {
   height: 34px;
