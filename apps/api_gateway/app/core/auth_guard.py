@@ -101,11 +101,12 @@ class WsIdentity:
 
 
 async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
-    """Resolves the identity behind a WS connection. Checks the browser
-    cookie session first (and re-verifies the user isn't disabled -- a stale
-    cookie from before a disable shouldn't grant a fresh connection), then a
-    paired-device token (services.auth.devices), then the legacy shared
-    device_auth_token as a temporary fallback for un-paired fleets."""
+    """Resolves the identity behind a WS connection. Checks the bearer
+    subprotocol first, then the browser cookie session (and re-verifies the
+    user isn't disabled -- a stale cookie from before a disable shouldn't
+    grant a fresh connection), then a paired-device token (services.auth.devices),
+    then the legacy shared device_auth_token as a temporary fallback for
+    un-paired fleets."""
     from app.services.auth.devices import device_store
     from app.services.auth.users import user_store
 

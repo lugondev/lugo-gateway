@@ -29,7 +29,7 @@ async def test_ws_accepts_valid_bearer_subprotocol(client, _with_password, ws_us
     with client.websocket_connect(
         "/v1/stt/stream", subprotocols=["bearer", token]
     ) as ws:
-        assert ws is not None
+        assert ws.accepted_subprotocol == "bearer"
 
 
 async def test_ws_rejects_invalid_bearer_subprotocol(client, _with_password):
