@@ -181,7 +181,12 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
+    # Tắt credentials: Lugo web client dùng bearer (không cookie), còn admin
+    # webui được phục vụ từ chính app này (/static) nên same-origin và không
+    # đi qua CORS. Bật credentials cùng allow_origins=["*"] sẽ khiến Starlette
+    # echo lại mọi origin kèm Allow-Credentials -- mọi website đọc được
+    # response xác thực bằng cookie, chỉ còn SameSite=lax chặn.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
