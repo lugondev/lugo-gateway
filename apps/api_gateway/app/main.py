@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import secrets
 import time
 from contextlib import asynccontextmanager
 
@@ -188,7 +187,7 @@ app.add_middleware(
 )
 
 app.add_middleware(AuthGuardMiddleware)
-_session_secret = settings.session_secret or secrets.token_hex(32)
+_session_secret = settings.effective_session_secret
 app.add_middleware(
     SessionMiddleware,
     secret_key=_session_secret,

@@ -1,4 +1,10 @@
+import secrets
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Sinh một lần lúc import -> ổn định trong process, reset khi restart.
+# Giữ đúng hành vi cũ của main.py (secrets.token_hex(32) ở module scope).
+_GENERATED_SESSION_SECRET = secrets.token_hex(32)
 
 
 class Settings(BaseSettings):
@@ -88,6 +94,13 @@ class Settings(BaseSettings):
     @property
     def auth_enabled(self) -> bool:
         return bool(self.admin_password or self.admin_bootstrap_password)
+
+    @property
+    def effective_session_secret(self) -> str:
+        """Secret ký cho cả cookie session lẫn Lugo bearer token. Rỗng ->
+        secret ngẫu nhiên mỗi process: session và token cùng reset khi
+        restart, đúng bằng hành vi trước đây."""
+        return self.session_secret or _GENERATED_SESSION_SECRET
 
     @property
     def cors_origins_list(self) -> list[str]:
