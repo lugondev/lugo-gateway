@@ -6,6 +6,7 @@ for an S3-compatible object store later without touching callers.
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
@@ -13,6 +14,12 @@ from pathlib import Path
 from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
+
+# Only files this store itself created (uuid4().hex + extension) are ever
+# pruned. The directory is shared: OmniVoice keeps its pinned voice reference
+# (_omnivoice_voice_ref.wav -- deleting it makes the cloned voice change) and
+# its open sidecar log here, and operators may drop files in too.
+_ARTIFACT_FILENAME = re.compile(r"^[0-9a-f]{32}\.(wav|mp3)$")
 
 
 class ArtifactStore:
@@ -45,7 +52,7 @@ class ArtifactStore:
         cutoff = time.time() - max_age_s
         removed = 0
         for path in self.base_dir.iterdir():
-            if not path.is_file():
+            if not _ARTIFACT_FILENAME.match(path.name):
                 continue
             try:
                 if path.stat().st_mtime < cutoff:

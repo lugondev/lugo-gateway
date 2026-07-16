@@ -16,8 +16,8 @@ def test_prune_removes_only_files_older_than_max_age(tmp_path):
     leaving fresh ones (still referenced by live playback URLs) alone."""
     store = ArtifactStore(str(tmp_path))
     _, fresh_url = store.save_wav(b"fresh-wav")
-    old = tmp_path / "old.wav"
-    old.write_bytes(b"old-wav")
+    _, old_url = store.save_wav(b"old-wav")
+    old = tmp_path / old_url.rsplit("/", 1)[-1]
     _age_file(old, seconds=7200)
 
     removed = store.prune(max_age_s=3600)
@@ -26,6 +26,23 @@ def test_prune_removes_only_files_older_than_max_age(tmp_path):
     assert not old.exists()
     fresh_name = fresh_url.rsplit("/", 1)[-1]
     assert (tmp_path / fresh_name).exists()
+
+
+def test_prune_leaves_non_artifact_files_alone(tmp_path):
+    """OmniVoice keeps its pinned voice reference (_omnivoice_voice_ref.wav,
+    written once, mtime never refreshed) and the sidecar's open log file in
+    the SAME directory. Pruning them changes the cloned voice every TTL and
+    orphans the open log inode -- only uuid-hex artifact files may be deleted."""
+    store = ArtifactStore(str(tmp_path))
+    keepers = ["_omnivoice_voice_ref.wav", "_omnivoice_sidecar.log", "notes.txt"]
+    for name in keepers:
+        path = tmp_path / name
+        path.write_bytes(b"keep-me")
+        _age_file(path, seconds=7200)
+
+    assert store.prune(max_age_s=3600) == 0
+    for name in keepers:
+        assert (tmp_path / name).exists()
 
 
 def test_prune_ignores_subdirectories(tmp_path):
@@ -43,8 +60,8 @@ async def test_prune_loop_prunes_periodically_and_sleeps_first(tmp_path):
     (including test lifespans pointed at the real artifacts dir) doesn't
     immediately delete files."""
     store = ArtifactStore(str(tmp_path))
-    old = tmp_path / "old.wav"
-    old.write_bytes(b"old-wav")
+    _, old_url = store.save_wav(b"old-wav")
+    old = tmp_path / old_url.rsplit("/", 1)[-1]
     _age_file(old, seconds=7200)
 
     task = asyncio.create_task(prune_loop(store, max_age_s=3600, interval_s=0.02))
