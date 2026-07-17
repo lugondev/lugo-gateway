@@ -20,6 +20,18 @@ from app.services.tts.base import RenderingTTSProvider
 _DEFAULT_TIMEOUT = 60.0
 
 
+def _looks_like_wav(data: bytes) -> bool:
+    """Cheap RIFF/WAVE container sniff.
+
+    Not a full parse -- just enough to catch a 200 response that's actually a
+    JSON error page, an MP3, or a truncated body before it reaches the Opus
+    hot path's wave.open() (core/audio.wav_bytes_to_pcm16), which raises a
+    bare wave.Error from inside asyncio.to_thread -- outside render_wav's
+    ProviderError wrapping.
+    """
+    return len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WAVE"
+
+
 class OpenAICompatTTSProvider(RenderingTTSProvider):
     name = "openai_tts"
     sample_rate = 24000
@@ -73,6 +85,13 @@ class OpenAICompatTTSProvider(RenderingTTSProvider):
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(endpoint, headers=headers, json=body)
                 response.raise_for_status()
-                return response.content
         except httpx.HTTPError as exc:
             raise translate_httpx_error(self.name, exc) from exc
+
+        content = response.content
+        if not _looks_like_wav(content):
+            raise RuntimeError(
+                f"{self.name} returned {len(content)} bytes that are not a WAV file "
+                f"(expected a RIFF/WAVE header, got {content[:16]!r})"
+            )
+        return content

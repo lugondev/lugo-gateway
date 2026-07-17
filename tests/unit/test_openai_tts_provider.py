@@ -1,3 +1,6 @@
+import io
+import wave
+
 import httpx
 import pytest
 
@@ -12,6 +15,23 @@ _ENTRY = {
 }
 
 
+def _tiny_wav() -> bytes:
+    """A minimal, real WAV payload -- valid enough to pass the provider's
+    RIFF/WAVE sniff, unlike the placeholder b"RIFFWAVEDATA" this fixture used
+    to return (which starts with RIFF but has "DATA", not "WAVE", at offset 8
+    and would now be rejected)."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(8000)
+        f.writeframes(b"\x00\x00")
+    return buf.getvalue()
+
+
+_WAV_BYTES = _tiny_wav()
+
+
 @pytest.fixture
 def captured(monkeypatch):
     seen = {}
@@ -20,7 +40,7 @@ def captured(monkeypatch):
         seen["url"] = str(request.url)
         seen["auth"] = request.headers.get("Authorization")
         seen["json"] = request.read().decode()
-        return httpx.Response(200, content=b"RIFFWAVEDATA")
+        return httpx.Response(200, content=_WAV_BYTES)
 
     transport = httpx.MockTransport(handler)
     original = httpx.AsyncClient
@@ -39,7 +59,7 @@ async def test_posts_to_audio_speech_and_returns_wav_bytes(captured):
     provider = OpenAICompatTTSProvider(entry=_ENTRY)
     wav = await provider.render_wav(TTSRequest(text="xin chào", engine="openai_tts", voice="v1"))
 
-    assert wav == b"RIFFWAVEDATA"
+    assert wav == _WAV_BYTES
     assert captured["url"] == "http://tts-service:8100/v1/audio/speech"
     assert captured["auth"] == "Bearer t0ken"
     # Pin what actually goes on the wire: model, input text and voice.
@@ -58,7 +78,7 @@ async def test_resolves_the_enabled_entry_from_the_registry(captured, monkeypatc
         fake_find_enabled,
     )
     wav = await OpenAICompatTTSProvider().render_wav(TTSRequest(text="hi", engine="openai_tts"))
-    assert wav == b"RIFFWAVEDATA"
+    assert wav == _WAV_BYTES
     assert captured["url"] == "http://tts-service:8100/v1/audio/speech"
 
 
@@ -84,6 +104,24 @@ async def test_http_error_becomes_provider_error(monkeypatch):
         httpx, "AsyncClient", lambda *a, **k: original(*a, **{**k, "transport": transport})
     )
     with pytest.raises(ProviderError, match="HTTP 502"):
+        await OpenAICompatTTSProvider(entry=_ENTRY).render_wav(
+            TTSRequest(text="hi", engine="openai_tts")
+        )
+
+
+@pytest.mark.asyncio
+async def test_non_wav_200_response_becomes_a_clean_provider_error(monkeypatch):
+    # A 200 that isn't actually a WAV (a JSON error envelope, an MP3, a
+    # truncated body) must not sail past raise_for_status() and reach the
+    # Opus hot path's wave.open() as a bare wave.Error.
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(200, json={"error": "engine returned nonsense"})
+    )
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda *a, **k: original(*a, **{**k, "transport": transport})
+    )
+    with pytest.raises(ProviderError, match="not a WAV file"):
         await OpenAICompatTTSProvider(entry=_ENTRY).render_wav(
             TTSRequest(text="hi", engine="openai_tts")
         )
