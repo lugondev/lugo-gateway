@@ -111,26 +111,35 @@ override doesn't seem to take effect.
 Once the container is running and reachable from the gateway (e.g. as the
 `model-service` compose service, reachable at `http://model-service:8100`),
 add a Model Registry entry in the gateway so the gateway can use it as a
-remote engine:
+remote engine. The registry engine to use depends on the container's
+`SERVICE_KIND`:
 
-1. Kind: `stt` (there is no `tts` equivalent registry engine yet for this
-   pattern — see Limits).
-2. Engine: `openai_stt`. This is the gateway's own OpenAI-compatible remote
-   STT client; it is what actually issues the HTTP calls to the container.
+- `SERVICE_KIND=stt` container → registry Engine `openai_stt`
+  (`apps/api_gateway/app/services/stt/providers/openai_stt_provider.py`).
+- `SERVICE_KIND=tts` container → registry Engine `openai_tts`
+  (`apps/api_gateway/app/services/tts/providers/openai_tts_provider.py`).
+
+Both are the gateway's own OpenAI-compatible remote clients; they issue the
+HTTP calls to the container and are otherwise symmetric — same `base_url`/
+`api_key` shape, same test-before-add behavior. To add either:
+
+1. Kind: `stt` or `tts`, matching the container's `SERVICE_KIND`.
+2. Engine: `openai_stt` (for `stt`) or `openai_tts` (for `tts`).
 3. `model_id`: whatever you want to label the model as (it's forwarded to the
-   container as the `model` form field but the container's engine, chosen by
-   its own `SERVICE_ENGINE`, decides what actually runs — the registry
-   `model_id` doesn't select the container's engine).
+   container as the `model` field but the container's engine, chosen by its
+   own `SERVICE_ENGINE`, decides what actually runs — the registry `model_id`
+   doesn't select the container's engine).
 4. `base_url`: `http://model-service:8100/v1` (or `http://<host>:8100/v1` for
    a container reachable by hostname/IP from wherever the gateway runs).
 5. `api_key`: the exact value you set as the container's `SERVICE_API_TOKEN`.
 
 Saving the entry triggers the gateway's usual test-before-add call against the
 container, so a saved entry is already proof the container answered over HTTP
-with the token accepted. After that, `GET /v1/stt/engines` on the gateway
-should list `openai_stt` with `mode: remote` and `available: true`, and any
-transcription request routed with `engine=openai_stt` reaches the container
-instead of loading a model in the gateway's own process.
+with the token accepted. After that, `GET /v1/stt/engines` (for `openai_stt`)
+or `GET /v1/tts/engines` (for `openai_tts`) on the gateway should list the
+engine with `mode: remote` and `available: true`, and any request routed with
+that engine reaches the container instead of loading a model in the gateway's
+own process.
 
 ## Limits (v1)
 
