@@ -1,0 +1,80 @@
+"""STT against any OpenAI-compatible /audio/transcriptions endpoint.
+
+The name describes the protocol, not the backend: the same Model Registry
+entry can point at apps/model_service, a faster-whisper-server, or any other
+compatible host.
+
+Unlike RemoteWhisperProvider (which caches base_url/api_key at construction and
+needs stt_service.reinit_remote_providers() after every admin edit), this
+resolves its entry per call, so an edited entry takes effect immediately.
+"""
+
+from __future__ import annotations
+
+import httpx
+
+from app.schemas.stt import STTResult
+from app.services.model_registry.store import model_registry_store
+from app.services.stt.base import STTProvider
+
+_DEFAULT_TIMEOUT = 60.0
+
+
+class OpenAICompatSttProvider(STTProvider):
+    name = "openai_stt"
+
+    def __init__(
+        self,
+        name: str = "openai_stt",
+        timeout_seconds: float = _DEFAULT_TIMEOUT,
+        entry: dict | None = None,
+    ) -> None:
+        self.name = name
+        self.timeout_seconds = timeout_seconds
+        # Only the registry's test-before-add call passes an entry: at that
+        # point the row being validated does not exist yet.
+        self._entry_override = entry
+
+    async def _resolve_entry(self, model: str | None) -> dict | None:
+        if self._entry_override is not None:
+            return self._entry_override
+        if model:
+            return await model_registry_store.find(kind="stt", engine=self.name, model_id=model)
+        return await model_registry_store.find_enabled(kind="stt", engine=self.name)
+
+    async def transcribe_bytes(
+        self, audio_bytes: bytes, language: str | None = None, model: str | None = None
+    ) -> STTResult:
+        entry = await self._resolve_entry(model)
+        base_url = (entry or {}).get("base_url", "").strip()
+        if not base_url:
+            raise RuntimeError(
+                f"{self.name} is not configured. Add a Model Registry entry with the "
+                f"service's base URL (e.g. http://stt-service:8100/v1)."
+            )
+
+        api_key = (entry or {}).get("api_key", "").strip()
+        timeout = (entry.get("config") or {}).get("timeout_seconds") or self.timeout_seconds
+
+        endpoint = f"{base_url.rstrip('/')}/audio/transcriptions"
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        data = {"model": model or entry.get("model_id", ""), "response_format": "json"}
+        if language:
+            data["language"] = language
+        files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(endpoint, headers=headers, data=data, files=files)
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(
+                f"{self.name} returned HTTP {exc.response.status_code}: {exc.response.text[:200]}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"{self.name} request failed: {exc}") from exc
+
+        return STTResult(
+            engine=self.name, text=str(payload.get("text", "")).strip(), is_final=True, confidence=None
+        )
