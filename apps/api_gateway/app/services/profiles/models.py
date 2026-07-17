@@ -27,7 +27,7 @@ class SttConfig(BaseModel):
     engine: str = ""
     language: str = ""
     # Model-variant id for engines with a registry (see stt/model_registry.py) —
-    # e.g. a whisper size ("phowhisper-medium") or a qwen3_asr shorthand ("0.6b").
+    # e.g. a whisper size ("large-v3-turbo") or a qwen3_asr shorthand ("0.6b").
     # "" = inherit whatever model is currently active for the resolved engine.
     model: str = ""
 

@@ -30,7 +30,7 @@ Set the Vosk model path in the admin **System** tab (System settings) to use a d
 
 ```bash
 .venv/bin/pip install -e ".[mlx]"     # Apple Silicon only
-./scripts/convert_phowhisper_mlx.sh   # builds models/stt/phowhisper-medium-mlx
+./scripts/convert_phowhisper_mlx.sh   # builds models/stt/whisper-large-v3-turbo-mlx
 ```
 Then set the conversation STT engine to `whisper_mlx` in the admin System tab (or
 `conversation.conversation_stt_engine` via `PUT /v1/system/config`). The engine

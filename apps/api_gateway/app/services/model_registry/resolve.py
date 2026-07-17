@@ -77,14 +77,14 @@ def _env_overrides(prefix: str, defaults: dict) -> dict:
 # source for migrate_stt_local_models_to_registry().
 STT_ENGINE_CONFIG_DEFAULTS: dict[str, dict] = {
     "whisper_local": {
-        "default_model": "phowhisper-medium",
+        "default_model": "large-v3-turbo",
         "vad_filter": True,
         "beam_size": 1,
         "condition_on_previous_text": False,
         "initial_prompt": "",
     },
     "whisper_mlx": {
-        "model_path": "models/stt/phowhisper-medium-mlx",
+        "model_path": "models/stt/whisper-large-v3-turbo-mlx",
         "condition_on_previous_text": False,
         "initial_prompt": "",
     },

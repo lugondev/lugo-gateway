@@ -2,8 +2,9 @@
 
 CTranslate2 (faster-whisper) is CPU-only on macOS; MLX runs Whisper on the Metal
 GPU. On an M-series chip this is ~7x faster than the CPU int8 path at equal/better
-accuracy (float16). Uses a locally converted PhoWhisper-MLX model so Vietnamese
-accuracy matches the faster-whisper PhoWhisper engine.
+accuracy (float16). Uses a locally converted whisper-MLX model (see
+scripts/convert_phowhisper_mlx.sh) matching the faster-whisper `whisper_local`
+engine's accuracy.
 
 Available only when `mlx_whisper` is installed (macOS/Apple Silicon) and the model
 directory exists; otherwise the engine is hidden and callers fall back to whisper.

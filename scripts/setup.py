@@ -24,7 +24,7 @@ import sys
 # can run on. install is ("extra", name) -> folded into `pip install -e .[...]`,
 # or ("pip", spec) -> `pip install <spec>`.
 COMPONENTS = [
-    dict(id="whisper", label="Whisper / PhoWhisper — STT (CPU)", module="faster_whisper",
+    dict(id="whisper", label="Whisper — STT (CPU)", module="faster_whisper",
          install=("extra", "tts"), hosts={"apple", "nvidia", "cpu"}, note="base"),
     dict(id="vosk", label="Vosk — streaming STT (CPU)", module="vosk",
          install=("extra", "tts"), hosts={"apple", "nvidia", "cpu"}, note="base"),
@@ -32,7 +32,7 @@ COMPONENTS = [
          install=("extra", "qwen3-asr-cuda"), hosts={"nvidia"}, note=""),
     dict(id="qwen3_asr_mlx", label="Qwen3-ASR — STT (Apple MLX) ⭐ Vietnamese", module="mlx_qwen3_asr",
          install=("extra", "qwen3-asr"), hosts={"apple"}, note=""),
-    dict(id="whisper_mlx", label="PhoWhisper — STT (Apple MLX, ~7×)", module="mlx_whisper",
+    dict(id="whisper_mlx", label="Whisper — STT (Apple MLX, ~7×)", module="mlx_whisper",
          install=("extra", "mlx"), hosts={"apple"}, note=""),
     dict(id="vieneu", label="VieNeu v3turbo — TTS (CPU, Vietnamese)", module="vieneu",
          install=("extra", "tts"), hosts={"apple", "nvidia", "cpu"}, note=""),

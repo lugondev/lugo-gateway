@@ -8,7 +8,7 @@ from app.services.stt.providers.openai_stt_provider import OpenAICompatSttProvid
 from app.services.stt.service import stt_service
 
 _ENTRY = {
-    "id": "e1", "kind": "stt", "engine": "openai_stt", "model_id": "phowhisper-medium",
+    "id": "e1", "kind": "stt", "engine": "openai_stt", "model_id": "large-v3-turbo",
     "label": "local box", "enabled": True, "stage": "stable",
     "api_key": "t0ken", "base_url": "http://stt-service:8100/v1", "config": {},
 }
@@ -51,11 +51,11 @@ async def test_posts_to_the_entry_base_url_with_bearer(captured, monkeypatch):
         "app.services.stt.providers.openai_stt_provider.model_registry_store.find", fake_find
     )
     provider = OpenAICompatSttProvider()
-    result = await provider.transcribe_bytes(b"RIFFDATA", "vi", "phowhisper-medium")
+    result = await provider.transcribe_bytes(b"RIFFDATA", "vi", "large-v3-turbo")
 
     assert captured["url"] == "http://stt-service:8100/v1/audio/transcriptions"
     assert captured["auth"] == "Bearer t0ken"
-    assert _multipart_field(captured["body"], "model") == "phowhisper-medium"
+    assert _multipart_field(captured["body"], "model") == "large-v3-turbo"
     assert _multipart_field(captured["body"], "language") == "vi"
     assert result.text == "xin chào"
     assert result.engine == "openai_stt"

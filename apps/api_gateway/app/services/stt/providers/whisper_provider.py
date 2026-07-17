@@ -2,7 +2,6 @@ import asyncio
 import os
 import tempfile
 import threading
-from pathlib import Path
 
 from app.schemas.stt import STTResult
 from app.services.model_registry.resolve import (
@@ -24,35 +23,17 @@ _MODEL_LOCK = threading.Lock()
 # engine-config sentinel row when unset. Reset on restart (not persisted).
 _active_model: str | None = None
 
-# PhoWhisper (VinAI) Vietnamese fine-tune, pre-converted to CTranslate2 so it loads
-# directly in faster-whisper. One repo holds every size in its own subfolder.
-PHOWHISPER_REPO = "quocphu/PhoWhisper-ct2-FasterWhisper"
-PHOWHISPER_SUBFOLDERS = {
-    "phowhisper-tiny": "PhoWhisper-tiny-ct2-fasterWhisper",
-    "phowhisper-base": "PhoWhisper-base-ct2-fasterWhisper",
-    "phowhisper-small": "PhoWhisper-small-ct2-fasterWhisper",
-    "phowhisper-medium": "PhoWhisper-medium-ct2-fasterWhisper",
-    "phowhisper-large": "PhoWhisper-large-ct2-fasterWhisper",
-}
-
-
-def is_phowhisper(model: str) -> bool:
-    return model in PHOWHISPER_SUBFOLDERS
-
 
 def resolve_whisper_model(model: str) -> str:
     """Map a model id to something faster-whisper accepts.
 
-    Standard sizes ("medium", "large-v3") pass through. PhoWhisper ids download the
-    matching subfolder from the hub (cached after the first call) and return its path.
+    Every WHISPER_SIZES entry ("medium", "large-v3", ...) passes through unchanged
+    -- faster-whisper resolves it to Systran/faster-whisper-{model} on the hub
+    itself. Kept as a seam (rather than calling faster_whisper.WhisperModel with
+    `model` directly) so tests can monkeypatch it and a future non-Systran model
+    source only needs to change this one function.
     """
-    sub = PHOWHISPER_SUBFOLDERS.get(model)
-    if not sub:
-        return model
-    from huggingface_hub import snapshot_download
-
-    root = snapshot_download(PHOWHISPER_REPO, allow_patterns=[f"{sub}/*"])
-    return str(Path(root) / sub)
+    return model
 
 
 def get_active_whisper_model() -> str:

@@ -420,7 +420,7 @@ def test_bad_service_url_is_rejected_at_add_time(client, monkeypatch):
     r = client.post(
         "/v1/model_registry",
         json={
-            "kind": "stt", "engine": "openai_stt", "model_id": "phowhisper-medium",
+            "kind": "stt", "engine": "openai_stt", "model_id": "whisper-medium",
             "label": "typo", "base_url": "http://nonexistent.invalid:9/v1", "api_key": "t0ken",
         },
     )

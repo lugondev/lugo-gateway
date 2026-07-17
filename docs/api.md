@@ -443,7 +443,7 @@ Key changes from earlier API versions:
   `whisper_mlx_model_path`, `qwen3_asr_model`). Configure them per engine via the
   Model Registry `model_id=""` sentinel entries (`kind="stt"`, `engine="whisper_local"` /
   `"whisper_mlx"` / `"qwen3_asr"` / `"vosk"`), stored in the `config` dict — e.g.
-  `{"default_model": "phowhisper-medium", "vad_filter": true, "beam_size": 1,
+  `{"default_model": "large-v3-turbo", "vad_filter": true, "beam_size": 1,
   "condition_on_previous_text": false, "initial_prompt": "", "device": "cpu",
   "compute_type": "int8"}` for `whisper_local`, `{"model_path": "..."}` for
   `vosk`/`whisper_mlx`.

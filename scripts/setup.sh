@@ -27,7 +27,7 @@ Options (tick what you want):
 Engines installed per detected host:
   Apple Silicon -> .[mlx,qwen3-asr,tts,opus]  (whisper_mlx, qwen3_asr MLX, VieNeu, Opus)
   NVIDIA GPU    -> .[qwen3-asr-cuda,tts]       (qwen3_asr CUDA, VieNeu)  [+ vieneu[gpu] with --gpu-tts]
-  CPU only      -> .[tts,opus]                 (whisper/PhoWhisper CPU, VieNeu v3turbo, Opus)
+  CPU only      -> .[tts,opus]                 (whisper CPU, VieNeu v3turbo, Opus)
 EOF
 }
 
@@ -62,17 +62,17 @@ print_menu() {
   echo "Installable on this host ($HOST):"
   case "$HOST" in
     apple)
-      echo "  STT : whisper_mlx, qwen3_asr (MLX), whisper/PhoWhisper (CPU), vosk"
+      echo "  STT : whisper_mlx, qwen3_asr (MLX), whisper (CPU), vosk"
       echo "  TTS : VieNeu v3turbo (CPU)"
       echo "  LLM : Ollama (--ollama MODEL)  |  online (UI)"
       echo "  Skipped (incompatible): qwen3_asr CUDA, VieNeu GPU modes  (need NVIDIA)" ;;
     nvidia)
-      echo "  STT : qwen3_asr (CUDA) ⭐, whisper/PhoWhisper (CPU), vosk"
+      echo "  STT : qwen3_asr (CUDA) ⭐, whisper (CPU), vosk"
       echo "  TTS : VieNeu v3turbo (CPU)  |  VieNeu GPU modes (--gpu-tts)"
       echo "  LLM : Ollama (--ollama MODEL)  |  online (UI)"
       echo "  Skipped (incompatible): whisper_mlx, qwen3_asr MLX  (Apple Silicon only)" ;;
     cpu)
-      echo "  STT : whisper/PhoWhisper (CPU), vosk"
+      echo "  STT : whisper (CPU), vosk"
       echo "  TTS : VieNeu v3turbo (CPU)"
       echo "  LLM : online (UI)  |  Ollama (--ollama MODEL, slow on CPU)"
       echo "  Skipped (incompatible): qwen3_asr (needs GPU), whisper_mlx (Apple), VieNeu GPU modes" ;;

@@ -25,9 +25,9 @@ def caps(**over) -> Capabilities:
 def cand(**over) -> Candidate:
     base = dict(
         category="stt",
-        id="phowhisper-medium",
+        id="medium",
         engine="whisper",
-        label="PhoWhisper Medium",
+        label="Whisper Medium",
         chip="cpu",
         tier="high",
         vietnamese=True,
@@ -36,9 +36,9 @@ def cand(**over) -> Candidate:
         min_ram_gb=4.0,
         requires=["faster_whisper"],
         action={"kind": "download", "method": "POST", "path": "/v1/models/whisper/download",
-                "payload": {"size": "phowhisper-medium"}},
+                "payload": {"size": "medium"}},
         select={"kind": "select", "method": "POST", "path": "/v1/models/whisper/select",
-                "payload": {"size": "phowhisper-medium"}},
+                "payload": {"size": "medium"}},
     )
     base.update(over)
     return Candidate(**base)
@@ -53,7 +53,7 @@ def test_cpu_engine_present_but_not_downloaded_is_runnable_and_recommended():
 
 
 def test_installed_model_gets_installed_status_and_bonus():
-    r = evaluate(cand(), caps(), installed_ids={"phowhisper-medium"})
+    r = evaluate(cand(), caps(), installed_ids={"medium"})
     assert r["status"] == "installed"
     assert r["fit_score"] == 50 + 30 + 10 + 10  # + installed bonus
 
@@ -123,15 +123,15 @@ def test_missing_engine_module_needs_it_not_incompatible():
 
 
 def test_installed_not_active_exposes_use_select_action():
-    r = evaluate(cand(), caps(), installed_ids={"phowhisper-medium"}, active_ids=set())
+    r = evaluate(cand(), caps(), installed_ids={"medium"}, active_ids=set())
     assert r["status"] == "installed"
     assert r["active"] is False
     assert r["select"]["path"] == "/v1/models/whisper/select"
 
 
 def test_active_model_marked_active():
-    r = evaluate(cand(), caps(), installed_ids={"phowhisper-medium"},
-                 active_ids={"phowhisper-medium"})
+    r = evaluate(cand(), caps(), installed_ids={"medium"},
+                 active_ids={"medium"})
     assert r["active"] is True
 
 
@@ -150,11 +150,11 @@ def test_engine_without_select_has_none():
 def test_rank_sorts_by_fit_descending():
     cs = [
         cand(id="tiny", tier="low", vietnamese=False, min_ram_gb=1.0),
-        cand(id="phowhisper-medium", tier="high", vietnamese=True),
+        cand(id="medium", tier="high", vietnamese=True),
         cand(id="qwen", chip="apple_silicon", requires=["mlx"], min_ram_gb=24.0),
     ]
     ranked = rank(cs, caps(), installed_ids=set())
     ids = [r["id"] for r in ranked]
-    assert ids[0] == "phowhisper-medium"  # 90
+    assert ids[0] == "medium"  # 90
     assert ids[1] == "tiny"               # 55
     assert ids[2] == "qwen"               # 0 incompatible -> bottom

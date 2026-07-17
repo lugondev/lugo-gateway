@@ -1,8 +1,8 @@
 # speech-text-transformer
 
 Local gateway unifying Speech-to-Text, Text-to-Speech, and a voice Conversation loop
-over REST / WebSocket / SSE, with a browser playground. STT: Vosk, faster-whisper
-(PhoWhisper for Vietnamese), Apple-GPU MLX (`whisper_mlx`), remote Whisper. TTS:
+over REST / WebSocket / SSE, with a browser playground. STT: Vosk, faster-whisper,
+Qwen3-ASR (Vietnamese), Apple-GPU MLX (`whisper_mlx`), remote Whisper. TTS:
 OmniVoice, VieNeu, and more. Conversation: VAD turn-taking + barge-in, local/online
 LLM, PCM or Opus transport.
 
@@ -115,10 +115,10 @@ Every TTS request runs real synthesis; a failing engine reports an `error` event
 ## STT engine options
 
 - vosk: Local Vosk model.
-- whisper or whisper_local: Local faster-whisper. Defaults to **PhoWhisper** (VinAI
-  Vietnamese fine-tune, `phowhisper-medium`) — far better Vietnamese tones/diacritics
-  than vanilla Whisper. CPU on macOS (~3.7s/utterance).
-- **whisper_mlx**: PhoWhisper on the Apple-Silicon **GPU** via MLX — ~0.5s/utterance
+- whisper or whisper_local: Local faster-whisper. Defaults to **large-v3-turbo**.
+  CPU on macOS (~3.7s/utterance). For Vietnamese, prefer `qwen3_asr` — it beats
+  faster-whisper on Vietnamese (FLEURS benchmark).
+- **whisper_mlx**: Whisper on the Apple-Silicon **GPU** via MLX — ~0.5s/utterance
   (~7× faster than CPU), same accuracy. Mac only; auto-falls back to `whisper`
   elsewhere. Build the model with `scripts/convert_phowhisper_mlx.sh`.
 - whisper_service: Remote OpenAI-compatible Whisper endpoint.

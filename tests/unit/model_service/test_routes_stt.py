@@ -45,9 +45,9 @@ def test_forwards_language_and_model_to_the_provider():
         "/v1/audio/transcriptions",
         headers=_AUTH,
         files={"file": ("a.wav", b"RIFFDATA", "audio/wav")},
-        data={"language": "vi", "model": "phowhisper-medium"},
+        data={"language": "vi", "model": "large-v3-turbo"},
     )
-    assert provider.calls == [(b"RIFFDATA", "vi", "phowhisper-medium")]
+    assert provider.calls == [(b"RIFFDATA", "vi", "large-v3-turbo")]
 
 
 def test_blank_language_and_model_become_none():
