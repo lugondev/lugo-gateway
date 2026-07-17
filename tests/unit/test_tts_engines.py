@@ -206,6 +206,14 @@ def test_pick_device_dtype_attn_prefers_cuda(monkeypatch):
 
 
 def test_pick_device_dtype_attn_falls_back_to_mps(monkeypatch):
+    """MPS must use float32, not float16.
+
+    Empirically reproduced (3/3 runs, three different input texts): fp16 on
+    MPS makes Qwen3-TTS's nested codec `generate` produce inf/nan in its
+    sampling distribution, and `torch.multinomial` raises
+    "probability tensor contains either `inf`, `nan` or element < 0".
+    float32 on MPS works and still uses the Apple GPU (no CPU fallback).
+    """
     import torch
 
     from app.services.tts.providers.qwen3_tts_provider import _pick_device_dtype_attn
@@ -217,7 +225,7 @@ def test_pick_device_dtype_attn_falls_back_to_mps(monkeypatch):
     device, dtype, attn = _pick_device_dtype_attn()
 
     assert device == "mps"
-    assert dtype is torch.float16
+    assert dtype is torch.float32
     assert attn is None
 
 

@@ -48,7 +48,14 @@ def _pick_device_dtype_attn():
     if device.startswith("cuda"):
         return device, torch.bfloat16, "flash_attention_2"
     if device == "mps":
-        return device, torch.float16, None
+        # float16 (NOT float32-alternatives like bfloat16) on MPS makes
+        # Qwen3-TTS's nested codec `generate` produce inf/nan in its sampling
+        # distribution, and torch.multinomial then raises "probability
+        # tensor contains either `inf`, `nan` or element < 0". Empirically
+        # reproduced 3/3 with three different input texts; float32 on MPS
+        # is confirmed to work (and still uses the Apple GPU — do not
+        # "optimize" this back to fp16, and do not fall back to CPU).
+        return device, torch.float32, None
     return device, torch.float32, None
 
 
