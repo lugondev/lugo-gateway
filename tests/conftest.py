@@ -4,6 +4,12 @@ from pathlib import Path
 
 import pytest
 
+# Ensure apps directories are at the front so that imports like model_service
+# resolve to /apps/model_service, not /tests/unit/model_service (namespace collision)
+_root = Path(__file__).parent.parent
+sys.path.insert(0, str(_root / "apps"))
+sys.path.insert(0, str(_root / "apps" / "api_gateway"))
+
 sys.path.insert(0, str(Path(__file__).parent))  # for concurrency_guard import
 
 from concurrency_guard import running_foreign_pytest_pids  # noqa: E402
