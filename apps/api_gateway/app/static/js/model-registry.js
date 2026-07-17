@@ -66,7 +66,11 @@ function renderModelRegistry() {
         key: "base_url",
         label: "Base URL",
         render: (e) =>
-          e.kind === "llm" || e.kind === "stt"
+          // Every kind can carry a base_url now: llm/stt point at an
+          // OpenAI-compatible endpoint, and tts engines like openai_tts need
+          // one too (Model Registry entries are how apps/model_service is
+          // wired in as a remote engine).
+          e.kind === "llm" || e.kind === "stt" || e.kind === "tts"
             ? `<input type="text" class="mini" data-registry-baseurl="${escapeHtml(e.id)}"
                  value="${escapeHtml(e.base_url || "")}" placeholder="https://…" />`
             : "—",
@@ -174,10 +178,16 @@ async function bulkPatchEntries(ids, fields, verb) {
 
 function _updateKindFields() {
   const kind = el("registry-add-kind").value;
-  el("registry-add-llm-fields").classList.toggle("hidden", !(kind === "llm" || kind === "stt"));
-  // tts is the only kind still using the plain "API Key" field; llm/stt have
-  // their own (paired with Base URL).
-  el("registry-add-key-fields").classList.toggle("hidden", kind === "llm" || kind === "stt");
+  const isLlmOrStt = kind === "llm" || kind === "stt";
+  // Base URL matters for every kind now: llm/stt point at an OpenAI-compatible
+  // endpoint, and tts (e.g. openai_tts) needs one too -- apps/model_service is
+  // wired in as a remote engine the same way for all three.
+  el("registry-add-llm-fields").classList.toggle("hidden", !(isLlmOrStt || kind === "tts"));
+  // tts still uses the plain "API Key" field below rather than the one paired
+  // with Base URL above -- hide that paired input for tts so it doesn't show
+  // two "API Key" inputs at once.
+  el("registry-add-llm-apikey-wrap").classList.toggle("hidden", kind === "tts");
+  el("registry-add-key-fields").classList.toggle("hidden", isLlmOrStt);
 }
 
 export async function createModelRegistryEntry() {
@@ -199,7 +209,11 @@ export async function createModelRegistryEntry() {
     payload.base_url = el("registry-add-base-url").value.trim();
     payload.api_key = el("registry-add-api-key").value.trim();
   } else {
-    // tts: no current engine reads api_key, stored for a future key-requiring one.
+    // tts: base_url matters for openai_tts (the apps/model_service base URL);
+    // other tts engines just ignore it being empty. api_key still comes from
+    // the plain field -- no current engine reads it, stored for a future
+    // key-requiring one.
+    payload.base_url = el("registry-add-base-url").value.trim();
     payload.api_key = el("registry-add-key-api-key").value.trim();
   }
   status.textContent = "Testing…";
