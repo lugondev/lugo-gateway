@@ -48,6 +48,23 @@ Endpoint: `GET /v1/conversation/stream` (WebSocket).
 
 **Binary frame nhận được** = một packet Opus thô (không bọc Ogg), thuộc `audio_start` gần nhất. Đếm đủ `frames` packet thì tới `audio_end`.
 
+## Khả năng trình duyệt — ĐÃ ĐO THẬT, không phải giả định
+
+Chạy Chromium 149 qua Playwright, trên `http://localhost` (secure context):
+
+```
+isSecureContext: true
+AudioDecoder:    true
+getUserMedia:    true
+opus_24000:      true      <- cấu hình ta cần
+opus_16000:      true
+opus_48000:      true
+```
+
+**Cảnh báo về cách đo:** cùng phép thử đó chạy trên `about:blank` trả `AudioDecoder: false` và `getUserMedia: false` — **âm tính giả**, vì `about:blank` không phải secure context. Đừng feature-detect ngoài một trang được phục vụ thật, và đừng kết luận trình duyệt thiếu tính năng từ một phép đo như vậy.
+
+**Ràng buộc triển khai suy ra từ đây: client BẮT BUỘC chạy trên HTTPS ở production** (hoặc `localhost` khi dev). Không có secure context thì cả WebCodecs lẫn mic đều không tồn tại, và Talk chết hoàn toàn — không phải suy giảm từ từ. Điều này phải vào cấu hình deploy trước khi client lên sóng.
+
 ## Global Constraints
 
 - **Opus ra: 24000 Hz, mono, frame 60ms = 1440 samples.** PCM16 vào: **16000 Hz, mono**. Các số này lấy từ code server, dùng đúng.
@@ -187,7 +204,9 @@ out.textContent = lines.join('\n')
 
 Chạy `pnpm dev`, mở `/probe.html`, **chép lại kết quả thật vào report**.
 
-**Nếu `opus 24k mono decode` là false hoặc AudioDecoder không tồn tại: DỪNG LẠI và báo cáo.** Đừng tự chọn phương án thay thế — chủ dự án đã cân nhắc và chọn Opus-qua-WS có ý thức (vì `/artifacts` không có auth), nên việc đổi hướng là quyết định của họ, không phải của bạn.
+Kỳ vọng (controller đã đo trên Chromium 149 + localhost): cả bốn dòng đều `true`. Nếu bạn thấy `false`, **kiểm tra `isSecureContext` trước khi kết luận** — đo ngoài secure context cho âm tính giả.
+
+**Nếu `opus 24k mono decode` là false trên một trang được phục vụ thật với `isSecureContext: true`: DỪNG LẠI và báo cáo.** Đừng tự chọn phương án thay thế — chủ dự án đã cân nhắc và chọn Opus-qua-WS có ý thức (vì `/artifacts` không có auth), nên việc đổi hướng là quyết định của họ, không phải của bạn.
 
 - [ ] **Step 6: Commit**
 
@@ -808,6 +827,81 @@ Mở `/talk-probe.html`, bấm "Nối & nói", cho phép mic, rồi kiểm tra v
 - [ ] Không có URL `/artifacts` nào trong tab Network (chứng tỏ đi đúng đường opus).
 
 **Nếu nghe thấy tiếng nổ lách tách, tiếng chồng nhau, hay im lặng: DỪNG và báo cáo cùng những gì bạn quan sát được.** Đừng vá bừa — trong 3 chỗ (mic, giải mã, xếp lịch) thì triệu chứng khác nhau chỉ về đúng một chỗ, và đoán mò sẽ giấu mất nguyên nhân.
+
+- [ ] **Step 3b: Kiểm chứng KHÁCH QUAN (không dựa vào tai)**
+
+Tai không đo được, và người kế tiếp đọc report của bạn không nghe lại được. Đo bằng số.
+
+Cài Playwright nếu chưa có: `cd lugo-web-client && pnpm add -D playwright && npx playwright install chromium`
+
+Tạo `lugo-web-client/verify-audio.mjs`:
+
+```js
+// Chạy Talk thật trong Chromium với mic giả, rồi ĐO thay vì nghe.
+import { chromium } from 'playwright'
+
+const b = await chromium.launch({
+  args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
+})
+const p = await b.newPage()
+
+const artifactHits = []
+p.on('request', (r) => {
+  if (r.url().includes('/artifacts/')) artifactHits.push(r.url())
+})
+
+// Bẫy AudioDecoder để đếm frame và đo RMS -- phải cài TRƯỚC khi trang chạy.
+await p.addInitScript(() => {
+  window.__decoded = []
+  const Orig = window.AudioDecoder
+  window.AudioDecoder = class extends Orig {
+    constructor(init) {
+      super({
+        error: init.error,
+        output: (data) => {
+          const pcm = new Float32Array(data.numberOfFrames)
+          data.copyTo(pcm, { planeIndex: 0, format: 'f32-planar' })
+          let sum = 0
+          for (const v of pcm) sum += v * v
+          window.__decoded.push({
+            frames: data.numberOfFrames,
+            rate: data.sampleRate,
+            rms: Math.sqrt(sum / pcm.length),
+          })
+          init.output(data)
+        },
+      })
+    }
+  }
+})
+
+await p.goto('http://localhost:5173/talk-probe.html')
+await p.click('#go')
+await p.waitForTimeout(25000) // đủ cho mic giả -> STT -> LLM -> TTS
+
+const d = await p.evaluate(() => window.__decoded)
+const log = await p.textContent('#log')
+
+const totalFrames = d.reduce((s, x) => s + x.frames, 0)
+const loud = d.filter((x) => x.rms > 0.001).length
+console.log('log:\n' + log)
+console.log('chunk giải mã:', d.length)
+console.log('tổng frame:', totalFrames, '=', (totalFrames / 24000).toFixed(2), 'giây audio')
+console.log('sample rate khác 24000:', d.filter((x) => x.rate !== 24000).length)
+console.log('chunk KHÔNG im lặng:', loud, '/', d.length)
+console.log('request /artifacts (phải là 0):', artifactHits.length)
+
+await b.close()
+```
+
+Chạy: `cd lugo-web-client && node verify-audio.mjs` (cần `pnpm dev` và gateway đang chạy).
+
+**Chép output thật vào report.** Ngưỡng phải đạt:
+- `chunk giải mã` > 0 — không thì giải mã hỏng hoặc audio không về.
+- `sample rate khác 24000` = **0** — khác 0 nghĩa là lệch tần số, và lệch tần số cho ra giọng chipmunk hoặc giọng trầm rề mà test đơn vị không bao giờ bắt được.
+- `chunk KHÔNG im lặng` gần bằng tổng — toàn im lặng nghĩa là giải mã ra rác.
+- `request /artifacts` = **0** — khác 0 nghĩa là đang đi nhầm đường `audio_url` công khai, đúng thứ ta chọn opus để tránh.
+- `tổng frame` quy ra giây phải hợp lý so với độ dài câu trả lời trong `log`.
 
 - [ ] **Step 4: Commit**
 
