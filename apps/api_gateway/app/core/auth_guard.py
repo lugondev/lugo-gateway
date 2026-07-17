@@ -67,10 +67,20 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         if path in _STATIC_ALLOWLIST or path.startswith("/api/auth") or _matches(path, _NO_AUTH_PREFIXES):
             return await call_next(request)
 
-        actor = await _bearer_actor(request)
-        if actor is not None:
+        # "authentication chỉ dùng 1, không fallback" -- nếu request chào
+        # scheme bearer, bearer LÀ danh tính duy nhất cho request đó. Token
+        # hỏng -> 401 ngay, không được rơi về cookie session.
+        header = request.headers.get("authorization", "")
+        scheme, _, _token = header.partition(" ")
+        if scheme.lower() == "bearer":
+            actor = await _bearer_actor(request)
+            if actor is None:
+                return self._bearer_unauthenticated()
             request.state.actor = actor
-        user_id = actor.user_id if actor is not None else request.session.get("user_id")
+            user_id = actor.user_id
+        else:
+            actor = None
+            user_id = request.session.get("user_id")
 
         if _matches(path, _USER_PREFIXES):
             if not user_id:
@@ -92,6 +102,13 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         if "text/html" in request.headers.get("accept", ""):
             return RedirectResponse("/static/login.html")
         return JSONResponse({"success": False, "error": "login required"}, status_code=401)
+
+    @staticmethod
+    def _bearer_unauthenticated():
+        # Never redirect here: an API client presenting a bad token is not a
+        # browser navigating, and a 302 to the login page would confuse the
+        # SPA's refresh logic. Always JSON, regardless of Accept.
+        return JSONResponse({"success": False, "error": "invalid bearer token"}, status_code=401)
 
 
 @dataclass

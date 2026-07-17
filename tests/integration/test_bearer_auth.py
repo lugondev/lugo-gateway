@@ -79,3 +79,71 @@ async def test_admin_prefix_still_works_via_session_cookie(client, _with_passwor
     client.post("/api/auth/login", json={"username": "bearer-admin", "password": "pw12345678"})
     resp = client.get("/v1/system/status")
     assert resp.status_code == 200
+
+
+async def test_invalid_bearer_with_valid_admin_cookie_is_401_on_user_prefix(
+    client, _with_password, admin_user
+):
+    """Chính sách mới: 1 phương thức, không fallback. Bearer hỏng thì KHÔNG
+    được rơi về danh tính cookie, kể cả khi cookie hợp lệ và là admin."""
+    client.post("/api/auth/login", json={"username": "bearer-admin", "password": "pw12345678"})
+    resp = client.get("/v1/sessions", headers=_auth("garbage"))
+    assert resp.status_code == 401
+
+
+async def test_invalid_bearer_with_valid_admin_cookie_is_401_on_admin_prefix(
+    client, _with_password, admin_user
+):
+    """Không phải 403 (nghĩa là có danh tính nhưng thiếu quyền), không phải
+    200 (nghĩa là fallback cookie) -- request này không có danh tính nào cả."""
+    client.post("/api/auth/login", json={"username": "bearer-admin", "password": "pw12345678"})
+    resp = client.get("/v1/system/status", headers=_auth("garbage"))
+    assert resp.status_code == 401
+
+
+async def test_expired_or_tampered_bearer_with_no_cookie_is_401(client, _with_password, normal_user):
+    token = issue_access_token(normal_user["id"])
+    tampered = token[:-1] + ("a" if token[-1] != "a" else "b")
+    resp = client.get("/v1/sessions", headers=_auth(tampered))
+    assert resp.status_code == 401
+
+
+async def test_basic_auth_header_with_valid_cookie_is_not_bearer_401(client, _with_password, admin_user):
+    """Basic <something> không phải là một lần thử bearer -- không được kích
+    hoạt đường 401 của bearer. Cookie vẫn thắng như trước."""
+    client.post("/api/auth/login", json={"username": "bearer-admin", "password": "pw12345678"})
+    resp = client.get("/v1/system/status", headers={"Authorization": "Basic dXNlcjpwYXNz"})
+    assert resp.status_code == 200
+
+
+async def test_no_authorization_header_with_valid_cookie_is_unchanged(client, _with_password, admin_user):
+    client.post("/api/auth/login", json={"username": "bearer-admin", "password": "pw12345678"})
+    resp = client.get("/v1/system/status")
+    assert resp.status_code == 200
+
+
+async def test_valid_bearer_user_prefix_unchanged(client, _with_password, normal_user):
+    token = issue_access_token(normal_user["id"])
+    resp = client.get("/v1/sessions", headers=_auth(token))
+    assert resp.status_code != 401
+
+
+async def test_valid_bearer_admin_prefix_still_403(client, _with_password, admin_user):
+    token = issue_access_token(admin_user["id"])
+    resp = client.get("/v1/system/status", headers=_auth(token))
+    assert resp.status_code == 403
+
+
+async def test_failed_bearer_401_is_json_not_redirect_even_with_html_accept(
+    client, _with_password, admin_user
+):
+    """Client trình bày token, không phải trình duyệt điều hướng -- 302 tới
+    trang login sẽ làm hỏng logic refresh của SPA."""
+    client.post("/api/auth/login", json={"username": "bearer-admin", "password": "pw12345678"})
+    resp = client.get(
+        "/v1/sessions",
+        headers={**_auth("garbage"), "Accept": "text/html"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 401
+    assert resp.headers.get("content-type", "").startswith("application/json")
