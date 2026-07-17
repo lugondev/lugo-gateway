@@ -13,6 +13,7 @@ from __future__ import annotations
 import httpx
 
 from app.schemas.tts import TTSRequest
+from app.services.http_errors import translate_httpx_error
 from app.services.model_registry.store import model_registry_store
 from app.services.tts.base import RenderingTTSProvider
 
@@ -73,9 +74,5 @@ class OpenAICompatTTSProvider(RenderingTTSProvider):
                 response = await client.post(endpoint, headers=headers, json=body)
                 response.raise_for_status()
                 return response.content
-        except httpx.HTTPStatusError as exc:
-            raise RuntimeError(
-                f"{self.name} returned HTTP {exc.response.status_code}: {exc.response.text[:200]}"
-            ) from exc
         except httpx.HTTPError as exc:
-            raise RuntimeError(f"{self.name} request failed: {exc}") from exc
+            raise translate_httpx_error(self.name, exc) from exc

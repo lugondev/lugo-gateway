@@ -14,6 +14,7 @@ from __future__ import annotations
 import httpx
 
 from app.schemas.stt import STTResult
+from app.services.http_errors import translate_httpx_error
 from app.services.model_registry.store import model_registry_store
 from app.services.stt.base import STTProvider
 
@@ -68,12 +69,8 @@ class OpenAICompatSttProvider(STTProvider):
                 response = await client.post(endpoint, headers=headers, data=data, files=files)
                 response.raise_for_status()
                 payload = response.json()
-        except httpx.HTTPStatusError as exc:
-            raise RuntimeError(
-                f"{self.name} returned HTTP {exc.response.status_code}: {exc.response.text[:200]}"
-            ) from exc
         except httpx.HTTPError as exc:
-            raise RuntimeError(f"{self.name} request failed: {exc}") from exc
+            raise translate_httpx_error(self.name, exc) from exc
 
         return STTResult(
             engine=self.name, text=str(payload.get("text", "")).strip(), is_final=True, confidence=None
