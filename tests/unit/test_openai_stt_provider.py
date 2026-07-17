@@ -126,6 +126,16 @@ async def test_timeout_falls_back_to_the_provider_default_when_entry_has_none(ca
     assert captured["timeout"] == 60.0
 
 
+@pytest.mark.asyncio
+async def test_a_configured_zero_timeout_is_not_discarded(captured):
+    # `0 or self.timeout_seconds` would silently replace an explicit 0 with
+    # the provider default -- a plain `is not None` check must not do that.
+    entry = {**_ENTRY, "config": {"timeout_seconds": 0}}
+    provider = OpenAICompatSttProvider(entry=entry)
+    await provider.transcribe_bytes(b"RIFFDATA")
+    assert captured["timeout"] == 0
+
+
 def test_engine_is_registered():
     assert stt_service.get_provider("openai_stt").name == "openai_stt"
 

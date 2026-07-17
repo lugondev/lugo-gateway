@@ -22,8 +22,6 @@ _DEFAULT_TIMEOUT = 60.0
 
 
 class OpenAICompatSttProvider(STTProvider):
-    name = "openai_stt"
-
     def __init__(
         self,
         name: str = "openai_stt",
@@ -55,7 +53,8 @@ class OpenAICompatSttProvider(STTProvider):
             )
 
         api_key = (entry or {}).get("api_key", "").strip()
-        timeout = (entry.get("config") or {}).get("timeout_seconds") or self.timeout_seconds
+        configured_timeout = (entry.get("config") or {}).get("timeout_seconds")
+        timeout = configured_timeout if configured_timeout is not None else self.timeout_seconds
 
         endpoint = f"{base_url.rstrip('/')}/audio/transcriptions"
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
