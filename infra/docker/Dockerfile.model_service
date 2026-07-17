@@ -1,0 +1,38 @@
+# infra/docker/Dockerfile.model_service
+# One image for every local engine; SERVICE_KIND + SERVICE_ENGINE pick which
+# one this container runs. Reuses the gateway's providers -- hence the same
+# system deps and the api_gateway package on PYTHONPATH.
+FROM python:3.11-slim
+
+# libsndfile1: soundfile (VieNeu TTS audio I/O). libopus0: Opus transport.
+# libatomic1: vosk's libvosk.so dlopen-fails without it on Debian slim images
+# ("cannot open shared object file") -- python:3.11-slim omits it by default.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libsndfile1 libopus0 libatomic1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY apps ./apps
+
+RUN pip install --no-cache-dir ".[tts,opus]"
+
+ENV PYTHONPATH=/app/apps/api_gateway:/app/apps \
+    PYTHONUNBUFFERED=1 \
+    SERVICE_PORT=8100 \
+    ARTIFACTS_DIR=/tmp/artifacts \
+    DATABASE_URL=sqlite+aiosqlite:////tmp/model_service.db
+
+# ARTIFACTS_DIR: app/services/artifacts.py mkdirs at import time and this
+# service never serves artifacts -- keep it off the image's working tree.
+# DATABASE_URL: three providers still read system_config_store for inert
+# defaults (glossary path, default voice); point them at a throwaway file so
+# nothing tries to write into a read-only rootfs.
+
+EXPOSE 8100
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD python -c "import urllib.request,os;urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"SERVICE_PORT\"]}/health').read()"
+
+# --factory: main.py has no module-level `app`, so that importing it in tests
+# doesn't run load_config() and die on missing env.
+CMD ["sh", "-c", "uvicorn model_service.app.main:create_app --factory --host 0.0.0.0 --port ${SERVICE_PORT}"]

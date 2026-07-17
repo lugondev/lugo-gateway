@@ -11,8 +11,63 @@ awaited the store.
 
 from __future__ import annotations
 
+import os
+
 from app.services.model_registry.store import model_registry_store
 from app.services.system_config import OmnivoiceConfig, RemoteSttConfig
+
+# Recognized spellings for a bool-typed env override. Anything else is a
+# misconfiguration and must fail loudly -- see EnvVarError below -- rather
+# than silently becoming False the way `raw.lower() in (...)` used to.
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+class EnvVarError(ValueError):
+    """A {PREFIX}_{KEY} env var holds a value that can't be coerced to the
+    type its default expects. This is the container's whole config surface
+    (see resolve_stt_engine_config's docstring), so a bad value must fail
+    loudly and name both the variable and what was expected -- not be
+    swallowed into some silently-wrong default."""
+
+
+def _coerce(raw: str, default, var_name: str):
+    """Coerce an env string to the type of the default it overrides. bool is
+    checked before int because bool is a subclass of int."""
+    if isinstance(default, bool):
+        normalized = raw.strip().lower()
+        if normalized in _TRUE_VALUES:
+            return True
+        if normalized in _FALSE_VALUES:
+            return False
+        raise EnvVarError(
+            f"{var_name}={raw!r} is not a valid boolean; expected one of "
+            f"{sorted(_TRUE_VALUES | _FALSE_VALUES)}"
+        )
+    if isinstance(default, int):
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise EnvVarError(f"{var_name}={raw!r} is not a valid integer") from exc
+    if isinstance(default, float):
+        try:
+            return float(raw)
+        except ValueError as exc:
+            raise EnvVarError(f"{var_name}={raw!r} is not a valid float") from exc
+    return raw
+
+
+def _env_overrides(prefix: str, defaults: dict) -> dict:
+    """Read {PREFIX}_{KEY} for each key in `defaults`. Only keys that exist in
+    `defaults` are readable, so a typo'd env var is ignored rather than
+    injecting an unknown key into provider config."""
+    out = {}
+    for key, default in defaults.items():
+        var_name = f"{prefix}_{key}".upper()
+        raw = os.environ.get(var_name)
+        if raw is not None:
+            out[key] = _coerce(raw, default, var_name)
+    return out
 
 
 # Per-engine engine-level settings that used to be SttLocalConfig fields
@@ -42,10 +97,16 @@ def resolve_stt_engine_config(engine: str) -> dict:
     """Engine-level config for a local STT engine (default model, whisper
     decode tuning), merged over the per-engine defaults above. Looked up by
     the reserved model_id="" sentinel -- see resolve_stt_local_device's
-    docstring for why the per-model-size governance rows must not match."""
+    docstring for why the per-model-size governance rows must not match.
+
+    Precedence: registry row > env > defaults. The env layer exists for
+    apps/model_service, which runs a provider with no registry DB: there the
+    cache is cold, find_sync returns None, and env wins. In the gateway a
+    sentinel row exists and still wins, so this is a no-op there."""
+    defaults = STT_ENGINE_CONFIG_DEFAULTS.get(engine, {})
     entry = model_registry_store.find_sync("stt", engine, "")
     config = (entry or {}).get("config") or {}
-    return {**STT_ENGINE_CONFIG_DEFAULTS.get(engine, {}), **config}
+    return {**defaults, **_env_overrides(f"STT_{engine}", defaults), **config}
 
 
 def resolve_stt_local_device(engine: str) -> dict:
@@ -54,13 +115,16 @@ def resolve_stt_local_device(engine: str) -> dict:
     Looked up by the reserved model_id="" sentinel, which is distinct from
     the per-model-size governance rows seed_known_models() creates under the
     same (kind, engine) pair -- using find_enabled_sync here instead would
-    silently match one of those governance rows (empty config) instead."""
+    silently match one of those governance rows (empty config) instead.
+
+    Precedence: registry row > env > defaults (see resolve_stt_engine_config)."""
+    defaults = {"device": "", "compute_type": "int8"}
     entry = model_registry_store.find_sync("stt", engine, "")
     config = (entry or {}).get("config") or {}
-    return {
-        "device": config.get("device", ""),
-        "compute_type": config.get("compute_type", "int8"),
-    }
+    merged = {**defaults, **_env_overrides(f"STT_{engine}", defaults), **config}
+    # The sentinel row's config also carries engine-level keys (default_model,
+    # beam_size, ...); return only this resolver's two.
+    return {"device": merged["device"], "compute_type": merged["compute_type"]}
 
 
 def resolve_omnivoice_config() -> OmnivoiceConfig:

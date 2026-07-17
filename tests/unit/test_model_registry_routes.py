@@ -1,6 +1,8 @@
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.audio import pcm16_to_wav_bytes
 from app.core.settings import settings
 from app.main import app
 from app.schemas.tts import TTSResult
@@ -347,3 +349,85 @@ async def test_patch_omnivoice_entry_respawns_the_sidecar(client, _with_password
     assert resp.status_code == 200
     assert ov_mod._voice_ref == {}
     assert len(spawn_calls) == 1
+
+
+_SERVICE_BASE = "http://tts-service:8100/v1"
+
+
+def test_tts_entry_keeps_its_base_url(client, monkeypatch):
+    """Regression: create_entry whitelisted base_url to (llm, stt), so a TTS
+    service entry lost its URL on save and openai_tts could never resolve it."""
+    from app.services.tts.providers import openai_tts_provider
+
+    async def fake_render(self, payload):
+        # Must be a real WAV container, not just the "RIFFWAVEDATA" placeholder:
+        # RenderingTTSProvider.synthesize() runs wav_duration_seconds() on this
+        # return value, which raises wave.Error on anything that isn't a real
+        # RIFF/WAVE file -- masking the base_url regression behind an unrelated
+        # 400 ("not a WAVE file") instead of exercising the code path this test
+        # is meant to pin.
+        return pcm16_to_wav_bytes(b"\x00\x00" * 100, sample_rate=24000)
+
+    monkeypatch.setattr(openai_tts_provider.OpenAICompatTTSProvider, "_render_wav", fake_render)
+    _signup_login(client, "admin_base_url", role="admin")
+
+    r = client.post(
+        "/v1/model_registry",
+        json={
+            "kind": "tts", "engine": "openai_tts", "model_id": "vieneu",
+            "label": "local box", "base_url": _SERVICE_BASE, "api_key": "t0ken",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["base_url"] == _SERVICE_BASE
+
+
+def test_bad_service_url_is_rejected_at_add_time(client, monkeypatch):
+    """The admin should learn the URL/token is wrong when they click Add, not on
+    the first real transcription.
+
+    Asserting only `"openai_stt" in detail` would also pass if the add-time
+    test call never reached the network at all: the *singleton* openai_stt
+    provider (no entry override) resolves its entry by looking up a registry
+    row, finds none yet (this row hasn't been created), and raises "openai_stt
+    is not configured" -- which also contains the substring "openai_stt", so a
+    bare substring check can't tell a short-circuited lookup apart from an
+    actual failed HTTP attempt against the submitted base_url. Pin the latter
+    specifically: the provider must reach OpenAICompatSttProvider.transcribe_bytes
+    and fail there with a network/request error, using the base_url from *this*
+    payload, not report a missing config.
+
+    The base_url is deliberately bogus (".invalid" TLD, per RFC 2606), but the
+    test must stay hermetic -- no real DNS/socket call. httpx.AsyncClient is
+    swapped for a MockTransport whose handler raises httpx.ConnectError, same
+    pattern as test_openai_stt_provider.py's `captured` fixture, so the
+    provider's `except httpx.HTTPError` branch fires exactly like it would
+    against an unreachable host, without ever touching the network."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("[Errno 8] nodename nor servname provided, or not known", request=request)
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def factory(*args, **kwargs):
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+
+    _signup_login(client, "admin_bad_url", role="admin")
+    r = client.post(
+        "/v1/model_registry",
+        json={
+            "kind": "stt", "engine": "openai_stt", "model_id": "phowhisper-medium",
+            "label": "typo", "base_url": "http://nonexistent.invalid:9/v1", "api_key": "t0ken",
+        },
+    )
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert "openai_stt" in detail
+    # Proves an HTTP attempt was actually made against the submitted URL, not a
+    # short-circuited "not configured" from a provider that never saw the payload.
+    assert "not configured" not in detail
+    assert "request failed" in detail

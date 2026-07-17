@@ -4,13 +4,14 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.audio import pcm16_to_wav_bytes
 from app.main import app
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
+from app.schemas.tts import TTSRequest
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
-from app.services.tts.base import TTSProvider
+from app.services.tts.base import RenderingTTSProvider
 from app.services.tts.service import tts_service
 
 SR = 16000
@@ -23,14 +24,18 @@ class _StubSTT(STTProvider):
         return STTResult(engine=self.name, text="xin chào", is_final=True)
 
 
-class _StubTTS(TTSProvider):
-    name = "stub-gw-tts"
+class _StubTTS(RenderingTTSProvider):
+    """A real RenderingTTSProvider so the Opus path (which calls render_wav(),
+    never synthesize()) gets real WAV bytes to encode instead of a fabricated
+    artifact URL that nothing wrote. synthesize() is inherited unchanged, so
+    URL-mode tests below still get a real artifact_store-backed audio_url."""
 
-    async def synthesize(self, payload) -> TTSResult:
-        return TTSResult(
-            engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
-            duration_seconds=0.1, text=payload.text,
-        )
+    name = "stub-gw-tts"
+    sample_rate = 24000
+
+    async def _render_wav(self, payload: TTSRequest) -> bytes:
+        n = int(self.sample_rate * 100 / 1000)  # 100ms of silence
+        return pcm16_to_wav_bytes(b"\x00\x00" * n, sample_rate=self.sample_rate)
 
 
 @pytest.fixture(autouse=True)
@@ -85,9 +90,22 @@ def test_text_to_audio_url():
 
 
 def _opus_ok():
-    try:
-        import opuslib
+    # Route through app.core.opus.opus_available() rather than a bare
+    # `import opuslib`: opuslib locates libopus via ctypes.util.find_library,
+    # which needs app.core.opus._ensure_libopus_findable()'s shim to succeed
+    # on this host (see that module's docstring). A bare import only works if
+    # some other, already-collected module ran the shim first -- making
+    # whether this test runs or skips depend on collection order (it always
+    # runs under `pytest tests/unit tests/integration`, since a unit test
+    # imports opus_available() first, but always skips under plain `pytest`,
+    # which collects tests/integration/ first).
+    from app.core.opus import opus_available
 
+    if not opus_available():
+        return False
+    import opuslib
+
+    try:
         opuslib.Encoder(24000, 1, opuslib.APPLICATION_VOIP)
         return True
     except Exception:  # noqa: BLE001

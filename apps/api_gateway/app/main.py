@@ -178,16 +178,36 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
-# Starlette's add_middleware inserts at index 0, so the LAST middleware added is
-# OUTERMOST in the resulting chain. We add CORSMiddleware last so it wraps
-# everything else -- including AuthGuardMiddleware's 401/403 short-circuits.
-# If CORS were added first (and thus ended up innermost), any response
-# AuthGuardMiddleware returns before reaching a route (401 expired/invalid
-# bearer, 403 wrong role) would carry no Access-Control-Allow-Origin header.
-# A cross-origin SPA can't read such a response at all -- the browser reports
-# an opaque network failure instead of a 401/403, so token-refresh logic that
-# depends on seeing the 401 never fires. See test_cors_bearer.py for the
-# regression test that pins this ordering.
+# Registration order here is deliberately the REVERSE of the request chain --
+# don't "tidy" it to read top-to-bottom like the chain does.
+#
+# Starlette's `app.add_middleware()` inserts at index 0 of
+# `app.user_middleware`, so each middleware added pushes the previous ones
+# further from the front. Index 0 is OUTERMOST (it sees the request first and
+# the response last), so whichever middleware is added LAST ends up
+# outermost, wrapping everything added before it.
+#
+# We need this request chain, outermost to innermost:
+#   CORS -> Session -> AuthGuard -> routes
+# which means registration (call) order must be the exact reverse:
+#   AuthGuard added first, then Session, then CORS added last.
+#
+#   - Session must wrap AuthGuard (added after it) because
+#     AuthGuardMiddleware.dispatch() reads `request.session`, which
+#     SessionMiddleware.dispatch() populates before calling `call_next` --
+#     so Session's pre-handler code must run before AuthGuard's, which
+#     requires Session to be the outer one of the pair.
+#   - CORS must wrap both (added last / outermost) so it also applies to
+#     AuthGuard's short-circuit responses (401 unauthenticated, 403 wrong
+#     role). If CORS is inside AuthGuard instead, those short-circuits ship
+#     with no Access-Control-Allow-Origin header, and a cross-origin browser
+#     client can't even read the status code -- it sees an opaque network
+#     failure instead of a 401/403, so client-side logic that reacts to auth
+#     failures (re-login, token refresh) never fires. This exact regression
+#     is pinned by tests/integration/test_cors_ordering.py and
+#     test_cors_bearer.py -- they assert on real HTTP responses, not on
+#     `app.user_middleware` list order, so they catch this even if
+#     Starlette's internal insertion behavior changes.
 app.add_middleware(AuthGuardMiddleware)
 _session_secret = settings.effective_session_secret
 app.add_middleware(
@@ -196,7 +216,6 @@ app.add_middleware(
     same_site="lax",
     https_only=settings.app_env != "dev",
 )
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,

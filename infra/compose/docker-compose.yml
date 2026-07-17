@@ -18,3 +18,20 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+
+  model-service:
+    # Opt-in: `docker compose --profile models up`. Left out of the default
+    # `up` so gateway development doesn't pull model weights.
+    profiles: ["models"]
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.model_service
+    environment:
+      SERVICE_KIND: stt
+      SERVICE_ENGINE: vosk
+      SERVICE_API_TOKEN: ${MODEL_SERVICE_TOKEN:?set MODEL_SERVICE_TOKEN}
+      STT_VOSK_MODEL_PATH: /models/stt/vosk-model-small-en-us-0.15
+    volumes:
+      - ../../models:/models:ro
+    ports:
+      - "8100:8100"

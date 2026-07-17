@@ -51,11 +51,18 @@ class RenderingTTSProvider(TTSProvider):
     async def _render_wav(self, payload: TTSRequest) -> bytes:
         raise NotImplementedError
 
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:
+    async def render_wav(self, payload: TTSRequest) -> bytes:
+        """Public seam: real synthesis -> WAV bytes, no artifact side effect.
+
+        apps/model_service returns these bytes straight on the HTTP response;
+        synthesize() below is the gateway's artifact-saving path on top."""
         try:
-            wav = await self._render_wav(payload)
+            return await self._render_wav(payload)
         except Exception as exc:  # noqa: BLE001 - surface as a clean provider error
             raise ProviderError(f"{self.name} synthesis failed: {exc}") from exc
+
+    async def synthesize(self, payload: TTSRequest) -> TTSResult:
+        wav = await self.render_wav(payload)
 
         _, audio_url = artifact_store.save_wav(wav)
         return TTSResult(
