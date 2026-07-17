@@ -16,16 +16,44 @@ import os
 from app.services.model_registry.store import model_registry_store
 from app.services.system_config import OmnivoiceConfig, RemoteSttConfig
 
+# Recognized spellings for a bool-typed env override. Anything else is a
+# misconfiguration and must fail loudly -- see EnvVarError below -- rather
+# than silently becoming False the way `raw.lower() in (...)` used to.
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
-def _coerce(raw: str, default):
+
+class EnvVarError(ValueError):
+    """A {PREFIX}_{KEY} env var holds a value that can't be coerced to the
+    type its default expects. This is the container's whole config surface
+    (see resolve_stt_engine_config's docstring), so a bad value must fail
+    loudly and name both the variable and what was expected -- not be
+    swallowed into some silently-wrong default."""
+
+
+def _coerce(raw: str, default, var_name: str):
     """Coerce an env string to the type of the default it overrides. bool is
     checked before int because bool is a subclass of int."""
     if isinstance(default, bool):
-        return raw.strip().lower() in ("1", "true", "yes", "on")
+        normalized = raw.strip().lower()
+        if normalized in _TRUE_VALUES:
+            return True
+        if normalized in _FALSE_VALUES:
+            return False
+        raise EnvVarError(
+            f"{var_name}={raw!r} is not a valid boolean; expected one of "
+            f"{sorted(_TRUE_VALUES | _FALSE_VALUES)}"
+        )
     if isinstance(default, int):
-        return int(raw)
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise EnvVarError(f"{var_name}={raw!r} is not a valid integer") from exc
     if isinstance(default, float):
-        return float(raw)
+        try:
+            return float(raw)
+        except ValueError as exc:
+            raise EnvVarError(f"{var_name}={raw!r} is not a valid float") from exc
     return raw
 
 
@@ -35,9 +63,10 @@ def _env_overrides(prefix: str, defaults: dict) -> dict:
     injecting an unknown key into provider config."""
     out = {}
     for key, default in defaults.items():
-        raw = os.environ.get(f"{prefix}_{key}".upper())
+        var_name = f"{prefix}_{key}".upper()
+        raw = os.environ.get(var_name)
         if raw is not None:
-            out[key] = _coerce(raw, default)
+            out[key] = _coerce(raw, default, var_name)
     return out
 
 

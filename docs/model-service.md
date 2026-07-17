@@ -65,13 +65,23 @@ docker run --rm -p 8100:8100 \
   model-service:dev
 ```
 
-The process validates its configuration at startup, not on first request: an
-unset or misspelled `SERVICE_KIND`/`SERVICE_ENGINE`, or a missing
-`SERVICE_API_TOKEN`, makes the container exit immediately with a `ConfigError`
-rather than starting up and failing 30 minutes later on the first real audio
-request. In particular, **`SERVICE_API_TOKEN` is mandatory** — there is no
-"open" mode — so the container never accidentally serves an unauthenticated
-model on the network.
+The process validates `SERVICE_KIND`, `SERVICE_ENGINE`, `SERVICE_API_TOKEN`,
+and `SERVICE_PORT` at startup, not on first request: an unset or misspelled
+`SERVICE_KIND`/`SERVICE_ENGINE`, a missing `SERVICE_API_TOKEN`, or an
+out-of-range `SERVICE_PORT` makes the container exit immediately with a
+`ConfigError` rather than starting up and failing later on the first real
+audio request. In particular, **`SERVICE_API_TOKEN` is mandatory** — there is
+no "open" mode — so the container never accidentally serves an
+unauthenticated model on the network.
+
+That startup check does not extend to the per-engine environment layer
+described below (`STT_{ENGINE}_{KEY}`, resolved via
+`apps/api_gateway/app/services/model_registry/resolve.py`): those resolvers
+run lazily, on the first request that needs them, not at process start. A bad
+value there (e.g. `STT_WHISPER_LOCAL_VAD_FILTER=banana`) still fails loudly —
+`resolve.py` raises a clear error naming the offending variable and value —
+but only once something actually calls the resolver, not when the container
+boots.
 
 ## Environment variables
 
