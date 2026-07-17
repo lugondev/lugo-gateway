@@ -5,7 +5,9 @@ from app.core.audio import (
     pcm16_to_float_array,
     pcm16_to_wav_bytes,
     silent_wav_bytes,
+    wav_bytes_to_pcm16,
     wav_duration_seconds,
+    wav_file_to_pcm16,
 )
 
 
@@ -34,3 +36,86 @@ def test_pcm16_to_float_array_range():
     arr = pcm16_to_float_array(pcm)
     assert arr.dtype == np.float32
     assert -1.0 <= arr.min() and arr.max() <= 1.0
+
+
+# ---------------------------------------------------------- wav_bytes_to_pcm16
+# wav_file_to_pcm16(path, sr) is a thin wrapper around wav_bytes_to_pcm16(bytes, sr)
+# (single implementation, see app.core.audio) -- these tests pin that the two
+# agree exactly on the same payload, across the behaviors both must preserve:
+# straight passthrough, resampling, and stereo downmix.
+
+def _tone_pcm16(n: int, freq: float, sr: int) -> bytes:
+    t = np.arange(n) / sr
+    samples = (0.3 * np.sin(2 * np.pi * freq * t)).astype(np.float32)
+    return (samples * 32767).astype("<i2").tobytes()
+
+
+def test_wav_bytes_and_wav_file_agree_same_rate(tmp_path):
+    pcm = _tone_pcm16(1600, 220.0, 16000)  # 100ms @ 16kHz, no resample needed
+    wav = pcm16_to_wav_bytes(pcm, sample_rate=16000)
+    path = tmp_path / "in.wav"
+    path.write_bytes(wav)
+
+    from_bytes = wav_bytes_to_pcm16(wav, target_sr=16000)
+    from_file = wav_file_to_pcm16(str(path), target_sr=16000)
+
+    assert from_bytes == from_file
+    # Same-rate path still round-trips through the float32 normalize/rescale
+    # (/32768 then *32767), so it's not byte-identical to the input -- but it
+    # must stay within +/-1 LSB per sample.
+    in_arr = np.frombuffer(pcm, dtype="<i2").astype(np.int32)
+    out_arr = np.frombuffer(from_bytes, dtype="<i2").astype(np.int32)
+    assert len(in_arr) == len(out_arr)
+    assert np.max(np.abs(in_arr - out_arr)) <= 1
+
+
+def test_wav_bytes_and_wav_file_agree_when_resampling(tmp_path):
+    pcm = _tone_pcm16(2400, 220.0, 24000)  # 100ms @ 24kHz
+    wav = pcm16_to_wav_bytes(pcm, sample_rate=24000)
+    path = tmp_path / "in24k.wav"
+    path.write_bytes(wav)
+
+    from_bytes = wav_bytes_to_pcm16(wav, target_sr=16000)
+    from_file = wav_file_to_pcm16(str(path), target_sr=16000)
+
+    assert from_bytes == from_file
+    # Resampled to 16kHz from a 100ms clip -> ~1600 samples (allow rounding).
+    assert abs(len(from_bytes) // 2 - 1600) <= 4
+
+
+def test_wav_bytes_and_wav_file_agree_stereo_downmix(tmp_path):
+    left = _tone_pcm16(800, 220.0, 16000)
+    right = _tone_pcm16(800, 220.0, 16000)
+    left_arr = np.frombuffer(left, dtype="<i2")
+    right_arr = np.frombuffer(right, dtype="<i2")
+    interleaved = np.empty(len(left_arr) * 2, dtype="<i2")
+    interleaved[0::2] = left_arr
+    interleaved[1::2] = right_arr
+    wav = pcm16_to_wav_bytes(interleaved.tobytes(), sample_rate=16000, channels=2)
+    path = tmp_path / "stereo.wav"
+    path.write_bytes(wav)
+
+    from_bytes = wav_bytes_to_pcm16(wav, target_sr=16000)
+    from_file = wav_file_to_pcm16(str(path), target_sr=16000)
+
+    assert from_bytes == from_file
+    # Downmixed mono should have half as many samples as the stereo source.
+    assert len(from_bytes) // 2 == len(left_arr)
+
+
+def test_wav_bytes_to_pcm16_rejects_non_pcm16_width():
+    import io
+    import wave
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(1)  # 8-bit -- unsupported
+        wav_file.setframerate(16000)
+        wav_file.writeframes(b"\x00" * 100)
+
+    try:
+        wav_bytes_to_pcm16(buffer.getvalue(), target_sr=16000)
+        raise AssertionError("expected ValueError for unsupported sample width")
+    except ValueError as exc:
+        assert "unsupported sample width" in str(exc)

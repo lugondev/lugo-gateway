@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
 
-from app.core.audio import pcm16_to_wav_bytes, preprocess_pcm16, wav_file_to_pcm16
+from app.core.audio import pcm16_to_wav_bytes, preprocess_pcm16, wav_bytes_to_pcm16, wav_file_to_pcm16
 from app.core.errors import AppError
 from app.core.settings import settings
 from app.schemas.tts import TTSRequest
@@ -44,6 +44,7 @@ from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.stt.routing import select_stt_engine
 from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
+from app.services.tts.base import RenderingTTSProvider
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
 from app.services.warmup import is_ready, warm_providers
@@ -389,16 +390,29 @@ class ConversationSession:
 
             async def _synth(sentence: str):
                 logger.info("DEBUG_HANG _synth: starting engine=%s sentence=%r", cfg.tts_engine, sentence)
-                result = await self.tts_provider.synthesize(
-                    TTSRequest(
-                        text=sentence, engine=cfg.tts_engine, voice=cfg.voice,
-                        ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
-                        instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
-                    )
+                request = TTSRequest(
+                    text=sentence, engine=cfg.tts_engine, voice=cfg.voice,
+                    ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
+                    instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
                 )
+                if self.opus_encoder is not None and isinstance(self.tts_provider, RenderingTTSProvider):
+                    # Nothing downstream reads `result` once we have Opus packets (see
+                    # the `packets is not None` branch below), so synthesize()'s
+                    # write-then-immediately-read-back through the artifact store is
+                    # pure overhead on this latency-critical path. render_wav() is the
+                    # same real synthesis with no artifact side effect.
+                    wav = await self.tts_provider.render_wav(request)
+                    logger.info("DEBUG_HANG _synth: got result for sentence=%r", sentence)
+                    pcm = await asyncio.to_thread(wav_bytes_to_pcm16, wav, cfg.output_sample_rate)
+                    packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
+                    return None, packets
+                result = await self.tts_provider.synthesize(request)
                 logger.info("DEBUG_HANG _synth: got result for sentence=%r", sentence)
                 if self.opus_encoder is not None:
-                    # Decode the TTS wav -> PCM16 @ output_sr -> Opus packets (off-loop).
+                    # Fallback for engines that aren't a RenderingTTSProvider (e.g.
+                    # edge_tts, which is test-UI/batch only and produces MP3) -- keep
+                    # the artifact-backed path rather than crashing on a missing
+                    # render_wav().
                     path = result.audio_url.lstrip("/")
                     pcm = await asyncio.to_thread(wav_file_to_pcm16, path, cfg.output_sample_rate)
                     packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
@@ -592,16 +606,27 @@ class ConversationSession:
         try:
             if cfg.want_text:
                 await self.emit("response_text", turn=self.turn, chunk_index=0, text=text, responder="system")
-            result = await self.tts_provider.synthesize(
-                TTSRequest(
-                    text=text, engine=cfg.tts_engine, voice=cfg.voice,
-                    ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
-                    instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
-                )
+            request = TTSRequest(
+                text=text, engine=cfg.tts_engine, voice=cfg.voice,
+                ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
+                instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
             )
-            if self.opus_encoder is not None:
-                pcm = await asyncio.to_thread(wav_file_to_pcm16, result.audio_url.lstrip("/"), cfg.output_sample_rate)
+            result = None
+            packets = None
+            if self.opus_encoder is not None and isinstance(self.tts_provider, RenderingTTSProvider):
+                # Same no-disk seam as _synth() above -- no artifact URL is ever
+                # read once we're producing Opus packets.
+                wav = await self.tts_provider.render_wav(request)
+                pcm = await asyncio.to_thread(wav_bytes_to_pcm16, wav, cfg.output_sample_rate)
                 packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
+            else:
+                result = await self.tts_provider.synthesize(request)
+                if self.opus_encoder is not None:
+                    # Fallback for non-RenderingTTSProvider engines (see _synth()).
+                    pcm = await asyncio.to_thread(wav_file_to_pcm16, result.audio_url.lstrip("/"), cfg.output_sample_rate)
+                    packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
+
+            if packets is not None:
                 await self.emit("audio_start", turn=self.turn, chunk_index=0, codec="opus",
                                 sample_rate=cfg.output_sample_rate, frames=len(packets))
                 frame_s = self.opus_encoder.frame / self.opus_encoder.sample_rate
