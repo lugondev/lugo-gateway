@@ -90,9 +90,22 @@ def test_text_to_audio_url():
 
 
 def _opus_ok():
-    try:
-        import opuslib
+    # Route through app.core.opus.opus_available() rather than a bare
+    # `import opuslib`: opuslib locates libopus via ctypes.util.find_library,
+    # which needs app.core.opus._ensure_libopus_findable()'s shim to succeed
+    # on this host (see that module's docstring). A bare import only works if
+    # some other, already-collected module ran the shim first -- making
+    # whether this test runs or skips depend on collection order (it always
+    # runs under `pytest tests/unit tests/integration`, since a unit test
+    # imports opus_available() first, but always skips under plain `pytest`,
+    # which collects tests/integration/ first).
+    from app.core.opus import opus_available
 
+    if not opus_available():
+        return False
+    import opuslib
+
+    try:
         opuslib.Encoder(24000, 1, opuslib.APPLICATION_VOIP)
         return True
     except Exception:  # noqa: BLE001

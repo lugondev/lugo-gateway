@@ -17,7 +17,17 @@ from app.services.tts.service import tts_service
 
 try:
     # opuslib raises a bare Exception (not ImportError) when libopus can't be
-    # found, so importorskip isn't enough — guard the whole load.
+    # found, so importorskip isn't enough — guard the whole load. Check
+    # app.core.opus.opus_available() first (rather than a bare `import
+    # opuslib`): opuslib locates libopus via ctypes.util.find_library, which
+    # needs app.core.opus._ensure_libopus_findable()'s shim to succeed on this
+    # host. A bare import only works if some other, already-collected module
+    # ran the shim first -- making whether this module skips depend on
+    # collection order (see that module's docstring for why the shim exists).
+    from app.core.opus import opus_available
+
+    if not opus_available():
+        raise RuntimeError("opus_available() reported libopus unavailable")
     import opuslib
 
     _ENC = opuslib.Encoder(16000, 1, opuslib.APPLICATION_VOIP)
