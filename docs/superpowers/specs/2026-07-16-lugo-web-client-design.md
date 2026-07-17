@@ -134,10 +134,12 @@ không bắt người dùng điều hướng để làm việc chính.
 - **Talk** — màn hình chính. Hội thoại giọng nói realtime (WS, VAD, barge-in,
   TTS phát về). Trạng thái nghe/nghĩ/nói thể hiện qua chính vòng tròn hở của
   logo: vòng xoay khi nghĩ, chấm cam pulse khi nghe.
-- **History** — danh sách session, transcript, audio phát lại.
-- **Devices** — pair ESP32, trạng thái online, đặt tên. Dùng
-  `/v1/devices/mine` và `/v1/devices/pair/claim` (đã nằm trong `_USER_PREFIXES`,
-  được match trước `_ADMIN_PREFIXES` nên không cần nới quyền).
+- **History** — danh sách session, transcript, xoá phiên. **Audio phát lại: hoãn
+  sang phase sau** — xem bên dưới.
+- **Devices** — pair ESP32, **"lần cuối thấy"** (không phải trạng thái online —
+  xem bên dưới), đặt tên. Dùng `/v1/devices/mine` và `/v1/devices/pair/claim`
+  (đã nằm trong `_USER_PREFIXES`, được match trước `_ADMIN_PREFIXES` nên không
+  cần nới quyền).
 - **Tools** — STT/TTS thủ công gộp một chỗ, dạng đơn giản hoá của batch hiện có.
 
 ### Kiến trúc module
@@ -199,6 +201,41 @@ Không nhân bản mô hình này. (Sửa `esp32-assistant` là việc riêng, n
 3. History
 4. Devices
 5. Tools
+
+## Hai lời hứa ban đầu đã phải chỉnh lại sau khi đo thực tế
+
+### Audio phát lại trong History — hoãn có chủ đích
+
+Spec bản đầu ghi History có "audio phát lại". **Không giao được ở phase này**, vì
+ba lý do độc lập nhau, mỗi lý do đủ để chặn:
+
+1. **History không lưu audio.** `get_messages()` trả đúng `{turn, role, content}`
+   — thuần văn bản. Không có cột nào tham chiếu tới file audio.
+2. **Artifacts bị dọn sau 24 giờ** (`artifacts_ttl_hours = 24.0`, janitor chạy
+   mỗi giờ). Kể cả có link thì link cũng chết sau một ngày.
+3. **Luồng của web client không sinh file audio nào cả.** Ta chọn
+   `audio_out=opus`, nên audio đi thẳng qua WebSocket dưới dạng packet và không
+   bao giờ được ghi ra đĩa. Không có file để mà phát lại.
+
+Điểm 3 là hệ quả không tránh khỏi của chính quyết định `audio_out=opus` — quyết
+định đúng (vì `/artifacts` không có auth, xem phần CORS), nhưng cái giá là mất
+khả năng phát lại. Đây là đánh đổi có ý thức, không phải sơ suất.
+
+**Muốn có audio phát lại thì cần, ở backend:** server vừa stream Opus vừa lưu
+wav; thêm cột tham chiếu artifact vào bảng message; ngừng dọn (hoặc tăng TTL cho)
+những file đó; và bảo vệ `/artifacts` bằng auth. Đó là thay đổi chính sách lưu
+trữ, không phải một tính năng UI.
+
+### "Trạng thái online" của Devices — thay bằng "lần cuối thấy"
+
+Backend chỉ có `last_seen_at`, và nó chỉ được cập nhật khi thiết bị mở
+WebSocket. Đó là **dấu vết quá khứ, không phải hiện diện thật**. Một chấm xanh
+"Online" dựa trên nó thành lời nói dối ngay khi thiết bị rớt mạng 30 giây trước
+— và người dùng sẽ tin nó rồi đi tìm lỗi nhầm chỗ.
+
+UI hiển thị "lần cuối thấy" dạng tương đối. Ngoại lệ duy nhất: trong vòng 90
+giây thì nói "Đang hoạt động" — khoảng đó đủ hẹp để không thành lời nói dối.
+Muốn hiện diện thật thì backend cần một kênh presence, hiện chưa có.
 
 ## Nợ kỹ thuật đã biết (ghi nhận, không chặn merge)
 
