@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.errors import EngineNotFoundError, ProviderError
+from app.core.errors import EngineNotFoundError
 from app.schemas.stt import STTResult
 from model_service.app.config import ServiceConfig
 from model_service.app.main import create_app
@@ -66,12 +66,46 @@ def test_requires_auth():
 
 
 def test_provider_error_becomes_502_in_the_openai_envelope():
-    r = _client(_FakeSTT(exc=ProviderError("engine died"))).post(
+    # Real STT providers never raise ProviderError -- they raise bare
+    # RuntimeError (see apps/api_gateway/app/services/stt/providers/*.py).
+    # This pins the path that actually occurs in production: routes_stt.py
+    # must catch it and translate it into the envelope itself.
+    r = _client(_FakeSTT(exc=RuntimeError("engine died"))).post(
         "/v1/audio/transcriptions", headers=_AUTH, files={"file": ("a.wav", b"D", "audio/wav")}
     )
     assert r.status_code == 502
-    assert r.json()["error"]["message"] == "engine died"
+    assert r.headers["content-type"] == "application/json"
+    assert "engine died" in r.json()["error"]["message"]
     assert r.json()["error"]["type"] == "provider_error"
+
+
+def test_non_wav_upload_surfaces_as_envelope_not_plain_text_500():
+    # Simulates what a real provider does on unreadable/malformed audio (e.g.
+    # vosk_provider.py raising RuntimeError on a bad WAV header): the raw
+    # RuntimeError must not leak past routes_stt.py as a bare 500 text/plain.
+    provider = _FakeSTT(exc=RuntimeError("Vosk requires a valid WAV PCM16 mono file."))
+    r = _client(provider).post(
+        "/v1/audio/transcriptions",
+        headers=_AUTH,
+        files={"file": ("not-audio.txt", b"this is not a wav file", "text/plain")},
+    )
+    assert r.status_code == 502
+    assert r.headers["content-type"] == "application/json"
+    body = r.json()
+    assert body["error"]["type"] == "provider_error"
+    assert "WAV" in body["error"]["message"]
+
+
+def test_404_carries_the_openai_envelope():
+    # Starlette's router raises starlette.exceptions.HTTPException directly for
+    # unmatched routes -- registering the handler on fastapi.HTTPException
+    # alone would miss this and leak {"detail": "Not Found"}.
+    r = _client(_FakeSTT()).get("/v1/no-such-route", headers=_AUTH)
+    assert r.status_code == 404
+    assert r.headers["content-type"] == "application/json"
+    body = r.json()
+    assert body["error"]["type"] == "invalid_request_error"
+    assert isinstance(body["error"]["message"], str) and body["error"]["message"]
 
 
 def test_engine_not_found_becomes_400():
