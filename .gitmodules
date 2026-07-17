@@ -1,0 +1,3 @@
+[submodule "lugo-web-client"]
+	path = lugo-web-client
+	url = ../lugo-web-client
