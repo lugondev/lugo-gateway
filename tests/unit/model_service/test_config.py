@@ -1,6 +1,7 @@
 import pytest
 
-from model_service.app.config import ConfigError, load_config
+from model_service.app.config import ConfigError, ServiceConfig, load_config
+from model_service.app.main import create_app
 
 _VALID = {"SERVICE_KIND": "stt", "SERVICE_ENGINE": "whisper_local", "SERVICE_API_TOKEN": "t0ken"}
 
@@ -34,3 +35,16 @@ def test_rejects_missing_token():
 
 def test_port_is_overridable():
     assert load_config({**_VALID, "SERVICE_PORT": "9000"}).port == 9000
+
+
+def test_unknown_stt_engine_fails_at_startup():
+    from app.core.errors import EngineNotFoundError
+
+    with pytest.raises(EngineNotFoundError):
+        create_app(ServiceConfig(kind="stt", engine="not_an_engine", api_token="t"))
+
+
+def test_non_rendering_tts_engine_is_refused():
+    # edge_tts is a plain TTSProvider: it cannot hand back WAV bytes.
+    with pytest.raises(ConfigError, match="RenderingTTSProvider"):
+        create_app(ServiceConfig(kind="tts", engine="edge_tts", api_token="t"))
