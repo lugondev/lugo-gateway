@@ -147,3 +147,55 @@ async def test_failed_bearer_401_is_json_not_redirect_even_with_html_accept(
     )
     assert resp.status_code == 401
     assert resp.headers.get("content-type", "").startswith("application/json")
+
+
+async def test_bearer_devices_mine_is_not_401(client, _with_password, normal_user):
+    """Bug: /v1/devices/mine reads request.session directly instead of using
+    current_user_id(), so a bearer-only (cross-origin, cookie-less) request
+    was rejected with 401 even though the guard already let it through."""
+    token = issue_access_token(normal_user["id"])
+    resp = client.get("/v1/devices/mine", headers=_auth(token))
+    assert resp.status_code == 200
+
+
+async def test_bearer_devices_revoke_is_not_401(client, _with_password, normal_user):
+    """A 404 (device not found) proves auth passed and the route ran -- that
+    is what distinguishes this from the auth-layer 401 bug."""
+    token = issue_access_token(normal_user["id"])
+    resp = client.post("/v1/devices/mine/no-such-device/revoke", headers=_auth(token))
+    assert resp.status_code != 401
+
+
+async def test_bearer_devices_pair_claim_is_not_401(client, _with_password, normal_user):
+    """Worst symptom of the bug: pairing itself was unreachable over bearer.
+    A bogus code should fail on the pairing code, not on auth."""
+    token = issue_access_token(normal_user["id"])
+    resp = client.post(
+        "/v1/devices/pair/claim",
+        json={"code": "000000", "name": "my-device"},
+        headers=_auth(token),
+    )
+    assert resp.status_code != 401
+
+
+async def test_bearer_devices_mine_no_auth_is_still_401(client, _with_password):
+    resp = client.get("/v1/devices/mine")
+    assert resp.status_code == 401
+
+
+async def test_bearer_never_reaches_admin_devices_listing(client, _with_password, admin_user):
+    """Invariant of the whole design: bearer must never reach admin routes,
+    even for a user whose DB role is admin (bearer path hardcodes role=user)."""
+    token = issue_access_token(admin_user["id"])
+    resp = client.get("/v1/devices", headers=_auth(token))
+    assert resp.status_code == 403
+
+
+async def test_cookie_session_devices_mine_still_works(client, _with_password, normal_user):
+    """The admin webui depends on the cookie-session path continuing to work."""
+    client.post(
+        "/api/auth/login",
+        json={"username": "bearer-user", "password": "pw12345678"},
+    )
+    resp = client.get("/v1/devices/mine")
+    assert resp.status_code == 200

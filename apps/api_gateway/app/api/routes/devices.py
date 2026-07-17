@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from app.core.actor import current_user_id
 from app.core.errors import AuthError, DeviceSerialConflictError, PairingCodeInvalidError
 from app.services.auth.devices import device_store
 from app.services.auth.pairing import pending_pairings
@@ -38,7 +39,7 @@ class PairClaimRequest(BaseModel):
 
 @router.post("/pair/claim")
 async def pair_claim(payload: PairClaimRequest, request: Request) -> dict:
-    user_id = request.session.get("user_id")
+    user_id = current_user_id(request)
     if not user_id:
         raise AuthError("login required")
     entry = pending_pairings.get_by_code(payload.code)
@@ -56,7 +57,7 @@ async def pair_claim(payload: PairClaimRequest, request: Request) -> dict:
 
 @router.get("/mine")
 async def list_my_devices(request: Request) -> dict:
-    user_id = request.session.get("user_id")
+    user_id = current_user_id(request)
     if not user_id:
         raise AuthError("login required")
     return {"success": True, "data": await device_store.list_for_user(user_id)}
@@ -64,7 +65,7 @@ async def list_my_devices(request: Request) -> dict:
 
 @router.post("/mine/{device_id}/revoke")
 async def revoke_my_device(device_id: str, request: Request) -> dict:
-    user_id = request.session.get("user_id")
+    user_id = current_user_id(request)
     if not user_id:
         raise AuthError("login required")
     ok = await device_store.revoke(device_id, owner_user_id=user_id)
