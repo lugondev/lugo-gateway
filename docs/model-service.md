@@ -50,7 +50,7 @@ docker run --rm -p 8100:8100 \
   -e SERVICE_KIND=stt \
   -e SERVICE_ENGINE=vosk \
   -e SERVICE_API_TOKEN=dev-token \
-  -e STT_VOSK_MODEL_PATH=/models/vosk-model-small-en-us-0.15 \
+  -e STT_VOSK_MODEL_PATH=/models/stt/vosk-model-small-en-us-0.15 \
   -v "$(pwd)/models:/models:ro" \
   model-service:dev
 ```
@@ -186,8 +186,7 @@ unset, rather than quietly booting the container without
 `SERVICE_API_TOKEN` and having the container itself immediately refuse to run.
 The default compose service mounts `../../models` (repo-root `models/`) into
 the container at `/models:ro` and configures the `vosk` engine, pointed at
-`STT_VOSK_MODEL_PATH=/models/vosk-model-small-en-us-0.15` — that's a flat
-`models/vosk-model-small-en-us-0.15`, not the nested `models/stt/...` layout
-`scripts/download_vosk_model.sh` produces by default, so either place the
-model directly under `models/` or adjust the env var / volume mapping to
-match wherever you extracted it.
+`STT_VOSK_MODEL_PATH=/models/stt/vosk-model-small-en-us-0.15` — that matches
+the nested `models/stt/...` layout `scripts/download_vosk_model.sh` produces
+by default, so running that script from the repo root is enough to make the
+compose example work as written.

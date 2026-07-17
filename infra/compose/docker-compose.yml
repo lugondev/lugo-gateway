@@ -30,7 +30,7 @@ services:
       SERVICE_KIND: stt
       SERVICE_ENGINE: vosk
       SERVICE_API_TOKEN: ${MODEL_SERVICE_TOKEN:?set MODEL_SERVICE_TOKEN}
-      STT_VOSK_MODEL_PATH: /models/vosk-model-small-en-us-0.15
+      STT_VOSK_MODEL_PATH: /models/stt/vosk-model-small-en-us-0.15
     volumes:
       - ../../models:/models:ro
     ports:
