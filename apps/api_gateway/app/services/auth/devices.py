@@ -6,6 +6,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.core.timefmt import iso_utc
 from app.services.db.engine import db_session
 from app.services.db.models import Device, utcnow
 
@@ -20,8 +21,8 @@ def _device_dict(d: Device) -> dict:
         "user_id": d.user_id,
         "name": d.name,
         "serial": d.serial,
-        "created_at": d.created_at.isoformat() if d.created_at else None,
-        "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
+        "created_at": iso_utc(d.created_at),
+        "last_seen_at": iso_utc(d.last_seen_at),
         "revoked": d.revoked,
     }
 

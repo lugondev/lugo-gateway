@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import UsernameTakenError
+from app.core.timefmt import iso_utc
 from app.services.auth.password import hash_password, verify_password
 from app.services.db.engine import db_session
 from app.services.db.models import User
@@ -19,7 +20,7 @@ def _user_dict(u: User) -> dict:
         "role": u.role,
         "can_use_testing": u.can_use_testing,
         "disabled": u.disabled,
-        "created_at": u.created_at.isoformat() if u.created_at else None,
+        "created_at": iso_utc(u.created_at),
     }
 
 

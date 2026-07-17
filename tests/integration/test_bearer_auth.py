@@ -1,10 +1,14 @@
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core.settings import settings
 from app.main import app
+from app.services.auth.devices import device_store
 from app.services.auth.tokens import issue_access_token
 from app.services.auth.users import user_store
+from app.services.history.store import session_store
 
 
 @pytest.fixture
@@ -199,3 +203,47 @@ async def test_cookie_session_devices_mine_still_works(client, _with_password, n
     )
     resp = client.get("/v1/devices/mine")
     assert resp.status_code == 200
+
+
+def _assert_timestamp_is_unambiguous_and_recent(raw: str) -> None:
+    """The property that actually matters: a client parsing this string with
+    a standard ISO-8601 parser must land within seconds of "now", regardless
+    of the parsing client's local timezone. A naive string (no offset) is
+    ambiguous -- e.g. JS Date.parse() would interpret it as LOCAL time and
+    land hours away from now for any viewer not in UTC+0 (measured: "7 giờ
+    trước" for a session that had just been created, viewer in UTC+7)."""
+    assert raw, "expected a non-empty timestamp string"
+    parsed = datetime.fromisoformat(raw)
+    assert parsed.tzinfo is not None, (
+        f"timestamp {raw!r} has no timezone offset -- ambiguous to any client "
+        "not in UTC+0"
+    )
+    delta = abs((datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds())
+    assert delta < 10, f"timestamp {raw!r} is {delta}s away from now -- not 'just happened'"
+
+
+async def test_session_created_at_is_unambiguous_utc(client, _with_password, normal_user):
+    """API-level regression test for the timezone bug: GET /v1/sessions must
+    return a created_at that any client can parse unambiguously as the
+    correct instant, not one that shifts by the viewer's UTC offset."""
+    await session_store.create("tz-sess-1", profile_id="p", user_id=normal_user["id"])
+    token = issue_access_token(normal_user["id"])
+    resp = client.get("/v1/sessions", headers=_auth(token))
+    assert resp.status_code == 200
+    rows = resp.json()["data"]
+    row = next(r for r in rows if r["id"] == "tz-sess-1")
+    _assert_timestamp_is_unambiguous_and_recent(row["created_at"])
+
+
+async def test_device_created_at_is_unambiguous_utc(client, _with_password, normal_user):
+    """Same bug, device side: the Devices screen derives "active" from
+    last_seen_at/created_at being within 90 seconds of now -- an ambiguous
+    timestamp makes that check wrong in either direction depending on the
+    viewer's timezone."""
+    await device_store.create(normal_user["id"], "tz-device", "TZ:SERIAL")
+    token = issue_access_token(normal_user["id"])
+    resp = client.get("/v1/devices/mine", headers=_auth(token))
+    assert resp.status_code == 200
+    rows = resp.json()["data"]
+    row = next(r for r in rows if r["serial"] == "TZ:SERIAL")
+    _assert_timestamp_is_unambiguous_and_recent(row["created_at"])

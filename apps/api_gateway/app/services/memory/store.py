@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 
+from app.core.timefmt import iso_utc
 from app.services.db.engine import db_session
 from app.services.db.models import MemoryItem, MemoryProfileDoc, utcnow
 
@@ -17,8 +18,8 @@ def _mem_dict(m: MemoryItem) -> dict:
         "content": m.content,
         "source_session_id": m.source_session_id,
         "embedding": m.embedding,
-        "created_at": m.created_at.isoformat() if m.created_at else None,
-        "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+        "created_at": iso_utc(m.created_at),
+        "updated_at": iso_utc(m.updated_at),
     }
 
 
@@ -98,7 +99,7 @@ def _doc_dict(d: MemoryProfileDoc) -> dict:
     return {
         "profile_id": d.profile_id,
         "content": d.content,
-        "updated_at": d.updated_at.isoformat() if d.updated_at else None,
+        "updated_at": iso_utc(d.updated_at),
     }
 
 

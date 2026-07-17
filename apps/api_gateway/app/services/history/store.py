@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 
+from app.core.timefmt import iso_utc
 from app.services.db.engine import db_session
 from app.services.db.models import ChatMessage, ChatSession, utcnow
 
@@ -12,8 +13,8 @@ def _session_dict(s: ChatSession) -> dict:
         "id": s.id,
         "profile_id": s.profile_id,
         "user_id": s.user_id,
-        "created_at": s.created_at.isoformat() if s.created_at else None,
-        "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+        "created_at": iso_utc(s.created_at),
+        "ended_at": iso_utc(s.ended_at),
         "meta": s.meta or {},
     }
 
