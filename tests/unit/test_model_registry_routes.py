@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -381,7 +382,7 @@ def test_tts_entry_keeps_its_base_url(client, monkeypatch):
     assert r.json()["data"]["base_url"] == _SERVICE_BASE
 
 
-def test_bad_service_url_is_rejected_at_add_time(client):
+def test_bad_service_url_is_rejected_at_add_time(client, monkeypatch):
     """The admin should learn the URL/token is wrong when they click Add, not on
     the first real transcription.
 
@@ -394,7 +395,27 @@ def test_bad_service_url_is_rejected_at_add_time(client):
     actual failed HTTP attempt against the submitted base_url. Pin the latter
     specifically: the provider must reach OpenAICompatSttProvider.transcribe_bytes
     and fail there with a network/request error, using the base_url from *this*
-    payload, not report a missing config."""
+    payload, not report a missing config.
+
+    The base_url is deliberately bogus (".invalid" TLD, per RFC 2606), but the
+    test must stay hermetic -- no real DNS/socket call. httpx.AsyncClient is
+    swapped for a MockTransport whose handler raises httpx.ConnectError, same
+    pattern as test_openai_stt_provider.py's `captured` fixture, so the
+    provider's `except httpx.HTTPError` branch fires exactly like it would
+    against an unreachable host, without ever touching the network."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("[Errno 8] nodename nor servname provided, or not known", request=request)
+
+    transport = httpx.MockTransport(handler)
+    original_async_client = httpx.AsyncClient
+
+    def factory(*args, **kwargs):
+        kwargs["transport"] = transport
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+
     _signup_login(client, "admin_bad_url", role="admin")
     r = client.post(
         "/v1/model_registry",
