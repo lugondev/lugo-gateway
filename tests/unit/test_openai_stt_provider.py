@@ -1,3 +1,5 @@
+import re
+
 import httpx
 import pytest
 
@@ -10,6 +12,12 @@ _ENTRY = {
     "label": "local box", "enabled": True, "stage": "stable",
     "api_key": "t0ken", "base_url": "http://stt-service:8100/v1", "config": {},
 }
+
+
+def _multipart_field(body: bytes, name: str) -> str | None:
+    """Pull a form field's value out of a raw multipart/form-data body."""
+    match = re.search(rf'name="{name}"\r\n\r\n(.*?)\r\n--'.encode(), body, re.DOTALL)
+    return match.group(1).decode() if match else None
 
 
 @pytest.fixture
@@ -26,6 +34,7 @@ def captured(monkeypatch):
     original = httpx.AsyncClient
 
     def factory(*args, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
         kwargs["transport"] = transport
         return original(*args, **kwargs)
 
@@ -46,6 +55,8 @@ async def test_posts_to_the_entry_base_url_with_bearer(captured, monkeypatch):
 
     assert captured["url"] == "http://stt-service:8100/v1/audio/transcriptions"
     assert captured["auth"] == "Bearer t0ken"
+    assert _multipart_field(captured["body"], "model") == "phowhisper-medium"
+    assert _multipart_field(captured["body"], "language") == "vi"
     assert result.text == "xin chào"
     assert result.engine == "openai_stt"
 
@@ -102,7 +113,17 @@ async def test_http_error_surfaces_the_status_and_body(monkeypatch):
 async def test_timeout_comes_from_the_entry_config(captured, monkeypatch):
     entry = {**_ENTRY, "config": {"timeout_seconds": 5.0}}
     provider = OpenAICompatSttProvider(entry=entry)
-    await provider.transcribe_bytes(b"RIFFDATA")  # must not raise
+    await provider.transcribe_bytes(b"RIFFDATA")
+    assert captured["timeout"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_timeout_falls_back_to_the_provider_default_when_entry_has_none(captured):
+    # _ENTRY's config is {}, so no timeout_seconds override -- the provider's
+    # own default (60.0, per _DEFAULT_TIMEOUT) must be what reaches httpx.
+    provider = OpenAICompatSttProvider(entry=_ENTRY)
+    await provider.transcribe_bytes(b"RIFFDATA")
+    assert captured["timeout"] == 60.0
 
 
 def test_engine_is_registered():
