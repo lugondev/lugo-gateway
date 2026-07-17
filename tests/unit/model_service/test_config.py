@@ -37,6 +37,20 @@ def test_port_is_overridable():
     assert load_config({**_VALID, "SERVICE_PORT": "9000"}).port == 9000
 
 
+@pytest.mark.parametrize("port", ["0", "-1", "65536", "100000"])
+def test_rejects_out_of_range_port(port):
+    # Out-of-range ports used to pass load_config's int-parseable check and
+    # only fail later at uvicorn bind time -- contradicting this module's own
+    # promise that everything is validated at startup.
+    with pytest.raises(ConfigError, match="SERVICE_PORT"):
+        load_config({**_VALID, "SERVICE_PORT": port})
+
+
+@pytest.mark.parametrize("port", ["1", "65535"])
+def test_accepts_boundary_ports(port):
+    assert load_config({**_VALID, "SERVICE_PORT": port}).port == int(port)
+
+
 def test_unknown_stt_engine_fails_at_startup():
     from app.core.errors import EngineNotFoundError
 

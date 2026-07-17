@@ -13,6 +13,10 @@ from dataclasses import dataclass
 
 VALID_KINDS = ("stt", "tts")
 
+DEFAULT_PORT = 8100
+_MIN_PORT = 1
+_MAX_PORT = 65535
+
 
 class ConfigError(RuntimeError):
     """Env is missing or invalid; the process must not start."""
@@ -23,7 +27,7 @@ class ServiceConfig:
     kind: str
     engine: str
     api_token: str
-    port: int = 8100
+    port: int = DEFAULT_PORT
 
 
 def load_config(env: Mapping[str, str] | None = None) -> ServiceConfig:
@@ -41,9 +45,14 @@ def load_config(env: Mapping[str, str] | None = None) -> ServiceConfig:
     if not api_token:
         raise ConfigError("SERVICE_API_TOKEN is required; the service refuses to run open")
 
+    raw_port = env.get("SERVICE_PORT", str(DEFAULT_PORT))
     try:
-        port = int(env.get("SERVICE_PORT", "8100"))
+        port = int(raw_port)
     except ValueError as exc:
-        raise ConfigError(f"SERVICE_PORT must be an integer: {exc}") from exc
+        raise ConfigError(f"SERVICE_PORT must be an integer, got {raw_port!r}") from exc
+    if not (_MIN_PORT <= port <= _MAX_PORT):
+        raise ConfigError(
+            f"SERVICE_PORT must be between {_MIN_PORT} and {_MAX_PORT}, got {port}"
+        )
 
     return ServiceConfig(kind=kind, engine=engine, api_token=api_token, port=port)
