@@ -33,7 +33,26 @@ Repo con `lugo-web-client` @ `ab384b7`, 70/70 test:
 | `POST /v1/stt/transcribe` | multipart: `audio` (file). Các field khác (`engine`, `language`, `denoise`, `vad`, `segment`) đều optional — **bỏ trống hết**, server dùng mặc định. | `{success, data: {engine, text, is_final, confidence}}` |
 | `POST /v1/tts/synthesize` | JSON `{text}`. Các field khác optional — **chỉ gửi `text`**. | `{success, data: {engine, sample_rate, audio_url, duration_seconds, job_id, text}}` |
 
-**Quan trọng về `TTSRequest`:** `engine` có default `"omnivoice"` trong schema. Nếu client **không** gửi `engine`, server dùng `"omnivoice"` — **không phải** engine mặc định trong system config. Đó là hành vi của schema, không phải bug; nhưng nghĩa là bỏ trống `engine` KHÔNG có nghĩa "để server tự chọn". Task 4 phải kiểm chứng bằng gateway thật xem `{text}` trần có ra tiếng không. **Nếu 500 vì omnivoice chưa cài: DỪNG và báo cáo** — đừng tự chọn engine khác, đó là quyết định của chủ dự án.
+**Quan trọng về `TTSRequest` — controller đã đo, không cần đoán:**
+
+```
+POST /v1/tts/synthesize  {"text":"xin chao"}   -> 200
+{"engine":"omnivoice","sample_rate":24000,
+ "audio_url":"/artifacts/380ceef4....wav","duration_seconds":1.04}
+```
+
+Chạy được. Nhưng lộ ra một chỗ lệch cần biết: `TTSRequest.engine` có default
+`"omnivoice"` **trong schema**, nên gửi `{text}` trần KHÔNG có nghĩa "để server
+tự chọn" — nó ghim cứng omnivoice. Hôm nay `system_config.engines.default_tts_engine`
+cũng đúng bằng `"omnivoice"`, nên hai thứ trùng nhau **do tình cờ**.
+
+Route STT làm đúng (`engine = engine or system_config...default_stt_engine`);
+route TTS thì không. **Hệ quả đã biết:** nếu chủ dự án đổi engine TTS mặc định
+trong admin, Tools sẽ âm thầm không đi theo.
+
+**Không sửa ở plan này.** Đổi default của `TTSRequest.engine` sẽ ảnh hưởng tts
+profiles và conversation — rủi ro thật mà chẳng gỡ được gì cho Tools hôm nay.
+Ghi nhận, để chủ dự án quyết riêng.
 
 **Lỗi:** STT trả 400 (RuntimeError) hoặc 500 kèm `detail`; TTS trả lỗi qua `AppError` → `{success: false, error}`.
 
