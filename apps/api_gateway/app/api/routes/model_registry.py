@@ -5,8 +5,10 @@ from app.core.audio import pcm16_to_wav_bytes
 from app.schemas.tts import TTSRequest
 from app.services.conversation.responder import OpenAICompatResponder
 from app.services.model_registry.store import model_registry_store
+from app.services.stt.providers.openai_stt_provider import OpenAICompatSttProvider
 from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
 from app.services.stt.service import stt_service
+from app.services.tts.providers.openai_tts_provider import OpenAICompatTTSProvider
 from app.services.tts.service import tts_service
 
 router = APIRouter(prefix="/v1/model_registry", tags=["model_registry"])
@@ -23,6 +25,13 @@ _SAMPLE_WAV = pcm16_to_wav_bytes(b"\x00\x00" * 1600, sample_rate=16000)
 # the key the admin is submitting right now rather than the fixed singleton
 # provider (which looks its key up from an entry that doesn't exist yet).
 _OPENROUTER_STT_ENGINES = {"qwen3_asr_or", "whisper_or"}
+
+# Service engines whose config lives entirely on the entry being submitted
+# (base_url + api_key). Like the OpenRouter engines, the singleton provider
+# would look up a row that doesn't exist yet, so the add-time test call gets an
+# explicit entry built from the payload.
+_SERVICE_STT_ENGINES = {"openai_stt"}
+_SERVICE_TTS_ENGINES = {"openai_tts"}
 
 
 def _mask_api_key(key: str) -> str:
@@ -72,11 +81,16 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
                 provider = OpenRouterSttProvider(
                     name=payload.engine, model=payload.model_id, api_key=payload.api_key
                 )
+            elif payload.engine in _SERVICE_STT_ENGINES:
+                provider = OpenAICompatSttProvider(name=payload.engine, entry=payload.model_dump())
             else:
                 provider = stt_service.get_provider(payload.engine)
             await provider.transcribe_bytes(_SAMPLE_WAV)
         elif payload.kind == "tts":
-            provider = tts_service.get_provider(payload.engine)
+            if payload.engine in _SERVICE_TTS_ENGINES:
+                provider = OpenAICompatTTSProvider(name=payload.engine, entry=payload.model_dump())
+            else:
+                provider = tts_service.get_provider(payload.engine)
             await provider.synthesize(TTSRequest(text=payload.sample_text, engine=payload.engine))
         elif payload.kind == "llm":
             responder = OpenAICompatResponder(
@@ -91,15 +105,15 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
     except Exception as exc:  # noqa: BLE001 - surface the provider's own error to the admin
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Persist api_key for every kind (stt: read by openrouter_provider.py;
-    # llm: read by responder.py's resolve_llm_override_from_registry; tts: no
-    # engine reads it yet -- stored for UI/schema consistency and ready for a
-    # future key-requiring TTS engine). base_url only matters for llm (an
-    # OpenAI-compatible endpoint paired with this entry's model/key).
+    # Persist api_key for every kind (stt: read by openrouter_provider.py and
+    # openai_stt_provider.py; llm: read by responder.py's
+    # resolve_llm_override_from_registry; tts: read by openai_tts_provider.py).
+    # base_url is meaningful for every kind now: llm and the openai_stt/openai_tts
+    # service engines all pair a model with an OpenAI-compatible endpoint.
     created = await model_registry_store.create(
         payload.kind, payload.engine, payload.model_id, payload.label, stage=payload.stage,
         api_key=payload.api_key,
-        base_url=payload.base_url if payload.kind in ("llm", "stt") else "",
+        base_url=payload.base_url,
         config=payload.config,
     )
     created["api_key"] = _mask_api_key(created["api_key"])
