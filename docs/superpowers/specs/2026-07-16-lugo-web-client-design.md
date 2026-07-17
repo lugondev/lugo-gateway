@@ -36,6 +36,25 @@ chủ ý: migrate admin sẽ nhân đôi rủi ro mà không đem lại lợi í
 
 ## Auth
 
+### Một phương thức, không fallback
+
+Nếu request chìa ra `Authorization: Bearer`, thì bearer **là** danh tính của nó.
+Token hỏng/hết hạn/user bị vô hiệu hoá → **401 dứt khoát**, không bao giờ âm
+thầm rơi về danh tính của cookie.
+
+Ban đầu HTTP làm ngược lại (bỏ qua bearer hỏng rồi dùng cookie) trong khi WS đã
+fail-closed sẵn — hai lối không thống nhất chính sách. Đã sửa cho khớp nhau.
+Ngoài tính nhất quán, điều này còn cần thiết để SPA biết đường gọi refresh: một
+token hết hạn phải trả 401 rõ ràng, chứ không phải biến client thành một người
+dùng khác mà nó không hề hay biết.
+
+Header không phải bearer (ví dụ `Basic`) **không** kích hoạt lối này — nó đơn
+giản không phải một lần thử bearer, nên vẫn rơi về cookie như cũ.
+
+401 của lối bearer luôn là JSON, không bao giờ redirect về trang login kể cả khi
+`Accept: text/html` — client mang token là API client, không phải trình duyệt
+đang điều hướng.
+
 ### Bearer luôn là user, không ngoại lệ
 
 Đường bearer hardcode `role = "user"`. Backend **không đọc role claim từ token**.
@@ -72,12 +91,38 @@ Tách phân giải danh tính khỏi kiểm tra quyền: một chỗ duy nhất 
   cần thu hồi tức thì: thêm denylist nhỏ, không phải làm lại.
 - **XSS:** SPA giữ token trong JS nên XSS đọc được. Đây là cái giá đã chấp nhận
   khi chọn bearer thay vì BFF. TTL 1h giới hạn thiệt hại.
+- ⚠️ **`SESSION_SECRET` PHẢI được set ở env prod trước khi phase 1 ship.** Mặc
+  định nó rỗng, và khi rỗng thì secret ký được sinh ngẫu nhiên **mỗi process**.
+  Hệ quả: mọi refresh token 30 ngày chết theo mỗi lần restart/redeploy, nên
+  `REFRESH_TTL_SECONDS = 30 ngày` chỉ trung thực khi biến này được set thật.
+  Hành vi này khớp đúng cookie session trước đây (bảo toàn có chủ ý, không phải
+  regression), nhưng main tự động deploy prod — nên nếu quên, SPA sẽ trông như
+  ngẫu nhiên đăng xuất người dùng sau mỗi lần deploy.
 - **WebSocket:** token qua subprotocol, **không** qua query string (query string
   bị ghi vào access log và lịch sử proxy).
 
 ### CORS
 
 Domain riêng → cần CORS. Chỉ mở cho origin của web client, không wildcard.
+
+**Trạng thái sau giai đoạn 0: làm một nửa, phần còn lại hoãn có chủ đích.**
+
+- ✅ Đã làm: `allow_credentials=False`. Trước đó `allow_origins=["*"]` đi cùng
+  `allow_credentials=True` khiến Starlette echo lại **mọi** origin kèm
+  `Allow-Credentials: true` — mọi website đọc được response xác thực bằng
+  cookie. Chưa khai thác được nhờ `SameSite=lax`, tức một lỗ hổng tiềm ẩn chỉ
+  còn một lớp phòng thủ. Đã đóng.
+- ✅ Đã làm: `CORSMiddleware` chuyển thành ngoài cùng. Trước đó nó nằm trong
+  cùng nên mọi response 401/403 do `AuthGuardMiddleware` short-circuit đều
+  không mang header CORS — SPA cross-origin sẽ thấy `TypeError: Failed to
+  fetch` mờ đục thay vì 401, và luồng refresh không bao giờ chạy.
+- ⏸️ **Hoãn sang phase 1: allowlist origin.** `cors_allow_origins` vẫn mặc định
+  `"*"`. Lý do hoãn: domain của web client chưa chốt, và đoán sai rồi sửa lại
+  còn tệ hơn hoãn có chủ đích. Chấp nhận được tạm thời vì credentials đã tắt —
+  không response nào xác thực bằng cookie đọc được từ origin lạ, và bearer token
+  thì origin lạ không có. **Việc phải làm khi domain có thật:** đặt
+  `CORS_ALLOW_ORIGINS=https://<domain>` ở env prod (đây là cấu hình env, không
+  phải sửa code).
 
 ## Web client
 
@@ -154,6 +199,18 @@ Không nhân bản mô hình này. (Sửa `esp32-assistant` là việc riêng, n
 3. History
 4. Devices
 5. Tools
+
+## Nợ kỹ thuật đã biết (ghi nhận, không chặn merge)
+
+- **`lugo.py` không echo subprotocol** trong khi `conversation.py`/`livehost.py`/
+  `stt.py` đều có. Vì nó dùng chung `resolve_ws_identity`, một access token user
+  giờ authenticate được `/v1/lugo/stream` — nhưng **không cấp gì thật**:
+  capability nhận được là một phiên voice conversation, thứ mà chính token đó đã
+  có qua `/v1/conversation/stream`; `device_id=None` nên không chạm device row.
+  Trình duyệt cũng không dùng được vì subprotocol không được echo. Không sửa ở
+  giai đoạn 0 vì plan đã chốt không đụng `lugo.py` (hệ device riêng). Khi phase 1
+  chạm tới: hoặc echo cho nhất quán, hoặc thêm comment nói việc bỏ qua là cố ý —
+  hiện đọc như sơ suất.
 
 ## Ngoài phạm vi
 
