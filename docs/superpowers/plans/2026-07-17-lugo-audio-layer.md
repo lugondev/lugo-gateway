@@ -898,10 +898,12 @@ Chạy: `cd lugo-web-client && node verify-audio.mjs` (cần `pnpm dev` và gate
 
 **Chép output thật vào report.** Ngưỡng phải đạt:
 - `chunk giải mã` > 0 — không thì giải mã hỏng hoặc audio không về.
-- `sample rate khác 24000` = **0** — khác 0 nghĩa là lệch tần số, và lệch tần số cho ra giọng chipmunk hoặc giọng trầm rề mà test đơn vị không bao giờ bắt được.
+- `sample rate THỰC TẾ` = **[48000]**, `frame/chunk` = **[2880]**. Đây là số đo thật trên Chromium 149, KHÔNG phải 24000/1440 như trực giác. Lý do: **WebCodecs BỎ QUA `sampleRate` ta đưa vào `configure()` và luôn xuất 48kHz**, vì Opus giải mã nội bộ ở 48k. Server vẫn mã hoá ở 24000 và `output_sample_rate=24000` vẫn đúng — chỉ có đầu RA của decoder là 48k.
 - `chunk KHÔNG im lặng` gần bằng tổng — toàn im lặng nghĩa là giải mã ra rác.
 - `request /artifacts` = **0** — khác 0 nghĩa là đang đi nhầm đường `audio_url` công khai, đúng thứ ta chọn opus để tránh.
-- `tổng frame` quy ra giây phải hợp lý so với độ dài câu trả lời trong `log`.
+- `thời lượng THẬT` (tính bằng `frames/data.sampleRate`) phải hợp lý so với độ dài câu trả lời trong `log`. Nếu nó gấp đôi thực tế, `player.ts` đang tin hằng số 24000 thay vì `data.sampleRate` — audio sẽ phát chậm nửa tốc, giọng trầm rề.
+
+**Cảnh báo lịch sử (lỗi thật, đã xảy ra):** bản đầu của `player.ts` trong plan này hardcode 24000 cho `createBuffer` và cho bước tiến cursor. Đo thật cho thấy `thời lượng THẬT 6.66s` so với `13.32s nếu tin 24000` — lệch đúng gấp đôi. **Không test đơn vị nào bắt được** (jsdom không có AudioDecoder); chỉ có đo trên trình duyệt thật. Rate phải luôn lấy từ chính `data.sampleRate`.
 
 - [ ] **Step 4: Commit**
 
