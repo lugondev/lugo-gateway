@@ -55,6 +55,9 @@ def test_requires_auth():
 def test_empty_input_is_rejected():
     r = _client(_FakeTTS()).post("/v1/audio/speech", headers=_AUTH, json={"input": ""})
     assert r.status_code == 422
+    body = r.json()
+    assert body["error"]["type"] == "invalid_request_error"
+    assert isinstance(body["error"]["message"], str) and body["error"]["message"]
 
 
 def test_provider_error_becomes_502():

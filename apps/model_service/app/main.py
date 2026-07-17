@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.core.errors import EngineNotFoundError, ProviderError
@@ -63,6 +64,19 @@ def create_app(config: ServiceConfig | None = None, provider=None) -> FastAPI:
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": {"message": exc.detail, "type": "invalid_request_error"}},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(_request, exc: RequestValidationError):
+        # RequestValidationError (pydantic/FastAPI body & form validation) is
+        # not an HTTPException subclass, so it bypasses the handler above and
+        # would otherwise leak FastAPI's stock {"detail": [...]} shape -- the
+        # one case where an OpenAI-compatible client couldn't parse our error.
+        first = exc.errors()[0]
+        field = ".".join(str(p) for p in first["loc"] if p != "body")
+        message = f"{field}: {first['msg']}" if field else first["msg"]
+        return JSONResponse(
+            status_code=422, content={"error": {"message": message, "type": "invalid_request_error"}}
         )
 
     @app.exception_handler(EngineNotFoundError)

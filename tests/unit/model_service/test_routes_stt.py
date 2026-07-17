@@ -89,6 +89,16 @@ def test_empty_upload_is_rejected():
     assert r.status_code == 400
 
 
+def test_missing_file_field_is_rejected_in_the_openai_envelope():
+    r = _client(_FakeSTT()).post(
+        "/v1/audio/transcriptions", headers=_AUTH, data={"language": "vi"}
+    )
+    assert r.status_code == 422
+    body = r.json()
+    assert body["error"]["type"] == "invalid_request_error"
+    assert isinstance(body["error"]["message"], str) and body["error"]["message"]
+
+
 def test_models_lists_the_running_engine():
     r = _client(_FakeSTT()).get("/v1/models", headers=_AUTH)
     assert r.status_code == 200
