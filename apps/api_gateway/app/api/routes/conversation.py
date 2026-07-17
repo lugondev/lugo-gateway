@@ -266,6 +266,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
         output_sample_rate=output_sample_rate, audio_codec=audio_codec,
         want_audio=want_audio, want_text=want_text, audio_out=audio_out,
         denoise=denoise, resume_sid=requested_sid, stt_model=stt_model,
+        identity_user_id=identity.user_id,
     )
 
     async def emit(event: str, **payload) -> None:

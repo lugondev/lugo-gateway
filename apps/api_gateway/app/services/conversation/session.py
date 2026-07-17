@@ -112,6 +112,12 @@ class SessionRuntimeConfig:
     denoise: bool
     resume_sid: str | None  # requested_sid, for history resume
     stt_model: str = ""  # optional model-variant override (SttConfig.model, resolve_stt's 3rd value)
+    # The authenticated WS caller's user id (resolve_ws_identity's identity.user_id),
+    # if any. Preferred over profile.owner_id when recording the session -- the
+    # session belongs to whoever is actually speaking, not the profile's owner.
+    # None when auth is disabled (dev mode) or the caller used the legacy shared
+    # device_auth_token; in that case the front-end falls back to profile.owner_id.
+    identity_user_id: str | None = None
 
 
 class ConversationSession:
@@ -261,7 +267,7 @@ class ConversationSession:
                     cfg.session_id,
                     profile_id=cfg.profile_name or "",
                     meta={"stt_engine": cfg.stt_engine, "tts_engine": cfg.tts_engine},
-                    user_id=profile.owner_id if profile else None,
+                    user_id=cfg.identity_user_id or (profile.owner_id if profile else None),
                 )
         except Exception as exc:  # noqa: BLE001 - session setup must not drop the connection
             logger.warning("session setup failed for %s: %s", cfg.session_id, exc)
