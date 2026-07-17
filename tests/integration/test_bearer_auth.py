@@ -247,3 +247,57 @@ async def test_device_created_at_is_unambiguous_utc(client, _with_password, norm
     rows = resp.json()["data"]
     row = next(r for r in rows if r["serial"] == "TZ:SERIAL")
     _assert_timestamp_is_unambiguous_and_recent(row["created_at"])
+
+
+# --- STT/TTS were unguarded: no prefix in _USER_PREFIXES or _ADMIN_PREFIXES
+# matched /v1/stt or /v1/tts (only /v1/tts/profiles was listed), so requests
+# fell through to the unguarded `return await call_next(request)` branch.
+# Anyone could run inference, force model loads via /warm, and write wav
+# files into artifacts/ with no auth at all. ---
+
+
+async def test_tts_synthesize_no_auth_is_401(client, _with_password):
+    resp = client.post("/v1/tts/synthesize", json={"text": "hello", "engine": "omnivoice"})
+    assert resp.status_code == 401
+
+
+async def test_stt_warm_no_auth_is_401(client, _with_password):
+    resp = client.post("/v1/stt/warm")
+    assert resp.status_code == 401
+
+
+async def test_stt_engines_no_auth_is_401(client, _with_password):
+    resp = client.get("/v1/stt/engines")
+    assert resp.status_code == 401
+
+
+async def test_tts_voices_no_auth_is_401(client, _with_password):
+    resp = client.get("/v1/tts/voices")
+    assert resp.status_code == 401
+
+
+async def test_stt_engines_with_bearer_is_not_401(client, _with_password, normal_user):
+    """The web client's Tools screen depends on this staying reachable for
+    logged-in users -- the fix must not lock out legitimate bearer callers."""
+    token = issue_access_token(normal_user["id"])
+    resp = client.get("/v1/stt/engines", headers=_auth(token))
+    assert resp.status_code != 401
+
+
+async def test_tts_profiles_with_bearer_is_not_401(client, _with_password, normal_user):
+    """/v1/tts/profiles was already in _USER_PREFIXES; broadening to /v1/tts
+    must not change its behavior for a logged-in user."""
+    token = issue_access_token(normal_user["id"])
+    resp = client.get("/v1/tts/profiles", headers=_auth(token))
+    assert resp.status_code != 401
+
+
+async def test_cookie_session_stt_engines_still_works(client, _with_password, normal_user):
+    """The admin webui reaches /v1/stt/engines via same-origin cookie session
+    (static/js/stt-engines.js); that must keep working."""
+    client.post(
+        "/api/auth/login",
+        json={"username": "bearer-user", "password": "pw12345678"},
+    )
+    resp = client.get("/v1/stt/engines")
+    assert resp.status_code != 401

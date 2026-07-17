@@ -92,9 +92,21 @@ def test_guard_blocks_pair_claim_when_logged_out(client, _with_password):
     assert resp.status_code == 401
 
 
-def test_guard_allows_device_routes_without_login(client, _with_password):
-    resp = client.get("/v1/stt/engines")
+def test_guard_allows_device_pairing_status_without_login(client, _with_password):
+    # /v1/devices/pair/init and /v1/devices/pair/status are the only genuinely
+    # unauthenticated device-side routes (the device itself has no login) --
+    # see _NO_AUTH_PREFIXES. /v1/devices/pair/init already has its own test
+    # above; this covers the other entry.
+    resp = client.get("/v1/devices/pair/status", params={"poll_token": "does-not-exist"})
     assert resp.status_code != 401
+
+
+def test_guard_blocks_stt_engines_route_when_logged_out(client, _with_password):
+    # /v1/stt/engines is an STT engine listing, not a device route -- it now
+    # lives in _USER_PREFIXES alongside the rest of /v1/stt and /v1/tts, so it
+    # requires a logged-in session like any other user-facing surface.
+    resp = client.get("/v1/stt/engines")
+    assert resp.status_code == 401
 
 
 def test_guard_allows_auth_routes_without_login(client, _with_password):
