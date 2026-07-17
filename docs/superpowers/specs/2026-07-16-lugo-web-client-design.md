@@ -237,6 +237,17 @@ UI hiển thị "lần cuối thấy" dạng tương đối. Ngoại lệ duy nh
 giây thì nói "Đang hoạt động" — khoảng đó đủ hẹp để không thành lời nói dối.
 Muốn hiện diện thật thì backend cần một kênh presence, hiện chưa có.
 
+### Tools dùng `/artifacts` — thiếu nhất quán có chủ đích
+
+Talk cố ý tránh `/artifacts` (dùng `audio_out=opus`) vì nó không có auth. Nhưng
+`POST /v1/tts/synthesize` chỉ trả `audio_url`, không có đường Opus — nên màn
+Tools phát audio qua URL công khai đó.
+
+Chấp nhận vì nội dung là **đoạn chữ người dùng vừa tự gõ**, không phải cuộc trò
+chuyện riêng tư. Nhưng đây là phơi nhiễm thật: ai có URL cũng nghe được. Ghi lại
+để không ai tưởng là sơ suất, và để khi `/artifacts` được bảo vệ thì nhớ sửa
+Tools cho fetch bằng bearer.
+
 ## Nợ kỹ thuật đã biết (ghi nhận, không chặn merge)
 
 - **`lugo.py` không echo subprotocol** trong khi `conversation.py`/`livehost.py`/
