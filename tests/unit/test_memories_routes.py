@@ -2,6 +2,22 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.profiles.models import Profile
+from app.services.profiles.store import ProfileStore
+
+
+@pytest.fixture(autouse=True)
+def _profiles(tmp_path, monkeypatch):
+    # The memories routes now gate on the parent profile's ownership, so these
+    # profiles must exist for the CRUD under test to be reachable at all.
+    # owner_id=None (template) + dev-mode role "admin" keeps writes allowed --
+    # ownership itself is covered by tests/unit/test_memory_ownership.py.
+    fresh = ProfileStore(str(tmp_path / "profiles.json"))
+    for name in ("pet", "other"):
+        fresh.upsert(Profile(name=name))
+    monkeypatch.setattr("app.api.routes.memories.profile_store", fresh)
+    monkeypatch.setattr("app.api.routes.profiles.profile_store", fresh)
+    monkeypatch.setattr("app.services.profiles.store.profile_store", fresh)
 
 
 @pytest.fixture
