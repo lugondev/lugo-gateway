@@ -133,6 +133,22 @@ def test_missing_file_field_is_rejected_in_the_openai_envelope():
     assert isinstance(body["error"]["message"], str) and body["error"]["message"]
 
 
+@pytest.mark.asyncio
+async def test_validation_error_handler_survives_an_empty_errors_list():
+    # Every real FastAPI/pydantic validation failure produces at least one
+    # error item, but exc.errors()[0] being unguarded would IndexError
+    # *inside the handler* for a hypothetical future validator that raises
+    # RequestValidationError([]) -- turning a clean 422 into a bare 500.
+    # Exercise the registered handler directly since there's no way to
+    # trigger a genuinely empty errors() list through real request validation.
+    from fastapi.exceptions import RequestValidationError
+
+    app = _client(_FakeSTT()).app
+    handler = app.exception_handlers[RequestValidationError]
+    response = await handler(None, RequestValidationError([]))
+    assert response.status_code == 422
+
+
 def test_models_lists_the_running_engine():
     r = _client(_FakeSTT()).get("/v1/models", headers=_AUTH)
     assert r.status_code == 200

@@ -17,7 +17,12 @@ _PREFIX = "Bearer "
 
 def make_auth_dependency(expected_token: str) -> Callable:
     async def verify(authorization: str = Header(default="")) -> None:
-        if not authorization.startswith(_PREFIX):
+        # RFC 7235: the auth-scheme token ("Bearer") is case-insensitive, so
+        # "bearer ..."/"BEARER ..."/"Bearer ..." must all be accepted. Only
+        # the scheme+separator slice is lowercased for the comparison -- the
+        # token itself keeps its exact casing and is compared in constant
+        # time below.
+        if authorization[: len(_PREFIX)].lower() != _PREFIX.lower():
             raise HTTPException(status_code=401, detail="missing bearer token")
         supplied = authorization[len(_PREFIX):]
         # compare_digest, not ==, so a wrong token can't be recovered by timing.

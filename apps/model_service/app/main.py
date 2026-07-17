@@ -77,9 +77,18 @@ def create_app(config: ServiceConfig | None = None, provider=None) -> FastAPI:
         # not an HTTPException subclass, so it bypasses the handler above and
         # would otherwise leak FastAPI's stock {"detail": [...]} shape -- the
         # one case where an OpenAI-compatible client couldn't parse our error.
-        first = exc.errors()[0]
-        field = ".".join(str(p) for p in first["loc"] if p != "body")
-        message = f"{field}: {first['msg']}" if field else first["msg"]
+        errors = exc.errors()
+        if errors:
+            first = errors[0]
+            field = ".".join(str(p) for p in first["loc"] if p != "body")
+            message = f"{field}: {first['msg']}" if field else first["msg"]
+        else:
+            # Every real FastAPI/pydantic validation failure produces at
+            # least one error item, but exc.errors()[0] would IndexError
+            # here if a future validator ever raised
+            # RequestValidationError([]) -- turning a clean 422 into a bare
+            # 500 from inside the error handler itself.
+            message = "invalid request"
         return JSONResponse(
             status_code=422, content={"error": {"message": message, "type": "invalid_request_error"}}
         )
