@@ -6,6 +6,18 @@ from app.services.history.store import session_store
 from app.services.profiles.models import Profile
 
 
+def _fake_messages(msgs):
+    async def _get(_sid):
+        return msgs
+    return _get
+
+
+def _fake_extract(facts):
+    async def _ex(self, *a, **k):
+        return facts
+    return _ex
+
+
 def test_parse_facts_plain_array():
     assert _parse_facts('["a", "b"]') == ["a", "b"]
 
@@ -163,3 +175,28 @@ async def test_extract_and_upsert_cosine_dedup(monkeypatch):
     added = await MemoryExtractor().extract_and_upsert("s4", profile)
     assert added == 0  # dropped as a semantic duplicate
     assert len(await memory_store.list("emb2")) == 1
+
+
+@pytest.mark.asyncio
+async def test_extract_attributes_to_passed_user_not_profile_owner(monkeypatch):
+    from app.services.memory import extractor as ex
+    from app.services.memory.store import memory_store
+    from app.services.profiles.models import LlmConfig, MemoryConfig, Profile
+
+    profile = Profile(
+        name="template",
+        owner_id=None,  # a template: the old code would store user_id=None
+        llm=LlmConfig(base_url="http://x", model="m"),
+        memory=MemoryConfig(enabled=True),
+    )
+    monkeypatch.setattr(ex.session_store, "get_messages",
+                        _fake_messages([{"role": "user", "content": "hi"},
+                                        {"role": "assistant", "content": "yo"}]))
+    monkeypatch.setattr(ex.MemoryExtractor, "extract",
+                        _fake_extract(["User likes tea"]))
+
+    added = await ex.memory_extractor.extract_and_upsert("s1", profile, user_id="user-a")
+    assert added == 1
+    assert [m["content"] for m in await memory_store.list("template", user_id="user-a")] == ["User likes tea"]
+    # NOT under the None/'' bucket
+    assert await memory_store.list("template", user_id="") == []
