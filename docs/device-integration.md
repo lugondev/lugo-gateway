@@ -86,7 +86,7 @@ Manage profiles with `GET /v1/profiles`, `GET/PUT/DELETE /v1/profiles/{name}` �
 
 **Client support today:**
 - `scripts/rpi_voice_client.py` — pass `--profile <name>`.
-- `agent-assistant/` (production RPi service) — set `session.profile: <name>` in
+- `rpi-assistant/` (production RPi service) — set `session.profile: <name>` in
   `config.yaml`.
 - **ESP32 firmware** (`esp32-assistant/`) — set `AA_PROFILE` in `menuconfig` →
   "Assistant configuration" (empty by default = no profile sent).

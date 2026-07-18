@@ -1,3 +1,9 @@
 [submodule "lugo-web-client"]
 	path = lugo-web-client
 	url = ../lugo-web-client
+[submodule "esp32-assistant"]
+	path = esp32-assistant
+	url = ../esp32-assistant
+[submodule "rpi-assistant"]
+	path = rpi-assistant
+	url = ../rpi-assistant
