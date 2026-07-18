@@ -35,13 +35,15 @@ def inject_memories(system_prompt: str, block: str) -> str:
 
 
 class MemoryRetriever:
-    async def get_context(self, profile: Profile | None, query: str = "") -> str:
+    async def get_context(
+        self, profile: Profile | None, query: str = "", user_id: str | None = None
+    ) -> str:
         if profile is None or not profile.memory.enabled:
             return ""
-        doc = await profile_doc_store.get(profile.name)
+        doc = await profile_doc_store.get(profile.name, user_id=user_id)
         doc_block = doc["content"].strip() if doc and doc["content"] else ""
         doc_block = _truncate_at_boundary(doc_block, MAX_DOC_CHARS)
-        items = await memory_store.list(profile.name)
+        items = await memory_store.list(profile.name, user_id=user_id)
         if profile.memory.mode == "semantic" and query and items:
             items = await self._semantic_filter(items, query, profile)
         buffer_lines: list[str] = []

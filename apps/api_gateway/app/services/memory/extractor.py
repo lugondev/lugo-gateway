@@ -108,7 +108,9 @@ class MemoryExtractor:
             return [None] * len(texts)
         return vecs
 
-    async def extract_and_upsert(self, session_id: str, profile: Profile) -> int:
+    async def extract_and_upsert(
+        self, session_id: str, profile: Profile, user_id: str | None = None
+    ) -> int:
         """Extract facts from a finished session into the profile's memory."""
         try:
             if not profile.memory.enabled or not profile.llm.base_url:
@@ -122,7 +124,7 @@ class MemoryExtractor:
             )
             if not facts:
                 return 0
-            existing_items = await memory_store.list(profile.name)
+            existing_items = await memory_store.list(profile.name, user_id=user_id)
             existing_norm = {m["content"].strip().lower() for m in existing_items}
             existing_vecs = [
                 m["embedding"] for m in existing_items if m.get("embedding")
@@ -140,7 +142,7 @@ class MemoryExtractor:
                     continue
                 await memory_store.add(
                     profile.name, fact, source_session_id=session_id, embedding=vec,
-                    user_id=profile.owner_id,
+                    user_id=user_id,
                 )
                 existing_norm.add(norm)
                 if vec is not None:
@@ -148,7 +150,7 @@ class MemoryExtractor:
                 added += 1
             if added:
                 logger.info("memory: added %d facts for profile %s", added, profile.name)
-            await memory_compactor.maybe_compact(profile)
+            await memory_compactor.maybe_compact(profile, user_id=user_id)
             return added
         except Exception as exc:  # noqa: BLE001 - never break session teardown
             logger.warning("extract_and_upsert failed for %s: %s", session_id, exc)

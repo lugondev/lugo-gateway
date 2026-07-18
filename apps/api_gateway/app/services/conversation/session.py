@@ -337,7 +337,7 @@ class ConversationSession:
         if not hasattr(self.responder, "system_prompt"):
             return
         try:
-            block = await memory_retriever.get_context(self.profile, query=query)
+            block = await memory_retriever.get_context(self.profile, query=query, user_id=self.cfg.identity_user_id)
             self.responder.system_prompt = inject_memories(self.base_system_prompt, block)
         except Exception as exc:  # noqa: BLE001
             logger.warning("memory retrieval failed: %s", exc)
@@ -675,4 +675,8 @@ class ConversationSession:
             except Exception as exc:  # noqa: BLE001 - teardown must not fail
                 logger.warning("mark_ended failed for %s: %s", self.cfg.session_id, exc)
             if self.profile is not None:
-                _spawn_background(memory_extractor.extract_and_upsert(self.cfg.session_id, self.profile))
+                _spawn_background(
+                    memory_extractor.extract_and_upsert(
+                        self.cfg.session_id, self.profile, user_id=self.cfg.identity_user_id
+                    )
+                )

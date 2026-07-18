@@ -111,3 +111,29 @@ async def test_compact_empty_doc_keeps_facts(monkeypatch):
     did = await MemoryCompactor().maybe_compact(_profile(compaction_threshold=3))
     assert did is False
     assert len(await memory_store.list("pet")) == 3
+
+
+async def test_compaction_reads_and_writes_the_user_bucket(monkeypatch):
+    from app.services.memory import compactor as comp
+    from app.services.memory.store import memory_store, profile_doc_store
+    from app.services.profiles.models import LlmConfig, MemoryConfig, Profile
+
+    profile = Profile(
+        name="template", owner_id=None,
+        llm=LlmConfig(base_url="http://x", model="m"),
+        memory=MemoryConfig(enabled=True, compaction_threshold=2),
+    )
+    await memory_store.add("template", "f1", user_id="user-a")
+    await memory_store.add("template", "f2", user_id="user-a")
+    await memory_store.add("template", "other", user_id="user-b")
+
+    async def _fake_llm(self, prof, current_doc, facts):
+        return "## User Profile\n### Sở thích\n- " + ", ".join(facts)
+    monkeypatch.setattr(comp.MemoryCompactor, "_call_llm", _fake_llm)
+
+    assert await comp.memory_compactor.maybe_compact(profile, user_id="user-a") is True
+    # A's doc written under A; A's facts pruned; B untouched
+    assert "f1" in (await profile_doc_store.get("template", user_id="user-a"))["content"]
+    assert await profile_doc_store.get("template", user_id="user-b") is None
+    assert await memory_store.list("template", user_id="user-a") == []
+    assert [m["content"] for m in await memory_store.list("template", user_id="user-b")] == ["other"]

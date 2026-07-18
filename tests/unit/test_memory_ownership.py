@@ -112,19 +112,26 @@ def test_memories_of_nonexistent_profile_is_404(client, _with_password):
     assert client.delete(_mem_url("khong-ton-tai")).status_code == 404
 
 
-def test_user_can_read_but_not_write_template_memories(client, _with_password):
+def test_user_can_manage_own_memories_on_template(client, _with_password):
     _signup_login(client, "root", role="admin")
     client.post("/v1/profiles", json={"name": "template-a"})
 
     _signup_login(client, "toan", role="user")
     assert client.get(_mem_url("template-a")).status_code == 200
-    assert client.post(_mem_url("template-a"), json={"content": "x"}).status_code == 404
-    assert client.delete(_mem_url("template-a")).status_code == 404
+    assert client.post(_mem_url("template-a"), json={"content": "toan-note"}).status_code == 200
+    assert [m["content"] for m in client.get(_mem_url("template-a")).json()["data"]] == ["toan-note"]
 
 
-def test_admin_can_write_template_memories(client, _with_password):
+def test_template_memories_are_isolated_per_user(client, _with_password):
     _signup_login(client, "root", role="admin")
-    client.post("/v1/profiles", json={"name": "template-b"})
+    client.post("/v1/profiles", json={"name": "template-a"})
 
-    assert client.post(_mem_url("template-b"), json={"content": "ghi chu chung"}).status_code == 200
-    assert client.delete(_mem_url("template-b")).status_code == 200
+    _signup_login(client, "a", role="user")
+    client.post(_mem_url("template-a"), json={"content": "a-note"})
+
+    _signup_login(client, "b", role="user")
+    assert client.get(_mem_url("template-a")).json()["data"] == []
+    client.post(_mem_url("template-a"), json={"content": "b-note"})
+
+    _signup_login(client, "a", role="user")
+    assert [m["content"] for m in client.get(_mem_url("template-a")).json()["data"]] == ["a-note"]

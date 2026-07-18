@@ -73,6 +73,13 @@ def configure(url: str | None = None) -> None:
     _init_lock = asyncio.Lock()
 
 
+def get_engine() -> AsyncEngine:
+    if _engine is None:
+        configure()
+    assert _engine is not None
+    return _engine
+
+
 async def _ensure_column(conn, table: str, column: str, ddl_type: str) -> None:
     """Idempotent ALTER TABLE ADD COLUMN -- this codebase has no migration
     framework, and Base.metadata.create_all only creates missing tables, never
@@ -81,6 +88,42 @@ async def _ensure_column(conn, table: str, column: str, ddl_type: str) -> None:
     existing = {row[1] for row in result.fetchall()}
     if column not in existing:
         await conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
+
+async def _backfill_null_user_ids(conn, table: str) -> None:
+    """NULL user_id -> '' so rows land in the shared-device bucket and match
+    the composite-key filters. Idempotent."""
+    await conn.exec_driver_sql(f"UPDATE {table} SET user_id = '' WHERE user_id IS NULL")
+
+
+async def _ensure_doc_composite_pk(conn) -> None:
+    """Rebuild memory_profile_docs under PK (user_id, profile_id) if it still
+    has the legacy single-column PK. SQLite cannot ALTER a primary key, so
+    rename-copy-drop. Idempotent: no-op once user_id is already part of the PK."""
+    info = await conn.exec_driver_sql("PRAGMA table_info(memory_profile_docs)")
+    rows = info.fetchall()
+    if not rows:
+        # Defensive only: unreachable from init_db(), where create_all always
+        # creates this table first. Guards direct unit-test invocation of
+        # this helper against a missing table.
+        return
+    pk_cols = {r[1] for r in rows if r[5]}  # r[5] = pk position, nonzero => PK member
+    if "user_id" in pk_cols:
+        return  # already migrated
+    await conn.exec_driver_sql("ALTER TABLE memory_profile_docs RENAME TO _mpd_old")
+    await conn.exec_driver_sql(
+        "CREATE TABLE memory_profile_docs ("
+        "user_id VARCHAR(36) NOT NULL DEFAULT '', "
+        "profile_id VARCHAR(128) NOT NULL, "
+        "content TEXT DEFAULT '', "
+        "updated_at DATETIME, "
+        "PRIMARY KEY (user_id, profile_id))"
+    )
+    await conn.exec_driver_sql(
+        "INSERT INTO memory_profile_docs (user_id, profile_id, content, updated_at) "
+        "SELECT COALESCE(user_id, ''), profile_id, content, updated_at FROM _mpd_old"
+    )
+    await conn.exec_driver_sql("DROP TABLE _mpd_old")
 
 
 async def init_db() -> None:
@@ -102,6 +145,8 @@ async def init_db() -> None:
             await _ensure_column(conn, "model_registry_entries", "api_key", "VARCHAR(256) DEFAULT ''")
             await _ensure_column(conn, "model_registry_entries", "base_url", "VARCHAR(256) DEFAULT ''")
             await _ensure_column(conn, "model_registry_entries", "config", "JSON DEFAULT '{}'")
+            await _backfill_null_user_ids(conn, "memories")
+            await _ensure_doc_composite_pk(conn)
         _initialized = True
 
 

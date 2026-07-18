@@ -137,3 +137,17 @@ async def test_semantic_falls_back_when_no_embeddings(caplog):
         block = await MemoryRetriever().get_context(profile, query="anything")
     assert "- no vector here" in block
     assert any("falling back to all" in r.message for r in caplog.records)
+
+
+async def test_get_context_scopes_to_user():
+    from app.services.memory.retriever import memory_retriever
+    from app.services.memory.store import memory_store
+    from app.services.profiles.models import MemoryConfig, Profile
+
+    profile = Profile(name="template", memory=MemoryConfig(enabled=True, mode="all"))
+    await memory_store.add("template", "A likes tea", user_id="user-a")
+    await memory_store.add("template", "B likes coffee", user_id="user-b")
+
+    a_block = await memory_retriever.get_context(profile, user_id="user-a")
+    assert "A likes tea" in a_block
+    assert "B likes coffee" not in a_block

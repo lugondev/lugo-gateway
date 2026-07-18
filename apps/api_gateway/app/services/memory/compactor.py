@@ -69,30 +69,32 @@ class MemoryCompactor:
             content = resp.json()["choices"][0]["message"]["content"]
         return str(content).strip()
 
-    async def maybe_compact(self, profile: Profile) -> bool:
+    async def maybe_compact(self, profile: Profile, user_id: str | None = None) -> bool:
         """Compact iff the raw buffer has reached the profile's threshold."""
         try:
             if not profile.memory.enabled or not profile.llm.base_url:
                 return False
-            items = await memory_store.list(profile.name)
+            items = await memory_store.list(profile.name, user_id=user_id)
             threshold = max(1, profile.memory.compaction_threshold)
             if len(items) < threshold and len(items) < profile.memory.max_facts:
                 return False
-            return await self.compact(profile, items)
+            return await self.compact(profile, user_id=user_id, items=items)
         except Exception as exc:  # noqa: BLE001 - compaction is best-effort
             logger.warning("maybe_compact failed for %s: %s", profile.name, exc)
             return False
 
-    async def compact(self, profile: Profile, items: list[dict] | None = None) -> bool:
+    async def compact(
+        self, profile: Profile, user_id: str | None = None, items: list[dict] | None = None
+    ) -> bool:
         if items is None:
-            items = await memory_store.list(profile.name)
+            items = await memory_store.list(profile.name, user_id=user_id)
         if not items:
             return False
         # oldest first so the LLM can honor "prefer the more recent fact"
         items = sorted(items, key=lambda i: (i["created_at"] or "", i["id"]))
         fact_ids = [i["id"] for i in items]
         facts = [i["content"] for i in items]
-        current = await profile_doc_store.get(profile.name)
+        current = await profile_doc_store.get(profile.name, user_id=user_id)
         current_doc = current["content"] if current else ""
         new_doc = (await self._call_llm(profile, current_doc, facts) or "").strip()
         if not new_doc:
@@ -101,7 +103,7 @@ class MemoryCompactor:
             )
             return False
         new_doc = _truncate_at_boundary(new_doc, MAX_DOC_CHARS)
-        await profile_doc_store.upsert(profile.name, new_doc)
+        await profile_doc_store.upsert(profile.name, new_doc, user_id=user_id)
         await memory_store.delete_many(fact_ids)
         logger.info(
             "memory: compacted %d facts into profile %s", len(fact_ids), profile.name

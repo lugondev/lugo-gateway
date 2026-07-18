@@ -94,3 +94,17 @@ def test_ws_persists_and_resumes(client):
     ) as ws:
         started = ws.receive_json()
         assert started["session_id"] == sid
+
+
+async def test_two_users_on_one_profile_keep_separate_memory(monkeypatch):
+    """Facts extracted for user A must not surface in user B's context on the
+    same profile. Drives get_context directly with a shared profile."""
+    from app.services.memory.retriever import memory_retriever
+    from app.services.memory.store import memory_store
+    from app.services.profiles.models import MemoryConfig, Profile
+
+    profile = Profile(name="shared", memory=MemoryConfig(enabled=True, mode="all"))
+    await memory_store.add("shared", "A is in Hanoi", user_id="user-a")
+
+    assert "A is in Hanoi" in await memory_retriever.get_context(profile, user_id="user-a")
+    assert "A is in Hanoi" not in await memory_retriever.get_context(profile, user_id="user-b")

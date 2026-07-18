@@ -62,11 +62,61 @@ async def test_delete_many(store):
 async def test_add_with_user_id_roundtrips(store):
     added = await store.add("profile-a", "likes tea", user_id="user-a")
     assert added["user_id"] == "user-a"
-    items = await store.list("profile-a")
+    items = await store.list("profile-a", user_id="user-a")
     assert items[0]["user_id"] == "user-a"
 
 
 @pytest.mark.asyncio
 async def test_add_without_user_id_defaults_none(store):
+    # '' (never None) is the store's sentinel for "no attributable user" --
+    # see docs/superpowers/specs/2026-07-17-memory-user-scoping-design.md.
+    # add() normalizes via _uid() at the write boundary.
     added = await store.add("profile-a", "likes coffee")
-    assert added["user_id"] is None
+    assert added["user_id"] == ""
+
+
+async def test_list_scopes_by_user():
+    from app.services.memory.store import memory_store
+
+    await memory_store.add("shared", "a-fact", user_id="user-a")
+    await memory_store.add("shared", "b-fact", user_id="user-b")
+
+    a = await memory_store.list("shared", user_id="user-a")
+    assert [m["content"] for m in a] == ["a-fact"]
+    assert a[0]["user_id"] == "user-a"
+
+    b = await memory_store.list("shared", user_id="user-b")
+    assert [m["content"] for m in b] == ["b-fact"]
+
+
+async def test_none_user_normalizes_to_empty_string_bucket():
+    from app.services.memory.store import memory_store
+
+    await memory_store.add("dev", "device-fact", user_id=None)
+    rows = await memory_store.list("dev", user_id="")
+    assert [m["content"] for m in rows] == ["device-fact"]
+    assert rows[0]["user_id"] == ""
+
+
+async def test_delete_all_scopes_by_user():
+    from app.services.memory.store import memory_store
+
+    await memory_store.add("shared", "a-fact", user_id="user-a")
+    await memory_store.add("shared", "b-fact", user_id="user-b")
+
+    deleted = await memory_store.delete_all("shared", user_id="user-a")
+    assert deleted == 1
+    assert [m["content"] for m in await memory_store.list("shared", user_id="user-b")] == ["b-fact"]
+
+
+async def test_update_and_delete_reject_wrong_user():
+    from app.services.memory.store import memory_store
+
+    row = await memory_store.add("shared", "a-fact", user_id="user-a")
+    mid = row["id"]
+
+    assert await memory_store.update(mid, "hax", profile_id="shared", user_id="user-b") is None
+    assert await memory_store.delete(mid, profile_id="shared", user_id="user-b") is False
+    # owner still can
+    assert (await memory_store.update(mid, "fixed", profile_id="shared", user_id="user-a"))["content"] == "fixed"
+    assert await memory_store.delete(mid, profile_id="shared", user_id="user-a") is True
