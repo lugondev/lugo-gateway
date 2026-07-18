@@ -43,7 +43,7 @@ class MemoryItem(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     profile_id: Mapped[str] = mapped_column(String(128), index=True)
-    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default="", index=True)
     content: Mapped[str] = mapped_column(Text)
     source_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)

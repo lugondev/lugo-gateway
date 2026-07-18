@@ -120,3 +120,23 @@ async def test_update_and_delete_reject_wrong_user():
     # owner still can
     assert (await memory_store.update(mid, "fixed", profile_id="shared", user_id="user-a"))["content"] == "fixed"
     assert await memory_store.delete(mid, profile_id="shared", user_id="user-a") is True
+
+
+async def test_raw_memoryitem_without_user_id_defaults_to_empty_string():
+    """Defense-in-depth: a raw MemoryItem insert that bypasses MemoryStore.add
+    (which normalizes) must still land in the '' bucket, not NULL -- a NULL
+    user_id would be silently excluded by every `== _uid(...)` scoped query."""
+    import uuid
+
+    from app.services.db.engine import db_session
+    from app.services.db.models import MemoryItem
+
+    async with db_session() as s:
+        row = MemoryItem(id=str(uuid.uuid4()), profile_id="raw", content="bypass")
+        s.add(row)
+        await s.commit()
+        assert row.user_id == ""
+
+    from app.services.memory.store import memory_store
+
+    assert [m["content"] for m in await memory_store.list("raw", user_id="")] == ["bypass"]
