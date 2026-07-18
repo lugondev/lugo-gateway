@@ -7,7 +7,7 @@ from app.services.mcp.models import McpServer
 if TYPE_CHECKING:
     from app.services.mcp.server_store import McpServerStore
 
-# Built-in MCP servers (see mcp-servers/basic-tools) shipped disabled by default —
+# Built-in MCP servers (see servers/mcp-basic-tools) shipped disabled by default —
 # the URL is a placeholder until the user points it at their deployed instance.
 PRESET_SERVERS: list[McpServer] = [
     McpServer(

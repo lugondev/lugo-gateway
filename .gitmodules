@@ -7,3 +7,9 @@
 [submodule "rpi-assistant"]
 	path = rpi-assistant
 	url = ../rpi-assistant
+[submodule "servers/mcp-basic-tools"]
+	path = servers/mcp-basic-tools
+	url = ../mcp-basic-tools
+[submodule "servers/voiceprint-api"]
+	path = servers/voiceprint-api
+	url = ../voiceprint-api
