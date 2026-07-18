@@ -16,14 +16,14 @@ async def test_get_active_whisper_model_reads_registry_sentinel(monkeypatch):
     monkeypatch.setattr(whisper_provider, "_active_model", None)
     await model_registry_store.create(
         "stt", "whisper_local", "", "Whisper Local (engine config)",
-        config={"default_model": "phowhisper-large"},
+        config={"default_model": "large-v3"},
     )
-    assert whisper_provider.get_active_whisper_model() == "phowhisper-large"
+    assert whisper_provider.get_active_whisper_model() == "large-v3"
 
 
 def test_get_active_whisper_model_default_without_registry_row(monkeypatch):
     monkeypatch.setattr(whisper_provider, "_active_model", None)
-    assert whisper_provider.get_active_whisper_model() == "phowhisper-medium"
+    assert whisper_provider.get_active_whisper_model() == "large-v3-turbo"
 
 
 @pytest.mark.asyncio
@@ -70,7 +70,7 @@ async def test_whisper_transcribe_uses_registry_decode_tuning(monkeypatch):
     await model_registry_store.create(
         "stt", "whisper_local", "", "Whisper Local (engine config)",
         config={
-            "default_model": "phowhisper-medium",
+            "default_model": "large-v3",
             "vad_filter": False,
             "beam_size": 7,
             "condition_on_previous_text": True,
@@ -79,7 +79,7 @@ async def test_whisper_transcribe_uses_registry_decode_tuning(monkeypatch):
     )
     monkeypatch.setattr(whisper_provider, "_active_model", None)
     provider = whisper_provider.WhisperProvider()
-    key = provider._cache_key("phowhisper-medium")
+    key = provider._cache_key("large-v3")
     monkeypatch.setitem(whisper_provider._MODEL_CACHE, key, FakeModel())
 
     provider._do_transcribe(b"\x00\x00", "vi", None)

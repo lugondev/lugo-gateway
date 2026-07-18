@@ -26,16 +26,7 @@ _LLM = "/v1/models/llm/download"
 
 
 CANDIDATES: list[Candidate] = [
-    # ---- STT: faster-whisper (PhoWhisper + standard sizes), CPU ----
-    Candidate("stt", "phowhisper-medium", "whisper", "PhoWhisper Medium — Vietnamese ⭐",
-              "cpu", "high", True, 1.5, "~1.5 GB", 4.0, ["faster_whisper"],
-              _dl(_WHISPER, size="phowhisper-medium")),
-    Candidate("stt", "phowhisper-large", "whisper", "PhoWhisper Large — Vietnamese (best)",
-              "cpu", "high", True, 3.0, "~3 GB", 6.0, ["faster_whisper"],
-              _dl(_WHISPER, size="phowhisper-large")),
-    Candidate("stt", "phowhisper-small", "whisper", "PhoWhisper Small — Vietnamese (fastest)",
-              "cpu", "medium", True, 0.5, "~0.5 GB", 2.0, ["faster_whisper"],
-              _dl(_WHISPER, size="phowhisper-small")),
+    # ---- STT: faster-whisper (standard sizes), CPU ----
     Candidate("stt", "large-v3", "whisper", "Whisper Large v3 (multilingual)",
               "cpu", "high", False, 3.0, "~3 GB", 6.0, ["faster_whisper"],
               _dl(_WHISPER, size="large-v3")),
@@ -65,8 +56,9 @@ CANDIDATES: list[Candidate] = [
               "cpu", "low", False, 0.07, "~70 MB", 1.0, ["vosk"],
               _dl(_VOSK, name="vosk-model-small-en-us-0.15")),
     # ---- STT: Apple Silicon (MLX) ----
-    Candidate("stt", "phowhisper-medium-mlx", "whisper_mlx", "PhoWhisper Medium — MLX (Apple GPU, ~7×)",
-              "apple_silicon", "high", True, 1.5, "~1.5 GB", 4.0, ["mlx"],
+    Candidate("stt", "whisper-large-v3-turbo-mlx", "whisper_mlx",
+              "Whisper Large v3 Turbo — MLX (Apple GPU, ~7×)",
+              "apple_silicon", "high", False, 1.5, "~1.5 GB", 4.0, ["mlx"],
               _config("bash scripts/convert_phowhisper_mlx.sh (Apple Silicon only)")),
     # ---- STT: Qwen3-ASR — multilingual incl. Vietnamese (Apple MLX or NVIDIA CUDA) ----
     Candidate("stt", "qwen3-asr-mlx", "qwen3_asr",

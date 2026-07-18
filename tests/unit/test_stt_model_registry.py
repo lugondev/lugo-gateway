@@ -24,7 +24,7 @@ def test_whisper_manager_list_models_shape():
     assert models  # non-empty
     assert all({"id", "label", "cached", "active"} <= set(m) for m in models)
     ids = {m["id"] for m in models}
-    assert {"tiny", "phowhisper-medium", "large-v3"} <= ids
+    assert {"tiny", "large-v3-turbo", "large-v3"} <= ids
 
 
 def test_qwen3_registry_list_models_shape():

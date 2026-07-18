@@ -13,8 +13,8 @@ def _cold_cache(monkeypatch):
 
 
 def test_env_overrides_default_when_no_registry_row(monkeypatch):
-    monkeypatch.setenv("STT_WHISPER_LOCAL_DEFAULT_MODEL", "phowhisper-large")
-    assert resolve.resolve_stt_engine_config("whisper_local")["default_model"] == "phowhisper-large"
+    monkeypatch.setenv("STT_WHISPER_LOCAL_DEFAULT_MODEL", "large-v3")
+    assert resolve.resolve_stt_engine_config("whisper_local")["default_model"] == "large-v3"
 
 
 def test_env_is_coerced_to_the_default_s_type(monkeypatch):

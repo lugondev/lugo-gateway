@@ -25,14 +25,14 @@ async def test_resolve_stt_local_device_reads_registry_config():
 
 @pytest.mark.asyncio
 async def test_resolve_stt_local_device_ignores_seed_governance_row():
-    """Regression guard: seed_known_models() creates one ENABLED row per known
-    model size under the same (kind="stt", engine="whisper_local") pair (e.g.
-    model_id="phowhisper-tiny", config={}) -- these must never shadow the
+    """Regression guard: an admin may create an ENABLED row under the same
+    (kind="stt", engine="whisper_local") with a non-empty model_id (e.g.
+    model_id="tiny", config={}) -- these must never shadow the
     real model_id="" config row. Before the fix, resolve_stt_local_device()
     used find_enabled_sync("stt", engine), which ignores model_id and would
     return whichever of these two rows the cache happened to iterate first."""
     await model_registry_store.create(
-        "stt", "whisper_local", "phowhisper-tiny", "PhoWhisper Tiny", config={},
+        "stt", "whisper_local", "tiny", "Whisper Tiny", config={},
     )
     await model_registry_store.create(
         "stt", "whisper_local", "", "Whisper Local",
@@ -43,14 +43,14 @@ async def test_resolve_stt_local_device_ignores_seed_governance_row():
 
 def test_resolve_stt_engine_config_defaults_when_no_entry():
     assert resolve_stt_engine_config("whisper_local") == {
-        "default_model": "phowhisper-medium",
+        "default_model": "large-v3-turbo",
         "vad_filter": True,
         "beam_size": 1,
         "condition_on_previous_text": False,
         "initial_prompt": "",
     }
     assert resolve_stt_engine_config("whisper_mlx") == {
-        "model_path": "models/stt/phowhisper-medium-mlx",
+        "model_path": "models/stt/whisper-large-v3-turbo-mlx",
         "condition_on_previous_text": False,
         "initial_prompt": "",
     }
@@ -64,10 +64,10 @@ def test_resolve_stt_engine_config_defaults_when_no_entry():
 async def test_resolve_stt_engine_config_merges_registry_config_over_defaults():
     await model_registry_store.create(
         "stt", "whisper_local", "", "Whisper Local",
-        config={"default_model": "phowhisper-large", "beam_size": 5, "device": "cuda"},
+        config={"default_model": "large-v3", "beam_size": 5, "device": "cuda"},
     )
     cfg = resolve_stt_engine_config("whisper_local")
-    assert cfg["default_model"] == "phowhisper-large"
+    assert cfg["default_model"] == "large-v3"
     assert cfg["beam_size"] == 5
     assert cfg["vad_filter"] is True  # untouched default
     assert cfg["device"] == "cuda"  # extra keys (device config) pass through
@@ -75,8 +75,8 @@ async def test_resolve_stt_engine_config_merges_registry_config_over_defaults():
 
 @pytest.mark.asyncio
 async def test_resolve_stt_engine_config_ignores_seed_governance_row():
-    """seed_known_models() creates ENABLED per-model-size governance rows under
-    the same (kind="stt", engine) pair -- only the model_id="" sentinel row may
+    """An admin may create an ENABLED row under the same (kind="stt", engine)
+    with a non-empty model_id -- only the model_id="" sentinel row may
     feed engine config (same hazard as resolve_stt_local_device)."""
     await model_registry_store.create(
         "stt", "qwen3_asr", "1.7b", "Qwen3-ASR 1.7B", config={"default_model": "wrong"},
@@ -107,9 +107,9 @@ async def test_resolve_omnivoice_config_reads_registry_entry():
 
 @pytest.mark.asyncio
 async def test_resolve_omnivoice_config_ignores_seed_governance_row():
-    """Regression guard: seed_known_models() creates one ENABLED
-    tts/omnivoice/omnivoice governance row (config={}) -- it must never
-    shadow the real model_id="" config row. Before the fix,
+    """Regression guard: an admin may create an ENABLED row under the same
+    (kind="tts", engine="omnivoice") with a non-empty model_id (config={})
+    -- it must never shadow the real model_id="" config row. Before the fix,
     resolve_omnivoice_config() used find_enabled_sync("tts", "omnivoice"),
     which ignores model_id and would return whichever of these two rows the
     cache happened to iterate first."""

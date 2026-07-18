@@ -61,7 +61,7 @@ def build_configs(engines: list[str], glossary: str, qwen3_models: list[str]) ->
 
 @dataclass
 class ClipResult:
-    label: str  # config label, e.g. "phowhisper" or "phowhisper+glossary"
+    label: str  # config label, e.g. "whisper" or "whisper+glossary"
     duration_s: float
     latency_s: float
     cer: float

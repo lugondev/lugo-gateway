@@ -93,8 +93,8 @@ def test_aggregate_reports_latency_percentiles():
 
 
 def test_format_report_contains_headers_and_labels():
-    results = [_r("phowhisper", 1, 0.2, 0.1, 0.2), _r("phowhisper+glossary", 1, 0.2, 0.05, 0.1)]
+    results = [_r("whisper", 1, 0.2, 0.1, 0.2), _r("whisper+glossary", 1, 0.2, 0.05, 0.1)]
     report = format_report(aggregate(results, by_bucket=False))
     assert "CER" in report and "WER" in report
-    assert "phowhisper" in report
-    assert "phowhisper+glossary" in report
+    assert "whisper" in report
+    assert "whisper+glossary" in report

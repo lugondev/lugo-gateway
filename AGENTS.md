@@ -74,7 +74,8 @@ for the wire protocol.
 - **libopus** is a system lib. opuslib can't find Homebrew's on macOS unless
   `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` is set — the Makefile exports it. Opus
   code degrades gracefully (falls back to PCM16) when libopus is absent.
-- **Vietnamese STT**: default is **PhoWhisper** (VinAI fine-tune), not vanilla Whisper.
+- **Vietnamese STT**: default is **qwen3_asr** — it beat faster-whisper on Vietnamese
+  (FLEURS benchmark).
 - TTS engines output different sample rates (VieNeu 48k, OmniVoice 24k) — resample when
   re-encoding (`core/audio.py: wav_file_to_pcm16`).
 

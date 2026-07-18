@@ -105,7 +105,7 @@ since the container has no registry database of its own. Two concrete
 examples:
 
 - `STT_WHISPER_LOCAL_DEFAULT_MODEL` — overrides `whisper_local`'s default model
-  (e.g. `phowhisper-medium`).
+  (e.g. `large-v3-turbo`).
 - `STT_WHISPER_LOCAL_DEVICE` — overrides the compute device (`cpu`, `cuda`, ...)
   `whisper_local` runs on.
 

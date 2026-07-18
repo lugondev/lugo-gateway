@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Convert a (Pho)Whisper model to MLX for the Apple-Silicon GPU STT engine.
+# Convert a Whisper model to MLX for the Apple-Silicon GPU STT engine.
 #
 # CTranslate2 (faster-whisper) is CPU-only on macOS; MLX runs on the Metal GPU and
 # is ~7x faster on M-series. This converts the HF transformers weights to MLX
@@ -9,8 +9,8 @@
 # Usage:   scripts/convert_phowhisper_mlx.sh [HF_MODEL] [OUT_DIR]
 set -euo pipefail
 
-HF_MODEL="${1:-vinai/PhoWhisper-medium}"
-OUT_DIR="${2:-models/stt/phowhisper-medium-mlx}"
+HF_MODEL="${1:-openai/whisper-large-v3-turbo}"
+OUT_DIR="${2:-models/stt/whisper-large-v3-turbo-mlx}"
 PY="${PYTHON:-.venv/bin/python}"
 
 if ! "$PY" -c "import mlx_whisper" 2>/dev/null; then

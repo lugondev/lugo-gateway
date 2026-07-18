@@ -132,10 +132,8 @@ async def lifespan(app: FastAPI):
         migrate_remote_stt_to_registry,
         migrate_stt_local_device_to_registry,
         migrate_stt_local_models_to_registry,
-        seed_known_models,
     )
 
-    await seed_known_models()
     await migrate_conversation_llm_to_registry()
     await migrate_remote_stt_to_registry()
     await migrate_stt_local_device_to_registry()
