@@ -13,3 +13,6 @@
 [submodule "servers/voiceprint-api"]
 	path = servers/voiceprint-api
 	url = ../voiceprint-api
+[submodule "lugo-landing"]
+	path = lugo-landing
+	url = ../lugo-landing
