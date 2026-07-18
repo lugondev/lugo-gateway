@@ -337,7 +337,7 @@ class ConversationSession:
         if not hasattr(self.responder, "system_prompt"):
             return
         try:
-            block = await memory_retriever.get_context(self.profile, query=query)
+            block = await memory_retriever.get_context(self.profile, query=query, user_id=self.cfg.identity_user_id)
             self.responder.system_prompt = inject_memories(self.base_system_prompt, block)
         except Exception as exc:  # noqa: BLE001
             logger.warning("memory retrieval failed: %s", exc)
