@@ -11,6 +11,7 @@ export function renderDataTable({
   getRowClass,
   bulkActions = [],
   emptyMessage = "No entries yet.",
+  rowDetail = null,
 }) {
   if (!container) return null;
   if (!rows.length) {
@@ -33,12 +34,22 @@ export function renderDataTable({
   const selectAllCheckbox = thead.querySelector("input");
 
   const tbody = document.createElement("tbody");
-  tbody.innerHTML = rows.map((row) => `
-    <tr class="${getRowClass ? getRowClass(row) : ""}">
-      <td class="dt-checkbox-cell"><input type="checkbox" /></td>
-      ${columns.map((c) => `<td${c.cellClass ? ` class="${c.cellClass}"` : ""}>${c.render(row)}</td>`).join("")}
-    </tr>
-  `).join("");
+  const colCount = columns.length + 1; // + checkbox cell
+  tbody.innerHTML = rows.map((row) => {
+    const key = rowKey(row);
+    const main = `
+      <tr class="dt-main-row ${getRowClass ? getRowClass(row) : ""}" data-dt-key="${escapeHtml(String(key))}">
+        <td class="dt-checkbox-cell"><input type="checkbox" /></td>
+        ${columns.map((c) => `<td${c.cellClass ? ` class="${c.cellClass}"` : ""}>${c.render(row)}</td>`).join("")}
+      </tr>`;
+    if (!rowDetail) return main;
+    const detail = rowDetail(row);
+    if (detail == null) return main;
+    return main + `
+      <tr class="dt-detail" data-dt-detail-for="${escapeHtml(String(key))}" hidden>
+        <td colspan="${colCount}">${detail}</td>
+      </tr>`;
+  }).join("");
 
   table.append(thead, tbody);
 
@@ -73,7 +84,9 @@ export function renderDataTable({
     selectAllCheckbox.indeterminate = selected.size > 0 && selected.size < rows.length;
   }
 
-  [...tbody.children].forEach((tr, i) => {
+  const mainRows = [...tbody.querySelectorAll("tr.dt-main-row")];
+
+  mainRows.forEach((tr, i) => {
     const id = rowKey(rows[i]);
     const cb = tr.querySelector("input[type=checkbox]");
     cb.addEventListener("change", () => {
@@ -87,7 +100,7 @@ export function renderDataTable({
   selectAllCheckbox.addEventListener("change", () => {
     const checked = selectAllCheckbox.checked;
     selected.clear();
-    [...tbody.children].forEach((tr, i) => {
+    mainRows.forEach((tr, i) => {
       const cb = tr.querySelector("input[type=checkbox]");
       cb.checked = checked;
       tr.classList.toggle("dt-row-selected", checked);
@@ -96,6 +109,12 @@ export function renderDataTable({
     updateSelectAllState();
     renderToolbar();
   });
+
+  table.toggleDetail = (key) => {
+    const detail = tbody.querySelector(`tr.dt-detail[data-dt-detail-for="${CSS.escape(String(key))}"]`);
+    if (detail) detail.hidden = !detail.hidden;
+    return detail ? !detail.hidden : false;
+  };
 
   container.innerHTML = "";
   container.append(toolbar, table);

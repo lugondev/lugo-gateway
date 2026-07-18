@@ -994,6 +994,8 @@ input[type="radio"] {
 .data-table .dt-actions-cell button + button {
   margin-left: 6px;
 }
+tr.dt-detail > td { padding: 0.75rem 1rem; background: rgba(255,255,255,0.02); }
+tr.dt-detail[hidden] { display: none; }
 
 .dt-toolbar {
   display: flex;
