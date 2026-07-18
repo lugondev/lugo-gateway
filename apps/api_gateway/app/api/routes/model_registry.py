@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from app.core.audio import pcm16_to_wav_bytes
 from app.schemas.tts import TTSRequest
 from app.services.conversation.responder import OpenAICompatResponder
+from app.services.model_registry.config_schema import config_schema_for
 from app.services.model_registry.store import model_registry_store
 from app.services.stt.providers.openai_stt_provider import OpenAICompatSttProvider
 from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
@@ -71,6 +72,14 @@ async def list_entries() -> dict:
     for e in entries:
         e["api_key"] = _mask_api_key(e["api_key"])
     return {"success": True, "data": entries}
+
+
+@router.get("/config_schema")
+async def get_config_schema(kind: str, engine: str) -> dict:
+    """Fields the Config form should render for this (kind, engine). Describes a
+    schema, not a stored entry -- never reads the DB. Empty for engines with no
+    known config shape (the UI falls back to raw JSON)."""
+    return {"fields": config_schema_for(kind, engine)}
 
 
 @router.post("")
