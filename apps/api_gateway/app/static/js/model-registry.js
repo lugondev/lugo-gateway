@@ -54,43 +54,17 @@ function renderModelRegistry() {
         `,
       },
       {
-        key: "api_key",
-        label: "API Key",
-        render: (e) => `
-          <code class="hint">${escapeHtml(e.api_key || "not set")}</code>
-          <input type="password" class="mini" data-registry-apikey="${escapeHtml(e.id)}"
-                 placeholder="new key…" autocomplete="off" />
-        `,
-      },
-      {
-        key: "base_url",
-        label: "Base URL",
-        render: (e) =>
-          // Every kind can carry a base_url now: llm/stt point at an
-          // OpenAI-compatible endpoint, and tts engines like openai_tts need
-          // one too (Model Registry entries are how apps/model_service is
-          // wired in as a remote engine).
-          e.kind === "llm" || e.kind === "stt" || e.kind === "tts"
-            ? `<input type="text" class="mini" data-registry-baseurl="${escapeHtml(e.id)}"
-                 value="${escapeHtml(e.base_url || "")}" placeholder="https://…" />`
-            : "—",
-      },
-      {
-        key: "config",
-        label: "Config",
-        render: (e) =>
-          Object.keys(e.config || {}).length
-            ? `<textarea class="mini" rows="2" data-registry-config="${escapeHtml(e.id)}">${escapeHtml(JSON.stringify(e.config))}</textarea>`
-            : `<textarea class="mini" rows="2" data-registry-config="${escapeHtml(e.id)}" placeholder="{}"></textarea>`,
-      },
-      {
         key: "actions",
         label: "",
         headerClass: "dt-actions-cell",
         cellClass: "dt-actions-cell",
-        render: (e) => `<button class="mini" data-registry-toggle="${escapeHtml(e.id)}">${e.enabled ? "Disable" : "Enable"}</button>`,
+        render: (e) => `
+          <button class="mini" data-registry-edit="${escapeHtml(e.id)}">Edit</button>
+          <button class="mini" data-registry-toggle="${escapeHtml(e.id)}">${e.enabled ? "Disable" : "Enable"}</button>
+        `,
       },
     ],
+    rowDetail: (e) => _detailHtml(e),
     bulkActions: [
       { label: "Enable selected", run: (ids) => bulkPatchEntries(ids, { enabled: true }, "Enabled") },
       { label: "Disable selected", run: (ids) => bulkPatchEntries(ids, { enabled: false }, "Disabled") },
@@ -112,32 +86,157 @@ function renderModelRegistry() {
       patchEntry(id, { enabled: !entry.enabled });
     })
   );
-  table.querySelectorAll("[data-registry-apikey]").forEach((input) =>
-    input.addEventListener("change", () => {
-      // Blank = keep the existing key (same "blank means keep" convention used
-      // for every other secret field in this app); only send a PATCH when the
-      // admin actually typed a new value.
-      if (!input.value.trim()) return;
-      patchEntry(input.getAttribute("data-registry-apikey"), { api_key: input.value.trim() });
+
+  const detailState = new Map(); // id -> { schema, mode }
+
+  table.querySelectorAll("[data-registry-edit]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      const id = btn.getAttribute("data-registry-edit");
+      const nowOpen = table.toggleDetail(id);
+      if (!nowOpen || detailState.has(id)) return;
+      const entry = registryData.find((x) => x.id === id);
+      const schema = await _fetchSchema(entry.kind, entry.engine);
+      detailState.set(id, { schema, mode: "form" });
+      _renderConfigForm(id, schema, entry.config || {});
     })
   );
-  table.querySelectorAll("[data-registry-baseurl]").forEach((input) =>
-    input.addEventListener("change", () =>
-      patchEntry(input.getAttribute("data-registry-baseurl"), { base_url: input.value.trim() })
-    )
-  );
-  table.querySelectorAll("[data-registry-config]").forEach((textarea) =>
-    textarea.addEventListener("change", () => {
-      let parsed;
-      try {
-        parsed = textarea.value.trim() ? JSON.parse(textarea.value) : {};
-      } catch {
-        print(el("model-registry-status"), "Config must be valid JSON", true);
-        return;
+
+  table.querySelectorAll("[data-config-mode]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const detail = btn.closest("[data-registry-detail]");
+      const id = detail.getAttribute("data-registry-detail");
+      const mode = btn.getAttribute("data-config-mode");
+      const form = detail.querySelector("[data-config-form]");
+      const raw = detail.querySelector("[data-config-raw]");
+      const err = detail.querySelector("[data-config-error]");
+      err.hidden = true;
+      if (mode === "raw") {
+        // form -> raw: serialize (only if the form has fields loaded)
+        try {
+          const st = detailState.get(id);
+          if (st && st.schema.length) raw.value = JSON.stringify(_configFromForm(id), null, 2);
+        } catch (e) { err.textContent = e.message; err.hidden = false; return; }
+        form.hidden = true; raw.hidden = false;
+      } else {
+        // raw -> form: parse back
+        try {
+          const parsed = JSON.parse(raw.value || "{}");
+          const st = detailState.get(id);
+          _renderConfigForm(id, st.schema, parsed);
+        } catch { err.textContent = "Invalid JSON — fix it or stay in Raw mode"; err.hidden = false; return; }
+        raw.hidden = true; form.hidden = false;
       }
-      patchEntry(textarea.getAttribute("data-registry-config"), { config: parsed });
+      _setModeButtons(detail, mode);
     })
   );
+
+  table.querySelectorAll("[data-detail-save]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      const id = btn.getAttribute("data-detail-save");
+      const detail = _detailEl(id);
+      const err = detail.querySelector("[data-config-error]");
+      err.hidden = true;
+      const rawVisible = !detail.querySelector("[data-config-raw]").hidden;
+      let config;
+      try {
+        config = rawVisible
+          ? JSON.parse(detail.querySelector("[data-config-raw]").value || "{}")
+          : _configFromForm(id);
+      } catch (e) { err.textContent = e.message || "Invalid config"; err.hidden = false; return; }
+
+      const fields = { config };
+      const apikey = detail.querySelector("[data-detail-apikey]").value.trim();
+      if (apikey) fields.api_key = apikey; // blank = keep existing
+      fields.base_url = detail.querySelector("[data-detail-baseurl]").value.trim();
+      await patchEntry(id, fields);
+    })
+  );
+}
+
+function _detailHtml(e) {
+  return `
+    <div class="registry-detail" data-registry-detail="${escapeHtml(e.id)}">
+      <label class="registry-field">
+        <span>API Key</span>
+        <code class="hint">${escapeHtml(e.api_key || "not set")}</code>
+        <input type="password" class="mini" data-detail-apikey placeholder="new key…" autocomplete="off" />
+      </label>
+      <label class="registry-field">
+        <span>Base URL</span>
+        <input type="text" class="mini" data-detail-baseurl value="${escapeHtml(e.base_url || "")}" placeholder="https://…" />
+      </label>
+      <div class="registry-field">
+        <span>Config</span>
+        <div class="config-mode-toggle">
+          <button type="button" class="mini" data-config-mode="form">Form</button>
+          <button type="button" class="mini ghost" data-config-mode="raw">Raw JSON</button>
+        </div>
+        <div class="config-form" data-config-form>Loading fields…</div>
+        <textarea class="mini config-raw" rows="4" data-config-raw hidden>${escapeHtml(JSON.stringify(e.config || {}, null, 2))}</textarea>
+        <p class="config-error hint" data-config-error hidden></p>
+      </div>
+      <button class="mini" data-detail-save="${escapeHtml(e.id)}">Save</button>
+    </div>`;
+}
+
+async function _fetchSchema(kind, engine) {
+  try {
+    const r = await fetch(`/v1/model_registry/config_schema?kind=${encodeURIComponent(kind)}&engine=${encodeURIComponent(engine)}`, { credentials: "same-origin" });
+    if (!r.ok) return [];
+    return (await r.json()).fields || [];
+  } catch {
+    return [];
+  }
+}
+
+function _detailEl(id) {
+  return document.querySelector(`[data-registry-detail="${CSS.escape(id)}"]`);
+}
+
+function _setModeButtons(detail, mode) {
+  detail.querySelectorAll("[data-config-mode]").forEach((btn) => {
+    btn.classList.toggle("ghost", btn.getAttribute("data-config-mode") !== mode);
+  });
+}
+
+function _renderConfigForm(id, schema, config) {
+  const host = _detailEl(id).querySelector("[data-config-form]");
+  if (!schema.length) {
+    host.innerHTML = `<p class="hint">No preset fields for this engine — use Raw JSON.</p>`;
+    return;
+  }
+  host.innerHTML = schema.map((f) => {
+    const val = config[f.key];
+    if (f.type === "bool") {
+      return `<label class="config-row"><input type="checkbox" data-cfg="${escapeHtml(f.key)}" ${val ? "checked" : ""}/> ${escapeHtml(f.key)}</label>`;
+    }
+    const inputType = (f.type === "int" || f.type === "float") ? "number" : "text";
+    const v = val === undefined ? "" : String(val);
+    return `<label class="config-row"><span>${escapeHtml(f.key)}</span>
+      <input type="${inputType}" data-cfg="${escapeHtml(f.key)}" data-cfg-type="${f.type}"
+             value="${escapeHtml(v)}" placeholder="${escapeHtml(String(f.default))}" /></label>`;
+  }).join("");
+}
+
+// Gather the form into a typed config object. Throws on a bad number.
+function _configFromForm(id) {
+  const host = _detailEl(id).querySelector("[data-config-form]");
+  const out = {};
+  host.querySelectorAll("[data-cfg]").forEach((input) => {
+    const key = input.getAttribute("data-cfg");
+    if (input.type === "checkbox") { out[key] = input.checked; return; }
+    const raw = input.value.trim();
+    if (raw === "") return; // omit empty -> resolver falls back to default
+    const t = input.getAttribute("data-cfg-type");
+    if (t === "int" || t === "float") {
+      const n = Number(raw);
+      if (Number.isNaN(n)) throw new Error(`${key} must be a number`);
+      out[key] = t === "int" ? Math.trunc(n) : n;
+    } else {
+      out[key] = raw;
+    }
+  });
+  return out;
 }
 
 async function _patchEntryRaw(id, fields) {
