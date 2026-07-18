@@ -1,33 +1,21 @@
 import pytest
 
-from app.services.model_registry.seed import seed_known_models
+from app.services.model_registry import seed as seed_module
 from app.services.model_registry.store import ModelRegistryStore
 
 
-@pytest.fixture
-def store():
-    return ModelRegistryStore()
+def test_seed_known_models_is_gone():
+    """The registry no longer mirrors the code-owned catalogue. gate.py treats a
+    missing entry as unrestricted, so seeding a permissive row per known model
+    restricted nothing -- it only manufactured shadow rows. The catalogue lives
+    in whisper_models.py; the registry holds config + restriction."""
+    assert not hasattr(seed_module, "seed_known_models")
 
 
 @pytest.mark.asyncio
-async def test_seed_populates_stt_and_tts_entries(store):
-    await seed_known_models()
-    entries = await store.list_all()
-    kinds = {e["kind"] for e in entries}
-    assert "stt" in kinds
-    assert "tts" in kinds
-    # tts entries gate at engine granularity: model_id == engine
-    tts_entries = [e for e in entries if e["kind"] == "tts"]
-    assert all(e["model_id"] == e["engine"] for e in tts_entries)
-
-
-@pytest.mark.asyncio
-async def test_seed_is_idempotent_and_preserves_admin_edits(store):
-    await seed_known_models()
-    entries = await store.list_all()
-    stt_entry = next(e for e in entries if e["kind"] == "stt")
-    await store.set_fields(stt_entry["id"], enabled=False)
-
-    await seed_known_models()  # re-seed must not overwrite the admin's edit
-    refreshed = await store.find("stt", stt_entry["engine"], stt_entry["model_id"])
-    assert refreshed["enabled"] is False
+async def test_fresh_store_has_no_catalogue_rows():
+    """A store nobody has seeded is empty -- no per-variant STT rows, no
+    model_id==engine TTS placeholder rows. (Migrations add the model_id=""
+    sentinels; those are exercised in the migration tests, not here.)"""
+    store = ModelRegistryStore()
+    assert await store.list_all() == []
