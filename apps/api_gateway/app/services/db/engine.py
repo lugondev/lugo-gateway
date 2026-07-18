@@ -103,7 +103,10 @@ async def _ensure_doc_composite_pk(conn) -> None:
     info = await conn.exec_driver_sql("PRAGMA table_info(memory_profile_docs)")
     rows = info.fetchall()
     if not rows:
-        return  # table absent; create_all already made it with the new PK
+        # Defensive only: unreachable from init_db(), where create_all always
+        # creates this table first. Guards direct unit-test invocation of
+        # this helper against a missing table.
+        return
     pk_cols = {r[1] for r in rows if r[5]}  # r[5] = pk position, nonzero => PK member
     if "user_id" in pk_cols:
         return  # already migrated

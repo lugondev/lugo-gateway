@@ -3,7 +3,6 @@ carry every legacy doc under user_id='' and accept per-user docs on one
 profile without a PK collision."""
 
 import pytest
-from sqlalchemy import text
 
 from app.services.db import engine as db_engine
 
@@ -11,6 +10,17 @@ from app.services.db import engine as db_engine
 @pytest.fixture
 async def old_schema_db(tmp_path, monkeypatch):
     url = f"sqlite+aiosqlite:///{tmp_path / 'old.db'}"
+    # configure() only disposes a pre-existing engine cleanly when called
+    # from a plain sync context (see its docstring): it wraps the dispose
+    # in asyncio.run(), which can't run inside this fixture's already-active
+    # loop. In that case it falls back to a sync dispose, but the coroutine
+    # object eagerly built for asyncio.run()'s argument is discarded
+    # unawaited and leaks a RuntimeWarning at GC time. Dispose the
+    # conftest-installed engine ourselves first so configure() sees a clean
+    # slate (_engine is None) and skips that path entirely.
+    if db_engine._engine is not None:
+        await db_engine._engine.dispose()
+        db_engine._engine = None
     db_engine.configure(url)
     # Simulate a pre-migration DB: single-PK doc table + a NULL-user memory row.
     eng = db_engine.get_engine()
@@ -34,8 +44,13 @@ async def old_schema_db(tmp_path, monkeypatch):
         )
     # Reset the init guard so init_db re-runs against this DB.
     db_engine._initialized = False
-    yield url
-    db_engine._initialized = False
+    try:
+        yield url
+    finally:
+        db_engine._initialized = False
+        # init_db() reuses this same engine (it only reconfigures when
+        # _factory is None), so this is the one and only engine to dispose.
+        await eng.dispose()
 
 
 async def test_migration_backfills_and_rebuilds(old_schema_db):
