@@ -111,9 +111,9 @@ async def test_migrate_stt_local_device_not_shadowed_by_a_per_model_row():
 
     whisper_config_entry = await model_registry_store.find("stt", "whisper_local", "")
     qwen_config_entry = await model_registry_store.find("stt", "qwen3_asr", "")
-    assert whisper_config_entry is not None, "migration was shadowed by the seed governance row"
+    assert whisper_config_entry is not None, "migration sentinel shadowed by a colliding enabled row"
     assert whisper_config_entry["config"] == {"device": "cuda", "compute_type": "float16"}
-    assert qwen_config_entry is not None, "migration was shadowed by the seed governance row"
+    assert qwen_config_entry is not None, "migration sentinel shadowed by a colliding enabled row"
     assert qwen_config_entry["config"] == {"device": "mps"}
 
 
@@ -221,6 +221,6 @@ async def test_migrate_omnivoice_not_shadowed_by_a_placeholder_row():
     await migrate_omnivoice_to_registry()
 
     config_entry = await model_registry_store.find("tts", "omnivoice", "")
-    assert config_entry is not None, "migration was shadowed by the seed governance row"
+    assert config_entry is not None, "migration sentinel shadowed by a colliding enabled row"
     assert config_entry["config"]["omnivoice_device"] == "mps"
     assert config_entry["config"]["omnivoice_dtype"] == "bfloat16"
