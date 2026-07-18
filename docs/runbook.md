@@ -84,7 +84,46 @@ variables (or `.env`). See `.env.example` for the full list.
 | `LOG_LEVEL` | `INFO` | logging level |
 | `CORS_ALLOW_ORIGINS` | `*` | comma-separated origins, or `*` |
 | `ADMIN_PASSWORD` | — | browser control-panel login |
+| `SESSION_SECRET` | — (random per process) | signs cookie sessions **and** bearer tokens — see below |
 | `ARTIFACTS_DIR` | `artifacts` | where generated WAVs are written |
+
+### `SESSION_SECRET` — set it in production before the web client ships
+
+`SESSION_SECRET` is the HMAC key used to sign two things: the admin webui's cookie
+session, and the Lugo web client's bearer access + refresh tokens (both are signed with
+the same key — `settings.effective_session_secret`).
+
+**When it is unset, the key is randomly generated at process start** (`secrets.token_hex(32)`
+at import) and therefore **changes on every restart or redeploy.** Consequence: every
+restart invalidates all existing sessions and tokens — admin users get logged out, and
+every bearer token dies, including the 30-day refresh tokens. So `REFRESH_TTL = 30 days`
+is only honest when `SESSION_SECRET` is actually set.
+
+This is harmless in local dev (you just log in again) and it is unchanged from the old
+cookie-only behavior. But `main` auto-deploys to prod, so on a server that redeploys
+often it looks like the app is **randomly logging users out**. Set it once to a fixed,
+secret value:
+
+```bash
+# generate a value
+python -c "import secrets; print(secrets.token_hex(32))"   # or: openssl rand -hex 32
+```
+
+Set `SESSION_SECRET=<that value>` in the prod environment (Coolify > app > Environment
+Variables). Keep it stable across deploys; rotating it logs everyone out on purpose.
+
+### Prod checklist for the Lugo web client (cross-origin, bearer)
+
+The web client is a separate app on its own domain, talking to this gateway with bearer
+tokens (no cookies). Before it ships, three env-level things must be true — none are code
+changes:
+
+1. **`SESSION_SECRET`** set to a fixed value (above), or tokens die on each redeploy.
+2. **HTTPS** on the web client's origin. WebCodecs and the microphone require a *secure
+   context*; without HTTPS the Talk screen does not degrade — it does not work at all.
+3. **`CORS_ALLOW_ORIGINS`** narrowed from `*` to the web client's real origin
+   (e.g. `https://app.example.com`). `*` is acceptable only while `allow_credentials` is
+   off (it is), and is fine for dev; production should name the origin.
 
 STT/TTS engine choice, Whisper/Vosk/OmniVoice/Qwen3 model settings, remote STT provider
 endpoints/keys, conversation LLM endpoint, conversation tuning, and VAD/noise
