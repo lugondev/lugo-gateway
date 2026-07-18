@@ -202,6 +202,24 @@ Không nhân bản mô hình này. (Sửa `esp32-assistant` là việc riêng, n
 4. Devices
 5. Tools
 
+## Pivot: copy tiếng Anh (phase 1g)
+
+Bản đầu spec này xây Lugo như sản phẩm tiếng Việt (font Be Vietnam Pro chọn vì
+dấu thanh; nhiều ghi chú "lỗi phải là tiếng Việt"). **Chủ dự án đã đổi: toàn bộ
+copy người dùng thấy chuyển sang tiếng Anh.**
+
+- Mọi chuỗi hiển thị (màn hình, nút, placeholder, empty state, aria-live,
+  `relativeTime`, các hàm map lỗi) → tiếng Anh. Thay chuỗi trực tiếp, KHÔNG i18n.
+- Giữ Be Vietnam Pro (render Latin sạch, không churn font).
+- Code comment giữ tiếng Việt (nội bộ, không ship).
+- Các ghi chú "copy tiếng Việt" / "lỗi phải tiếng Việt" bên dưới trong spec này
+  bị pivot này thay thế. Logic phân biệt lỗi (mã sai vs đã ghép) vẫn giữ; chỉ
+  ngôn ngữ của thông báo đổi.
+- Đồng thời chuẩn hoá UI thành bộ component dùng chung (Button/Input/TextArea/
+  Card/Modal), giữ nhận diện Lugo; confirm phá hoại thành modal thật.
+
+Kế hoạch: `docs/superpowers/plans/2026-07-18-lugo-english-and-ui-system.md`.
+
 ## Hai lời hứa ban đầu đã phải chỉnh lại sau khi đo thực tế
 
 ### Audio phát lại trong History — hoãn có chủ đích
