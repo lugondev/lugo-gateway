@@ -6,6 +6,30 @@ Qwen3-ASR (Vietnamese), Apple-GPU MLX (`whisper_mlx`), remote Whisper. TTS:
 OmniVoice, VieNeu, and more. Conversation: VAD turn-taking + barge-in, local/online
 LLM, PCM or Opus transport.
 
+Beyond the playground it runs a small multi-device voice platform: **bearer/session
+auth** with users and roles, **device pairing** for hardware clients, a unified
+**Model Registry** for STT/TTS/LLM engines, per-profile config with **MCP** tools and
+per-user **chat memory**, and the **lugo** binary WebSocket protocol spoken by the
+Raspberry Pi and ESP32 clients.
+
+## Repository & submodules
+
+This repo uses **five git submodules**, so clone recursively (or init after cloning):
+
+```bash
+git clone --recurse-submodules https://github.com/lugondev/speech-text-transformer.git
+# or, in an existing clone:
+git submodule update --init --recursive
+```
+
+| Path | Repo | What |
+|---|---|---|
+| `rpi-assistant` | lugondev/rpi-assistant | Raspberry Pi voice client (lugo protocol) |
+| `esp32-assistant` | lugondev/esp32-assistant | ESP-IDF firmware thin client |
+| `lugo-web-client` | lugondev/lugo-web-client | React SPA web client (bearer auth) |
+| `servers/mcp-basic-tools` | lugondev/mcp-basic-tools | Built-in MCP tools server (web_search, fetch, …) |
+| `servers/voiceprint-api` | lugondev/voiceprint-api | 3D-Speaker voiceprint service |
+
 ## Quick start
 
 ### With the Makefile (recommended)
@@ -58,6 +82,8 @@ docker compose up --build
 - [docs/device-integration.md](docs/device-integration.md) — **Raspberry Pi / ESP32
   voice device guide**: protocol, audio formats, and a runnable reference client.
 - [docs/architecture.md](docs/architecture.md) — components, data flows, upgrade paths.
+- [docs/model-service.md](docs/model-service.md) — the one-engine-per-container model
+  service (`apps/model_service`) and the `openai_stt` / `openai_tts` remote providers.
 - [docs/runbook.md](docs/runbook.md) — run, configure, troubleshoot.
 
 ## Endpoints
@@ -82,6 +108,21 @@ docker compose up --build
 - POST /v1/models/vosk/download
 - DELETE /v1/models/vosk/{name}
 - GET /artifacts/{file} (generated audio)
+
+Platform (auth, devices, profiles, registry, memory):
+
+- POST /api/auth/{signup,login,logout} — session cookie or bearer token
+- GET/POST/PATCH/DELETE /v1/users (admin) — user + role management
+- WS /v1/lugo/stream — the **lugo** binary protocol for RPi / ESP32 clients
+- POST /v1/devices/pair/{init,status,claim} — 6-digit device pairing
+- GET /v1/devices, /v1/devices/mine — paired-device management + revoke
+- GET/POST/PUT/DELETE /v1/profiles + /v1/profiles/{name}/memories — per-profile
+  config (LLM, STT/TTS, MCP servers, memory) and per-user chat memory
+- GET/POST /v1/model_registry — unified STT/TTS/LLM engine registry (the active
+  conversation LLM is the enabled `kind="llm"` entry)
+- GET/POST /v1/mcp — global + per-profile MCP servers
+- GET /v1/sessions — chat history/session store
+- POST /v1/livehost/... — TikTok Live co-host orchestration
 
 UI playground at `/ui` (same API host), tabbed: **System** (status, model managers for
 Vosk/Whisper/TTS/LLM, VAD+denoise config, online-LLM provider), **Speech →
@@ -127,10 +168,10 @@ Every TTS request runs real synthesis; a failing engine reports an `error` event
 ## Conversation (voice)
 
 `WS /v1/conversation/stream` runs a full voice loop: VAD endpointing → STT → reply →
-streamed TTS, with barge-in. The reply comes from a text LLM (cascade): local
-**Ollama** (default `gemma2:9b`), or any OpenAI-compatible **online** provider
-(OpenAI/Groq/Together) configured at runtime via the System tab or
-`POST /v1/conversation/llm` — held in memory only.
+streamed TTS, with barge-in. The reply comes from a text LLM — local **Ollama** or any
+OpenAI-compatible **online** provider (OpenAI/Groq/Together). The active LLM is the
+enabled `kind="llm"` entry in the **Model Registry** (`/v1/model_registry`, managed in
+the admin UI); a profile can override it per-conversation.
 
 It's a unified **text/audio → text/audio** gateway: input is audio frames or a
 `{"type":"text"}` message; `?output=audio,text` picks what comes back — covering
@@ -147,6 +188,21 @@ Expected remote API format:
 - multipart file field: file
 - form fields: model, language(optional), response_format=json
 - response json includes text
+
+## Auth & multi-user
+
+Auth turns on when an admin password is set (`ADMIN_PASSWORD` or
+`ADMIN_BOOTSTRAP_PASSWORD`); otherwise it no-ops for local dev. Two identity schemes,
+no fallback between them:
+
+- **Session cookie** — the admin web UI (`/ui`), full role (admin/user).
+- **Bearer token** — the React web client (`lugo-web-client`) and API clients; always
+  resolves to `role="user"`, so a token can't escalate to admin.
+
+Hardware clients authenticate the `WS /v1/lugo/stream` connection with a per-device
+token from the pairing flow (`/v1/devices/pair/*`), or a shared `DEVICE_AUTH_TOKEN`
+stopgap. Chat memory and profiles are scoped per user, so devices/users on a shared
+template profile don't see each other's memories.
 
 ## Tests
 
