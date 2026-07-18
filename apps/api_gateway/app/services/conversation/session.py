@@ -675,4 +675,8 @@ class ConversationSession:
             except Exception as exc:  # noqa: BLE001 - teardown must not fail
                 logger.warning("mark_ended failed for %s: %s", self.cfg.session_id, exc)
             if self.profile is not None:
-                _spawn_background(memory_extractor.extract_and_upsert(self.cfg.session_id, self.profile))
+                _spawn_background(
+                    memory_extractor.extract_and_upsert(
+                        self.cfg.session_id, self.profile, user_id=self.cfg.identity_user_id
+                    )
+                )

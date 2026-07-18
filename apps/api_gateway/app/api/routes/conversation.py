@@ -2,9 +2,10 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from app.core.actor import current_user_id
 from app.core.auth_guard import resolve_ws_identity, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
@@ -94,8 +95,11 @@ async def reset_llm_config() -> dict:
 
 
 @router.post("/chat")
-async def chat(payload: ChatRequest, profile: str | None = None, session_id: str | None = None) -> dict:
+async def chat(
+    payload: ChatRequest, request: Request, profile: str | None = None, session_id: str | None = None
+) -> dict:
     """Text chat with the configured conversation responder (LLM or echo)."""
+    caller_id = current_user_id(request)
     active_profile = profile_store.get(profile) if profile else None
     llm_base_url = (active_profile.llm.base_url or None) if (active_profile and active_profile.llm.base_url) else None
     llm_api_key = active_profile.llm.api_key if (active_profile and active_profile.llm.base_url) else None
@@ -129,7 +133,7 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
     # Memory injection: prepend the profile's memories to the system prompt.
     last_user = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
     try:
-        block = await memory_retriever.get_context(active_profile, query=last_user)
+        block = await memory_retriever.get_context(active_profile, query=last_user, user_id=caller_id)
     except Exception as exc:  # noqa: BLE001 - memory retrieval must not block the reply
         logger.warning("memory retrieval failed for %s: %s", sid, exc)
         block = ""
@@ -167,7 +171,7 @@ async def chat(payload: ChatRequest, profile: str | None = None, session_id: str
                 await session_store.append_message(sid, turn, m["role"], m["content"])
             await session_store.append_message(sid, turn, "assistant", reply)
             if active_profile and active_profile.memory.enabled and active_profile.llm.base_url:
-                _spawn_background(memory_extractor.extract_and_upsert(sid, active_profile))
+                _spawn_background(memory_extractor.extract_and_upsert(sid, active_profile, user_id=caller_id))
         except Exception as exc:  # noqa: BLE001 - persistence must not fail a successful reply
             logger.warning("chat persistence failed for %s: %s", sid, exc)
 
