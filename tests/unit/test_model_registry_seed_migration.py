@@ -93,14 +93,10 @@ async def test_migrate_stt_local_device_seeds_whisper_local_and_qwen3_asr():
 
 
 @pytest.mark.asyncio
-async def test_migrate_stt_local_device_not_shadowed_by_seed_known_models_row():
-    """Regression guard for the exact bug found in final review: seed_known_models()
-    runs BEFORE this migration at boot and creates an ENABLED governance row per
-    known model size (e.g. model_id="large-v3-turbo", config={}) under the
-    same (kind="stt", engine="whisper_local") pair. The migration's guard used to
-    be find_enabled("stt", "whisper_local") -- which ignores model_id and would
-    see that governance row, conclude "already migrated", and skip creating its
-    own model_id="" config row entirely."""
+async def test_migrate_stt_local_device_not_shadowed_by_a_per_model_row():
+    """Regression guard: a colliding enabled row under the same (kind, engine)
+    -- e.g. one an admin adds -- must not shadow the migration's model_id=""
+    config sentinel."""
     await model_registry_store.create(
         "stt", "whisper_local", "large-v3-turbo", "Whisper Large v3 Turbo", config={},
     )
@@ -215,13 +211,10 @@ async def test_migrate_omnivoice_seeds_from_existing_config():
 
 
 @pytest.mark.asyncio
-async def test_migrate_omnivoice_not_shadowed_by_seed_known_models_row():
-    """Regression guard for the exact bug found in final review: seed_known_models()
-    runs BEFORE this migration at boot and creates an ENABLED
-    tts/omnivoice/omnivoice governance row (config={}). The migration's guard
-    used to be find_enabled("tts", "omnivoice") -- which ignores model_id and
-    would see that governance row, conclude "already migrated", and skip
-    creating its own model_id="" config row entirely."""
+async def test_migrate_omnivoice_not_shadowed_by_a_placeholder_row():
+    """Regression guard: a colliding enabled row under the same (kind, engine)
+    -- e.g. one an admin adds -- must not shadow the migration's model_id=""
+    config sentinel."""
     await model_registry_store.create("tts", "omnivoice", "omnivoice", "OmniVoice", config={})
     _set_raw_group("omnivoice", {"omnivoice_device": "mps", "omnivoice_dtype": "bfloat16"})
 
