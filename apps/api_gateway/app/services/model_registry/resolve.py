@@ -97,7 +97,7 @@ def resolve_stt_engine_config(engine: str) -> dict:
     """Engine-level config for a local STT engine (default model, whisper
     decode tuning), merged over the per-engine defaults above. Looked up by
     the reserved model_id="" sentinel -- see resolve_stt_local_device's
-    docstring for why the per-model-size governance rows must not match.
+    docstring for why an arbitrary per-model row must not match.
 
     Precedence: registry row > env > defaults. The env layer exists for
     apps/model_service, which runs a provider with no registry DB: there the
@@ -113,9 +113,9 @@ def resolve_stt_local_device(engine: str) -> dict:
     """{'device': str, 'compute_type': str} for a local STT engine (only
     whisper_local uses compute_type; qwen3_asr's caller just ignores it).
     Looked up by the reserved model_id="" sentinel, which is distinct from
-    the per-model-size governance rows seed_known_models() creates under the
-    same (kind, engine) pair -- using find_enabled_sync here instead would
-    silently match one of those governance rows (empty config) instead.
+    any per-model restriction row an admin may add under the same (kind,
+    engine) pair -- using find_enabled_sync here would silently match such a
+    row instead of the config sentinel.
 
     Precedence: registry row > env > defaults (see resolve_stt_engine_config)."""
     defaults = {"device": "", "compute_type": "int8"}
@@ -129,9 +129,9 @@ def resolve_stt_local_device(engine: str) -> dict:
 
 def resolve_omnivoice_config() -> OmnivoiceConfig:
     """Looked up by the reserved model_id="" sentinel -- see
-    resolve_stt_local_device's docstring for why (seed_known_models() creates
-    a separate tts/omnivoice/omnivoice governance row that would otherwise be
-    ambiguous with this config row)."""
+    resolve_stt_local_device's docstring for why (an admin may add a
+    tts/omnivoice restriction row that would otherwise be ambiguous with this
+    config sentinel)."""
     entry = model_registry_store.find_sync("tts", "omnivoice", "")
     if entry is None:
         return OmnivoiceConfig()

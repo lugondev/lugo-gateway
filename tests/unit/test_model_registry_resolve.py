@@ -25,8 +25,8 @@ async def test_resolve_stt_local_device_reads_registry_config():
 
 @pytest.mark.asyncio
 async def test_resolve_stt_local_device_ignores_seed_governance_row():
-    """Regression guard: seed_known_models() creates one ENABLED row per known
-    model size under the same (kind="stt", engine="whisper_local") pair (e.g.
+    """Regression guard: an admin may create an ENABLED row under the same
+    (kind="stt", engine="whisper_local") with a non-empty model_id (e.g.
     model_id="tiny", config={}) -- these must never shadow the
     real model_id="" config row. Before the fix, resolve_stt_local_device()
     used find_enabled_sync("stt", engine), which ignores model_id and would
@@ -75,8 +75,8 @@ async def test_resolve_stt_engine_config_merges_registry_config_over_defaults():
 
 @pytest.mark.asyncio
 async def test_resolve_stt_engine_config_ignores_seed_governance_row():
-    """seed_known_models() creates ENABLED per-model-size governance rows under
-    the same (kind="stt", engine) pair -- only the model_id="" sentinel row may
+    """An admin may create an ENABLED row under the same (kind="stt", engine)
+    with a non-empty model_id -- only the model_id="" sentinel row may
     feed engine config (same hazard as resolve_stt_local_device)."""
     await model_registry_store.create(
         "stt", "qwen3_asr", "1.7b", "Qwen3-ASR 1.7B", config={"default_model": "wrong"},
@@ -107,9 +107,9 @@ async def test_resolve_omnivoice_config_reads_registry_entry():
 
 @pytest.mark.asyncio
 async def test_resolve_omnivoice_config_ignores_seed_governance_row():
-    """Regression guard: seed_known_models() creates one ENABLED
-    tts/omnivoice/omnivoice governance row (config={}) -- it must never
-    shadow the real model_id="" config row. Before the fix,
+    """Regression guard: an admin may create an ENABLED row under the same
+    (kind="tts", engine="omnivoice") with a non-empty model_id (config={})
+    -- it must never shadow the real model_id="" config row. Before the fix,
     resolve_omnivoice_config() used find_enabled_sync("tts", "omnivoice"),
     which ignores model_id and would return whichever of these two rows the
     cache happened to iterate first."""

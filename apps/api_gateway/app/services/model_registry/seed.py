@@ -72,8 +72,8 @@ async def migrate_stt_local_device_to_registry() -> None:
     Model Registry entries, so the legacy values (if any) are only reachable
     via the raw, still-persisted JSON group (see
     SystemConfigStore.get_raw_group). Seed one engine-level registry entry
-    each (model_id="" -- distinct from the per-size governance rows
-    seed_known_models() already creates) from the current values. No-op once
+    each (model_id="" -- the engine-level config row, distinct from any
+    per-model row an admin may add) from the current values. No-op once
     an enabled entry already exists for that engine."""
     stt_local_raw = system_config_store.get_raw_group("stt_local")
     if await model_registry_store.find("stt", "whisper_local", "") is None:
@@ -151,8 +151,8 @@ async def migrate_omnivoice_to_registry() -> None:
     single Model Registry entry, so the legacy values (if any) are only
     reachable via the raw, still-persisted JSON group (see
     SystemConfigStore.get_raw_group). Seeded under the reserved model_id=""
-    sentinel (distinct from the tts/omnivoice/omnivoice governance row
-    seed_known_models() already creates) -- resolve_omnivoice_config() reads
+    sentinel (the config row; distinct from any tts/omnivoice restriction row
+    an admin may add) -- resolve_omnivoice_config() reads
     omnivoice_model_id back out of `config`, so it must stay in there.
     No-op once a model_id="" entry already exists."""
     if await model_registry_store.find("tts", "omnivoice", "") is not None:
