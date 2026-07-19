@@ -83,6 +83,12 @@ class ConversationTuningConfig(BaseModel):
     conversation_min_speech_ms: int = 300
     conversation_rms_threshold: float = 0.015
     conversation_preroll_ms: int = 600
+    # Ignore a barge-in for this long after the assistant STARTS speaking. The
+    # first frames the mic hears when the assistant begins are usually the
+    # assistant's own audio echoed back (no/imperfect echo cancellation), which
+    # would otherwise abort the turn instantly. 0 disables the grace (barge-in
+    # from the first frame). Clients that half-duplex their mic never hit this.
+    conversation_barge_in_grace_ms: int = 500
     conversation_max_utterance_ms: int = 30000
     conversation_goodbye_text: str = "Hẹn gặp lại nha!"
     conversation_stt_engine: str = "whisper"

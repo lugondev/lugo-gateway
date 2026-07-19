@@ -24,7 +24,7 @@ from app.core.audio import pcm16_to_wav_bytes, preprocess_pcm16, wav_bytes_to_pc
 from app.core.errors import AppError
 from app.core.settings import settings
 from app.schemas.tts import TTSRequest
-from app.services.conversation.endpointer import VadEndpointer
+from app.services.conversation.endpointer import VadEndpointer, barge_in_suppressed
 from app.services.conversation.responder import (
     build_responder_ex,
     resolve_llm_override_from_registry,
@@ -148,6 +148,10 @@ class ConversationSession:
 
         self.turn = 0
         self.current_turn: asyncio.Task | None = None
+        # Monotonic time the assistant started emitting audio for the current
+        # turn (None when it isn't speaking). Drives the barge-in grace window
+        # in feed_audio so onset echo doesn't abort the turn.
+        self._speaking_since: float | None = None
 
     def is_turn_active(self) -> bool:
         return bool(self.current_turn and not self.current_turn.done())
@@ -361,6 +365,7 @@ class ConversationSession:
         self.turn += 1
         turn = self.turn
         turn_start = time.monotonic()
+        self._speaking_since = None  # fresh barge-in grace for this turn
         await self.emit("processing", turn=turn)
 
         # Stage timing so a slow/cold first turn is diagnosable from server logs alone
@@ -439,6 +444,10 @@ class ConversationSession:
                     if want_text:
                         await self.emit("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
                     if packets is not None:
+                        # Mark when the assistant first starts speaking this turn,
+                        # so feed_audio can ignore onset echo as barge-in.
+                        if self._speaking_since is None:
+                            self._speaking_since = time.monotonic()
                         # Push Opus binary frames bracketed by audio_start/audio_end (devices).
                         await self.emit(
                             "audio_start", turn=turn, chunk_index=index,
@@ -559,6 +568,7 @@ class ConversationSession:
                 pass
             await self.emit("aborted", reason=reason)
         self.current_turn = None
+        self._speaking_since = None
 
     async def feed_audio(self, frame: bytes) -> None:
         if self.opus_decoder is not None:
@@ -571,6 +581,10 @@ class ConversationSession:
         if not event:
             return
         if event["event"] == "speech_start":
+            grace_ms = system_config_store.get().conversation.conversation_barge_in_grace_ms
+            if barge_in_suppressed(self._speaking_since, time.monotonic(), grace_ms):
+                # Onset echo of the assistant's own audio, not a real barge-in.
+                return
             # Barge-in: user starts talking -> cancel the assistant's turn.
             await self._abort_turn("barge-in")
             await self.emit("speech_start")

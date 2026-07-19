@@ -12,6 +12,22 @@ import numpy as np
 from app.core.audio import pcm16_to_float_array
 
 
+def barge_in_suppressed(
+    speaking_since: float | None, now: float, grace_ms: float
+) -> bool:
+    """True if a detected speech onset should be ignored as likely echo.
+
+    ``speaking_since`` is the monotonic time the assistant started emitting audio
+    for the current turn (None when it isn't speaking). Within ``grace_ms`` of
+    that moment, a speech_start is almost certainly the assistant's own audio
+    echoed into the mic, not the user barging in -- so it is suppressed. After
+    the grace window (or when the assistant isn't speaking) barge-in is allowed.
+    """
+    if speaking_since is None or grace_ms <= 0:
+        return False
+    return (now - speaking_since) * 1000.0 < grace_ms
+
+
 class VadEndpointer:
     def __init__(
         self,
