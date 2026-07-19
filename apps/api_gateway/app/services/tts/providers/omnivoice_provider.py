@@ -214,12 +214,13 @@ class OmniVoiceProvider(RenderingTTSProvider):
         omnivoice = resolve_omnivoice_config()
         body = {
             "text": text,
-            "language": None,
+            "language": omnivoice.omnivoice_language,
             "instruct": instruct,
             "ref_audio": ref_audio,
             "ref_text": ref_text,
             "speed": speed,
             "class_temperature": omnivoice.omnivoice_class_temperature,
+            "num_step": omnivoice.omnivoice_num_step,
         }
         logger.info("DEBUG_HANG _server_synth: posting /synth, text_len=%d", len(text))
         async with httpx.AsyncClient(timeout=omnivoice.omnivoice_timeout_seconds) as client:
@@ -244,6 +245,8 @@ class OmniVoiceProvider(RenderingTTSProvider):
             omnivoice.omnivoice_python_path, "-m", "omnivoice.cli.infer",
             "--model", get_active_omnivoice_model(), "--text", text, "--output", output_path,
             "--class_temperature", str(omnivoice.omnivoice_class_temperature),
+            "--language", omnivoice.omnivoice_language,
+            "--num_step", str(omnivoice.omnivoice_num_step),
         ]
         if omnivoice.omnivoice_device:
             cmd += ["--device", omnivoice.omnivoice_device]

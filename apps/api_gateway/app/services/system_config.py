@@ -60,6 +60,12 @@ class OmnivoiceConfig(BaseModel):
     omnivoice_class_temperature: float = 0.0
     omnivoice_pin_voice: bool = True
     omnivoice_ref_text: str = "Xin chào, đây là giọng đọc tham chiếu để giữ giọng nhất quán."
+    # Both are OmniVoice's own documented speed levers (docs/generation-parameters.md,
+    # README's usage example), previously left at the model's quality-first defaults
+    # (language unset, num_step=32) instead of the project's own "for faster
+    # inference" recommendation.
+    omnivoice_language: str = "vi"
+    omnivoice_num_step: int = 16  # default 32; project docs: "Use 16 for faster inference"
 
     @property
     def omnivoice_python_path(self) -> str:

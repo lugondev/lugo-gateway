@@ -75,6 +75,8 @@ class Handler(BaseHTTPRequestHandler):
                 kwargs[key] = req[key]
         if req.get("class_temperature") is not None:
             kwargs["class_temperature"] = req["class_temperature"]
+        if req.get("num_step") is not None:
+            kwargs["num_step"] = req["num_step"]
         try:
             with _LOCK:  # OmniVoice generate is not concurrency-safe
                 audios = _MODEL.generate(**kwargs)

@@ -233,6 +233,49 @@ def test_spawn_sidecar_serializes_concurrent_calls_via_lock(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_server_synth_sends_language_and_num_step_from_config(monkeypatch, tmp_path):
+    """Both are OmniVoice's own documented speed levers (docs/generation-
+    parameters.md: 'Use 16 for faster inference'; 'Performance is slightly
+    better if you specify the language') -- previously left at the model's
+    quality-first defaults (language=None, num_step unset -> model default 32)
+    instead of being forwarded from config."""
+    from app.services.system_config import OmnivoiceConfig
+
+    cfg = OmnivoiceConfig(omnivoice_language="vi", omnivoice_num_step=16)
+    monkeypatch.setattr(ov_mod, "resolve_omnivoice_config", lambda: cfg)
+
+    provider = OmniVoiceProvider()
+    monkeypatch.setattr(provider, "_ensure_server", AsyncMock(return_value=None))
+
+    posted = {}
+
+    class _FakeResp:
+        status_code = 200
+        content = b"fake-wav"
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, json=None):
+            posted.update(json)
+            return _FakeResp()
+
+    monkeypatch.setattr(
+        "app.services.tts.providers.omnivoice_provider.httpx.AsyncClient",
+        lambda *a, **kw: _FakeClient(),
+    )
+
+    await provider._server_synth("Xin chào", None, None, None, None)
+
+    assert posted["language"] == "vi"
+    assert posted["num_step"] == 16
+
+
+@pytest.mark.asyncio
 async def test_available_reads_python_path_from_registry(monkeypatch, tmp_path):
     from app.services.model_registry.store import model_registry_store
 
