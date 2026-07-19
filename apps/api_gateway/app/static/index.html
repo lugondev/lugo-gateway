@@ -208,15 +208,23 @@
                     </label>
                   </div>
                   <label>
-                    STT (speech-to-text)
-                    <select id="pf-stt-profile">
+                    STT engine
+                    <select id="pf-stt-engine">
                       <option value="">(inherit global)</option>
-                      <option value="vi">Vietnamese (qwen3_asr)</option>
-                      <option value="en">English (qwen3_asr)</option>
-                      <option value="multi">Multilingual — auto-detect</option>
-                      <option value="en_vi">English + Vietnamese — auto-detect</option>
                     </select>
                   </label>
+                  <div class="row">
+                    <label>
+                      STT language
+                      <input id="pf-stt-language" type="text" placeholder="vi / en — blank = auto" autocomplete="off" />
+                    </label>
+                    <label>
+                      STT model
+                      <select id="pf-stt-model">
+                        <option value="">(engine default)</option>
+                      </select>
+                    </label>
+                  </div>
                   <label>
                     TTS Profile
                     <select id="pf-tts-profile">

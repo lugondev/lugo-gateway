@@ -99,6 +99,50 @@ export function toggleLlmCustomFields() {
   fields.classList.toggle("hidden", sel.value !== "__custom__");
 }
 
+export async function renderProfileSttEngineSelect() {
+  const sel = el("pf-stt-engine");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">(inherit global)</option>';
+  try {
+    const body = await (await fetch("/v1/stt/engines")).json();
+    (body.data || []).filter((e) => e.available).forEach((e) => {
+      const opt = document.createElement("option");
+      opt.value = e.engine;
+      opt.textContent = e.detail ? `${e.engine} — ${e.detail}` : e.engine;
+      sel.appendChild(opt);
+    });
+  } catch {
+    /* keep just the inherit option */
+  }
+  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  if (!sel.dataset.bound) {
+    sel.addEventListener("change", () => renderProfileSttModelSelect(""));
+    sel.dataset.bound = "1";
+  }
+}
+
+export async function renderProfileSttModelSelect(selected) {
+  const sel = el("pf-stt-model");
+  if (!sel) return;
+  sel.innerHTML = '<option value="">(engine default)</option>';
+  const engine = el("pf-stt-engine")?.value || "";
+  if (!engine) { sel.value = ""; return; }
+  try {
+    const body = await (await fetch(`/v1/stt/models?engine=${encodeURIComponent(engine)}`)).json();
+    const data = body.data || {};
+    (data.models || []).forEach((m) => {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.label || m.id;
+      sel.appendChild(opt);
+    });
+  } catch {
+    /* keep just the default option */
+  }
+  if (selected && [...sel.options].some((o) => o.value === selected)) sel.value = selected;
+}
+
 export async function openProfilePanel(mode, name) {
   profileEditMode = mode === "new" ? "new" : name;
   const panel = el("profile-panel");
@@ -108,6 +152,7 @@ export async function openProfilePanel(mode, name) {
   renderProfileTtsSelect();
   await loadLlmOptions();
   renderProfileLlmSelect();
+  await renderProfileSttEngineSelect();
 
   if (mode === "new") {
     el("pf-name").value = "";
@@ -120,7 +165,9 @@ export async function openProfilePanel(mode, name) {
     el("pf-llm-model").value = "";
     el("pf-llm-key").value = "";
     toggleLlmCustomFields();
-    if (el("pf-stt-profile")) el("pf-stt-profile").value = "";
+    if (el("pf-stt-engine")) el("pf-stt-engine").value = "";
+    if (el("pf-stt-language")) el("pf-stt-language").value = "";
+    await renderProfileSttModelSelect("");
     if (el("pf-tts-profile")) el("pf-tts-profile").value = "";
     if (el("pf-idle-timeout")) el("pf-idle-timeout").value = 30;
     el("pf-delete-btn").classList.add("hidden");
@@ -145,7 +192,9 @@ export async function openProfilePanel(mode, name) {
     el("pf-llm-model").value = p.llm?.model || "";
     el("pf-llm-key").value = "";
     toggleLlmCustomFields();
-    if (el("pf-stt-profile")) el("pf-stt-profile").value = p.stt?.profile || "";
+    if (el("pf-stt-engine")) el("pf-stt-engine").value = p.stt?.engine || "";
+    if (el("pf-stt-language")) el("pf-stt-language").value = p.stt?.language || "";
+    await renderProfileSttModelSelect(p.stt?.model || "");
     if (el("pf-tts-profile")) el("pf-tts-profile").value = p.tts?.profile_name || "";
     if (el("pf-idle-timeout")) el("pf-idle-timeout").value = p.session?.idle_timeout_s ?? 30;
     selectedMcpServers = p.mcp_servers || [];
@@ -226,7 +275,9 @@ export async function saveProfile() {
     system_prompt: el("pf-system-prompt").value,
     voice_optimized: el("pf-voice-optimized")?.checked ?? false,
     stt: {
-      profile: el("pf-stt-profile")?.value || "",
+      engine: el("pf-stt-engine")?.value || "",
+      language: el("pf-stt-language")?.value.trim() || "",
+      model: el("pf-stt-model")?.value || "",
     },
     tts: {
       profile_name: el("pf-tts-profile")?.value || "",
