@@ -99,48 +99,62 @@ export function toggleLlmCustomFields() {
   fields.classList.toggle("hidden", sel.value !== "__custom__");
 }
 
-export async function renderProfileSttEngineSelect() {
-  const sel = el("pf-stt-engine");
+// One flat "STT model" select: each option is an (engine, model-variant)
+// pair encoded as "engine|model" ("" model = the engine's default/only
+// model). Engines without selectable variants contribute a single option.
+export async function renderProfileSttModelSelect(selEngine, selModel) {
+  const sel = el("pf-stt-model");
   if (!sel) return;
-  const prev = sel.value;
   sel.innerHTML = '<option value="">(inherit global)</option>';
   try {
     const body = await (await fetch("/v1/stt/engines")).json();
-    (body.data || []).filter((e) => e.available).forEach((e) => {
-      const opt = document.createElement("option");
-      opt.value = e.engine;
-      opt.textContent = e.detail ? `${e.engine} — ${e.detail}` : e.engine;
-      sel.appendChild(opt);
+    const engines = (body.data || []).filter((e) => e.available);
+    const variantLists = await Promise.all(engines.map(async (e) => {
+      try {
+        const mb = await (await fetch(`/v1/stt/models?engine=${encodeURIComponent(e.engine)}`)).json();
+        return mb.data?.models || [];
+      } catch {
+        return [];
+      }
+    }));
+    engines.forEach((e, i) => {
+      const models = variantLists[i];
+      if (models.length === 0) {
+        const opt = document.createElement("option");
+        opt.value = `${e.engine}|`;
+        opt.textContent = e.detail ? `${e.engine} — ${e.detail}` : e.engine;
+        sel.appendChild(opt);
+        return;
+      }
+      models.forEach((m) => {
+        const opt = document.createElement("option");
+        opt.value = `${e.engine}|${m.id}`;
+        opt.textContent = `${e.engine} — ${m.label || m.id}`;
+        sel.appendChild(opt);
+      });
     });
   } catch {
     /* keep just the inherit option */
   }
-  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
-  if (!sel.dataset.bound) {
-    sel.addEventListener("change", () => renderProfileSttModelSelect(""));
-    sel.dataset.bound = "1";
+  const want = selEngine ? `${selEngine}|${selModel || ""}` : "";
+  if ([...sel.options].some((o) => o.value === want)) {
+    sel.value = want;
+  } else if (selEngine) {
+    // Profile names an engine/model this server can't list right now (engine
+    // unavailable, or a variant id gone) — keep it selectable rather than
+    // silently snapping the form back to "(inherit global)".
+    const opt = document.createElement("option");
+    opt.value = want;
+    opt.textContent = `${selEngine}${selModel ? ` — ${selModel}` : ""} (unavailable)`;
+    sel.appendChild(opt);
+    sel.value = want;
   }
 }
 
-export async function renderProfileSttModelSelect(selected) {
-  const sel = el("pf-stt-model");
-  if (!sel) return;
-  sel.innerHTML = '<option value="">(engine default)</option>';
-  const engine = el("pf-stt-engine")?.value || "";
-  if (!engine) { sel.value = ""; return; }
-  try {
-    const body = await (await fetch(`/v1/stt/models?engine=${encodeURIComponent(engine)}`)).json();
-    const data = body.data || {};
-    (data.models || []).forEach((m) => {
-      const opt = document.createElement("option");
-      opt.value = m.id;
-      opt.textContent = m.label || m.id;
-      sel.appendChild(opt);
-    });
-  } catch {
-    /* keep just the default option */
-  }
-  if (selected && [...sel.options].some((o) => o.value === selected)) sel.value = selected;
+export function readProfileSttSelection() {
+  const raw = el("pf-stt-model")?.value || "";
+  const [engine = "", model = ""] = raw ? raw.split("|") : ["", ""];
+  return { engine, model };
 }
 
 export async function openProfilePanel(mode, name) {
@@ -152,7 +166,6 @@ export async function openProfilePanel(mode, name) {
   renderProfileTtsSelect();
   await loadLlmOptions();
   renderProfileLlmSelect();
-  await renderProfileSttEngineSelect();
 
   if (mode === "new") {
     el("pf-name").value = "";
@@ -165,9 +178,8 @@ export async function openProfilePanel(mode, name) {
     el("pf-llm-model").value = "";
     el("pf-llm-key").value = "";
     toggleLlmCustomFields();
-    if (el("pf-stt-engine")) el("pf-stt-engine").value = "";
     if (el("pf-stt-language")) el("pf-stt-language").value = "";
-    await renderProfileSttModelSelect("");
+    await renderProfileSttModelSelect("", "");
     if (el("pf-tts-profile")) el("pf-tts-profile").value = "";
     if (el("pf-idle-timeout")) el("pf-idle-timeout").value = 30;
     el("pf-delete-btn").classList.add("hidden");
@@ -192,9 +204,8 @@ export async function openProfilePanel(mode, name) {
     el("pf-llm-model").value = p.llm?.model || "";
     el("pf-llm-key").value = "";
     toggleLlmCustomFields();
-    if (el("pf-stt-engine")) el("pf-stt-engine").value = p.stt?.engine || "";
     if (el("pf-stt-language")) el("pf-stt-language").value = p.stt?.language || "";
-    await renderProfileSttModelSelect(p.stt?.model || "");
+    await renderProfileSttModelSelect(p.stt?.engine || "", p.stt?.model || "");
     if (el("pf-tts-profile")) el("pf-tts-profile").value = p.tts?.profile_name || "";
     if (el("pf-idle-timeout")) el("pf-idle-timeout").value = p.session?.idle_timeout_s ?? 30;
     selectedMcpServers = p.mcp_servers || [];
@@ -275,9 +286,8 @@ export async function saveProfile() {
     system_prompt: el("pf-system-prompt").value,
     voice_optimized: el("pf-voice-optimized")?.checked ?? false,
     stt: {
-      engine: el("pf-stt-engine")?.value || "",
+      ...readProfileSttSelection(),
       language: el("pf-stt-language")?.value.trim() || "",
-      model: el("pf-stt-model")?.value || "",
     },
     tts: {
       profile_name: el("pf-tts-profile")?.value || "",
