@@ -161,9 +161,13 @@ class SentenceAggregator:
         self._first_done = False
 
     def _take_first_chunk(self) -> str | None:
-        """Cut at the earliest clause boundary at/after the min length; else None."""
+        """Cut at the earliest boundary: a real sentence-end (.!?。！？) is
+        ALWAYS eligible regardless of length -- a complete short sentence like
+        "Chào bạn!" is never too tiny to speak on its own, unlike a soft
+        clause comma, which still needs the min-length gate below."""
         for m in _CLAUSE_BOUNDARY.finditer(self._buf):
-            if m.end() >= self.first_chunk_min_chars:
+            is_hard_end = self._buf[m.start()] in _HARD_END
+            if is_hard_end or m.end() >= self.first_chunk_min_chars:
                 chunk = _normalize(strip_emoji(self._buf[: m.end()]))
                 self._buf = self._buf[m.end() :]
                 return chunk or None

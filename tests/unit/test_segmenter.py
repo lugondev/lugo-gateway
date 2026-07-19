@@ -86,6 +86,23 @@ def test_first_chunk_falls_back_to_sentence_end_when_no_clause_boundary():
     assert out[1] == "Tạm biệt."
 
 
+def test_short_first_sentence_cuts_at_its_own_hard_end_below_min_chars():
+    # Bug: a short but COMPLETE opener ("Chào bạn!", 9 chars) was silently
+    # held back because it's under first_chunk_min_chars=12, and since the
+    # rest of the reply has no comma before its own final period, the whole
+    # thing collapsed into one long "first chunk" -- adding seconds of
+    # avoidable time-to-first-audio for exactly the common short-greeting
+    # case. Real sentence-final punctuation (.!?) must always be eligible as
+    # a first-chunk cut, unlike a soft clause comma (see
+    # test_first_chunk_not_cut_below_min_chars, which must still hold).
+    out = _stream(
+        SentenceAggregator(first_chunk_min_chars=12),
+        "Chào bạn! Rất vui được nói chuyện với bạn.",
+    )
+    assert out[0] == "Chào bạn!"
+    assert out[1] == "Rất vui được nói chuyện với bạn."
+
+
 # --- Regression: over-splitting seen on ESP32 storytelling output ------------
 # Symptoms from a live log: dramatic mid-sentence "…" split the sentence, a lone
 # closing quote " was emitted as its own chunk, and every dialogue newline forced
