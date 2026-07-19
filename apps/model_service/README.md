@@ -65,6 +65,51 @@ docker run --rm -p 8100:8100 \
   model-service:dev
 ```
 
+### Qwen3-TTS (0.6B / 1.7B)
+
+`SERVICE_ENGINE=qwen3_tts_0_6b` or `qwen3_tts_1_7b`
+(`apps/api_gateway/app/services/tts/providers/qwen3_tts_provider.py`) has two
+backends, auto-selected by hardware — same provider code, no config needed to
+switch between them:
+
+- **`qwen_tts`** (the baseline): runs on CPU, Apple Silicon MPS, or CUDA. This
+  is what actually runs today on a native Mac dev setup (this project's local
+  engines run natively, not in Docker, on Apple Silicon).
+- **`faster_qwen3_tts`**: a CUDA-graph-capture fast path for real-time
+  inference (https://github.com/andimarafioti/faster-qwen3-tts). It has **no
+  CPU/MPS fallback** — it requires a real NVIDIA GPU (`torch.cuda.CUDAGraph`)
+  — so the provider only selects it when `torch.cuda.is_available()` is true
+  *and* the package is importable; everywhere else (including this project's
+  Mac dev machines) it silently keeps using `qwen_tts`. `QWEN3_TTS_DEVICE` can
+  force a device (e.g. `QWEN3_TTS_DEVICE=cpu` to opt out of both CUDA and the
+  faster backend even on a GPU box).
+
+Run natively (CPU/MPS — Mac dev, or any host without a GPU):
+
+```bash
+pip install ".[qwen3-tts,opus]"
+SERVICE_KIND=tts SERVICE_ENGINE=qwen3_tts_0_6b SERVICE_API_TOKEN=dev-token \
+  PYTHONPATH=apps/api_gateway:apps \
+  uvicorn model_service.app.main:create_app --factory --port 8100
+```
+
+Run in Docker on a CUDA GPU host (fast path): the stock
+`infra/docker/Dockerfile.model_service` is built on `python:3.11-slim` with no
+GPU access, so it can only ever run the `qwen_tts` (CPU) backend — `torch.cuda.is_available()`
+is false inside it regardless of the host's GPU. To actually exercise
+`faster_qwen3_tts`, the container needs:
+
+1. A CUDA-capable base image (e.g. an `nvidia/cuda` runtime image with a
+   matching PyTorch/CUDA version) instead of `python:3.11-slim`.
+2. `RUN pip install ".[qwen3-tts,qwen3-tts-cuda]"` in the build.
+3. `docker run --gpus all ...` (needs the NVIDIA Container Toolkit on the
+   host) so the container can actually see the GPU.
+
+There is no separate `Dockerfile.model_service.cuda` for this yet — the stock
+image intentionally stays CPU-only and small. Building a GPU variant is a
+follow-up, not something this doc's stock `docker build`/`docker run`
+examples produce as written.
+
 The process validates `SERVICE_KIND`, `SERVICE_ENGINE`, `SERVICE_API_TOKEN`,
 and `SERVICE_PORT` at startup, not on first request: an unset or misspelled
 `SERVICE_KIND`/`SERVICE_ENGINE`, a missing `SERVICE_API_TOKEN`, or an
@@ -88,7 +133,7 @@ boots.
 | Variable | Required | Meaning |
 |---|---|---|
 | `SERVICE_KIND` | yes | `stt` or `tts`. Picks which router (transcription vs. speech) the app mounts. |
-| `SERVICE_ENGINE` | yes | The engine name, e.g. `vosk`, `whisper_local`, `whisper_mlx`, `qwen3_asr` for STT; `vieneu` for TTS. Must match a key the gateway's own `stt_service`/`tts_service` registers. |
+| `SERVICE_ENGINE` | yes | The engine name, e.g. `vosk`, `whisper_local`, `whisper_mlx`, `qwen3_asr` for STT; `vieneu`, `qwen3_tts_0_6b`, `qwen3_tts_1_7b` for TTS. Must match a key the gateway's own `stt_service`/`tts_service` registers. |
 | `SERVICE_API_TOKEN` | yes | Bearer token every request must present (`Authorization: Bearer <token>`). No default — the process refuses to start without it. |
 | `SERVICE_PORT` | no (default `8100`) | Port `uvicorn` binds. |
 | `ARTIFACTS_DIR` | set in the image (`/tmp/artifacts`) | The gateway's artifact store creates this directory at import time even though the model service never serves artifacts; pointed at `/tmp` so nothing writes into the image's read-only working tree. You should not need to override this. |

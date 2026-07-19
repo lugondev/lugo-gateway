@@ -82,8 +82,8 @@ docker compose up --build
 - [docs/device-integration.md](docs/device-integration.md) — **Raspberry Pi / ESP32
   voice device guide**: protocol, audio formats, and a runnable reference client.
 - [docs/architecture.md](docs/architecture.md) — components, data flows, upgrade paths.
-- [docs/model-service.md](docs/model-service.md) — the one-engine-per-container model
-  service (`apps/model_service`) and the `openai_stt` / `openai_tts` remote providers.
+- [apps/model_service/README.md](apps/model_service/README.md) — the one-engine-per-container
+  model service and the `openai_stt` / `openai_tts` remote providers.
 - [docs/runbook.md](docs/runbook.md) — run, configure, troubleshoot.
 
 ## Endpoints
