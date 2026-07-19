@@ -115,6 +115,11 @@ class Responder(ABC):
         """Given chat history [{role, content}, ...] return the assistant reply."""
         raise NotImplementedError
 
+    async def aclose(self) -> None:
+        """Release any resources (e.g. a persistent HTTP client) held for this
+        responder's lifetime. No-op by default; OpenAICompatResponder overrides
+        this to close its reused httpx.AsyncClient."""
+
     async def reply_stream(
         self,
         history: list[dict],
@@ -158,25 +163,33 @@ class OpenAICompatResponder(Responder):
         self.model = model
         self.system_prompt = system_prompt
         self.timeout = timeout
+        # One client for the responder's whole lifetime (a session usually runs
+        # many turns, each with 1-2+ LLM calls) instead of a fresh
+        # httpx.AsyncClient per call -- httpx keeps the underlying TCP+TLS
+        # connection alive between calls, so only the FIRST call to the LLM
+        # host pays handshake latency instead of every single one. Must be
+        # closed via aclose() when the responder is done (see call sites).
+        self._client = httpx.AsyncClient(timeout=timeout)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
     async def reply(self, history: list[dict]) -> str:
         messages = [{"role": "system", "content": self.system_prompt}, *history]
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers=headers,
-                    json={"model": self.model, "messages": messages},
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            resp = await self._client.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json={"model": self.model, "messages": messages},
+            )
+            resp.raise_for_status()
+            data = resp.json()
             return str(data["choices"][0]["message"]["content"]).strip()
         except Exception as exc:  # noqa: BLE001 - surface a clear offline error
             logger.warning("LLM responder failed: %s", exc)
             raise LLMUnavailableError(
-                f"LLM offline ({self.model}) — start the Ollama service (System tab) "
-                "or check CONVERSATION_LLM_BASE_URL."
+                f"LLM offline ({self.model} @ {self.base_url}): {exc}"
             ) from exc
 
     async def reply_stream(
@@ -217,14 +230,13 @@ class OpenAICompatResponder(Responder):
 
         for _ in range(max_iters):
             messages = [{"role": "system", "content": self.system_prompt}, *working]
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers=headers,
-                    json={"model": self.model, "messages": messages, "tools": registry.openai_schema()},
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            resp = await self._client.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json={"model": self.model, "messages": messages, "tools": registry.openai_schema()},
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
             assistant_msg = data["choices"][0]["message"]
             tool_calls = assistant_msg.get("tool_calls")
@@ -254,31 +266,30 @@ class OpenAICompatResponder(Responder):
         agg = SentenceAggregator()
         logger.info("DEBUG_HANG _stream_history: opening stream request")
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                async with client.stream(
-                    "POST",
-                    f"{self.base_url}/chat/completions",
-                    headers=headers,
-                    json={"model": self.model, "messages": messages, "stream": True},
-                ) as resp:
-                    logger.info("DEBUG_HANG _stream_history: got response headers, status=%s", resp.status_code)
-                    resp.raise_for_status()
-                    line_count = 0
-                    async for line in resp.aiter_lines():
-                        line_count += 1
-                        if not line.startswith("data:"):
-                            continue
-                        data = line[5:].strip()
-                        if data == "[DONE]":
-                            logger.info("DEBUG_HANG _stream_history: saw [DONE] after %d lines", line_count)
-                            break
-                        delta = json.loads(data)["choices"][0].get("delta", {}).get("content", "")
-                        if delta:
-                            for sentence in agg.push(delta):
-                                logger.info("DEBUG_HANG _stream_history: yielding sentence %r", sentence)
-                                yield sentence
-                    else:
-                        logger.info("DEBUG_HANG _stream_history: aiter_lines exhausted without [DONE], %d lines", line_count)
+            async with self._client.stream(
+                "POST",
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json={"model": self.model, "messages": messages, "stream": True},
+            ) as resp:
+                logger.info("DEBUG_HANG _stream_history: got response headers, status=%s", resp.status_code)
+                resp.raise_for_status()
+                line_count = 0
+                async for line in resp.aiter_lines():
+                    line_count += 1
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        logger.info("DEBUG_HANG _stream_history: saw [DONE] after %d lines", line_count)
+                        break
+                    delta = json.loads(data)["choices"][0].get("delta", {}).get("content", "")
+                    if delta:
+                        for sentence in agg.push(delta):
+                            logger.info("DEBUG_HANG _stream_history: yielding sentence %r", sentence)
+                            yield sentence
+                else:
+                    logger.info("DEBUG_HANG _stream_history: aiter_lines exhausted without [DONE], %d lines", line_count)
             logger.info("DEBUG_HANG _stream_history: stream closed, flushing aggregator")
             for sentence in agg.flush():
                 logger.info("DEBUG_HANG _stream_history: yielding flushed sentence %r", sentence)
@@ -287,8 +298,7 @@ class OpenAICompatResponder(Responder):
         except Exception as exc:  # noqa: BLE001
             logger.warning("LLM stream failed: %s", exc)
             raise LLMUnavailableError(
-                f"LLM offline ({self.model}) — start the Ollama service (System tab) "
-                "or check CONVERSATION_LLM_BASE_URL."
+                f"LLM offline ({self.model} @ {self.base_url}): {exc}"
             ) from exc
 
 

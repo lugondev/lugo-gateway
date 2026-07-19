@@ -61,7 +61,7 @@ export async function sendChat() {
       pending.textContent = body.data.reply;
       chat.history.push({ role: "assistant", content: body.data.reply });
       if (body.data.session_id) currentSessionId = body.data.session_id;
-      el("chat-hint").textContent = `Responder: ${body.data.responder}${body.data.responder === "llm" ? " · " + body.data.model : " (no LLM configured — set CONVERSATION_LLM_BASE_URL)"}`;
+      el("chat-hint").textContent = `Responder: ${body.data.responder}${body.data.responder === "llm" ? " · " + body.data.model : " (no LLM configured — enable one in Model Registry)"}`;
     }
   } catch (error) {
     pending.textContent = `error: ${error}`;

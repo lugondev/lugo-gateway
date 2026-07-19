@@ -112,7 +112,7 @@ CANDIDATES: list[Candidate] = [
               _dl(_LLM, model="gemma2:27b")),
     Candidate("llm", "online", "online", "Online LLM (OpenAI-compatible API)",
               "cpu", "high", False, None, "remote API", None, ["online_llm"],
-              _config("Set CONVERSATION_LLM_BASE_URL + CONVERSATION_LLM_API_KEY")),
+              _config("Add an LLM entry in Model Registry (base_url + api_key)")),
 
     # ---- VAD ----
     Candidate("vad", "energy", "energy", "Energy gate (built-in)",

@@ -106,7 +106,10 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
                 base_url=payload.base_url, api_key=payload.api_key, model=payload.model_id,
                 system_prompt="", timeout=30.0,
             )
-            await responder.reply([{"role": "user", "content": payload.sample_text}])
+            try:
+                await responder.reply([{"role": "user", "content": payload.sample_text}])
+            finally:
+                await responder.aclose()
         else:
             raise HTTPException(status_code=400, detail=f"unknown kind '{payload.kind}'")
     except HTTPException:

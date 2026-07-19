@@ -51,11 +51,11 @@ export async function loadModels() {
       if (llm.remote && llm.available) {
         el("llm-hint").textContent = `Cloud API: ${llm.base_url} — model: ${llm.active} ✓`;
       } else if (llm.remote) {
-        el("llm-hint").textContent = `Cloud API: ${llm.base_url} — set CONVERSATION_LLM_API_KEY to use.`;
+        el("llm-hint").textContent = `Cloud API: ${llm.base_url} — add an API key in Model Registry to use.`;
       } else if (llm.available) {
         el("llm-hint").textContent = `Ollama at ${llm.base_url} — active: ${llm.active} ${llm.running ? "(running)" : "(idle)"}`;
       } else {
-        el("llm-hint").textContent = "Ollama not reachable. Install & run Ollama, then set CONVERSATION_LLM_BASE_URL=http://localhost:11434/v1.";
+        el("llm-hint").textContent = "Ollama not reachable. Add/enable an Ollama-pointing LLM entry in Model Registry (kind=llm), then use Start below.";
       }
     }
     const llmBtn = el("llm-start");

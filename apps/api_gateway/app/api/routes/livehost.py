@@ -496,6 +496,10 @@ async def livehost_stream(websocket: WebSocket) -> None:
             drain_task.cancel()
         if poll_task:
             poll_task.cancel()
+        try:
+            await responder.aclose()
+        except Exception as exc:  # noqa: BLE001 - teardown must not fail
+            logger.warning("responder aclose failed for %s: %s", session_id, exc)
         await ingestor.stop()
         livehost_registry.unregister(session_id)
         if session_ready:

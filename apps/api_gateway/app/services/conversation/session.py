@@ -683,6 +683,11 @@ class ConversationSession:
     async def close(self) -> None:
         if self.current_turn and not self.current_turn.done():
             self.current_turn.cancel()
+        if self.responder is not None:
+            try:
+                await self.responder.aclose()
+            except Exception as exc:  # noqa: BLE001 - teardown must not fail
+                logger.warning("responder aclose failed for %s: %s", self.cfg.session_id, exc)
         if self.session_ready:
             try:
                 await session_store.mark_ended(self.cfg.session_id)

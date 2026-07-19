@@ -67,11 +67,16 @@ class LlmConfig(BaseModel):
 
 async def _llm_config_view() -> dict:
     """Current conversation LLM config (api key masked, never echoed back)."""
+    responder = await build_responder()
+    try:
+        responder_name = responder.name
+    finally:
+        await responder.aclose()
     return {
         "base_url": await get_active_llm_base_url(),
         "model": await get_active_llm_model(),
         "api_key_set": bool(await get_active_llm_api_key()),
-        "responder": (await build_responder()).name,
+        "responder": responder_name,
     }
 
 
@@ -153,16 +158,19 @@ async def chat(
         voice_optimized=bool(active_profile and active_profile.voice_optimized),
     )
     tool_registry = await _build_tool_registry(active_profile)
-    if tool_registry:
-        parts = [
-            chunk
-            async for chunk in responder.reply_stream(
-                history, registry=tool_registry, max_iters=settings.conversation_tool_max_iters
-            )
-        ]
-        reply = " ".join(parts).strip()
-    else:
-        reply = await responder.reply(history)
+    try:
+        if tool_registry:
+            parts = [
+                chunk
+                async for chunk in responder.reply_stream(
+                    history, registry=tool_registry, max_iters=settings.conversation_tool_max_iters
+                )
+            ]
+            reply = " ".join(parts).strip()
+        else:
+            reply = await responder.reply(history)
+    finally:
+        await responder.aclose()
 
     if session_ready:
         try:

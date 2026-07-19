@@ -145,9 +145,9 @@ class LlmManager:
         if not base:
             self._jobs[model] = {
                 "state": "error", "progress": 0.0, "status": "error",
-                "error": "Ollama is not configured on this server. Local LLM download needs "
-                         "Ollama running — set CONVERSATION_LLM_BASE_URL (e.g. "
-                         "http://host:11434/v1) or use an online LLM instead.",
+                "error": "Ollama is not configured on this server. Add/enable an "
+                         "Ollama-pointing LLM entry in Model Registry (kind=llm), or use "
+                         "an online LLM instead.",
             }
             return
         try:

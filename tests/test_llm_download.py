@@ -1,6 +1,6 @@
 """LLM (Ollama) download must fail clearly when no Ollama endpoint is configured,
 instead of leaking httpx's cryptic 'missing protocol' error (seen on the Coolify
-deploy where CONVERSATION_LLM_BASE_URL is empty)."""
+deploy when no kind="llm" Model Registry entry was enabled)."""
 
 from app.services.llm_models import llm_manager
 
