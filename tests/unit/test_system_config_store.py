@@ -81,7 +81,7 @@ def test_stt_local_config_has_expected_defaults(tmp_path):
     assert c.vosk_model_base_url == "https://alphacephei.com/vosk/models"
     assert c.stt_stream_sample_rate == 16000
     assert c.stt_glossary_path == ""
-    assert c.stt_profile == ""
+    assert not hasattr(c, "stt_profile")  # preset layer removed
     assert c.stt_segment_long_enabled is False
     assert c.stt_segment_min_seconds == 30.0
     assert c.stt_segment_concurrency == 4
@@ -161,7 +161,6 @@ def test_preprocessing_config_has_expected_defaults(tmp_path):
 
 
 def test_set_replaces_full_config_and_persists(tmp_path):
-    from app.services.system_config import SystemConfig
 
     p = str(tmp_path / "system_config.json")
     s1 = SystemConfigStore(p)

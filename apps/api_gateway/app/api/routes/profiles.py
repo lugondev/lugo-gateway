@@ -10,7 +10,6 @@ from app.services.model_registry.store import model_registry_store
 from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, SessionConfig, SttConfig, TtsConfig
 from app.services.profiles.store import profile_store
 from app.services.stt.model_registry import STT_MODEL_REGISTRIES
-from app.services.stt.profile import resolve_stt_profile
 
 router = APIRouter(prefix="/v1/profiles", tags=["profiles"])
 
@@ -24,14 +23,13 @@ def _mask(profile: Profile) -> dict:
 
 async def _validate_profile_models(profile: Profile, acting_user) -> None:
     if profile.stt.model:
-        preset = resolve_stt_profile(profile.stt.profile)
-        # Validation scope is intentionally narrowed to explicit stt.engine or stt.profile preset:
+        # Validation scope is intentionally narrowed to explicit stt.engine:
         # profiles must be self-contained and not depend on mutable system-config
         # conversation_stt_engine/default_stt_engine, so a profile's validity is
         # independent of deploy-time config.
-        engine = profile.stt.engine or (preset[0] if preset else "")
+        engine = profile.stt.engine
         if not engine:
-            raise AppError("stt.model requires stt.engine or a resolvable stt.profile preset")
+            raise AppError("stt.model requires stt.engine")
         registry = STT_MODEL_REGISTRIES.get(engine)
         if registry is None:
             raise AppError(f"engine '{engine}' has no selectable model variants")

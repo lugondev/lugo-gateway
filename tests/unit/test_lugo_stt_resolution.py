@@ -9,9 +9,9 @@ from app.services.system_config import SystemConfigStore
 import app.api.routes.lugo as lugo
 
 
-def test_lugo_resolve_uses_profile_stt_preset(monkeypatch, tmp_path):
+def test_lugo_resolve_uses_profile_stt_config(monkeypatch, tmp_path):
     fresh = ProfileStore(str(tmp_path / "profiles.json"))
-    fresh.upsert(Profile(name="dev", stt=SttConfig(profile="vi")))
+    fresh.upsert(Profile(name="dev", stt=SttConfig(engine="qwen3_asr", language="vi")))
     monkeypatch.setattr(lugo, "profile_store", fresh)
 
     _profile, stt_engine, language, _stt_model, _tts, _idle = lugo._resolve("dev")
@@ -20,7 +20,7 @@ def test_lugo_resolve_uses_profile_stt_preset(monkeypatch, tmp_path):
     assert language == "vi"
 
 
-def test_lugo_resolve_explicit_engine_overrides_preset(monkeypatch, tmp_path):
+def test_lugo_resolve_explicit_engine_and_language(monkeypatch, tmp_path):
     fresh = ProfileStore(str(tmp_path / "profiles.json"))
     fresh.upsert(Profile(name="dev2", stt=SttConfig(engine="whisper_mlx", language="en")))
     monkeypatch.setattr(lugo, "profile_store", fresh)
@@ -38,7 +38,6 @@ def test_lugo_resolve_no_profile_falls_back_to_settings(monkeypatch, tmp_path):
     fresh_config.set(
         fresh_config.get().model_copy(
             update={
-                "stt_local": fresh_config.get().stt_local.model_copy(update={"stt_profile": ""}),
                 "conversation": fresh_config.get().conversation.model_copy(
                     update={"conversation_stt_engine": "stub-fallback-stt"}
                 ),

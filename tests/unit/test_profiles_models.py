@@ -6,7 +6,6 @@ def test_profile_defaults():
     p = Profile(name="x")
     assert p.llm.base_url == ""
     assert p.tts.profile_name == ""
-    assert p.stt.profile == ""
     assert p.stt.engine == ""
     assert p.stt.language == ""
     assert p.mcp_servers == []
@@ -30,20 +29,27 @@ def test_profile_voice_optimized_back_compat_old_json():
 def test_profile_stt_config():
     from app.services.profiles.models import SttConfig
 
-    p = Profile(name="x", stt=SttConfig(profile="vi"))
-    assert p.stt.profile == "vi"
+    p = Profile(name="x", stt=SttConfig(engine="qwen3_asr", language="vi"))
+    assert p.stt.engine == "qwen3_asr"
     p2 = Profile.model_validate(p.model_dump())
-    assert p2.stt.profile == "vi"
+    assert p2.stt.language == "vi"
 
 
 def test_profile_stt_back_compat_old_json():
     # a profile saved before the stt section existed still validates with defaults
     p = Profile.model_validate({"name": "legacy", "tts": {"profile_name": "v"}})
-    assert p.stt.profile == ""
+    assert p.stt.engine == ""
+
+
+def test_profile_stt_back_compat_preset_era_json():
+    # a profile saved while the removed preset field ("stt": {"profile": "vi"})
+    # still existed must keep validating; the unknown key is ignored
+    p = Profile.model_validate({"name": "legacy", "stt": {"profile": "vi", "engine": "whisper"}})
+    assert p.stt.engine == "whisper"
+    assert not hasattr(p.stt, "profile")
 
 
 def test_profile_stt_model_defaults_empty():
-    from app.services.profiles.models import SttConfig
 
     p = Profile(name="x")
     assert p.stt.model == ""

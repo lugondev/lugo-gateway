@@ -39,7 +39,6 @@ class SttLocalConfig(BaseModel):
     vosk_model_base_url: str = "https://alphacephei.com/vosk/models"
     stt_stream_sample_rate: int = 16000
     stt_glossary_path: str = ""
-    stt_profile: str = ""
     stt_segment_long_enabled: bool = False
     stt_segment_min_seconds: float = 30.0
     stt_segment_concurrency: int = 4

@@ -1,30 +1,10 @@
-"""Language presets for STT engine + language selection.
+"""STT engine/language/model resolution for a conversation.
 
-A single profile maps a language need to a concrete (engine, language) pair, so
-callers don't have to wire engine and language hint separately:
-
-  vi     -> qwen3_asr, forced Vietnamese                    — beat PhoWhisper on FLEURS vi (see benchmark)
-  en     -> qwen3_asr, forced English                       — strong EN
-  multi  -> qwen3_asr, auto-detect                          — 30-language + language ID
-  en_vi  -> qwen3_asr, auto-detect                          — one model handles EN/VI code-switching
-
-language is None where the engine should auto-detect. resolve_stt_profile returns
-None for an unknown/empty profile (caller keeps its own defaults). See
-[qwen3-asr size docs] — swap size via QWEN3_ASR_MODEL / set_active_qwen3_asr_model.
+No preset layer: a profile (or query param) names the engine, language, and
+model variant directly, falling back to the server-wide defaults.
 """
 
-# (engine, language | None)  — None means auto-detect.
-STT_PROFILES: dict[str, tuple[str, str | None]] = {
-    "vi": ("qwen3_asr", "vi"),
-    "en": ("qwen3_asr", "en"),
-    "multi": ("qwen3_asr", None),
-    "en_vi": ("qwen3_asr", None),
-}
-
-
-def resolve_stt_profile(profile: str | None) -> tuple[str, str | None] | None:
-    """Return (engine, language) for a profile name, or None if unknown/empty."""
-    return STT_PROFILES.get((profile or "").strip().lower())
+from __future__ import annotations
 
 
 def resolve_stt(
@@ -40,29 +20,21 @@ def resolve_stt(
     same STT model. Priority, highest first:
 
       1. explicit query param (stt_engine / language / stt_model) — debugging / manual override
-      2. the chatllm profile's SttConfig (engine/language/model, or a language preset)
-      3. the server-wide default (system_config_store's stt_local.stt_profile preset, then
-         conversation_stt_engine / conversation_language); model has no server-wide
-         default — "" means "whatever's currently active for the resolved engine".
+      2. the chatllm profile's SttConfig (engine/language/model)
+      3. the server-wide default (conversation_stt_engine / conversation_language);
+         model has no server-wide default — "" means "whatever's currently active
+         for the resolved engine".
 
     `profile` is a services.profiles Profile (or None); accessed duck-typed to avoid
-    a circular import. A language preset (vi|en|multi|en_vi) sets engine+language
-    together; language None means auto-detect and is authoritative when a preset
-    resolves (it is not overridden by conversation_language). model is independent
-    of the preset system — a preset never implies a model variant.
+    a circular import. language None means auto-detect.
     """
     from app.services.system_config import system_config_store
 
     stt_cfg = getattr(profile, "stt", None)
-    preset_name = (getattr(stt_cfg, "profile", "") or "") or system_config_store.get().stt_local.stt_profile
-    preset = resolve_stt_profile(preset_name)
-    preset_engine, preset_lang = preset if preset else (None, None)
-
     conv_cfg = system_config_store.get().conversation
     engine = (
         q_engine
         or (getattr(stt_cfg, "engine", "") or None)
-        or preset_engine
         or conv_cfg.conversation_stt_engine
         or system_config_store.get().engines.default_stt_engine
     )
@@ -70,8 +42,6 @@ def resolve_stt(
         language: str | None = q_language
     elif getattr(stt_cfg, "language", ""):
         language = stt_cfg.language
-    elif preset:
-        language = preset_lang  # may be None (auto-detect) — authoritative
     else:
         language = conv_cfg.conversation_language or None
     model = q_model or (getattr(stt_cfg, "model", "") or "")

@@ -7,7 +7,7 @@ from app.core.settings import settings
 from app.main import app
 from app.services.auth.users import user_store
 from app.services.model_registry.store import ModelRegistryStore
-from app.services.profiles.store import ProfileStore, profile_store
+from app.services.profiles.store import ProfileStore
 
 
 @pytest.fixture(autouse=True)
@@ -171,11 +171,17 @@ def test_create_profile_rejects_model_without_resolvable_engine(client):
     assert resp.status_code == 400
 
 
-def test_create_profile_model_resolves_engine_via_preset(client):
-    # "vi" preset resolves to qwen3_asr — model should validate against that.
+def test_create_profile_model_requires_explicit_engine(client):
+    # Presets are gone: a model without an explicit engine is rejected.
     resp = client.post("/v1/profiles", json={
-        "name": "preset-model",
-        "stt": {"profile": "vi", "model": "1.7b"},
+        "name": "model-needs-engine",
+        "stt": {"model": "1.7b"},
+    })
+    assert resp.status_code == 400
+
+    resp = client.post("/v1/profiles", json={
+        "name": "model-with-engine",
+        "stt": {"engine": "qwen3_asr", "model": "1.7b"},
     })
     assert resp.status_code == 200
 
