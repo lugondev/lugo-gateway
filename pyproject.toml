@@ -52,6 +52,20 @@ qwen3-asr = [
 qwen3-asr-cuda = [
   "qwen-asr",
 ]
+# Qwen3-TTS (0.6B/1.7B) via the official qwen-tts. Runs on CPU/MPS/CUDA (no
+# flash-attention off CUDA); the engine auto-hides where qwen-tts is absent.
+qwen3-tts = [
+  "qwen-tts",
+]
+# Qwen3-TTS on NVIDIA GPU via faster-qwen3-tts (manual CUDA graph capture,
+# real-time inference). CUDA-only — no CPU/MPS fallback exists in that
+# package, so this extra is meaningless without a real GPU at runtime. The
+# engine auto-selects this backend over qwen-tts whenever both a CUDA device
+# and faster_qwen3_tts are present; qwen3-tts (above) is still required as the
+# CPU/MPS baseline. See https://github.com/andimarafioti/faster-qwen3-tts.
+qwen3-tts-cuda = [
+  "faster-qwen3-tts",
+]
 # TikTok Live co-host ingestion (unofficial API). See
 # docs/superpowers/specs/2026-07-05-livehost-tiktok-cohost-design.md.
 tiktok = [

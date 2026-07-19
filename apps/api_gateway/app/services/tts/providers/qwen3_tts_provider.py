@@ -5,6 +5,16 @@ dependency list — optional, like voxcpm/kokoro-vietnamese; gated by
 ``available()``. Officially supports 10 languages (not Vietnamese), but
 ``language="Auto"`` has been verified to produce acceptable Vietnamese
 output.
+
+Optional CUDA fast path: faster-qwen3-tts (`pip install faster-qwen3-tts`,
+https://github.com/andimarafioti/faster-qwen3-tts) wraps the same checkpoints
+with manual CUDA graph capture for real-time inference. It has NO CPU/MPS
+fallback (requires `torch.cuda.CUDAGraph`), so it is only selected when a real
+CUDA GPU is present -- on CPU/MPS (e.g. Apple Silicon dev machines) this
+engine keeps using the qwen_tts package unchanged. Its non-streaming
+generate_voice_clone/generate_custom_voice return the same (audio_list, sr)
+shape as qwen_tts, so _generate()/_render_wav() need no further branching once
+the right model object is loaded.
 """
 
 import asyncio
@@ -59,6 +69,14 @@ def _pick_device_dtype_attn():
     return device, torch.float32, None
 
 
+def _use_faster_backend(device: str) -> bool:
+    """faster_qwen3_tts requires a real CUDA GPU (torch.cuda.CUDAGraph, no
+    CPU/MPS fallback) -- select it only when the RESOLVED device (after any
+    QWEN3_TTS_DEVICE override) is actually cuda, so forcing cpu/mps via that
+    env var also opts out of the CUDA-only package, and it's installed."""
+    return device.startswith("cuda") and module_available("faster_qwen3_tts")
+
+
 def _to_mono_f32(wav) -> np.ndarray:
     if hasattr(wav, "detach"):  # torch tensor
         wav = wav.detach().cpu().numpy()
@@ -82,11 +100,15 @@ class _Qwen3TTSProviderBase(RenderingTTSProvider):
     def install_hint(self) -> str:
         return (
             "pip install -U qwen-tts  "
-            "(GPU/CUDA recommended; runs on CPU/MPS but slower, no flash-attention)"
+            "(GPU/CUDA recommended; runs on CPU/MPS but slower, no flash-attention). "
+            "On a CUDA GPU, also `pip install faster-qwen3-tts` for a real-time "
+            "CUDA-graph fast path (auto-selected; CUDA-only, no CPU/MPS fallback)."
         )
 
     def detail(self) -> str:
-        return f"Qwen3-TTS {self._size} · 12Hz codec · Base+CustomVoice"
+        device, _dtype, _attn = _pick_device_dtype_attn()
+        backend = "faster_qwen3_tts (CUDA graphs)" if _use_faster_backend(device) else "qwen_tts"
+        return f"Qwen3-TTS {self._size} · 12Hz codec · Base+CustomVoice · {backend}"
 
     def list_voices(self) -> list[dict]:
         return list(PRESET_SPEAKERS)
@@ -97,26 +119,43 @@ class _Qwen3TTSProviderBase(RenderingTTSProvider):
     def _load_model(self, kind: str):
         key = f"{self.name}:{kind}"
         if key not in _CACHE:
-            from qwen_tts import Qwen3TTSModel
-
             device, dtype, attn = _pick_device_dtype_attn()
-            kwargs = {"device_map": device, "dtype": dtype}
-            if attn is not None:
-                kwargs["attn_implementation"] = attn
-            _CACHE[key] = Qwen3TTSModel.from_pretrained(self._checkpoint_id(kind), **kwargs)
+            checkpoint = self._checkpoint_id(kind)
+            if _use_faster_backend(device):
+                from faster_qwen3_tts import FasterQwen3TTS
+
+                model = FasterQwen3TTS.from_pretrained(checkpoint)
+                # Prepares CUDA graphs ahead of the first real request instead
+                # of paying that cost on it.
+                if hasattr(model, "warmup"):
+                    model.warmup()
+            else:
+                from qwen_tts import Qwen3TTSModel
+
+                kwargs = {"device_map": device, "dtype": dtype}
+                if attn is not None:
+                    kwargs["attn_implementation"] = attn
+                model = Qwen3TTSModel.from_pretrained(checkpoint, **kwargs)
+            _CACHE[key] = model
         return _CACHE[key]
 
     def _generate(self, payload: TTSRequest):
         language = payload.language or "Auto"
+        device, _dtype, _attn = _pick_device_dtype_attn()
+        is_faster = _use_faster_backend(device)
         if payload.ref_audio_path:
             model = self._load_model("Base")
-            return model.generate_voice_clone(
-                text=payload.text,
-                language=language,
-                ref_audio=payload.ref_audio_path,
-                ref_text=payload.ref_text,
-                x_vector_only_mode=False,
-            )
+            kwargs = {
+                "text": payload.text,
+                "language": language,
+                "ref_audio": payload.ref_audio_path,
+                "ref_text": payload.ref_text,
+            }
+            if not is_faster:
+                # x_vector_only_mode is a qwen_tts-specific tuning knob;
+                # faster_qwen3_tts's generate_voice_clone doesn't accept it.
+                kwargs["x_vector_only_mode"] = False
+            return model.generate_voice_clone(**kwargs)
         model = self._load_model("CustomVoice")
         return model.generate_custom_voice(
             text=payload.text,
