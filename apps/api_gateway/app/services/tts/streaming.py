@@ -33,41 +33,68 @@ async def prefetch_synthesis(
     """Yield ``(index, sentence, audio)`` in order, synthesizing up to ``lookahead``
     sentences ahead of the consumer.
 
+    Two independent background tasks, not one: a producer task drains
+    ``sentences`` (the LLM stream) into a text queue, and a separate
+    synthesizer task drains that queue into synth() calls. Splitting them
+    means pulling sentence N+1 off the LLM stream can happen WHILE synth(N)
+    is still running, instead of only being asked for after synth(N)
+    completes -- a single combined worker would pay LLM-network-wait time
+    and synth time back-to-back instead of overlapping them.
+
     ``synth`` is an async callable ``sentence -> audio`` (the audio payload is opaque
     here — caller decides what to do with it). Order is preserved. Exceptions from
-    either ``sentences`` (the producer) or ``synth`` propagate to the consumer. The
-    background worker is always cancelled on exit (normal, error, or cancellation), so
-    a barge-in that cancels the consumer never leaks a synth worker.
+    either ``sentences`` (the producer) or ``synth`` propagate to the consumer. Both
+    background tasks are always cancelled on exit (normal, error, or cancellation), so
+    a barge-in that cancels the consumer never leaks a producer or synth task.
     """
     if lookahead < 1:
         lookahead = 1
-    queue: asyncio.Queue = asyncio.Queue(maxsize=lookahead)
+    text_queue: asyncio.Queue = asyncio.Queue(maxsize=lookahead)
+    audio_queue: asyncio.Queue = asyncio.Queue(maxsize=lookahead)
 
-    async def _worker() -> None:
-        index = 0
+    async def _produce() -> None:
         try:
             async for sentence in sentences:
-                audio = await synth(sentence)
-                await queue.put((index, sentence, audio))
+                await text_queue.put(sentence)
+            await text_queue.put(_SENTINEL)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - relay to the synthesizer
+            await text_queue.put(exc)
+
+    async def _synthesize() -> None:
+        index = 0
+        try:
+            while True:
+                item = await text_queue.get()
+                if item is _SENTINEL:
+                    break
+                if isinstance(item, BaseException):
+                    raise item
+                audio = await synth(item)
+                await audio_queue.put((index, item, audio))
                 index += 1
-            await queue.put(_SENTINEL)
+            await audio_queue.put(_SENTINEL)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # noqa: BLE001 - relay to the consumer
-            await queue.put(exc)
+            await audio_queue.put(exc)
 
-    worker = asyncio.create_task(_worker())
+    producer = asyncio.create_task(_produce())
+    synthesizer = asyncio.create_task(_synthesize())
     try:
         while True:
-            item = await queue.get()
+            item = await audio_queue.get()
             if item is _SENTINEL:
                 break
             if isinstance(item, BaseException):
                 raise item
             yield item
     finally:
-        worker.cancel()
-        try:
-            await worker
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            pass
+        producer.cancel()
+        synthesizer.cancel()
+        for task in (producer, synthesizer):
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass

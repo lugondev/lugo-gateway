@@ -89,6 +89,42 @@ def test_pacing_delays_empty():
     assert pacing_delays(0, prebuffer=5, frame_s=0.06) == []
 
 
+async def test_pulls_next_sentence_from_producer_while_synth_is_in_flight():
+    """The old single-worker design could only ask the sentence producer (the
+    LLM stream) for the next sentence AFTER synth() of the current one
+    finished -- so if the LLM had already streamed sentence N+1's text, that
+    text still sat unused until synth(N) completed, adding LLM-network-wait
+    time on top of synth time instead of overlapping with it. The producer
+    and the synthesizer must run as independent tasks so pulling sentence N+1
+    from the LLM stream can happen WHILE synth(N) is still running."""
+    pulled: list[str] = []
+    synth_started = asyncio.Event()
+    let_synth_finish = asyncio.Event()
+
+    async def agen():
+        for it in ["a", "b"]:
+            pulled.append(it)
+            yield it
+
+    async def synth(s):
+        if s == "a":
+            synth_started.set()
+            await let_synth_finish.wait()  # hold synth("a") open
+        return s.upper()
+
+    gen = prefetch_synthesis(agen(), synth, lookahead=2)
+    task = asyncio.ensure_future(gen.__anext__())
+    await synth_started.wait()
+    await asyncio.sleep(0.01)  # give the producer task a chance to run
+    assert pulled == ["a", "b"], "producer should pull 'b' while synth('a') is still in flight"
+
+    let_synth_finish.set()
+    result = await task
+    assert result == (0, "a", "A")
+    rest = [x async for x in gen]
+    assert rest == [(1, "b", "B")]
+
+
 async def test_propagates_producer_error():
     async def boom_gen():
         yield "a"
