@@ -1,0 +1,47 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // One Cloudflare Worker+Container project per deployed engine, same
+  // pattern as the repo's fly.toml (one Fly app per engine). To deploy a
+  // second engine, copy this whole directory and change: `name` here,
+  // `envVars.SERVICE_ENGINE`/`SERVICE_KIND` in src/index.ts, and
+  // `instance_type` if the engine needs more CPU/memory than `vieneu`.
+  "name": "lugo-model-service-vieneu",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-19",
+  "compatibility_flags": [],
+  "observability": {
+    "enabled": true
+  },
+  "containers": [
+    {
+      "class_name": "ModelServiceContainer",
+      // Reuses the existing multi-engine image as-is (see
+      // apps/model_service/README.md) -- no Cloudflare-specific Dockerfile.
+      "image": "../../docker/Dockerfile.model_service",
+      // The Dockerfile does `COPY pyproject.toml README.md ./` + `COPY apps
+      // ./apps`, so the build context must be the repo root, not the
+      // Dockerfile's own directory (Cloudflare's default). Mirrors how
+      // fly.toml (living at the repo root) got this for free.
+      "image_build_context": "../../../",
+      // vieneu (ONNX int8) ran fine on Fly.io's shared-cpu-1x/1GB -- basic
+      // (1/4 vCPU, 1GiB) is the CPU-only equivalent here. Bump to
+      // standard-1/standard-2 for a heavier engine (e.g. qwen3_tts on CPU).
+      "instance_type": "basic",
+      "max_instances": 2
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MODEL_SERVICE",
+        "class_name": "ModelServiceContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ModelServiceContainer"]
+    }
+  ]
+}

@@ -245,3 +245,17 @@ the container at `/models:ro` and configures the `vosk` engine, pointed at
 the nested `models/stt/...` layout `scripts/download_vosk_model.sh` produces
 by default, so running that script from the repo root is enough to make the
 compose example work as written.
+
+## Cloudflare Containers
+
+`infra/cloudflare/model-service/` has a Worker + Container config
+(`wrangler.jsonc` + `src/index.ts`) that deploys this same image
+(`infra/docker/Dockerfile.model_service`) to Cloudflare's Containers
+platform, `SERVICE_ENGINE=vieneu`. Deployed and end-to-end verified
+(2026-07-19): `https://lugo-model-service-vieneu.zzitorez.workers.dev`
+answers `/health` and returns real synthesized WAV audio from
+`POST /v1/audio/speech`, with auth enforced (unauthenticated requests get
+`401`). See that directory's own README for deploy steps, cost/instance-type
+notes, and why `omnivoice` isn't deployable there yet (the same env-override
+gap described above under Limits, not a Cloudflare-specific issue). Not yet
+wired into this gateway's own Model Registry.
