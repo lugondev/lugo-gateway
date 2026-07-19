@@ -187,3 +187,68 @@ async def test_find_enabled_sync_skips_disabled_entries():
     entry = await store.create("tts", "omnivoice", "k2-fsa/OmniVoice", "OmniVoice")
     await store.set_fields(entry["id"], enabled=False)
     assert store.find_enabled_sync("tts", "omnivoice") is None
+
+
+# ---------------------------------------------------------------------------
+# LLM single-active-row enforcement -- unlike stt/tts (where every caller
+# scopes find_enabled to one engine, so several engines each having their own
+# enabled row is normal), the conversation LLM is picked via a single
+# kind="llm" find_enabled() with NO engine filter (see responder.py's
+# _active_llm_entry). Two enabled llm rows at once is genuinely ambiguous
+# ("first found wins"), so create()/set_fields() must enforce at most one.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_creating_a_second_enabled_llm_entry_disables_the_first(store):
+    first = await store.create("llm", "openrouter", "model-a", "Model A")
+    assert first["enabled"] is True
+
+    second = await store.create("llm", "openrouter", "model-b", "Model B")
+
+    assert second["enabled"] is True
+    assert (await store.get(first["id"]))["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_set_fields_enabling_an_llm_entry_disables_other_llm_entries(store):
+    first = await store.create("llm", "openrouter", "model-a", "Model A")
+    second = await store.create("llm", "ollama", "model-b", "Model B", enabled=False)
+    assert first["enabled"] is True
+    assert second["enabled"] is False
+
+    updated = await store.set_fields(second["id"], enabled=True)
+
+    assert updated["enabled"] is True
+    assert (await store.get(first["id"]))["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_llm_exclusivity_ignores_engine_name(store):
+    """Two llm rows with the SAME engine label must still be mutually
+    exclusive -- exclusivity is scoped to kind="llm" only, not (kind, engine),
+    matching how _active_llm_entry() looks the row up (no engine filter)."""
+    first = await store.create("llm", "openrouter", "model-a", "Model A")
+    second = await store.create("llm", "openrouter", "model-b", "Model B")
+
+    assert (await store.get(first["id"]))["enabled"] is False
+    assert (await store.get(second["id"]))["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_llm_exclusivity_does_not_affect_other_kinds(store):
+    stt = await store.create("stt", "whisper", "medium", "Whisper Medium")
+    await store.create("llm", "openrouter", "model-a", "Model A")
+
+    assert (await store.get(stt["id"]))["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_disabling_the_active_llm_entry_does_not_enable_another(store):
+    first = await store.create("llm", "openrouter", "model-a", "Model A")
+    second = await store.create("llm", "ollama", "model-b", "Model B", enabled=False)
+
+    await store.set_fields(first["id"], enabled=False)
+
+    assert (await store.get(first["id"]))["enabled"] is False
+    assert (await store.get(second["id"]))["enabled"] is False

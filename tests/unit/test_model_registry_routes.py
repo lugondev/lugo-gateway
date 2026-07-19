@@ -228,6 +228,37 @@ def test_create_llm_entry_persists_api_key_and_base_url(client, _with_password, 
     assert data["api_key"] == "sk-or-v1-llm...012"
 
 
+def test_patch_enabling_an_llm_entry_disables_the_others_end_to_end(client, _with_password, monkeypatch):
+    """The admin System Config 'Default LLM' select PATCHes {enabled: true} on
+    the chosen row -- confirm the store's single-enabled-llm-row enforcement
+    holds through the actual HTTP route, not just the store directly."""
+    _signup_login(client, "root", role="admin")
+
+    async def fake_reply(self, messages):
+        return "ok"
+
+    from app.services.conversation.responder import OpenAICompatResponder
+    monkeypatch.setattr(OpenAICompatResponder, "reply", fake_reply)
+
+    first = client.post("/v1/model_registry", json={
+        "kind": "llm", "engine": "openrouter", "model_id": "model-a", "label": "Model A",
+        "base_url": "https://openrouter.ai/api/v1", "api_key": "sk-or-v1-firstkeyabc0123456789",
+    }).json()["data"]
+    second = client.post("/v1/model_registry", json={
+        "kind": "llm", "engine": "ollama", "model_id": "model-b", "label": "Model B",
+        "base_url": "http://localhost:11434/v1", "api_key": "",
+    }).json()["data"]
+    assert first["enabled"] is True  # first row's default enabled=True still holds alone
+
+    resp = client.patch(f"/v1/model_registry/{second['id']}", json={"enabled": True})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["enabled"] is True
+
+    entries = {e["id"]: e for e in client.get("/v1/model_registry").json()["data"]}
+    assert entries[second["id"]]["enabled"] is True
+    assert entries[first["id"]]["enabled"] is False
+
+
 def test_patch_blank_api_key_preserves_existing(client, _with_password):
     _signup_login(client, "root", role="admin")
     created = client.post("/v1/model_registry", json={

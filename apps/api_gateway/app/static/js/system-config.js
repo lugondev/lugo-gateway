@@ -64,6 +64,16 @@ const VOICE_FIELD = "engines.default_tts_engine_voice";
 const VOICE_SELECT_ID = "sys-engines-default_tts_engine_voice";
 const TTS_ENGINE_SELECT_ID = "sys-engines-default_tts_engine";
 
+// Default LLM is NOT a system_config field like default_stt_engine/
+// default_tts_engine -- the conversation LLM is a single Model Registry
+// kind="llm" row with enabled=true (see responder.py's _active_llm_entry),
+// so this widget lives outside the generic schema-driven field loop above and
+// is (re)populated by populateDefaultLlmField(), same pattern as the voice
+// select. Selecting a different row PATCHes it enabled=true immediately (the
+// backend enforces at most one enabled llm row -- see model_registry/store.py's
+// _disable_other_llm_rows), not bundled into the group Save button.
+const DEFAULT_LLM_FIELD_ID = "sys-default-llm";
+
 function fieldInputType(value) {
   if (typeof value === "boolean") return "checkbox";
   if (typeof value === "number") return "number";
@@ -164,13 +174,60 @@ export async function loadSystemConfigGroups() {
   root.innerHTML = GROUPS.map(
     (g) => `<details ${g.open ? "open" : ""}>
       <summary>${g.label}</summary>
-      <div class="fields">${renderGroupFields(g.key, body.data[g.key], engineLists)}</div>
+      <div class="fields">${renderGroupFields(g.key, body.data[g.key], engineLists)}
+      ${g.key === "engines" ? `<label class="field">DEFAULT_LLM
+        <select id="${DEFAULT_LLM_FIELD_ID}" disabled><option>loading…</option></select>
+      </label>` : ""}</div>
     </details>`
   ).join("\n");
   populateVoiceOptions();
+  populateDefaultLlmField();
   const engineSel = el(TTS_ENGINE_SELECT_ID);
   // innerHTML above recreated the element, so a fresh listener each load.
   if (engineSel) engineSel.addEventListener("change", populateVoiceOptions);
+}
+
+// Selecting a different row PATCHes it enabled=true right away (see the
+// DEFAULT_LLM_FIELD_ID comment above) -- this select has no "Save" step of
+// its own, so it must reflect committed state immediately after the PATCH.
+async function populateDefaultLlmField() {
+  const sel = el(DEFAULT_LLM_FIELD_ID);
+  if (!sel) return;
+  let entries = [];
+  try {
+    const body = await (await fetch("/v1/model_registry")).json();
+    entries = (body.data || []).filter((e) => e.kind === "llm");
+  } catch (error) {
+    sel.innerHTML = '<option value="">(failed to load)</option>';
+    return;
+  }
+  if (!entries.length) {
+    sel.innerHTML = '<option value="">(none configured — add one in Model Registry)</option>';
+    sel.disabled = true;
+    return;
+  }
+  const current = entries.find((e) => e.enabled);
+  sel.innerHTML = [
+    !current ? '<option value="" selected>(none enabled)</option>' : "",
+    ...entries.map(
+      (e) =>
+        `<option value="${e.id}"${e === current ? " selected" : ""}>${e.label} — ${e.model_id}</option>`
+    ),
+  ].join("");
+  sel.disabled = false;
+  sel.onchange = async () => {
+    if (!sel.value) return;
+    sel.disabled = true;
+    try {
+      await fetch(`/v1/model_registry/${encodeURIComponent(sel.value)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true }),
+      });
+    } finally {
+      populateDefaultLlmField();
+    }
+  };
 }
 
 export async function saveSystemConfigGroups() {

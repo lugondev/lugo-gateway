@@ -164,9 +164,13 @@ class ModelRegistryStore:
                 config=config or {},
             )
             s.add(row)
+            if kind == "llm" and enabled:
+                await self._disable_other_llm_rows(s, exclude_id=row.id)
             await s.commit()
             entry = _entry_dict(row)
         self._by_id[entry["id"]] = entry
+        if kind == "llm" and enabled:
+            self._sync_llm_exclusivity_cache(exclude_id=entry["id"])
         return _copy(entry)
 
     async def set_fields(self, entry_id: str, **fields) -> dict | None:
@@ -177,10 +181,42 @@ class ModelRegistryStore:
                 return None
             for key, value in fields.items():
                 setattr(row, key, value)
+            if row.kind == "llm" and fields.get("enabled") is True:
+                await self._disable_other_llm_rows(s, exclude_id=entry_id)
             await s.commit()
             entry = _entry_dict(row)
         self._by_id[entry_id] = entry
+        if row.kind == "llm" and fields.get("enabled") is True:
+            self._sync_llm_exclusivity_cache(exclude_id=entry_id)
         return _copy(entry)
+
+    async def _disable_other_llm_rows(self, session, exclude_id: str) -> None:
+        """Enforce at most one enabled kind="llm" row, DB-side.
+
+        The conversation LLM is resolved via a single find_enabled(kind="llm")
+        with no engine filter (see responder.py's _active_llm_entry) -- unlike
+        stt/tts, where every caller scopes find_enabled to one engine and
+        several engines each having their own enabled row is normal and
+        correct. For llm, more than one enabled row is genuinely ambiguous, so
+        enabling one here always turns every other llm row off."""
+        result = await session.execute(
+            select(ModelRegistryEntry).where(
+                ModelRegistryEntry.kind == "llm",
+                ModelRegistryEntry.id != exclude_id,
+                ModelRegistryEntry.enabled.is_(True),
+            )
+        )
+        for other in result.scalars():
+            other.enabled = False
+
+    def _sync_llm_exclusivity_cache(self, exclude_id: str) -> None:
+        """Mirror _disable_other_llm_rows' DB write into the in-memory cache
+        so a subsequent find()/list_all() in the same process sees the other
+        rows as disabled without a reload (matches this store's read-from-cache
+        contract -- see test_reads_are_served_from_cache_without_hitting_the_db_again)."""
+        for other_id, other in self._by_id.items():
+            if other_id != exclude_id and other["kind"] == "llm" and other["enabled"]:
+                other["enabled"] = False
 
 
 model_registry_store = ModelRegistryStore()
