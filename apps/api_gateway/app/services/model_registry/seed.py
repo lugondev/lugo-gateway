@@ -164,3 +164,32 @@ async def migrate_omnivoice_to_registry() -> None:
         "OmniVoice (migrated from System settings)",
         config=config,
     )
+
+
+async def seed_installed_models_to_registry() -> None:
+    """Back-fill enabled entries for models that are already installed or already
+    referenced by a profile, so flipping the gate to catalog-mode doesn't hide
+    anything that currently works. Idempotent; never disables."""
+    from app.services.model_registry.autosync import ensure_registry_entry
+    from app.services.models import model_manager
+    from app.services.profiles.store import profile_store
+    from app.services.whisper_models import whisper_manager
+
+    for m in whisper_manager.snapshot()["models"]:
+        if m["cached"]:
+            await ensure_registry_entry("stt", "whisper", m["size"], f"whisper — {m['label']}")
+
+    for m in model_manager.snapshot()["installed"]:
+        await ensure_registry_entry("stt", "vosk", m["name"], f"vosk — {m['name']}")
+
+    for profile in profile_store.list().values():
+        if profile.stt.engine and profile.stt.model:
+            if await model_registry_store.find("stt", profile.stt.engine, profile.stt.model) is None:
+                await ensure_registry_entry(
+                    "stt", profile.stt.engine, profile.stt.model,
+                    f"{profile.stt.engine} — {profile.stt.model} (in use)")
+        if profile.llm.engine and profile.llm.model:
+            if await model_registry_store.find("llm", profile.llm.engine, profile.llm.model) is None:
+                await ensure_registry_entry(
+                    "llm", profile.llm.engine, profile.llm.model,
+                    f"{profile.llm.engine} — {profile.llm.model} (in use)")
