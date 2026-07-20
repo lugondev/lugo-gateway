@@ -74,10 +74,9 @@ export function renderProfileTtsSelect() {
   if (ttsProfileData[prev]) sel.value = prev;
 }
 
-export function renderProfileLlmSelect() {
+export function renderProfileLlmSelect(selEngine = "", selModel = "") {
   const sel = el("pf-llm-select");
   if (!sel) return;
-  const prev = sel.value;
   sel.innerHTML = "";
   if (llmOptionData.length === 0) {
     const opt = document.createElement("option");
@@ -91,7 +90,20 @@ export function renderProfileLlmSelect() {
     opt.textContent = entry.label;
     sel.appendChild(opt);
   });
-  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+  const want = selEngine ? `${selEngine}|${selModel || ""}` : "";
+  if ([...sel.options].some((o) => o.value === want)) {
+    sel.value = want;
+  } else if (selEngine) {
+    // Profile's current LLM isn't among the catalogued (enabled) options --
+    // disabled entry, or engine no longer offered. Without this, the select's
+    // value would be left blank and Save would silently wipe engine/model
+    // (see renderProfileSttModelSelect for the identical fallback).
+    const opt = document.createElement("option");
+    opt.value = want;
+    opt.textContent = `${selEngine}${selModel ? ` — ${selModel}` : ""} (unavailable)`;
+    sel.appendChild(opt);
+    sel.value = want;
+  }
 }
 
 // One flat "STT model" select: each option is an (engine, model-variant)
@@ -141,7 +153,6 @@ export async function openProfilePanel(mode, name) {
   let selectedMcpServers = [];
   renderProfileTtsSelect();
   await loadLlmOptions();
-  renderProfileLlmSelect();
 
   if (mode === "new") {
     el("pf-name").value = "";
@@ -149,7 +160,7 @@ export async function openProfilePanel(mode, name) {
     el("pf-nickname").value = "";
     el("pf-system-prompt").value = "";
     if (el("pf-voice-optimized")) el("pf-voice-optimized").checked = false;
-    el("pf-llm-select").value = "";
+    renderProfileLlmSelect("", "");
     if (el("pf-stt-language")) el("pf-stt-language").value = "";
     await renderProfileSttModelSelect("", "");
     if (el("pf-tts-profile")) el("pf-tts-profile").value = "";
@@ -168,7 +179,7 @@ export async function openProfilePanel(mode, name) {
     el("pf-nickname").value = p.nickname || "";
     el("pf-system-prompt").value = p.system_prompt || "";
     if (el("pf-voice-optimized")) el("pf-voice-optimized").checked = p.voice_optimized ?? false;
-    el("pf-llm-select").value = p.llm?.engine ? `${p.llm.engine}|${p.llm.model || ""}` : "";
+    renderProfileLlmSelect(p.llm?.engine || "", p.llm?.model || "");
     if (el("pf-stt-language")) el("pf-stt-language").value = p.stt?.language || "";
     await renderProfileSttModelSelect(p.stt?.engine || "", p.stt?.model || "");
     if (el("pf-tts-profile")) el("pf-tts-profile").value = p.tts?.profile_name || "";
