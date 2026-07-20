@@ -29,10 +29,15 @@ async def _validate_profile_models(profile: Profile, acting_user) -> None:
         engine = profile.stt.engine
         if not engine:
             raise AppError("stt.model requires stt.engine")
+        # STT_MODEL_CATALOGS only covers local engines with selectable
+        # sizes/repos (whisper, qwen3_asr) -- it predates the Model Registry
+        # options endpoint, which now also lists remote-engine models an
+        # admin has registered (qwen3_asr_or, whisper_or, openai_stt).
+        # Engines with no variant catalog have nothing to shape-validate
+        # here; check_model_allowed is the real, generic gate.
         registry = STT_MODEL_CATALOGS.get(engine)
-        if registry is None:
-            raise AppError(f"engine '{engine}' has no selectable model variants")
-        registry.validate(profile.stt.model)
+        if registry is not None:
+            registry.validate(profile.stt.model)
         await check_model_allowed("stt", engine, profile.stt.model, acting_user)
     if profile.llm.engine and profile.llm.model:
         await check_model_allowed("llm", profile.llm.engine, profile.llm.model, acting_user)

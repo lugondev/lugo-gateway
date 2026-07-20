@@ -160,12 +160,24 @@ def test_create_profile_rejects_invalid_stt_model(client):
     assert resp.status_code == 400
 
 
-def test_create_profile_rejects_model_on_engine_without_registry(client):
+def test_create_profile_rejects_unregistered_model_for_engine_without_variant_catalog(client):
+    # vosk has no entry in STT_MODEL_CATALOGS (no local size/repo variants to
+    # shape-validate) -- that's no longer a save-time rejection by itself.
+    # The Model Registry gate is what rejects an unregistered model.
     resp = client.post("/v1/profiles", json={
         "name": "no-variants",
         "stt": {"engine": "vosk", "model": "anything"},
     })
-    assert resp.status_code == 400
+    assert resp.status_code == 403
+
+
+def test_create_profile_accepts_registered_model_for_engine_without_variant_catalog(client):
+    asyncio.run(ModelRegistryStore().create("stt", "vosk", "vosk-model-small-en-us-0.15", "English (small)"))
+    resp = client.post("/v1/profiles", json={
+        "name": "no-variants-but-registered",
+        "stt": {"engine": "vosk", "model": "vosk-model-small-en-us-0.15"},
+    })
+    assert resp.status_code == 200
 
 
 def test_create_profile_rejects_model_without_resolvable_engine(client):
