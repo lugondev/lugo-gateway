@@ -22,7 +22,7 @@ class SttConfig(BaseModel):
     # name; language is a hint ("" = server default, which may mean auto-detect).
     engine: str = ""
     language: str = ""
-    # Model-variant id for engines with a registry (see stt/model_registry.py) —
+    # Model-variant id for engines with a registry (see stt/model_catalog.py) —
     # e.g. a whisper size ("large-v3-turbo") or a qwen3_asr shorthand ("0.6b").
     # "" = inherit whatever model is currently active for the resolved engine.
     model: str = ""

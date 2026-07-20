@@ -82,7 +82,7 @@ async def transcribe(
             )
         else:
             # no per-session model here -- falls back to this engine's process-global
-            # default by design (see app.services.stt.model_registry)
+            # default by design (see app.services.stt.model_catalog)
             result = await provider.transcribe_bytes(audio_bytes, payload.language)
     except AppError:
         raise  # handled globally -> clean JSON
@@ -101,9 +101,9 @@ async def list_stt_engines() -> dict:
 
 @router.get("/models")
 async def list_stt_models(engine: str) -> dict:
-    from app.services.stt.model_registry import STT_MODEL_REGISTRIES
+    from app.services.stt.model_catalog import STT_MODEL_CATALOGS
 
-    registry = STT_MODEL_REGISTRIES.get(engine)
+    registry = STT_MODEL_CATALOGS.get(engine)
     if registry is None:
         return {"success": True, "data": {"engine": engine, "supports_variants": False, "models": []}}
     models = [{**m, "valid": True} for m in registry.list_models()]
@@ -125,7 +125,7 @@ async def warm_engine(engine: str | None = None, profile: str | None = None, mod
     import asyncio
 
     from app.services.profiles.store import profile_store
-    from app.services.stt.model_registry import apply_stt_model
+    from app.services.stt.model_catalog import apply_stt_model
     from app.services.stt.profile import resolve_stt
 
     if not engine:

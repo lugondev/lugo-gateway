@@ -75,7 +75,7 @@ class WhisperManager:
         return {"models": models, "active": active}
 
     def list_models(self) -> list[dict]:
-        """Common STT model-registry shape (see app.services.stt.model_registry)."""
+        """Common STT model-registry shape (see app.services.stt.model_catalog)."""
         snap = self.snapshot()
         return [
             {"id": m["size"], "label": m["label"], "cached": m["cached"], "active": m["active"]}

@@ -50,7 +50,7 @@ async def _warm_default_engines() -> None:
     device still pays a full cold-load on its first-ever turn each boot (see
     app.services.warmup)."""
     from app.core.errors import AppError
-    from app.services.stt.model_registry import apply_stt_model
+    from app.services.stt.model_catalog import apply_stt_model
     from app.services.stt.service import stt_service
     from app.services.tts.service import tts_service
     from app.services.warmup import engines_for_boot_warmup, warm_providers

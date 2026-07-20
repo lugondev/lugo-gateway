@@ -21,7 +21,7 @@ from app.services.livehost.orchestrator import LiveHostOrchestrator
 from app.services.livehost.registry import LivehostSession, livehost_registry
 from app.services.livehost.scheduler import EventScheduler
 from app.services.profiles.store import profile_store
-from app.services.stt.model_registry import resolve_default_stt_model
+from app.services.stt.model_catalog import resolve_default_stt_model
 from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store

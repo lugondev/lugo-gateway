@@ -9,7 +9,7 @@ from app.services.model_registry.gate import check_model_allowed
 from app.services.model_registry.store import model_registry_store
 from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, SessionConfig, SttConfig, TtsConfig
 from app.services.profiles.store import profile_store
-from app.services.stt.model_registry import STT_MODEL_REGISTRIES
+from app.services.stt.model_catalog import STT_MODEL_CATALOGS
 
 router = APIRouter(prefix="/v1/profiles", tags=["profiles"])
 
@@ -30,7 +30,7 @@ async def _validate_profile_models(profile: Profile, acting_user) -> None:
         engine = profile.stt.engine
         if not engine:
             raise AppError("stt.model requires stt.engine")
-        registry = STT_MODEL_REGISTRIES.get(engine)
+        registry = STT_MODEL_CATALOGS.get(engine)
         if registry is None:
             raise AppError(f"engine '{engine}' has no selectable model variants")
         registry.validate(profile.stt.model)

@@ -40,7 +40,7 @@ class BufferingStream(STTStream):
             return None
         wav = pcm16_to_wav_bytes(bytes(self._buffer), sample_rate=self._sample_rate)
         # no per-session model here -- falls back to this engine's process-global
-        # default by design (see app.services.stt.model_registry)
+        # default by design (see app.services.stt.model_catalog)
         return await self._provider.transcribe_bytes(wav, self._language)
 
 

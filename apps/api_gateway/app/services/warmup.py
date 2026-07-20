@@ -26,7 +26,7 @@ def engines_for_boot_warmup() -> tuple[list[str], list[str], dict[str, str]]:
     de-duplicated and order-preserving. stt_models maps engine -> model for any
     engine where at least one enumerated profile set SttConfig.model; since the
     active model is a single process-global slot per engine (see
-    app.services.stt.model_registry), if two profiles want different models on
+    app.services.stt.model_catalog), if two profiles want different models on
     the same engine only the last one enumerated wins here — the session-start
     swap-on-use (ConversationSession.start) is the authoritative per-session
     correctness mechanism, this is just a best-effort head start. LLM engines are

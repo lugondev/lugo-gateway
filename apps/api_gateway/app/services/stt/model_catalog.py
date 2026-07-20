@@ -49,7 +49,7 @@ class Qwen3AsrModelRegistry:
 
 qwen3_asr_model_registry = Qwen3AsrModelRegistry()
 
-STT_MODEL_REGISTRIES: dict[str, object] = {
+STT_MODEL_CATALOGS: dict[str, object] = {
     "whisper": whisper_manager,
     "whisper_local": whisper_manager,
     "qwen3_asr": qwen3_asr_model_registry,
@@ -66,7 +66,7 @@ def apply_stt_model(engine: str, model: str) -> None:
     """
     if not model:
         return
-    registry = STT_MODEL_REGISTRIES.get(engine)
+    registry = STT_MODEL_CATALOGS.get(engine)
     if registry is not None:
         registry.select(model)
 

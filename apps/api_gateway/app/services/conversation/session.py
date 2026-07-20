@@ -39,7 +39,7 @@ from app.services.mcp.server_store import mcp_server_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
 from app.services.profiles.store import profile_store
-from app.services.stt.model_registry import resolve_default_stt_model
+from app.services.stt.model_catalog import resolve_default_stt_model
 from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.stt.routing import select_stt_engine
 from app.services.stt.service import stt_service
