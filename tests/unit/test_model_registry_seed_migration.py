@@ -5,6 +5,7 @@ import pytest
 from app.services.db.config_models import SystemRow
 from app.services.db.sync_engine import session_scope
 from app.services.model_registry.seed import (
+    migrate_llm_default_flag,
     migrate_omnivoice_to_registry,
     migrate_remote_stt_to_registry,
     migrate_stt_local_device_to_registry,
@@ -194,6 +195,41 @@ async def test_migrate_stt_local_models_never_overwrites_admin_edited_keys():
 
     entry = await model_registry_store.find("stt", "whisper_local", "")
     assert entry["config"]["default_model"] == "small"
+
+
+@pytest.mark.asyncio
+async def test_migrate_llm_default_flag_promotes_the_previously_enabled_row():
+    """Pre-upgrade state: an enabled kind="llm" row with no is_default set (the
+    old enabled-exclusivity invariant guaranteed at most one). The migration
+    must promote it to is_default=True so the conversation LLM doesn't
+    silently go unset the first boot after this schema change."""
+    entry = await model_registry_store.create(
+        "llm", "custom", "gpt-x", "Conversation LLM", base_url="https://example.com",
+    )
+    assert entry["is_default"] is False
+
+    await migrate_llm_default_flag()
+
+    updated = await model_registry_store.get(entry["id"])
+    assert updated["is_default"] is True
+
+
+@pytest.mark.asyncio
+async def test_migrate_llm_default_flag_is_a_noop_once_a_default_exists():
+    await model_registry_store.create("llm", "custom", "gpt-x", "Model A", is_default=True)
+    other = await model_registry_store.create(
+        "llm", "custom", "gpt-y", "Model B", enabled=True
+    )
+
+    await migrate_llm_default_flag()
+
+    assert (await model_registry_store.get(other["id"]))["is_default"] is False
+
+
+@pytest.mark.asyncio
+async def test_migrate_llm_default_flag_is_a_noop_with_no_llm_rows():
+    await migrate_llm_default_flag()  # must not raise
+    assert await model_registry_store.find_default("llm") is None
 
 
 @pytest.mark.asyncio

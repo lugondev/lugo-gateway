@@ -13,11 +13,13 @@ async def migrate_conversation_llm_to_registry() -> None:
     """One-time: the conversation LLM's base_url/api_key/model used to live in
     System settings (`SystemConfig.conversation_llm`, removed from the schema
     now that Model Registry `kind="llm"` entries are the only source). If an
-    admin had already configured one and no `kind="llm"` entry is enabled yet,
-    seed one from the raw, still-persisted JSON so upgrading never silently
-    drops a working config. No-op once any `kind="llm"` entry is enabled --
-    including a fresh install with nothing configured either way."""
-    if await model_registry_store.find_enabled(kind="llm") is not None:
+    admin had already configured one and no `kind="llm"` entry is the default
+    yet, seed one from the raw, still-persisted JSON so upgrading never
+    silently drops a working config -- and mark it `is_default=True` since it
+    represents what WAS the sole conversation LLM. No-op once any `kind="llm"`
+    entry is already the default -- including a fresh install with nothing
+    configured either way."""
+    if await model_registry_store.find_default("llm") is not None:
         return
     old = system_config_store.get_raw_group("conversation_llm")
     base_url = (old.get("conversation_llm_base_url") or "").strip()
@@ -30,7 +32,26 @@ async def migrate_conversation_llm_to_registry() -> None:
         label="Conversation LLM (migrated from System settings)",
         base_url=base_url,
         api_key=old.get("conversation_llm_api_key") or "",
+        is_default=True,
     )
+
+
+async def migrate_llm_default_flag() -> None:
+    """One-time: before this feature, kind="llm" rows enforced enabled-exclusivity
+    (at most one enabled at a time), and that lone enabled row WAS the
+    conversation's active default -- find_enabled(kind="llm") resolved it
+    directly. Exclusivity is now scoped to a separate is_default flag so
+    multiple llm entries can be enabled (selectable per-profile) at once. On
+    upgrade, promote whichever row was already enabled (there's at most one,
+    by the old invariant) to is_default=True, so the conversation LLM doesn't
+    silently go unset the first boot after this schema change. No-op once any
+    llm row already has is_default=True (including a fresh install with
+    nothing configured)."""
+    if await model_registry_store.find_default("llm") is not None:
+        return
+    entry = await model_registry_store.find_enabled(kind="llm")
+    if entry is not None:
+        await model_registry_store.set_fields(entry["id"], is_default=True)
 
 
 async def migrate_remote_stt_to_registry() -> None:

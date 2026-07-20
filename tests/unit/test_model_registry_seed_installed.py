@@ -56,6 +56,33 @@ async def test_seeds_tts_profile_engine_shim_skips_blank_engine(monkeypatch):
     assert await model_registry_store.list_all() == []
 
 
+async def test_seeds_two_profiles_referencing_different_llms_both_stay_enabled(monkeypatch):
+    # Regression guard for the finding that motivated is_default: before it,
+    # kind="llm" `enabled` was exclusive DB-side, so seeding a second llm
+    # profile's model would silently disable the first -- locking a
+    # multi-LLM catalog down to exactly one usable entry. `enabled` is no
+    # longer exclusive (only `is_default` is), so both must end up enabled.
+    from app.services.whisper_models import whisper_manager
+    from app.services.models import model_manager
+    from app.services.profiles.store import profile_store
+    from app.services.profiles.models import Profile, LlmConfig
+    monkeypatch.setattr(whisper_manager, "snapshot", lambda: {"models": [], "active": None})
+    monkeypatch.setattr(model_manager, "snapshot", lambda: {"installed": [], "active": None})
+    monkeypatch.setattr(profile_store, "list", lambda: {
+        "p1": Profile(name="p1", llm=LlmConfig(engine="openrouter", model="model-a")),
+        "p2": Profile(name="p2", llm=LlmConfig(engine="ollama", model="model-b")),
+    })
+
+    await seed_installed_models_to_registry()
+
+    entry_a = await model_registry_store.find("llm", "openrouter", "model-a")
+    entry_b = await model_registry_store.find("llm", "ollama", "model-b")
+    assert entry_a is not None
+    assert entry_b is not None
+    assert entry_a["enabled"] is True
+    assert entry_b["enabled"] is True
+
+
 async def test_idempotent_and_preserves_disabled(monkeypatch):
     from app.services.whisper_models import whisper_manager
     from app.services.models import model_manager

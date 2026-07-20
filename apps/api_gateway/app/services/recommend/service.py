@@ -96,7 +96,7 @@ async def _augment_config_flags(caps: Capabilities) -> None:
     remote_stt = resolve_remote_stt_config()
     caps.modules["whisper_service"] = bool(remote_stt.whisper_service_base_url)
     caps.modules["eventlab"] = bool(remote_stt.eventlab_base_url)
-    llm_entry = await model_registry_store.find_enabled(kind="llm")
+    llm_entry = await model_registry_store.find_default(kind="llm")
     caps.modules["online_llm"] = bool(llm_entry and llm_entry["base_url"])
     # No system-wide OpenRouter key anymore -- each Model Registry entry has its
     # own (see model_registry_store.has_key_for_engine, async/DB-backed, not

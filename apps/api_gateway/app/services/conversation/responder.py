@@ -26,16 +26,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # The conversation LLM's base_url/api_key/model live in the single Model
-# Registry entry with kind="llm" that's marked `enabled` -- there is no
-# separate system-wide default and no in-memory override anymore; picking a
-# different LLM (or pointing at a different endpoint) means enabling a
-# different registry entry (see set_active_llm_config below).
+# Registry entry with kind="llm" that's marked `is_default` (and must also be
+# `enabled` -- a disabled default fails closed to "no active LLM") -- there is
+# no separate system-wide default and no in-memory override anymore; picking a
+# different LLM (or pointing at a different endpoint) means re-pointing the
+# default registry entry (see set_active_llm_config below).
 
 
 async def _active_llm_entry() -> dict | None:
     from app.services.model_registry.store import model_registry_store
 
-    return await model_registry_store.find_enabled(kind="llm")
+    entry = await model_registry_store.find_default(kind="llm")
+    return entry if entry and entry["enabled"] else None
 
 
 async def get_active_llm_model() -> str:
@@ -55,8 +57,8 @@ async def get_active_llm_api_key() -> str:
 
 async def set_active_llm_config(base_url: str, api_key: str, model: str, engine: str = "custom") -> None:
     """Point the conversation responder at an OpenAI-compatible endpoint --
-    creates the registry entry if none is enabled yet, else updates the
-    currently-enabled one in place (so re-pointing the same "slot" doesn't
+    creates the registry entry if none is the default yet, else updates the
+    currently-default one in place (so re-pointing the same "slot" doesn't
     pile up rows)."""
     from app.services.model_registry.store import model_registry_store
 
@@ -66,16 +68,21 @@ async def set_active_llm_config(base_url: str, api_key: str, model: str, engine:
     entry = await _active_llm_entry()
     if entry:
         # Leave `engine` untouched on an update -- it's a cosmetic label (only
-        # `kind="llm" + enabled` matters for resolution), and always defaulting
-        # the caller's `engine` param to "custom" here would stomp a more
-        # specific tag (e.g. "ollama") set when the entry was first created.
+        # `kind="llm" + is_default` matters for resolution), and always
+        # defaulting the caller's `engine` param to "custom" here would stomp
+        # a more specific tag (e.g. "ollama") set when the entry was first
+        # created.
         await model_registry_store.set_fields(
             entry["id"], base_url=base_url, api_key=api_key, model_id=model
         )
     else:
+        # New "slot": must be marked is_default too, or _active_llm_entry()
+        # (which now resolves via find_default, not find_enabled) would never
+        # find it again -- this legacy single-endpoint setter would silently
+        # stop activating the LLM it just created.
         await model_registry_store.create(
             kind="llm", engine=engine, model_id=model, label="Conversation LLM",
-            base_url=base_url, api_key=api_key,
+            base_url=base_url, api_key=api_key, is_default=True,
         )
 
 
