@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Dev venv is **Python 3.12** (`.venv` at repo root). Run backend tests from `apps/api_gateway`.
+- Dev venv is **Python 3.12** (`.venv` at repo root). Backend tests live at repo-root `tests/unit/` (flat naming `test_model_registry_*.py`); run `.venv/bin/pytest -q [paths]` FROM REPO ROOT (pyproject sets pythonpath/testpaths). Conventions: `asyncio_mode=auto` (bare `async def test_*`, no marker); `tests/conftest.py` has AUTOUSE `_tmp_db` (fresh SQLite per test + `model_registry_store.invalidate()`) — never request `tmp_db` as a param; route tests define their own sync `client` fixture: `TestClient(app)` from `fastapi.testclient` with `from app.main import app`.
 - Registry entry shape: `(kind, engine, model_id, label, enabled, stage, api_key, base_url, config)`. `kind ∈ {"stt","tts","llm"}`. `stage ∈ {"stable","testing"}`.
 - Registry has **no DELETE** — "delete a model" means `enabled=false`, row retained (preserves api_key/config).
 - `model_id=""` is a reserved **engine-config sentinel row** (device/compute config), NOT a selectable model — options endpoint and auto-sync must skip `model_id==""`.
@@ -66,7 +66,7 @@ Update any other files found in Step 1 (e.g. `services/stt/profile.py`) the same
 
 - [ ] **Step 4: Run the full api_gateway suite to prove nothing broke**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest -q`
+Run: `.venv/bin/pytest -q`
 Expected: PASS (same count as before the rename; no ImportError).
 
 - [ ] **Step 5: Commit**
@@ -88,7 +88,7 @@ The filtering logic for the options endpoint, unit-tested in isolation before wi
 
 **Files:**
 - Modify: `apps/api_gateway/app/services/model_registry/store.py` (add method to `ModelRegistryStore`)
-- Test: `apps/api_gateway/tests/services/model_registry/test_store_options.py`
+- Test: `tests/unit/test_model_registry_list_options.py`
 
 **Interfaces:**
 - Produces: `async ModelRegistryStore.list_options(kind: str, can_use_testing: bool) -> list[dict]` returning `[{"engine","model_id","label"}]` for entries where `kind` matches, `enabled` is true, `model_id != ""` (skip config sentinel rows), and (`stage == "stable"` or `can_use_testing`). Sorted by `(engine, model_id)`.
@@ -96,13 +96,12 @@ The filtering logic for the options endpoint, unit-tested in isolation before wi
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# apps/api_gateway/tests/services/model_registry/test_store_options.py
+# tests/unit/test_model_registry_list_options.py
 import pytest
 from app.services.model_registry.store import model_registry_store
 
 
-@pytest.mark.asyncio
-async def test_list_options_filters_enabled_stable_and_skips_sentinel(tmp_db):
+async def test_list_options_filters_enabled_stable_and_skips_sentinel():
     await model_registry_store.create("stt", "whisper", "tiny", "Tiny", enabled=True)
     await model_registry_store.create("stt", "whisper", "large-v3", "Large", enabled=True)
     await model_registry_store.create("stt", "whisper", "", "Whisper config", enabled=True)  # sentinel
@@ -122,7 +121,7 @@ async def test_list_options_filters_enabled_stable_and_skips_sentinel(tmp_db):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest tests/services/model_registry/test_store_options.py -v`
+Run: `.venv/bin/pytest tests/unit/test_model_registry_list_options.py -v`
 Expected: FAIL with `AttributeError: 'ModelRegistryStore' object has no attribute 'list_options'`
 
 - [ ] **Step 3: Implement the method**
@@ -147,13 +146,13 @@ async def list_options(self, kind: str, can_use_testing: bool) -> list[dict]:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest tests/services/model_registry/test_store_options.py -v`
+Run: `.venv/bin/pytest tests/unit/test_model_registry_list_options.py -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api_gateway/app/services/model_registry/store.py apps/api_gateway/tests/services/model_registry/test_store_options.py
+git add apps/api_gateway/app/services/model_registry/store.py tests/unit/test_model_registry_list_options.py
 git commit -m "feat(model-registry): add list_options store helper (enabled, non-sentinel, stage-filtered)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -165,7 +164,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `apps/api_gateway/app/api/routes/model_registry.py` (add route + import actor helper)
-- Test: `apps/api_gateway/tests/api/test_model_registry_options.py`
+- Test: `tests/unit/test_model_registry_options_route.py`
 
 **Interfaces:**
 - Consumes: `ModelRegistryStore.list_options` (Task 2).
@@ -174,33 +173,31 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# apps/api_gateway/tests/api/test_model_registry_options.py
+# tests/unit/test_model_registry_options_route.py
 import pytest
 
 
-@pytest.mark.asyncio
-async def test_options_returns_enabled_entries_for_kind(client, tmp_db):
+async def test_options_returns_enabled_entries_for_kind(client):
     from app.services.model_registry.store import model_registry_store
     await model_registry_store.create("stt", "whisper", "tiny", "Tiny", enabled=True)
     await model_registry_store.create("tts", "vieneu", "v3turbo", "VieNeu", enabled=True)
 
-    resp = await client.get("/v1/model_registry/options?kind=stt")
+    resp = client.get("/v1/model_registry/options?kind=stt")
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert data == [{"engine": "whisper", "model_id": "tiny", "label": "Tiny"}]
 
 
-@pytest.mark.asyncio
-async def test_options_rejects_unknown_kind(client, tmp_db):
-    resp = await client.get("/v1/model_registry/options?kind=bogus")
+async def test_options_rejects_unknown_kind(client):
+    resp = client.get("/v1/model_registry/options?kind=bogus")
     assert resp.status_code == 400
 ```
 
-Note: follow the existing test's `client`/`tmp_db` fixture names — check a sibling test in `tests/api/` (e.g. `test_model_registry*.py`) and mirror its fixtures/auth exactly.
+Note: mirror `tests/unit/test_model_registry_routes.py` — define a local `client` fixture (`TestClient(app)`); the autouse `_tmp_db` conftest fixture handles DB isolation.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest tests/api/test_model_registry_options.py -v`
+Run: `.venv/bin/pytest tests/unit/test_model_registry_options_route.py -v`
 Expected: FAIL with 404 (route not defined) / 405.
 
 - [ ] **Step 3: Implement the route**
@@ -233,13 +230,13 @@ Confirm `/options` is declared before `PATCH /{entry_id}` so it isn't shadowed b
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest tests/api/test_model_registry_options.py -v`
+Run: `.venv/bin/pytest tests/unit/test_model_registry_options_route.py -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api_gateway/app/api/routes/model_registry.py apps/api_gateway/tests/api/test_model_registry_options.py
+git add apps/api_gateway/app/api/routes/model_registry.py tests/unit/test_model_registry_options_route.py
 git commit -m "feat(model-registry): add GET /v1/model_registry/options?kind= endpoint
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -254,7 +251,7 @@ The behavioral heart. Gate now requires an enabled, stage-valid entry (was: no-e
 **Files:**
 - Modify: `apps/api_gateway/app/services/model_registry/gate.py` (invert missing-entry semantics)
 - Modify: `apps/api_gateway/app/api/routes/profiles.py` (remove `list_llm_options` route at :102-113; `_validate_profile_models` keeps calling `check_model_allowed`)
-- Test: `apps/api_gateway/tests/services/model_registry/test_gate_catalog_mode.py`
+- Test: `tests/unit/test_model_registry_gate_catalog.py`
 
 **Interfaces:**
 - Consumes: `model_registry_store.find` (existing).
@@ -263,33 +260,30 @@ The behavioral heart. Gate now requires an enabled, stage-valid entry (was: no-e
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# apps/api_gateway/tests/services/model_registry/test_gate_catalog_mode.py
+# tests/unit/test_model_registry_gate_catalog.py
 import pytest
 from app.core.errors import ModelNotAllowedError
 from app.services.model_registry.gate import check_model_allowed
 from app.services.model_registry.store import model_registry_store
 
 
-@pytest.mark.asyncio
-async def test_no_entry_now_rejected(tmp_db):
+async def test_no_entry_now_rejected():
     with pytest.raises(ModelNotAllowedError):
         await check_model_allowed("stt", "whisper", "tiny", None)
 
 
-@pytest.mark.asyncio
-async def test_enabled_entry_allowed(tmp_db):
+async def test_enabled_entry_allowed():
     await model_registry_store.create("stt", "whisper", "tiny", "Tiny", enabled=True)
     await check_model_allowed("stt", "whisper", "tiny", None)  # no raise
 
 
-@pytest.mark.asyncio
-async def test_empty_selection_is_unrestricted(tmp_db):
+async def test_empty_selection_is_unrestricted():
     await check_model_allowed("stt", "", "", None)  # inherit-global, no raise
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest tests/services/model_registry/test_gate_catalog_mode.py -v`
+Run: `.venv/bin/pytest tests/unit/test_model_registry_gate_catalog.py -v`
 Expected: `test_no_entry_now_rejected` FAILS (no exception raised).
 
 - [ ] **Step 3: Implement**
@@ -317,13 +311,13 @@ In `routes/profiles.py`, delete the entire `@router.get("/llm-options")` functio
 
 - [ ] **Step 4: Run gate tests + full profiles/registry suites**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest tests/services/model_registry/ tests/api/ -v`
+Run: `.venv/bin/pytest tests/unit/test_model_registry_gate_catalog.py tests/unit/test_model_registry_gate.py tests/unit/test_profile_model_gate.py tests/unit/test_tts_profile_model_gate.py tests/unit/test_profiles_routes.py -v`
 Expected: new gate tests PASS. Some existing tests that relied on "no entry = allowed" or hit `/v1/profiles/llm-options` will FAIL — fix them: create the needed registry entry in the test's arrange step, or repoint to `/v1/model_registry/options?kind=llm`. Do not weaken the gate to make old tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api_gateway/app/services/model_registry/gate.py apps/api_gateway/app/api/routes/profiles.py apps/api_gateway/tests
+git add apps/api_gateway/app/services/model_registry/gate.py apps/api_gateway/app/api/routes/profiles.py tests/unit
 git commit -m "feat(model-registry): gate becomes catalog-mode; remove /v1/profiles/llm-options
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -337,7 +331,7 @@ Pure store-level helpers, TDD'd before wiring into the Models action endpoints.
 
 **Files:**
 - Create: `apps/api_gateway/app/services/model_registry/autosync.py`
-- Test: `apps/api_gateway/tests/services/model_registry/test_autosync.py`
+- Test: `tests/unit/test_model_registry_autosync.py`
 
 **Interfaces:**
 - Consumes: `model_registry_store.find`, `.create`, `.set_fields`.
@@ -348,21 +342,19 @@ Pure store-level helpers, TDD'd before wiring into the Models action endpoints.
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# apps/api_gateway/tests/services/model_registry/test_autosync.py
+# tests/unit/test_model_registry_autosync.py
 import pytest
 from app.services.model_registry.autosync import ensure_registry_entry, disable_registry_entry
 from app.services.model_registry.store import model_registry_store
 
 
-@pytest.mark.asyncio
-async def test_ensure_creates_enabled_entry(tmp_db):
+async def test_ensure_creates_enabled_entry():
     await ensure_registry_entry("stt", "whisper", "tiny", "whisper — Tiny")
     entry = await model_registry_store.find("stt", "whisper", "tiny")
     assert entry["enabled"] is True and entry["stage"] == "stable" and entry["label"] == "whisper — Tiny"
 
 
-@pytest.mark.asyncio
-async def test_ensure_reenables_without_clobbering_config(tmp_db):
+async def test_ensure_reenables_without_clobbering_config():
     created = await model_registry_store.create(
         "stt", "whisper", "tiny", "Custom label", enabled=False,
         api_key="sk-secret", config={"beam_size": 7},
@@ -375,8 +367,7 @@ async def test_ensure_reenables_without_clobbering_config(tmp_db):
     assert entry["config"] == {"beam_size": 7}      # preserved
 
 
-@pytest.mark.asyncio
-async def test_disable_keeps_row(tmp_db):
+async def test_disable_keeps_row():
     await model_registry_store.create("stt", "whisper", "tiny", "Tiny", enabled=True, api_key="k")
     await disable_registry_entry("stt", "whisper", "tiny")
     entry = await model_registry_store.find("stt", "whisper", "tiny")
@@ -385,7 +376,7 @@ async def test_disable_keeps_row(tmp_db):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest tests/services/model_registry/test_autosync.py -v`
+Run: `.venv/bin/pytest tests/unit/test_model_registry_autosync.py -v`
 Expected: FAIL with `ModuleNotFoundError: app.services.model_registry.autosync`
 
 - [ ] **Step 3: Implement**
@@ -418,13 +409,13 @@ async def disable_registry_entry(kind: str, engine: str, model_id: str) -> None:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest tests/services/model_registry/test_autosync.py -v`
+Run: `.venv/bin/pytest tests/unit/test_model_registry_autosync.py -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api_gateway/app/services/model_registry/autosync.py apps/api_gateway/tests/services/model_registry/test_autosync.py
+git add apps/api_gateway/app/services/model_registry/autosync.py tests/unit/test_model_registry_autosync.py
 git commit -m "feat(model-registry): add ensure/disable autosync helpers (Models -> Registry)
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -439,7 +430,7 @@ Wire the helpers into the download/select/delete action endpoints in `system.py`
 **Files:**
 - Create: `apps/api_gateway/app/services/model_registry/engine_map.py`
 - Modify: `apps/api_gateway/app/api/routes/system.py` (call auto-sync after successful download/delete for whisper, vosk, omnivoice, vieneu, llm)
-- Test: `apps/api_gateway/tests/api/test_models_autosync.py`
+- Test: `tests/unit/test_models_autosync_routes.py`
 
 **Interfaces:**
 - Consumes: `ensure_registry_entry`, `disable_registry_entry` (Task 5).
@@ -453,41 +444,39 @@ Wire the helpers into the download/select/delete action endpoints in `system.py`
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# apps/api_gateway/tests/api/test_models_autosync.py
+# tests/unit/test_models_autosync_routes.py
 import pytest
 from app.services.model_registry.store import model_registry_store
 
 
-@pytest.mark.asyncio
-async def test_whisper_download_creates_registry_entry(client, tmp_db, monkeypatch):
+async def test_whisper_download_creates_registry_entry(client, monkeypatch):
     # Don't actually fetch weights — the endpoint queues via BackgroundTasks and
     # calls whisper_manager.validate/download; stub download so the test is fast.
     from app.services.whisper_models import whisper_manager
     monkeypatch.setattr(whisper_manager, "download", lambda size: None)
 
-    resp = await client.post("/v1/models/whisper/download", json={"size": "tiny"})
+    resp = client.post("/v1/models/whisper/download", json={"size": "tiny"})
     assert resp.status_code == 200
     entry = await model_registry_store.find("stt", "whisper", "tiny")
     assert entry is not None and entry["enabled"] is True
 
 
-@pytest.mark.asyncio
-async def test_whisper_delete_disables_registry_entry(client, tmp_db, monkeypatch):
+async def test_whisper_delete_disables_registry_entry(client, monkeypatch):
     from app.services.whisper_models import whisper_manager
     monkeypatch.setattr(whisper_manager, "delete", lambda size: None)
     await model_registry_store.create("stt", "whisper", "tiny", "Tiny", enabled=True)
 
-    resp = await client.delete("/v1/models/whisper/tiny")
+    resp = client.delete("/v1/models/whisper/tiny")
     assert resp.status_code == 200
     entry = await model_registry_store.find("stt", "whisper", "tiny")
     assert entry["enabled"] is False
 ```
 
-Check the sibling `tests/api/` fixtures for the real `client`/`tmp_db` names and mirror them.
+Mirror `tests/unit/test_model_registry_routes.py` for the `client` fixture; autouse `_tmp_db` handles DB isolation.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest tests/api/test_models_autosync.py -v`
+Run: `.venv/bin/pytest tests/unit/test_models_autosync_routes.py -v`
 Expected: FAIL (no registry entry created).
 
 - [ ] **Step 3: Implement the map**
@@ -546,13 +535,13 @@ Apply the same pattern to vosk (`payload.name` / path `{name}`), omnivoice (`pay
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest tests/api/test_models_autosync.py -v`
+Run: `.venv/bin/pytest tests/unit/test_models_autosync_routes.py -v`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add apps/api_gateway/app/services/model_registry/engine_map.py apps/api_gateway/app/api/routes/system.py apps/api_gateway/tests/api/test_models_autosync.py
+git add apps/api_gateway/app/services/model_registry/engine_map.py apps/api_gateway/app/api/routes/system.py tests/unit/test_models_autosync_routes.py
 git commit -m "feat(model-registry): auto-sync Models install/delete into Registry entries
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -567,7 +556,7 @@ Ensures nothing already installed or already used by a profile/config vanishes f
 **Files:**
 - Modify: `apps/api_gateway/app/services/model_registry/seed.py` (add `seed_installed_models_to_registry`)
 - Modify: `apps/api_gateway/app/main.py:129-141` (call it after the existing migrations)
-- Test: `apps/api_gateway/tests/services/model_registry/test_seed_installed.py`
+- Test: `tests/unit/test_model_registry_seed_installed.py`
 
 **Interfaces:**
 - Consumes: `ensure_registry_entry` (Task 5), `whisper_manager.snapshot`, `model_manager.snapshot` (vosk), `profile_store.list`.
@@ -576,14 +565,13 @@ Ensures nothing already installed or already used by a profile/config vanishes f
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# apps/api_gateway/tests/services/model_registry/test_seed_installed.py
+# tests/unit/test_model_registry_seed_installed.py
 import pytest
 from app.services.model_registry.seed import seed_installed_models_to_registry
 from app.services.model_registry.store import model_registry_store
 
 
-@pytest.mark.asyncio
-async def test_seeds_cached_whisper_models(tmp_db, monkeypatch):
+async def test_seeds_cached_whisper_models(monkeypatch):
     from app.services.whisper_models import whisper_manager
     monkeypatch.setattr(whisper_manager, "snapshot", lambda: {
         "models": [
@@ -600,8 +588,7 @@ async def test_seeds_cached_whisper_models(tmp_db, monkeypatch):
     assert await model_registry_store.find("stt", "whisper", "large-v3") is None  # not cached
 
 
-@pytest.mark.asyncio
-async def test_idempotent_and_preserves_disabled(tmp_db, monkeypatch):
+async def test_idempotent_and_preserves_disabled(monkeypatch):
     from app.services.whisper_models import whisper_manager
     from app.services.models import model_manager
     monkeypatch.setattr(whisper_manager, "snapshot", lambda: {
@@ -621,7 +608,7 @@ async def test_idempotent_and_preserves_disabled(tmp_db, monkeypatch):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest tests/services/model_registry/test_seed_installed.py -v`
+Run: `.venv/bin/pytest tests/unit/test_model_registry_seed_installed.py -v`
 Expected: FAIL with `ImportError: cannot import name 'seed_installed_models_to_registry'`
 
 - [ ] **Step 3: Implement**
@@ -667,18 +654,18 @@ In `main.py`, add to the seed import block (line ~129) and call after `migrate_o
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest tests/services/model_registry/test_seed_installed.py -v`
+Run: `.venv/bin/pytest tests/unit/test_model_registry_seed_installed.py -v`
 Expected: PASS
 
 - [ ] **Step 5: Full backend suite (catch fallout from the gate flip)**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest -q`
+Run: `.venv/bin/pytest -q`
 Expected: PASS. Fix any remaining tests that assumed old gate/llm-options behavior.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add apps/api_gateway/app/services/model_registry/seed.py apps/api_gateway/app/main.py apps/api_gateway/tests/services/model_registry/test_seed_installed.py
+git add apps/api_gateway/app/services/model_registry/seed.py apps/api_gateway/app/main.py tests/unit/test_model_registry_seed_installed.py
 git commit -m "feat(model-registry): seed installed + in-use models into registry on boot
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
@@ -896,7 +883,7 @@ Note: pushing the submodule to its own remote is required before the superprojec
 
 - [ ] **Step 1: Backend full suite**
 
-Run: `cd apps/api_gateway && ../../.venv/bin/python -m pytest -q`
+Run: `.venv/bin/pytest -q`
 Expected: PASS.
 
 - [ ] **Step 2: Web client full suite**
@@ -920,4 +907,4 @@ Summarize pass/fail with the actual test counts and the smoke-check observations
 
 - Spec coverage: rename (T1), options endpoint incl. llm-options merge (T3, T4), catalog-mode gate (T4), auto-sync install/delete (T5, T6), seed migration (T7), TTS `(engine, model_id)` real pairs — covered by the gate change (T4) + auto-sync labels; TTS profile save path uses engine/model already via registry entries. Playground UI (T8), lugo-web-client (T9), testing (each task + T10).
 - TTS granularity note: TTS profile *voice* selection is unchanged; TTS *model* entries are created by auto-sync (omnivoice/vieneu) with real `model_id`. If a later need arises to gate TTS at profile-save on `(engine, model_id)`, that reuses the same `check_model_allowed` — no new code.
-- No placeholders: every code step shows real code; fixtures reference existing `tmp_db`/`client` patterns (implementer confirms exact names from siblings in Step 1 of T3/T6/T9).
+- No placeholders: every code step shows real code; fixtures follow repo conventions: autouse `_tmp_db` (never a param), local `client = TestClient(app)`, asyncio auto mode.
