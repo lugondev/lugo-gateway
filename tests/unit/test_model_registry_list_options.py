@@ -1,4 +1,3 @@
-import pytest
 from app.services.model_registry.store import model_registry_store
 
 
@@ -8,6 +7,7 @@ async def test_list_options_filters_enabled_stable_and_skips_sentinel():
     await model_registry_store.create("stt", "whisper", "", "Whisper config", enabled=True)  # sentinel
     await model_registry_store.create("stt", "vosk", "vn", "Vosk VN", enabled=False)  # disabled
     await model_registry_store.create("stt", "qwen3_asr", "1.7b", "Q Testing", enabled=True, stage="testing")
+    await model_registry_store.create("tts", "vieneu", "v3turbo", "VieNeu", enabled=True)  # different kind
 
     stable = await model_registry_store.list_options("stt", can_use_testing=False)
     assert stable == [
