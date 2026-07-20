@@ -26,6 +26,12 @@ _USER_PREFIXES = (
     "/v1/sessions",
     "/v1/devices/mine",
     "/v1/devices/pair/claim",
+    # User-facing read of an otherwise admin-only prefix: /v1/model_registry/options
+    # is THE feed every user's profile-editor dropdowns read. _USER_PREFIXES is
+    # matched before _ADMIN_PREFIXES, so this carve-out wins over the
+    # "/v1/model_registry" admin rule below while the rest of the CRUD surface
+    # stays admin-only.
+    "/v1/model_registry/options",
 )
 # role == "admin" required.
 _ADMIN_PREFIXES = ("/v1/system", "/v1/models", "/v1/users", "/v1/devices", "/v1/model_registry")
