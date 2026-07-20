@@ -1,8 +1,8 @@
 import pytest
 
 from app.core.errors import AppError
-from app.services.stt.model_registry import (
-    STT_MODEL_REGISTRIES,
+from app.services.stt.model_catalog import (
+    STT_MODEL_CATALOGS,
     apply_stt_model,
     qwen3_asr_model_registry,
     resolve_default_stt_model,
@@ -53,11 +53,11 @@ def test_qwen3_registry_select_changes_active():
 
 
 def test_registries_dict_covers_whisper_family_and_qwen3():
-    assert STT_MODEL_REGISTRIES["whisper"] is whisper_manager
-    assert STT_MODEL_REGISTRIES["whisper_local"] is whisper_manager
-    assert STT_MODEL_REGISTRIES["qwen3_asr"] is qwen3_asr_model_registry
-    assert "vosk" not in STT_MODEL_REGISTRIES
-    assert "whisper_mlx" not in STT_MODEL_REGISTRIES
+    assert STT_MODEL_CATALOGS["whisper"] is whisper_manager
+    assert STT_MODEL_CATALOGS["whisper_local"] is whisper_manager
+    assert STT_MODEL_CATALOGS["qwen3_asr"] is qwen3_asr_model_registry
+    assert "vosk" not in STT_MODEL_CATALOGS
+    assert "whisper_mlx" not in STT_MODEL_CATALOGS
 
 
 def test_apply_stt_model_noop_for_empty_model():

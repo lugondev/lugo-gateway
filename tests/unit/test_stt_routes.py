@@ -32,7 +32,7 @@ def test_list_stt_models_requires_engine_param():
 def test_warm_stt_engine_with_explicit_model(monkeypatch):
     calls = []
     monkeypatch.setattr(
-        "app.services.stt.model_registry.apply_stt_model",
+        "app.services.stt.model_catalog.apply_stt_model",
         lambda e, m: calls.append((e, m)),
     )
 
