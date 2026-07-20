@@ -77,6 +77,21 @@ class ModelRegistryStore:
         entries = sorted(self._by_id.values(), key=lambda e: (e["kind"], e["engine"], e["model_id"]))
         return [_copy(e) for e in entries]
 
+    async def list_options(self, kind: str, can_use_testing: bool) -> list[dict]:
+        """Selectable entries for a dropdown: enabled, non-sentinel (model_id != ""),
+        and stage-visible to the caller. Config sentinel rows (model_id == "") are
+        engine config, not selectable models, so they're excluded."""
+        await self._ensure_loaded()
+        opts = [
+            {"engine": e["engine"], "model_id": e["model_id"], "label": e["label"]}
+            for e in self._by_id.values()
+            if e["kind"] == kind
+            and e["enabled"]
+            and e["model_id"] != ""
+            and (e["stage"] != "testing" or can_use_testing)
+        ]
+        return sorted(opts, key=lambda o: (o["engine"], o["model_id"]))
+
     async def find(self, kind: str, engine: str, model_id: str) -> dict | None:
         await self._ensure_loaded()
         for entry in self._by_id.values():
