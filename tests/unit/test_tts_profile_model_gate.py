@@ -49,7 +49,21 @@ def test_tts_profile_create_rejects_disabled_engine(client, _with_password):
     assert resp.status_code == 403
 
 
-def test_tts_profile_create_allows_engine_not_in_registry(client, _with_password):
+def test_tts_profile_create_rejects_engine_not_in_registry(client, _with_password):
+    # Catalog-mode (Task 4): an engine with no enabled registry entry is now
+    # rejected (was: silently allowed). Inverts the former
+    # test_tts_profile_create_allows_engine_not_in_registry.
     _signup_login(client, "toan")
     resp = client.post("/v1/tts/profiles", json={"name": "p1", "engine": "some-future-engine"})
+    assert resp.status_code == 403
+
+
+def test_tts_profile_create_allows_catalogued_engine(client, _with_password):
+    # The accept side of catalog-mode: an enabled entry for the engine lets the
+    # save through. TTS gates on (engine, engine) -- see routes/tts_profiles.py.
+    store = ModelRegistryStore()
+    asyncio.run(store.create("tts", "vieneu", "vieneu", "VieNeu"))
+
+    _signup_login(client, "toan")
+    resp = client.post("/v1/tts/profiles", json={"name": "p1", "engine": "vieneu"})
     assert resp.status_code == 200

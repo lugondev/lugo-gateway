@@ -1,7 +1,10 @@
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.model_registry.store import ModelRegistryStore
 from app.services.tts.profile_store import TtsProfileStore
 
 
@@ -9,6 +12,19 @@ from app.services.tts.profile_store import TtsProfileStore
 def _clean_store(tmp_path, monkeypatch):
     fresh = TtsProfileStore(str(tmp_path / "tts_profiles.json"))
     monkeypatch.setattr("app.api.routes.tts_profiles.tts_profile_store", fresh)
+
+
+@pytest.fixture(autouse=True)
+def _catalog_engines():
+    # Catalog-mode (Task 4): TTS create/update gate the chosen engine against an
+    # enabled registry entry (check_model_allowed("tts", engine, engine, ...)).
+    # These route tests exercise CRUD, not the gate, so seed the engines they
+    # use as catalogued/enabled. The route's singleton store reads these back
+    # from the shared per-test tmp DB (see conftest `_tmp_db`). Tests that save
+    # a profile with no engine (del/visible) skip the gate and don't need this.
+    store = ModelRegistryStore()
+    asyncio.run(store.create("tts", "vieneu", "vieneu", "VieNeu"))
+    asyncio.run(store.create("tts", "omnivoice", "omnivoice", "OmniVoice"))
 
 
 @pytest.fixture

@@ -6,7 +6,6 @@ from app.core.errors import AppError
 from app.services.auth.users import user_store
 from app.services.mcp.models import McpServer
 from app.services.model_registry.gate import check_model_allowed
-from app.services.model_registry.store import model_registry_store
 from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, SessionConfig, SttConfig, TtsConfig
 from app.services.profiles.store import profile_store
 from app.services.stt.model_catalog import STT_MODEL_CATALOGS
@@ -97,19 +96,6 @@ async def create_profile(payload: ProfileRequest, request: Request) -> dict:
     await _validate_profile_models(profile, acting_user)
     profile_store.upsert(profile)
     return {"success": True, "data": _mask(profile)}
-
-
-@router.get("/llm-options")
-async def list_llm_options(request: Request) -> dict:
-    acting_user = await _resolve_acting_user(request)
-    can_use_testing = bool(acting_user and acting_user.can_use_testing)
-    entries = await model_registry_store.list_all()
-    options = [
-        {"id": e["id"], "engine": e["engine"], "model_id": e["model_id"], "label": e["label"]}
-        for e in entries
-        if e["kind"] == "llm" and e["enabled"] and (e["stage"] != "testing" or can_use_testing)
-    ]
-    return {"success": True, "data": options}
 
 
 @router.get("/{name}")

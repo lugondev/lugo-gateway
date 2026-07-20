@@ -136,6 +136,11 @@ def test_update_replaces_api_key_when_provided(client):
 
 
 def test_create_profile_accepts_valid_stt_model(client):
+    # Catalog-mode (Task 4): the (engine, model) pick must exist as an enabled
+    # registry entry, else the gate rejects it. Arrange the entry the route
+    # will look up. The whisper-size *format* validation (STT_MODEL_CATALOGS)
+    # still runs first and independently -- see the rejects_invalid_* tests.
+    asyncio.run(ModelRegistryStore().create("stt", "qwen3_asr", "0.6b", "Qwen3 ASR 0.6B"))
     resp = client.post("/v1/profiles", json={
         "name": "good-model",
         "stt": {"engine": "qwen3_asr", "model": "0.6b"},
@@ -179,6 +184,9 @@ def test_create_profile_model_requires_explicit_engine(client):
     })
     assert resp.status_code == 400
 
+    # Catalog-mode (Task 4): with an explicit engine the pick must also be a
+    # catalogued, enabled entry -- arrange it so the accepted case is exercised.
+    asyncio.run(ModelRegistryStore().create("stt", "qwen3_asr", "1.7b", "Qwen3 ASR 1.7B"))
     resp = client.post("/v1/profiles", json={
         "name": "model-with-engine",
         "stt": {"engine": "qwen3_asr", "model": "1.7b"},
@@ -195,44 +203,40 @@ def test_update_profile_rejects_invalid_stt_model(client):
     assert resp.status_code == 400
 
 
-def test_llm_options_lists_enabled_stable_entries_for_regular_user(client, _with_password):
-    store = ModelRegistryStore()
-    asyncio.run(store.create("llm", "openai", "gpt-4o-mini", "GPT-4o mini", stage="stable"))
-    _signup_login(client, "toan", role="user")
-    resp = client.get("/v1/profiles/llm-options")
-    assert resp.status_code == 200
-    data = resp.json()["data"]
-    assert any(e["engine"] == "openai" and e["model_id"] == "gpt-4o-mini" for e in data)
-    entry = next(e for e in data if e["engine"] == "openai")
-    assert "api_key" not in entry
-    assert "base_url" not in entry
-
-
-def test_llm_options_hides_testing_stage_for_non_tester(client, _with_password):
+# NOTE (Task 4): /v1/profiles/llm-options is gone; selectable models are now
+# served by the single-source registry endpoint /v1/model_registry/options.
+# That route is admin-gated (see core/auth_guard._ADMIN_PREFIXES), so these
+# repointed tests log in as admin. "enabled stable entry appears, with no
+# api_key/base_url leaked" is already asserted by exact-dict equality in
+# tests/unit/test_model_registry_options_route.py, so that former case
+# (test_llm_options_lists_enabled_stable_entries_for_regular_user) was dropped
+# as an exact duplicate. What's kept here is the route-level wiring the options
+# route test doesn't cover: per-user testing-stage visibility and disabled-hidden.
+def test_registry_options_hides_testing_stage_for_non_tester(client, _with_password):
     store = ModelRegistryStore()
     asyncio.run(store.create("llm", "openrouter", "qwen3-instruct", "Qwen3 Instruct", stage="testing"))
-    _signup_login(client, "toan2", role="user")
-    resp = client.get("/v1/profiles/llm-options")
+    _signup_login(client, "toan2", role="admin")
+    resp = client.get("/v1/model_registry/options?kind=llm")
     assert resp.status_code == 200
     assert not any(e["engine"] == "openrouter" for e in resp.json()["data"])
 
 
-def test_llm_options_shows_testing_stage_for_tester(client, _with_password):
+def test_registry_options_shows_testing_stage_for_tester(client, _with_password):
     store = ModelRegistryStore()
     asyncio.run(store.create("llm", "openrouter", "qwen3-instruct-2", "Qwen3 Instruct 2", stage="testing"))
-    _signup_login(client, "toan3", role="user")
+    _signup_login(client, "toan3", role="admin")
     user = asyncio.run(user_store.get_by_username("toan3"))
     asyncio.run(user_store.set_fields(user.id, can_use_testing=True))
-    resp = client.get("/v1/profiles/llm-options")
+    resp = client.get("/v1/model_registry/options?kind=llm")
     assert resp.status_code == 200
     assert any(e["engine"] == "openrouter" and e["model_id"] == "qwen3-instruct-2" for e in resp.json()["data"])
 
 
-def test_llm_options_hides_disabled_entries(client, _with_password):
+def test_registry_options_hides_disabled_entries(client, _with_password):
     store = ModelRegistryStore()
     entry = asyncio.run(store.create("llm", "openai", "gpt-disabled", "Disabled model", stage="stable"))
     asyncio.run(store.set_fields(entry["id"], enabled=False))
-    _signup_login(client, "toan4", role="user")
-    resp = client.get("/v1/profiles/llm-options")
+    _signup_login(client, "toan4", role="admin")
+    resp = client.get("/v1/model_registry/options?kind=llm")
     assert resp.status_code == 200
     assert not any(e["engine"] == "openai" and e["model_id"] == "gpt-disabled" for e in resp.json()["data"])

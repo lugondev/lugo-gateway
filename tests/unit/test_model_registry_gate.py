@@ -17,9 +17,13 @@ def users():
 
 
 @pytest.mark.asyncio
-async def test_no_matching_entry_is_unrestricted(store, users):
+async def test_no_matching_entry_is_now_rejected(users):
+    # Catalog-mode (Task 4): a concrete (engine, model_id) with no registry
+    # entry is rejected, not silently allowed. The registry is the single
+    # source of truth for selectable models.
     user = await users.create("toan", "pw")
-    await check_model_allowed("llm", "some-custom-engine", "some-model", user)  # no raise
+    with pytest.raises(ModelNotAllowedError):
+        await check_model_allowed("llm", "some-custom-engine", "some-model", user)
 
 
 @pytest.mark.asyncio
