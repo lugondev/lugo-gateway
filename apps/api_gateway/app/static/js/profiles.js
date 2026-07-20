@@ -13,7 +13,7 @@ export let llmOptionData = [];
 
 export async function loadLlmOptions() {
   try {
-    const body = await (await fetch("/v1/profiles/llm-options")).json();
+    const body = await (await fetch("/v1/model_registry/options?kind=llm")).json();
     llmOptionData = body.data || [];
   } catch {
     llmOptionData = [];
@@ -79,24 +79,19 @@ export function renderProfileLlmSelect() {
   if (!sel) return;
   const prev = sel.value;
   sel.innerHTML = "";
+  if (llmOptionData.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "(no LLM models — add one in Model Registry)";
+    sel.appendChild(opt);
+  }
   llmOptionData.forEach((entry) => {
     const opt = document.createElement("option");
-    opt.value = entry.id;
-    opt.textContent = `${entry.label} (${entry.engine}/${entry.model_id})`;
+    opt.value = `${entry.engine}|${entry.model_id}`;
+    opt.textContent = entry.label;
     sel.appendChild(opt);
   });
-  const customOpt = document.createElement("option");
-  customOpt.value = "__custom__";
-  customOpt.textContent = "— Custom… —";
-  sel.appendChild(customOpt);
   if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
-}
-
-export function toggleLlmCustomFields() {
-  const sel = el("pf-llm-select");
-  const fields = el("pf-llm-custom-fields");
-  if (!sel || !fields) return;
-  fields.classList.toggle("hidden", sel.value !== "__custom__");
 }
 
 // One flat "STT model" select: each option is an (engine, model-variant)
@@ -107,31 +102,12 @@ export async function renderProfileSttModelSelect(selEngine, selModel) {
   if (!sel) return;
   sel.innerHTML = '<option value="">(inherit global)</option>';
   try {
-    const body = await (await fetch("/v1/stt/engines")).json();
-    const engines = (body.data || []).filter((e) => e.available);
-    const variantLists = await Promise.all(engines.map(async (e) => {
-      try {
-        const mb = await (await fetch(`/v1/stt/models?engine=${encodeURIComponent(e.engine)}`)).json();
-        return mb.data?.models || [];
-      } catch {
-        return [];
-      }
-    }));
-    engines.forEach((e, i) => {
-      const models = variantLists[i];
-      if (models.length === 0) {
-        const opt = document.createElement("option");
-        opt.value = `${e.engine}|`;
-        opt.textContent = e.detail ? `${e.engine} — ${e.detail}` : e.engine;
-        sel.appendChild(opt);
-        return;
-      }
-      models.forEach((m) => {
-        const opt = document.createElement("option");
-        opt.value = `${e.engine}|${m.id}`;
-        opt.textContent = `${e.engine} — ${m.label || m.id}`;
-        sel.appendChild(opt);
-      });
+    const body = await (await fetch("/v1/model_registry/options?kind=stt")).json();
+    (body.data || []).forEach((o) => {
+      const opt = document.createElement("option");
+      opt.value = `${o.engine}|${o.model_id}`;
+      opt.textContent = o.label;
+      sel.appendChild(opt);
     });
   } catch {
     /* keep just the inherit option */
@@ -173,11 +149,7 @@ export async function openProfilePanel(mode, name) {
     el("pf-nickname").value = "";
     el("pf-system-prompt").value = "";
     if (el("pf-voice-optimized")) el("pf-voice-optimized").checked = false;
-    el("pf-llm-select").value = "__custom__";
-    el("pf-llm-url").value = "";
-    el("pf-llm-model").value = "";
-    el("pf-llm-key").value = "";
-    toggleLlmCustomFields();
+    el("pf-llm-select").value = "";
     if (el("pf-stt-language")) el("pf-stt-language").value = "";
     await renderProfileSttModelSelect("", "");
     if (el("pf-tts-profile")) el("pf-tts-profile").value = "";
@@ -196,14 +168,7 @@ export async function openProfilePanel(mode, name) {
     el("pf-nickname").value = p.nickname || "";
     el("pf-system-prompt").value = p.system_prompt || "";
     if (el("pf-voice-optimized")) el("pf-voice-optimized").checked = p.voice_optimized ?? false;
-    const matchedOption = llmOptionData.find(
-      (o) => o.engine === p.llm?.engine && o.model_id === p.llm?.model
-    );
-    el("pf-llm-select").value = matchedOption ? matchedOption.id : "__custom__";
-    el("pf-llm-url").value = p.llm?.base_url || "";
-    el("pf-llm-model").value = p.llm?.model || "";
-    el("pf-llm-key").value = "";
-    toggleLlmCustomFields();
+    el("pf-llm-select").value = p.llm?.engine ? `${p.llm.engine}|${p.llm.model || ""}` : "";
     if (el("pf-stt-language")) el("pf-stt-language").value = p.stt?.language || "";
     await renderProfileSttModelSelect(p.stt?.engine || "", p.stt?.model || "");
     if (el("pf-tts-profile")) el("pf-tts-profile").value = p.tts?.profile_name || "";
@@ -271,17 +236,9 @@ export async function saveProfile() {
     name,
     nickname: el("pf-nickname").value.trim(),
     llm: (() => {
-      const selectedId = el("pf-llm-select")?.value;
-      const selected = llmOptionData.find((o) => o.id === selectedId);
-      if (selected) {
-        return { base_url: "", api_key: "", model: selected.model_id, engine: selected.engine };
-      }
-      return {
-        base_url: el("pf-llm-url").value.trim(),
-        api_key: el("pf-llm-key").value,
-        model: el("pf-llm-model").value.trim(),
-        engine: "",
-      };
+      const raw = el("pf-llm-select")?.value || "";
+      const [engine = "", model = ""] = raw ? raw.split("|") : ["", ""];
+      return { base_url: "", api_key: "", model, engine };
     })(),
     system_prompt: el("pf-system-prompt").value,
     voice_optimized: el("pf-voice-optimized")?.checked ?? false,
@@ -323,7 +280,6 @@ export async function saveProfile() {
       return;
     }
     el("pf-status").textContent = "Saved ✓";
-    el("pf-llm-key").value = "";
     await loadProfiles();
     el("profile-select").value = name;
     if (isNew) {
@@ -470,7 +426,6 @@ if (el("profile-edit-btn")) {
   });
 }
 if (el("profile-new-btn")) el("profile-new-btn").addEventListener("click", () => openProfilePanel("new"));
-if (el("pf-llm-select")) el("pf-llm-select").addEventListener("change", toggleLlmCustomFields);
 if (el("profile-close-btn")) el("profile-close-btn").addEventListener("click", closeProfilePanel);
 if (el("pf-cancel-btn")) el("pf-cancel-btn").addEventListener("click", closeProfilePanel);
 if (el("pf-save-btn")) el("pf-save-btn").addEventListener("click", saveProfile);
