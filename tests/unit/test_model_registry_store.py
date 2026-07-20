@@ -190,28 +190,30 @@ async def test_find_enabled_sync_skips_disabled_entries():
 
 
 # ---------------------------------------------------------------------------
-# LLM single-active-row enforcement -- unlike stt/tts (where every caller
+# LLM single-default-row enforcement -- unlike stt/tts (where every caller
 # scopes find_enabled to one engine, so several engines each having their own
-# enabled row is normal), the conversation LLM is picked via a single
-# kind="llm" find_enabled() with NO engine filter (see responder.py's
-# _active_llm_entry). Two enabled llm rows at once is genuinely ambiguous
-# ("first found wins"), so create()/set_fields() must enforce at most one.
+# enabled row is normal, and multiple llm rows may now be enabled too, e.g.
+# several models a user can pick per profile), the conversation LLM is picked
+# via a single kind="llm" find_default() with NO engine filter (see
+# responder.py's _active_llm_entry). Two is_default=True llm rows at once
+# would be genuinely ambiguous, so create()/set_fields() enforce at most one
+# is_default row per kind="llm" -- `enabled` itself is no longer exclusive.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_creating_a_second_enabled_llm_entry_disables_the_first(store):
+async def test_creating_a_second_enabled_llm_entry_does_not_disable_the_first(store):
     first = await store.create("llm", "openrouter", "model-a", "Model A")
     assert first["enabled"] is True
 
     second = await store.create("llm", "openrouter", "model-b", "Model B")
 
     assert second["enabled"] is True
-    assert (await store.get(first["id"]))["enabled"] is False
+    assert (await store.get(first["id"]))["enabled"] is True
 
 
 @pytest.mark.asyncio
-async def test_set_fields_enabling_an_llm_entry_disables_other_llm_entries(store):
+async def test_set_fields_enabling_an_llm_entry_does_not_disable_other_llm_entries(store):
     first = await store.create("llm", "openrouter", "model-a", "Model A")
     second = await store.create("llm", "ollama", "model-b", "Model B", enabled=False)
     assert first["enabled"] is True
@@ -220,35 +222,82 @@ async def test_set_fields_enabling_an_llm_entry_disables_other_llm_entries(store
     updated = await store.set_fields(second["id"], enabled=True)
 
     assert updated["enabled"] is True
-    assert (await store.get(first["id"]))["enabled"] is False
+    assert (await store.get(first["id"]))["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_creating_a_second_default_llm_entry_disables_the_first_default(store):
+    first = await store.create("llm", "openrouter", "model-a", "Model A", is_default=True)
+    assert first["is_default"] is True
+
+    second = await store.create("llm", "openrouter", "model-b", "Model B", is_default=True)
+
+    assert second["is_default"] is True
+    assert (await store.get(first["id"]))["is_default"] is False
+    # enabled is untouched by is_default exclusivity.
+    assert (await store.get(first["id"]))["enabled"] is True
+    assert (await store.get(second["id"]))["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_set_fields_setting_is_default_disables_other_llm_defaults(store):
+    first = await store.create("llm", "openrouter", "model-a", "Model A", is_default=True)
+    second = await store.create("llm", "ollama", "model-b", "Model B")
+    assert first["is_default"] is True
+    assert second["is_default"] is False
+
+    updated = await store.set_fields(second["id"], is_default=True)
+
+    assert updated["is_default"] is True
+    assert (await store.get(first["id"]))["is_default"] is False
+    assert (await store.get(first["id"]))["enabled"] is True
+    assert (await store.get(second["id"]))["enabled"] is True
 
 
 @pytest.mark.asyncio
 async def test_llm_exclusivity_ignores_engine_name(store):
     """Two llm rows with the SAME engine label must still be mutually
-    exclusive -- exclusivity is scoped to kind="llm" only, not (kind, engine),
-    matching how _active_llm_entry() looks the row up (no engine filter)."""
-    first = await store.create("llm", "openrouter", "model-a", "Model A")
-    second = await store.create("llm", "openrouter", "model-b", "Model B")
+    exclusive on is_default -- exclusivity is scoped to kind="llm" only, not
+    (kind, engine), matching how _active_llm_entry() looks the row up (no
+    engine filter)."""
+    first = await store.create("llm", "openrouter", "model-a", "Model A", is_default=True)
+    second = await store.create("llm", "openrouter", "model-b", "Model B", is_default=True)
 
-    assert (await store.get(first["id"]))["enabled"] is False
-    assert (await store.get(second["id"]))["enabled"] is True
+    assert (await store.get(first["id"]))["is_default"] is False
+    assert (await store.get(second["id"]))["is_default"] is True
 
 
 @pytest.mark.asyncio
 async def test_llm_exclusivity_does_not_affect_other_kinds(store):
     stt = await store.create("stt", "whisper", "medium", "Whisper Medium")
-    await store.create("llm", "openrouter", "model-a", "Model A")
+    await store.create("llm", "openrouter", "model-a", "Model A", is_default=True)
 
     assert (await store.get(stt["id"]))["enabled"] is True
 
 
 @pytest.mark.asyncio
-async def test_disabling_the_active_llm_entry_does_not_enable_another(store):
-    first = await store.create("llm", "openrouter", "model-a", "Model A")
+async def test_clearing_is_default_does_not_set_another_entrys_is_default(store):
+    first = await store.create("llm", "openrouter", "model-a", "Model A", is_default=True)
     second = await store.create("llm", "ollama", "model-b", "Model B", enabled=False)
 
-    await store.set_fields(first["id"], enabled=False)
+    await store.set_fields(first["id"], is_default=False)
 
-    assert (await store.get(first["id"]))["enabled"] is False
-    assert (await store.get(second["id"]))["enabled"] is False
+    assert (await store.get(first["id"]))["is_default"] is False
+    assert (await store.get(second["id"]))["is_default"] is False
+
+
+@pytest.mark.asyncio
+async def test_find_default_returns_the_is_default_row_for_a_kind(store):
+    assert await store.find_default("llm") is None
+
+    stt_entry = await store.create("stt", "whisper", "medium", "Whisper Medium")
+    await store.create("llm", "openrouter", "model-a", "Model A")
+    default_entry = await store.create("llm", "ollama", "model-b", "Model B", is_default=True)
+
+    found = await store.find_default("llm")
+    assert found is not None
+    assert found["id"] == default_entry["id"]
+
+    # Scoped by kind -- an is_default llm row doesn't leak into stt's lookup.
+    assert await store.find_default("stt") is None
+    assert stt_entry["is_default"] is False

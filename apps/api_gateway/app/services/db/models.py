@@ -99,6 +99,7 @@ class ModelRegistryEntry(Base):
     label: Mapped[str] = mapped_column(String(128))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     stage: Mapped[str] = mapped_column(String(16), default="stable")  # "stable" | "testing"
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     # Per-model credential, looked up by (kind, engine, model_id) at call time
     # instead of a single system-wide key. Used today by OpenRouter-backed STT
     # engines (qwen3_asr_or/whisper_or) and by kind="llm" entries (see

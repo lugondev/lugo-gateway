@@ -145,6 +145,7 @@ async def init_db() -> None:
             await _ensure_column(conn, "model_registry_entries", "api_key", "VARCHAR(256) DEFAULT ''")
             await _ensure_column(conn, "model_registry_entries", "base_url", "VARCHAR(256) DEFAULT ''")
             await _ensure_column(conn, "model_registry_entries", "config", "JSON DEFAULT '{}'")
+            await _ensure_column(conn, "model_registry_entries", "is_default", "BOOLEAN DEFAULT 0")
             await _backfill_null_user_ids(conn, "memories")
             await _ensure_doc_composite_pk(conn)
         _initialized = True

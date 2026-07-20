@@ -12,7 +12,7 @@ from app.services.db.models import ModelRegistryEntry
 def _entry_dict(e: ModelRegistryEntry) -> dict:
     return {
         "id": e.id, "kind": e.kind, "engine": e.engine, "model_id": e.model_id,
-        "label": e.label, "enabled": e.enabled, "stage": e.stage,
+        "label": e.label, "enabled": e.enabled, "stage": e.stage, "is_default": e.is_default,
         "api_key": e.api_key, "base_url": e.base_url, "config": e.config or {},
     }
 
@@ -117,6 +117,19 @@ class ModelRegistryStore:
                 return _copy(entry)
         return None
 
+    async def find_default(self, kind: str) -> dict | None:
+        """The is_default=True entry for this kind, if one is set. Distinct from
+        find_enabled: enabled means "selectable at all" (multiple rows may be
+        enabled simultaneously, e.g. several llm models a user can pick per
+        profile); is_default means "the one this kind falls back to with no
+        per-profile override" (at most one row per kind, enforced by
+        create()/set_fields() the same way enabled used to be for kind="llm")."""
+        await self._ensure_loaded()
+        for entry in self._by_id.values():
+            if entry["kind"] == kind and entry["is_default"]:
+                return _copy(entry)
+        return None
+
     def find_sync(self, kind: str, engine: str, model_id: str) -> dict | None:
         """Synchronous, cache-only equivalent of `find()` for call sites that
         can't `await` -- provider code that builds a model off the event loop
@@ -170,22 +183,23 @@ class ModelRegistryStore:
         base_url: str = "",
         config: dict | None = None,
         enabled: bool = True,
+        is_default: bool = False,
     ) -> dict:
         await self._ensure_loaded()
         async with db_session() as s:
             row = ModelRegistryEntry(
                 id=str(uuid.uuid4()), kind=kind, engine=engine, model_id=model_id,
                 label=label, enabled=enabled, stage=stage, api_key=api_key, base_url=base_url,
-                config=config or {},
+                config=config or {}, is_default=is_default,
             )
             s.add(row)
-            if kind == "llm" and enabled:
-                await self._disable_other_llm_rows(s, exclude_id=row.id)
+            if kind == "llm" and is_default:
+                await self._disable_other_llm_defaults(s, exclude_id=row.id)
             await s.commit()
             entry = _entry_dict(row)
         self._by_id[entry["id"]] = entry
-        if kind == "llm" and enabled:
-            self._sync_llm_exclusivity_cache(exclude_id=entry["id"])
+        if kind == "llm" and is_default:
+            self._sync_llm_default_cache(exclude_id=entry["id"])
         return _copy(entry)
 
     async def set_fields(self, entry_id: str, **fields) -> dict | None:
@@ -196,42 +210,43 @@ class ModelRegistryStore:
                 return None
             for key, value in fields.items():
                 setattr(row, key, value)
-            if row.kind == "llm" and fields.get("enabled") is True:
-                await self._disable_other_llm_rows(s, exclude_id=entry_id)
+            if row.kind == "llm" and fields.get("is_default") is True:
+                await self._disable_other_llm_defaults(s, exclude_id=entry_id)
             await s.commit()
             entry = _entry_dict(row)
         self._by_id[entry_id] = entry
-        if row.kind == "llm" and fields.get("enabled") is True:
-            self._sync_llm_exclusivity_cache(exclude_id=entry_id)
+        if row.kind == "llm" and fields.get("is_default") is True:
+            self._sync_llm_default_cache(exclude_id=entry_id)
         return _copy(entry)
 
-    async def _disable_other_llm_rows(self, session, exclude_id: str) -> None:
-        """Enforce at most one enabled kind="llm" row, DB-side.
+    async def _disable_other_llm_defaults(self, session, exclude_id: str) -> None:
+        """Enforce at most one is_default=True kind="llm" row, DB-side.
 
-        The conversation LLM is resolved via a single find_enabled(kind="llm")
-        with no engine filter (see responder.py's _active_llm_entry) -- unlike
-        stt/tts, where every caller scopes find_enabled to one engine and
-        several engines each having their own enabled row is normal and
-        correct. For llm, more than one enabled row is genuinely ambiguous, so
-        enabling one here always turns every other llm row off."""
+        The conversation LLM is resolved via a single find_default(kind="llm")
+        with no engine filter (see responder.py's _active_llm_entry) -- more
+        than one is_default=True row would be genuinely ambiguous for that
+        lookup, so setting one here always clears is_default on every other
+        llm row. This does not touch `enabled`: multiple llm rows may be
+        enabled (selectable per-profile) at once, same as stt/tts."""
         result = await session.execute(
             select(ModelRegistryEntry).where(
                 ModelRegistryEntry.kind == "llm",
                 ModelRegistryEntry.id != exclude_id,
-                ModelRegistryEntry.enabled.is_(True),
+                ModelRegistryEntry.is_default.is_(True),
             )
         )
         for other in result.scalars():
-            other.enabled = False
+            other.is_default = False
 
-    def _sync_llm_exclusivity_cache(self, exclude_id: str) -> None:
-        """Mirror _disable_other_llm_rows' DB write into the in-memory cache
+    def _sync_llm_default_cache(self, exclude_id: str) -> None:
+        """Mirror _disable_other_llm_defaults' DB write into the in-memory cache
         so a subsequent find()/list_all() in the same process sees the other
-        rows as disabled without a reload (matches this store's read-from-cache
-        contract -- see test_reads_are_served_from_cache_without_hitting_the_db_again)."""
+        rows' is_default cleared without a reload (matches this store's
+        read-from-cache contract -- see
+        test_reads_are_served_from_cache_without_hitting_the_db_again)."""
         for other_id, other in self._by_id.items():
-            if other_id != exclude_id and other["kind"] == "llm" and other["enabled"]:
-                other["enabled"] = False
+            if other_id != exclude_id and other["kind"] == "llm" and other["is_default"]:
+                other["is_default"] = False
 
 
 model_registry_store = ModelRegistryStore()
