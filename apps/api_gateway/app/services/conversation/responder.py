@@ -87,7 +87,7 @@ async def set_active_llm_config(base_url: str, api_key: str, model: str, engine:
 
 
 async def reset_active_llm_config() -> None:
-    """Turn off the conversation LLM (disables the currently-enabled entry --
+    """Turn off the conversation LLM (disables the current is_default entry --
     conversation falls back to the built-in echo responder)."""
     from app.services.model_registry.store import model_registry_store
 

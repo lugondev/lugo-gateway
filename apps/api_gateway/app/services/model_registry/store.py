@@ -105,12 +105,14 @@ class ModelRegistryStore:
         return None if entry is None else _copy(entry)
 
     async def find_enabled(self, kind: str, engine: str | None = None) -> dict | None:
-        """The single enabled entry for this kind (optionally scoped to one
-        engine) -- the "active" config source convention used by kinds with
-        no per-profile selection (e.g. the default conversation LLM). If more
-        than one entry is enabled, the first found wins; callers should treat
-        multiple-enabled as a UI misconfiguration to fix, not rely on the
-        tie-break order."""
+        """The single enabled entry for this (kind, engine) -- multiple
+        engines each having their own enabled row is normal (stt/tts) since
+        this is scoped per engine. NOT the lookup for "the default conversation
+        LLM" -- that's find_default(kind), since kind="llm" allows several
+        enabled rows at once (a per-profile catalog) with at most one marked
+        is_default. If more than one entry is enabled for the same (kind,
+        engine), the first found wins; callers should treat that as a UI
+        misconfiguration to fix, not rely on the tie-break order."""
         await self._ensure_loaded()
         for entry in self._by_id.values():
             if entry["kind"] == kind and entry["enabled"] and (engine is None or entry["engine"] == engine):
