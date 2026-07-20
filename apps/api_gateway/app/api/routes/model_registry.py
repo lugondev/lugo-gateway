@@ -1,7 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from app.core.actor import current_user_id
 from app.core.audio import pcm16_to_wav_bytes
+from app.services.auth.users import user_store
 from app.schemas.tts import TTSRequest
 from app.services.conversation.responder import OpenAICompatResponder
 from app.services.model_registry.config_schema import config_schema_for
@@ -80,6 +82,22 @@ async def get_config_schema(kind: str, engine: str) -> dict:
     schema, not a stored entry -- never reads the DB. Empty for engines with no
     known config shape (the UI falls back to raw JSON)."""
     return {"fields": config_schema_for(kind, engine)}
+
+
+_VALID_KINDS = {"stt", "tts", "llm"}
+
+
+@router.get("/options")
+async def list_options(kind: str, request: Request) -> dict:
+    """Selectable models for a dropdown, filtered to what this user may pick.
+    The single source of truth every profile/service select reads."""
+    if kind not in _VALID_KINDS:
+        raise HTTPException(status_code=400, detail=f"unknown kind '{kind}'")
+    user_id = current_user_id(request)
+    user = await user_store.get_by_id(user_id) if user_id else None
+    can_use_testing = bool(user and user.can_use_testing)
+    options = await model_registry_store.list_options(kind, can_use_testing)
+    return {"success": True, "data": options}
 
 
 @router.post("")
