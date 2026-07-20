@@ -58,6 +58,7 @@ class CreateEntryRequest(BaseModel):
     api_key: str = ""
     config: dict = {}
     sample_text: str = "xin chào"
+    is_default: bool = False
 
 
 class UpdateEntryRequest(BaseModel):
@@ -66,6 +67,7 @@ class UpdateEntryRequest(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     config: dict | None = None
+    is_default: bool | None = None
 
 
 @router.get("")
@@ -145,6 +147,7 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
         api_key=payload.api_key,
         base_url=payload.base_url,
         config=payload.config,
+        is_default=payload.is_default,
     )
     created["api_key"] = _mask_api_key(created["api_key"])
     return {"success": True, "data": created}
