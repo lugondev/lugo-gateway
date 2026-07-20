@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 from app.core.settings import settings
 from app.services.artifacts import artifact_store
+from app.services.model_registry.autosync import disable_registry_entry, ensure_registry_entry
+from app.services.model_registry.engine_map import registry_ref
 from app.services.models import model_manager
 from app.services.stt.service import stt_service
 from app.services.llm_models import llm_manager
@@ -185,12 +187,17 @@ async def list_models() -> dict:
 async def download_vosk(payload: DownloadRequest, background: BackgroundTasks) -> dict:
     model_manager.validate(payload.name)
     background.add_task(model_manager.download, payload.name)
+    ref = registry_ref("vosk", payload.name)
+    if ref:
+        await ensure_registry_entry(*ref)
     return {"success": True, "data": {"name": payload.name, "state": "queued"}}
 
 
 @router.delete("/models/vosk/{name}")
 async def delete_vosk(name: str) -> dict:
     model_manager.delete(name)
+    kind, engine, model_id, _ = registry_ref("vosk", name)
+    await disable_registry_entry(kind, engine, model_id)
     return {"success": True, "data": {"name": name, "state": "deleted"}}
 
 
@@ -205,12 +212,17 @@ async def select_vosk(payload: DownloadRequest) -> dict:
 async def download_whisper(payload: WhisperRequest, background: BackgroundTasks) -> dict:
     whisper_manager.validate(payload.size)
     background.add_task(whisper_manager.download, payload.size)
+    ref = registry_ref("whisper", payload.size)
+    if ref:
+        await ensure_registry_entry(*ref)
     return {"success": True, "data": {"size": payload.size, "state": "queued"}}
 
 
 @router.delete("/models/whisper/{size}")
 async def delete_whisper(size: str) -> dict:
     whisper_manager.delete(size)
+    kind, engine, model_id, _ = registry_ref("whisper", size)
+    await disable_registry_entry(kind, engine, model_id)
     return {"success": True, "data": {"size": size, "state": "deleted"}}
 
 
@@ -225,6 +237,9 @@ async def select_whisper(payload: WhisperRequest) -> dict:
 async def download_omnivoice(payload: OmniModelRequest, background: BackgroundTasks) -> dict:
     tts_model_manager.validate_repo(payload.id)
     background.add_task(tts_model_manager.download_omnivoice, payload.id)
+    ref = registry_ref("omnivoice", payload.id)
+    if ref:
+        await ensure_registry_entry(*ref)
     return {"success": True, "data": {"id": payload.id, "state": "queued"}}
 
 
@@ -237,6 +252,8 @@ async def select_omnivoice(payload: OmniModelRequest) -> dict:
 @router.post("/models/omnivoice/delete")
 async def delete_omnivoice(payload: OmniModelRequest) -> dict:
     tts_model_manager.delete_omnivoice(payload.id)
+    kind, engine, model_id, _ = registry_ref("omnivoice", payload.id)
+    await disable_registry_entry(kind, engine, model_id)
     return {"success": True, "data": {"id": payload.id, "state": "deleted"}}
 
 
@@ -245,6 +262,9 @@ async def delete_omnivoice(payload: OmniModelRequest) -> dict:
 async def download_vieneu(payload: VieneuModeRequest, background: BackgroundTasks) -> dict:
     tts_model_manager.validate_mode(payload.mode)
     background.add_task(tts_model_manager.download_vieneu, payload.mode)
+    ref = registry_ref("vieneu", payload.mode)
+    if ref:
+        await ensure_registry_entry(*ref)
     return {"success": True, "data": {"mode": payload.mode, "state": "queued"}}
 
 
@@ -257,6 +277,8 @@ async def select_vieneu(payload: VieneuModeRequest) -> dict:
 @router.post("/models/vieneu/delete")
 async def delete_vieneu(payload: VieneuModeRequest) -> dict:
     tts_model_manager.delete_vieneu(payload.mode)
+    kind, engine, model_id, _ = registry_ref("vieneu", payload.mode)
+    await disable_registry_entry(kind, engine, model_id)
     return {"success": True, "data": {"mode": payload.mode, "state": "deleted"}}
 
 
@@ -265,6 +287,9 @@ async def delete_vieneu(payload: VieneuModeRequest) -> dict:
 async def download_llm(payload: LlmModelRequest, background: BackgroundTasks) -> dict:
     llm_manager.validate(payload.model)
     background.add_task(llm_manager.download, payload.model)
+    ref = registry_ref("llm", payload.model)
+    if ref:
+        await ensure_registry_entry(*ref)
     return {"success": True, "data": {"model": payload.model, "state": "queued"}}
 
 
@@ -287,4 +312,6 @@ async def select_llm(payload: LlmModelRequest) -> dict:
 @router.post("/models/llm/delete")
 async def delete_llm(payload: LlmModelRequest) -> dict:
     await llm_manager.delete(payload.model)
+    kind, engine, model_id, _ = registry_ref("llm", payload.model)
+    await disable_registry_entry(kind, engine, model_id)
     return {"success": True, "data": {"model": payload.model, "state": "deleted"}}
