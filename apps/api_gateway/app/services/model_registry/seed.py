@@ -173,6 +173,7 @@ async def seed_installed_models_to_registry() -> None:
     from app.services.model_registry.autosync import ensure_registry_entry
     from app.services.models import model_manager
     from app.services.profiles.store import profile_store
+    from app.services.tts.profile_store import tts_profile_store
     from app.services.whisper_models import whisper_manager
 
     for m in whisper_manager.snapshot()["models"]:
@@ -193,3 +194,17 @@ async def seed_installed_models_to_registry() -> None:
                 await ensure_registry_entry(
                     "llm", profile.llm.engine, profile.llm.model,
                     f"{profile.llm.engine} — {profile.llm.model} (in use)")
+
+    # TTS profiles gate on the (engine, engine) shim -- see check_model_allowed()
+    # call in routes/tts_profiles.py, where profile.engine doubles as its own
+    # model_id since TTS profiles don't select a separate model id. Nothing else
+    # backfills this shape: migrate_omnivoice_to_registry() seeds a different,
+    # unrelated model_id="" sentinel row, and engine_map's auto-sync keys rows by
+    # real model ids, not by the engine name repeated as model_id. Without this,
+    # catalog-mode's flip (Task 4) locks every existing TTS profile out of saving.
+    for tts_profile in tts_profile_store.list().values():
+        if tts_profile.engine:
+            if await model_registry_store.find("tts", tts_profile.engine, tts_profile.engine) is None:
+                await ensure_registry_entry(
+                    "tts", tts_profile.engine, tts_profile.engine,
+                    f"{tts_profile.engine} — {tts_profile.engine} (in use)")

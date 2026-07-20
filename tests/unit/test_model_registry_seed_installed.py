@@ -20,6 +20,42 @@ async def test_seeds_cached_whisper_models(monkeypatch):
     assert await model_registry_store.find("stt", "whisper", "large-v3") is None  # not cached
 
 
+async def test_seeds_tts_profile_engine_shim(monkeypatch):
+    # Finding 1 (critical): TTS profile save gates on the (engine, engine) shim
+    # (see routes/tts_profiles.py) -- unlike stt/llm, nothing else backfills
+    # that shape, so a profile with an in-use engine must be seeded here too or
+    # catalog-mode's flip (Task 4) locks existing TTS profiles out of saving.
+    from app.services.whisper_models import whisper_manager
+    from app.services.models import model_manager
+    from app.services.tts.profile_store import tts_profile_store
+    from app.services.tts.profile_models import TtsProfile
+    monkeypatch.setattr(whisper_manager, "snapshot", lambda: {"models": [], "active": None})
+    monkeypatch.setattr(model_manager, "snapshot", lambda: {"installed": [], "active": None})
+    monkeypatch.setattr(tts_profile_store, "list", lambda: {
+        "p1": TtsProfile(name="p1", engine="omnivoice"),
+    })
+
+    await seed_installed_models_to_registry()
+    entry = await model_registry_store.find("tts", "omnivoice", "omnivoice")
+    assert entry is not None
+    assert entry["enabled"] is True
+
+
+async def test_seeds_tts_profile_engine_shim_skips_blank_engine(monkeypatch):
+    from app.services.whisper_models import whisper_manager
+    from app.services.models import model_manager
+    from app.services.tts.profile_store import tts_profile_store
+    from app.services.tts.profile_models import TtsProfile
+    monkeypatch.setattr(whisper_manager, "snapshot", lambda: {"models": [], "active": None})
+    monkeypatch.setattr(model_manager, "snapshot", lambda: {"installed": [], "active": None})
+    monkeypatch.setattr(tts_profile_store, "list", lambda: {
+        "p1": TtsProfile(name="p1", engine=""),
+    })
+
+    await seed_installed_models_to_registry()  # no-op, no crash -- blank engine == inherit default
+    assert await model_registry_store.list_all() == []
+
+
 async def test_idempotent_and_preserves_disabled(monkeypatch):
     from app.services.whisper_models import whisper_manager
     from app.services.models import model_manager
