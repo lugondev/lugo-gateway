@@ -60,17 +60,45 @@ function _filteredRegistryData() {
   });
 }
 
+// Sentinel rows (model_id == "") are engine-config, not selectable models:
+// they hold device/compute/model_path settings the providers read at runtime
+// (resolve_stt_engine_config). Splitting them into their own section keeps them
+// from looking like phantom "downloaded" models in the main list.
+function _isEngineConfig(e) {
+  return e.model_id === "";
+}
+
 function renderModelRegistry() {
   const host = el("model-registry-list");
   if (!host) return;
 
   const rows = _filteredRegistryData();
+  const modelRows = rows.filter((e) => !_isEngineConfig(e));
+  const configRows = rows.filter(_isEngineConfig);
+
+  host.innerHTML = "";
+  const modelsHost = document.createElement("div");
+  host.appendChild(modelsHost);
+  _renderRegistryTable(modelsHost, modelRows, registryData.length ? "No models match the current filters." : "No entries yet.");
+
+  if (configRows.length) {
+    const label = document.createElement("h3");
+    label.className = "sub";
+    label.textContent = "Engine config (device / compute — not selectable models)";
+    host.appendChild(label);
+    const configHost = document.createElement("div");
+    host.appendChild(configHost);
+    _renderRegistryTable(configHost, configRows, "");
+  }
+}
+
+function _renderRegistryTable(host, rows, emptyMessage) {
   const table = renderDataTable({
     container: host,
     rows,
     rowKey: (e) => e.id,
+    emptyMessage,
     getRowClass: (e) => (e.enabled ? "" : "dim"),
-    emptyMessage: registryData.length ? "No entries match the current filters." : "No entries yet.",
     columns: [
       { key: "kind", label: "Kind", render: (e) => `<strong>${escapeHtml(e.kind)}</strong>` },
       {

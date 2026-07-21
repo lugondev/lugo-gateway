@@ -24,15 +24,28 @@ async def test_whisper_download_creates_registry_entry(client, monkeypatch):
     assert entry is not None and entry["enabled"] is True
 
 
-async def test_whisper_delete_disables_registry_entry(client, monkeypatch):
+async def test_whisper_delete_removes_registry_entry(client, monkeypatch):
+    # A local whisper row has no api_key/base_url worth keeping, so deleting the
+    # artifact removes the registry row outright (no dangling disabled entry).
     from app.services.whisper_models import whisper_manager
     monkeypatch.setattr(whisper_manager, "delete", lambda size: None)
     await model_registry_store.create("stt", "whisper", "tiny", "Tiny", enabled=True)
 
     resp = client.delete("/v1/models/whisper/tiny")
     assert resp.status_code == 200
+    assert await model_registry_store.find("stt", "whisper", "tiny") is None
+
+
+async def test_whisper_delete_keeps_credentialed_entry(client, monkeypatch):
+    # A row carrying an api_key is only disabled, so a reinstall keeps the key.
+    from app.services.whisper_models import whisper_manager
+    monkeypatch.setattr(whisper_manager, "delete", lambda size: None)
+    await model_registry_store.create("stt", "whisper", "tiny", "Tiny", enabled=True, api_key="k")
+
+    resp = client.delete("/v1/models/whisper/tiny")
+    assert resp.status_code == 200
     entry = await model_registry_store.find("stt", "whisper", "tiny")
-    assert entry["enabled"] is False
+    assert entry is not None and entry["enabled"] is False and entry["api_key"] == "k"
 
 
 async def test_vosk_download_creates_registry_entry(client, monkeypatch):
@@ -45,15 +58,14 @@ async def test_vosk_download_creates_registry_entry(client, monkeypatch):
     assert entry is not None and entry["enabled"] is True
 
 
-async def test_vosk_delete_disables_registry_entry(client, monkeypatch):
+async def test_vosk_delete_removes_registry_entry(client, monkeypatch):
     from app.services.models import model_manager
     monkeypatch.setattr(model_manager, "delete", lambda name: None)
     await model_registry_store.create("stt", "vosk", "small", "Small", enabled=True)
 
     resp = client.delete("/v1/models/vosk/small")
     assert resp.status_code == 200
-    entry = await model_registry_store.find("stt", "vosk", "small")
-    assert entry["enabled"] is False
+    assert await model_registry_store.find("stt", "vosk", "small") is None
 
 
 async def test_omnivoice_download_creates_registry_entry(client, monkeypatch):
@@ -66,15 +78,14 @@ async def test_omnivoice_download_creates_registry_entry(client, monkeypatch):
     assert entry is not None and entry["enabled"] is True
 
 
-async def test_omnivoice_delete_disables_registry_entry(client, monkeypatch):
+async def test_omnivoice_delete_removes_registry_entry(client, monkeypatch):
     from app.services.tts_models import tts_model_manager
     monkeypatch.setattr(tts_model_manager, "delete_omnivoice", lambda repo: None)
     await model_registry_store.create("tts", "omnivoice", "org/repo", "Repo", enabled=True)
 
     resp = client.post("/v1/models/omnivoice/delete", json={"id": "org/repo"})
     assert resp.status_code == 200
-    entry = await model_registry_store.find("tts", "omnivoice", "org/repo")
-    assert entry["enabled"] is False
+    assert await model_registry_store.find("tts", "omnivoice", "org/repo") is None
 
 
 async def test_vieneu_download_creates_registry_entry(client, monkeypatch):
@@ -87,15 +98,14 @@ async def test_vieneu_download_creates_registry_entry(client, monkeypatch):
     assert entry is not None and entry["enabled"] is True
 
 
-async def test_vieneu_delete_disables_registry_entry(client, monkeypatch):
+async def test_vieneu_delete_removes_registry_entry(client, monkeypatch):
     from app.services.tts_models import tts_model_manager
     monkeypatch.setattr(tts_model_manager, "delete_vieneu", lambda mode: None)
     await model_registry_store.create("tts", "vieneu", "v3turbo", "v3 Turbo", enabled=True)
 
     resp = client.post("/v1/models/vieneu/delete", json={"mode": "v3turbo"})
     assert resp.status_code == 200
-    entry = await model_registry_store.find("tts", "vieneu", "v3turbo")
-    assert entry["enabled"] is False
+    assert await model_registry_store.find("tts", "vieneu", "v3turbo") is None
 
 
 async def test_llm_download_creates_registry_entry(client, monkeypatch):
@@ -108,12 +118,11 @@ async def test_llm_download_creates_registry_entry(client, monkeypatch):
     assert entry is not None and entry["enabled"] is True
 
 
-async def test_llm_delete_disables_registry_entry(client, monkeypatch):
+async def test_llm_delete_removes_registry_entry(client, monkeypatch):
     from app.services.llm_models import llm_manager
     monkeypatch.setattr(llm_manager, "delete", AsyncMock(return_value=None))
     await model_registry_store.create("llm", "ollama", "llama3", "llama3", enabled=True)
 
     resp = client.post("/v1/models/llm/delete", json={"model": "llama3"})
     assert resp.status_code == 200
-    entry = await model_registry_store.find("llm", "ollama", "llama3")
-    assert entry["enabled"] is False
+    assert await model_registry_store.find("llm", "ollama", "llama3") is None
