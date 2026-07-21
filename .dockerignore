@@ -1,0 +1,44 @@
+# Build context is the repo root, but the model-service Dockerfile only needs
+# pyproject.toml, README.md, and apps/. Everything below is excluded so the
+# 3.3 GB context (mostly .venv/ and submodules) doesn't upload on every deploy.
+
+# Python virtualenvs / caches
+.venv/
+venv/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Nested repos / submodules not built into the image
+esp32-assistant/
+lugo-web-client/
+lugo-landing/
+servers/
+
+# Infra, tests, docs, local data
+infra/
+tests/
+docs/
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Node / frontend build artifacts
+**/node_modules/
+**/dist/
+**/build/
+
+# VCS / tooling / editors
+.git/
+.github/
+.gitignore
+.idea/
+.vscode/
+*.log
+
+# OS cruft
+.DS_Store
