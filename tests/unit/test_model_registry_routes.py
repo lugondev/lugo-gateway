@@ -672,3 +672,34 @@ async def test_list_entries_surfaces_artifact_installed(client, _with_password, 
     assert by_id[uncached["id"]]["artifact_installed"] is False
     assert by_id[not_applicable["id"]]["artifact_installed"] is None
 
+
+# ---------- Feature: hard DELETE ----------
+
+
+def test_admin_can_delete_an_entry(client, _with_password):
+    _signup_login(client, "root", role="admin")
+    created = client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "stub-registry-ok", "model_id": "v1", "label": "Stub OK",
+    }).json()["data"]
+
+    resp = client.delete(f"/v1/model_registry/{created['id']}")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["deleted"] is True
+
+    listed = client.get("/v1/model_registry").json()["data"]
+    assert not any(e["id"] == created["id"] for e in listed)
+
+
+def test_delete_nonexistent_entry_is_404(client, _with_password):
+    _signup_login(client, "root", role="admin")
+    resp = client.delete("/v1/model_registry/does-not-exist")
+    assert resp.status_code == 404
+
+
+def test_regular_user_cannot_delete_model_registry_entry(client, _with_password):
+    """Mirrors test_regular_user_cannot_reach_model_registry -- DELETE should be
+    covered by the same admin-only prefix gate as every other /v1/model_registry
+    route, proven rather than assumed."""
+    _signup_login(client, "toan", role="user")
+    resp = client.delete("/v1/model_registry/some-id")
+    assert resp.status_code == 403

@@ -221,6 +221,21 @@ class ModelRegistryStore:
             self._sync_llm_default_cache(exclude_id=entry_id)
         return _copy(entry)
 
+    async def delete(self, entry_id: str) -> bool:
+        """Hard delete -- unlike enabled=False (which every other mutation in
+        this store treats as the "removed" state), this actually drops the row.
+        For entries the admin has confirmed are genuinely wrong/orphaned, not
+        for the normal disable-to-hide flow (that's still enabled=False)."""
+        await self._ensure_loaded()
+        async with db_session() as s:
+            row = await s.get(ModelRegistryEntry, entry_id)
+            if row is None:
+                return False
+            await s.delete(row)
+            await s.commit()
+        self._by_id.pop(entry_id, None)
+        return True
+
     async def _disable_other_llm_defaults(self, session, exclude_id: str) -> None:
         """Enforce at most one is_default=True kind="llm" row, DB-side.
 

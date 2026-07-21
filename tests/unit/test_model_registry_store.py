@@ -301,3 +301,22 @@ async def test_find_default_returns_the_is_default_row_for_a_kind(store):
     # Scoped by kind -- an is_default llm row doesn't leak into stt's lookup.
     assert await store.find_default("stt") is None
     assert stt_entry["is_default"] is False
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_the_row_entirely(store):
+    entry = await store.create("stt", "vosk", "vosk-model-vn-0.4", "Vosk VN")
+    other = await store.create("stt", "whisper", "medium", "Whisper Medium")
+
+    deleted = await store.delete(entry["id"])
+    assert deleted is True
+
+    assert await store.get(entry["id"]) is None
+    ids = {e["id"] for e in await store.list_all()}
+    assert entry["id"] not in ids
+    assert other["id"] in ids
+
+
+@pytest.mark.asyncio
+async def test_delete_nonexistent_id_returns_false(store):
+    assert await store.delete("does-not-exist") is False

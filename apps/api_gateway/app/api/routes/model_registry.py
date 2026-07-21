@@ -219,3 +219,11 @@ async def update_entry(entry_id: str, payload: UpdateEntryRequest) -> dict:
 
     updated["api_key"] = _mask_api_key(updated["api_key"])
     return {"success": True, "data": updated}
+
+
+@router.delete("/{entry_id}")
+async def delete_entry(entry_id: str) -> dict:
+    deleted = await model_registry_store.delete(entry_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"model registry entry '{entry_id}' not found")
+    return {"success": True, "data": {"id": entry_id, "deleted": True}}
