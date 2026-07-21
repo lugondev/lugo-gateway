@@ -83,6 +83,63 @@ async def test_resolves_the_enabled_entry_from_the_registry(captured, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_model_id_resolves_the_exact_registry_row(captured, monkeypatch):
+    # Several rows can share engine "openai_tts" pointing at different service
+    # base URLs. A concrete model_id (the "engine|model_id" the picker sends)
+    # must resolve that exact row via find(), not the non-deterministic
+    # first-enabled fallback.
+    seen = {}
+
+    async def fake_find(kind, engine=None, model_id=None):
+        seen["find"] = (kind, engine, model_id)
+        return {**_ENTRY, "model_id": model_id, "base_url": "http://box-b:8100/v1"}
+
+    async def fail_find_enabled(kind, engine=None):
+        raise AssertionError("find_enabled must not be called when model_id is set")
+
+    monkeypatch.setattr(
+        "app.services.tts.providers.openai_tts_provider.model_registry_store.find",
+        fake_find,
+    )
+    monkeypatch.setattr(
+        "app.services.tts.providers.openai_tts_provider.model_registry_store.find_enabled",
+        fail_find_enabled,
+    )
+    wav = await OpenAICompatTTSProvider().render_wav(
+        TTSRequest(text="hi", engine="openai_tts", model_id="vieneu-fly")
+    )
+    assert wav == _WAV_BYTES
+    assert seen["find"] == ("tts", "openai_tts", "vieneu-fly")
+    assert captured["url"] == "http://box-b:8100/v1/audio/speech"
+    assert '"model":"vieneu-fly"' in captured["json"]
+
+
+@pytest.mark.asyncio
+async def test_empty_model_id_falls_back_to_first_enabled(captured, monkeypatch):
+    # Callers not yet migrated to row-based selection send an empty model_id;
+    # the provider keeps the legacy first-enabled behaviour for them.
+    async def fake_find_enabled(kind, engine=None):
+        return _ENTRY
+
+    async def fail_find(kind, engine=None, model_id=None):
+        raise AssertionError("find must not be called when model_id is empty")
+
+    monkeypatch.setattr(
+        "app.services.tts.providers.openai_tts_provider.model_registry_store.find_enabled",
+        fake_find_enabled,
+    )
+    monkeypatch.setattr(
+        "app.services.tts.providers.openai_tts_provider.model_registry_store.find",
+        fail_find,
+    )
+    wav = await OpenAICompatTTSProvider().render_wav(
+        TTSRequest(text="hi", engine="openai_tts")
+    )
+    assert wav == _WAV_BYTES
+    assert captured["url"] == "http://tts-service:8100/v1/audio/speech"
+
+
+@pytest.mark.asyncio
 async def test_unconfigured_raises_provider_error(monkeypatch):
     async def fake_find_enabled(kind, engine=None):
         return None

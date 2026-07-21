@@ -7,6 +7,7 @@ class TtsProfile(BaseModel):
     name: str
     owner_id: str | None = None
     engine: str = ""
+    model_id: str = ""         # registry row id within the engine (see TTSRequest.model_id)
     voice_mode: Literal["preset", "clone"] = "preset"
     voice: str = ""            # preset mode: voice id from GET /v1/tts/voices?engine=
     ref_audio_path: str = ""   # clone mode

@@ -3,32 +3,52 @@ import { modelRow } from "./model-manager.js";
 
 export let ttsEngineDetails = {};
 
+// The playground TTS pickers select a specific Model Registry row, not just an
+// engine: one engine (e.g. openai_tts) can back several enabled rows pointing
+// at different service base URLs, so an engine-only pick is ambiguous and picks
+// a non-deterministic row server-side. Each option value is "engine|model_id",
+// mirroring the STT/LLM model pickers. `/v1/tts/engines` is still fetched for
+// the install/status panel, per-engine detail text, and voice lists.
+export function ttsEngineOf(selId) {
+  const [engine = ""] = (el(selId)?.value || "").split("|");
+  return engine;
+}
+
 export async function loadTtsEngines() {
   try {
-    const body = await (await fetch("/v1/tts/engines")).json();
-    const items = body.data.filter((e) => e.available);
+    const [enginesBody, optionsBody] = await Promise.all([
+      (await fetch("/v1/tts/engines")).json(),
+      (await fetch("/v1/model_registry/options?kind=tts")).json(),
+    ]);
+    const options = optionsBody.data || [];
     ttsEngineDetails = {};
-    body.data.forEach((e) => (ttsEngineDetails[e.engine] = e.detail));
-    const def = (body.data.find((e) => e.default) || items[0] || {}).engine;
+    enginesBody.data.forEach((e) => (ttsEngineDetails[e.engine] = e.detail));
+    const availableEngines = new Set(enginesBody.data.filter((e) => e.available).map((e) => e.engine));
 
-    renderTtsEnginesStatus(body.data);
+    renderTtsEnginesStatus(enginesBody.data);
 
-    [["tts-engine", "tts-engine-detail"], ["tts-stream-engine", "tts-stream-engine-detail"], ["t2v-tts-engine", "t2v-engine-detail"], ["tp-engine", null]].forEach(
+    [["tts-engine", "tts-engine-detail"], ["tts-stream-engine", "tts-stream-engine-detail"], ["t2v-tts-engine", "t2v-engine-detail"]].forEach(
       ([selId, detId]) => {
         const select = el(selId);
         if (!select) return;
+        const prev = select.value;
         select.innerHTML = "";
-        // Show ALL engines; disable the ones that aren't installed yet.
-        body.data.forEach((item) => {
+        // One option per selectable registry row; disable rows whose engine
+        // isn't installed/available yet.
+        options.forEach((o) => {
           const opt = document.createElement("option");
-          opt.value = item.engine;
-          opt.textContent = item.available
-            ? `${item.engine} — ${item.detail}`
-            : `${item.engine} — (not installed)`;
-          opt.disabled = !item.available;
+          opt.value = `${o.engine}|${o.model_id}`;
+          const ok = availableEngines.has(o.engine);
+          opt.textContent = ok ? o.label : `${o.label} — (not installed)`;
+          opt.disabled = !ok;
           select.appendChild(opt);
         });
-        if (def) select.value = def;
+        if ([...select.options].some((o) => o.value === prev)) {
+          select.value = prev;
+        } else {
+          const firstOk = options.find((o) => availableEngines.has(o.engine));
+          if (firstOk) select.value = `${firstOk.engine}|${firstOk.model_id}`;
+        }
         restoreAndBind(selId);
         updateTtsEngine(selId, detId);
         if (!select.dataset.bound) {
@@ -60,7 +80,7 @@ export function renderTtsEnginesStatus(engines) {
 }
 
 export function updateTtsEngine(selId, detId) {
-  const engine = el(selId).value;
+  const engine = ttsEngineOf(selId);
   const det = el(detId);
   if (det) det.textContent = ttsEngineDetails[engine] ? `model: ${ttsEngineDetails[engine]}` : "";
   // Voice selector applies to any engine that exposes a voice list (vieneu, edge_tts, kokoro_vi, ...).

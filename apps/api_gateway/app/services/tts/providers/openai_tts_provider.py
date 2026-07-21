@@ -47,19 +47,27 @@ class OpenAICompatTTSProvider(RenderingTTSProvider):
         # Only the registry's test-before-add call passes an entry.
         self._entry_override = entry
 
-    async def _resolve_entry(self) -> dict | None:
+    async def _resolve_entry(self, model_id: str = "") -> dict | None:
         if self._entry_override is not None:
             return self._entry_override
+        # A specific row was selected (engine|model_id from the registry
+        # options): resolve it exactly so the choice is deterministic. Empty
+        # model_id keeps the legacy first-enabled fallback for callers that
+        # haven't been migrated to row-based selection yet.
+        if model_id:
+            return await model_registry_store.find(
+                kind="tts", engine=self.name, model_id=model_id
+            )
         return await model_registry_store.find_enabled(kind="tts", engine=self.name)
 
     def detail(self) -> str:
-        return self.name
+        return "OpenAI-compatible /audio/speech (per-registry-row service)"
 
     def install_hint(self) -> str:
         return "Add a Model Registry entry pointing at a TTS service base URL."
 
     async def _render_wav(self, payload: TTSRequest) -> bytes:
-        entry = await self._resolve_entry()
+        entry = await self._resolve_entry(payload.model_id)
         base_url = (entry or {}).get("base_url", "").strip()
         if not base_url:
             raise RuntimeError(

@@ -52,14 +52,14 @@ def _resolve(profile_name: str | None):
     tts_name = (profile.tts.profile_name if profile else "") or None
     tts_profile = tts_profile_store.get(tts_name) if tts_name else None
     if tts_profile and tts_profile.engine:
-        tts = dict(engine=tts_profile.engine, voice=tts_profile.voice or None,
+        tts = dict(engine=tts_profile.engine, model_id=tts_profile.model_id or "", voice=tts_profile.voice or None,
                    ref_audio_path=tts_profile.ref_audio_path or None, ref_text=tts_profile.ref_text or None,
                    instruct=tts_profile.instruct or None, speed=tts_profile.speed, language=tts_profile.language)
     else:
         conv_cfg = system_config_store.get().conversation
         tts = dict(
             engine=conv_cfg.conversation_tts_engine or system_config_store.get().engines.default_tts_engine,
-            voice=None, ref_audio_path=None, ref_text=None, instruct=None, speed=None, language=None)
+            model_id="", voice=None, ref_audio_path=None, ref_text=None, instruct=None, speed=None, language=None)
     idle = profile.session.idle_timeout_s if profile else 30
     return profile, stt_engine, language, stt_model, tts, idle
 
@@ -121,7 +121,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
         ref_text=tts["ref_text"], tts_instruct=tts["instruct"], tts_speed=tts["speed"],
         tts_language=tts["language"], sample_rate=in_sr, output_sample_rate=out_sr,
         audio_codec="opus", want_audio=True, want_text=True, audio_out="opus",
-        denoise=False, resume_sid=requested_sid, stt_model=stt_model,
+        denoise=False, resume_sid=requested_sid, stt_model=stt_model, tts_model=tts["model_id"],
     )
 
     speaking = False  # one tts{start} on first response/audio, one tts{stop} at turn end/abort

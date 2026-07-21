@@ -127,6 +127,48 @@ export function toggleTtsVoiceMode() {
   if (cloneWrap) cloneWrap.classList.toggle("hidden", !isClone);
 }
 
+// The engine picker selects a specific Model Registry row, not just an engine:
+// one engine (e.g. openai_tts) can have several enabled rows pointing at
+// different service base URLs, so picking by engine alone is ambiguous. Each
+// option value is "engine|model_id", mirroring the STT model picker
+// (renderProfileSttModelSelect in profiles.js).
+export async function renderTpEngineSelect(selEngine, selModel) {
+  const sel = el("tp-engine");
+  if (!sel) return;
+  sel.innerHTML = '<option value="">(no engine)</option>';
+  try {
+    const body = await (await fetch("/v1/model_registry/options?kind=tts")).json();
+    (body.data || []).forEach((o) => {
+      const opt = document.createElement("option");
+      opt.value = `${o.engine}|${o.model_id}`;
+      opt.textContent = o.label;
+      sel.appendChild(opt);
+    });
+  } catch {
+    /* keep just the empty option */
+  }
+  const want = selEngine ? `${selEngine}|${selModel || ""}` : "";
+  if ([...sel.options].some((o) => o.value === want)) {
+    sel.value = want;
+  } else if (selEngine) {
+    // Profile pins an engine/model this server can't list right now (row
+    // disabled or gone) — keep it selectable rather than snapping to "(no engine)".
+    const opt = document.createElement("option");
+    opt.value = want;
+    opt.textContent = `${selEngine}${selModel ? ` — ${selModel}` : ""} (unavailable)`;
+    sel.appendChild(opt);
+    sel.value = want;
+  } else {
+    sel.value = "";
+  }
+}
+
+function readTpEngineSelection() {
+  const raw = el("tp-engine")?.value || "";
+  const [engine = "", model = ""] = raw ? raw.split("|") : ["", ""];
+  return { engine, model };
+}
+
 export async function loadTtsProfileVoiceOptions(engine) {
   const sel = el("tp-voice");
   if (!sel) return;
@@ -152,7 +194,7 @@ export function openTtsProfileForm(name) {
 
   el("tp-name").value = name || "";
   el("tp-name").disabled = !!name;
-  el("tp-engine").value = p?.engine || "";
+  renderTpEngineSelect(p?.engine || "", p?.model_id || "");
   const isClone = p?.voice_mode === "clone";
   el("tp-mode-preset").checked = !isClone;
   el("tp-mode-clone").checked = isClone;
@@ -178,9 +220,11 @@ export async function saveTtsProfile() {
   if (!name) { print(el("tp-status"), "Enter a profile name", true); return; }
 
   const speedRaw = el("tp-speed").value.trim();
+  const { engine, model } = readTpEngineSelection();
   const payload = {
     name,
-    engine: el("tp-engine").value || "",
+    engine,
+    model_id: model,
     voice_mode: el("tp-mode-clone").checked ? "clone" : "preset",
     voice: el("tp-voice").value || "",
     ref_audio_path: el("tp-ref-audio").value.trim(),
@@ -262,7 +306,10 @@ export async function cloneTtsProfile(name) {
 }
 
 if (el("tp-engine")) {
-  el("tp-engine").addEventListener("change", (e) => loadTtsProfileVoiceOptions(e.target.value));
+  el("tp-engine").addEventListener("change", (e) => {
+    const [engine = ""] = (e.target.value || "").split("|");
+    loadTtsProfileVoiceOptions(engine);
+  });
 }
 if (el("tp-mode-preset")) el("tp-mode-preset").addEventListener("change", toggleTtsVoiceMode);
 if (el("tp-mode-clone")) el("tp-mode-clone").addEventListener("change", toggleTtsVoiceMode);

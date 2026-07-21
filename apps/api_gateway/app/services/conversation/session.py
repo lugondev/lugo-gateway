@@ -112,6 +112,7 @@ class SessionRuntimeConfig:
     denoise: bool
     resume_sid: str | None  # requested_sid, for history resume
     stt_model: str = ""  # optional model-variant override (SttConfig.model, resolve_stt's 3rd value)
+    tts_model: str = ""  # optional registry-row selector within tts_engine (TTSRequest.model_id)
     # The authenticated WS caller's user id (resolve_ws_identity's identity.user_id),
     # if any. Preferred over profile.owner_id when recording the session -- the
     # session belongs to whoever is actually speaking, not the profile's owner.
@@ -402,7 +403,7 @@ class ConversationSession:
             async def _synth(sentence: str):
                 logger.info("DEBUG_HANG _synth: starting engine=%s sentence=%r", cfg.tts_engine, sentence)
                 request = TTSRequest(
-                    text=sentence, engine=cfg.tts_engine, voice=cfg.voice,
+                    text=sentence, engine=cfg.tts_engine, model_id=cfg.tts_model, voice=cfg.voice,
                     ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
                     instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
                 )
@@ -627,7 +628,7 @@ class ConversationSession:
             if cfg.want_text:
                 await self.emit("response_text", turn=self.turn, chunk_index=0, text=text, responder="system")
             request = TTSRequest(
-                text=text, engine=cfg.tts_engine, voice=cfg.voice,
+                text=text, engine=cfg.tts_engine, model_id=cfg.tts_model, voice=cfg.voice,
                 ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
                 instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
             )

@@ -227,6 +227,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
     tts_profile = tts_profile_store.get(tts_profile_name) if tts_profile_name else None
     if tts_profile and tts_profile.engine:
         tts_engine = tts_profile.engine
+        tts_model = tts_profile.model_id or ""
         voice = tts_profile.voice or q.get("voice") or None
         ref_audio_path = tts_profile.ref_audio_path or None
         ref_text = tts_profile.ref_text or None
@@ -240,6 +241,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
             or conv_cfg.conversation_tts_engine
             or system_config_store.get().engines.default_tts_engine
         )
+        tts_model = q.get("tts_model") or ""
         voice = q.get("voice") or None
         ref_audio_path = ref_text = tts_instruct = None
         tts_speed = tts_language = None
@@ -278,6 +280,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
         output_sample_rate=output_sample_rate, audio_codec=audio_codec,
         want_audio=want_audio, want_text=want_text, audio_out=audio_out,
         denoise=denoise, resume_sid=requested_sid, stt_model=stt_model,
+        tts_model=tts_model,
         identity_user_id=identity.user_id,
     )
 

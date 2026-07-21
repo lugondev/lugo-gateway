@@ -13,12 +13,14 @@ el("tts-submit").addEventListener("click", async () => {
   ttsAudio.classList.add("hidden");
   ttsMeta.textContent = "";
   try {
+    const [engine = "", model = ""] = (el("tts-engine").value || "").split("|");
     const response = await fetch("/v1/tts/synthesize", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         text: ttsText.value.trim(),
-        engine: el("tts-engine").value || "omnivoice",
+        engine: engine || "omnivoice",
+        model_id: model,
         voice: el("tts-voice").value || null,
       }),
     });

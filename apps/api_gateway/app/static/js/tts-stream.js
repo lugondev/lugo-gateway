@@ -48,10 +48,11 @@ el("tts-stream-start").addEventListener("click", async () => {
   print(el("tts-stream-events"), "Creating stream job...");
 
   try {
+    const [engine = "", model = ""] = (el("tts-stream-engine").value || "").split("|");
     const response = await fetch("/v1/tts/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, engine: el("tts-stream-engine").value || "omnivoice" }),
+      body: JSON.stringify({ text, engine: engine || "omnivoice", model_id: model }),
     });
     const body = await response.json();
     if (!response.ok || !body.success) {

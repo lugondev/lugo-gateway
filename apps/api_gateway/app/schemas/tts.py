@@ -4,6 +4,11 @@ from pydantic import BaseModel, Field
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1)
     engine: str = "omnivoice"
+    # Registry row selector: multiple rows can share an engine (e.g. three
+    # openai_tts rows pointing at different service base_urls), so the engine
+    # alone is ambiguous. Empty = let the provider fall back to its first
+    # enabled row (legacy behavior for engines with a single row).
+    model_id: str = ""
     language: str | None = None
     speed: float | None = None
     instruct: str | None = None

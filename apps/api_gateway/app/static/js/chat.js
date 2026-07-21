@@ -215,12 +215,14 @@ if (el("t2v-submit")) {
     if (meta) meta.textContent = "Synthesizing…";
     if (audio) audio.classList.add("hidden");
     try {
+      const [t2vEngine = "", t2vModel = ""] = (el("t2v-tts-engine")?.value || "").split("|");
       const resp = await fetch("/v1/tts/synthesize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text,
-          engine: el("t2v-tts-engine")?.value || undefined,
+          engine: t2vEngine || undefined,
+          model_id: t2vModel,
           voice: el("t2v-tts-voice")?.value || null,
         }),
       });
