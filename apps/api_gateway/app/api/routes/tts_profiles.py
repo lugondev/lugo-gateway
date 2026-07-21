@@ -47,7 +47,7 @@ async def create_tts_profile(payload: TtsProfile, request: Request) -> dict:
     profile = payload.model_copy(update={"owner_id": owner_id})
     if profile.engine:
         acting_user = await _resolve_acting_user(request)
-        await check_model_allowed("tts", profile.engine, profile.engine, acting_user)
+        await check_model_allowed("tts", profile.engine, profile.model_id, acting_user)
     tts_profile_store.upsert(profile)
     return {"success": True, "data": profile.model_dump()}
 
@@ -77,7 +77,7 @@ async def update_tts_profile(name: str, payload: TtsProfile, request: Request) -
     profile = TtsProfile(**data)
     if profile.engine:
         acting_user = await _resolve_acting_user(request)
-        await check_model_allowed("tts", profile.engine, profile.engine, acting_user)
+        await check_model_allowed("tts", profile.engine, profile.model_id, acting_user)
     tts_profile_store.upsert(profile)
     return {"success": True, "data": profile.model_dump()}
 

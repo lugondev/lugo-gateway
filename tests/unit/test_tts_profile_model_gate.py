@@ -45,56 +45,54 @@ def _signup_login(client, username: str) -> None:
     client.post("/api/auth/login", json={"username": username, "password": "pw"})
 
 
-def test_tts_profile_create_rejects_disabled_engine(client, _with_password):
+def test_tts_profile_create_rejects_disabled_row(client, _with_password):
+    # Row-based gating: the profile selects a specific (engine, model_id) row,
+    # so a disabled row is rejected -- mirrors routes/tts_profiles.py passing
+    # profile.model_id (not the engine name) to check_model_allowed.
     store = ModelRegistryStore()
     entry = asyncio.run(store.create("tts", "omnivoice", "omnivoice", "OmniVoice"))
     asyncio.run(store.set_fields(entry["id"], enabled=False))
 
     _signup_login(client, "toan")
-    resp = client.post("/v1/tts/profiles", json={"name": "p1", "engine": "omnivoice"})
+    resp = client.post(
+        "/v1/tts/profiles",
+        json={"name": "p1", "engine": "omnivoice", "model_id": "omnivoice"},
+    )
     assert resp.status_code == 403
 
 
-def test_tts_profile_create_rejects_engine_not_in_registry(client, _with_password):
-    # Catalog-mode (Task 4): an engine with no enabled registry entry is now
-    # rejected (was: silently allowed). Inverts the former
-    # test_tts_profile_create_allows_engine_not_in_registry.
+def test_tts_profile_create_rejects_row_not_in_registry(client, _with_password):
+    # Catalog-mode: a concrete (engine, model_id) with no enabled registry entry
+    # is rejected. This is exactly the openai_tts/vieneu-cloudflare bug's inverse
+    # -- the gate must check the selected row, not the engine name against itself.
     _signup_login(client, "toan")
-    resp = client.post("/v1/tts/profiles", json={"name": "p1", "engine": "some-future-engine"})
+    resp = client.post(
+        "/v1/tts/profiles",
+        json={"name": "p1", "engine": "openai_tts", "model_id": "ghost-model"},
+    )
     assert resp.status_code == 403
 
 
-def test_tts_profile_create_allows_catalogued_engine(client, _with_password):
-    # The accept side of catalog-mode: an enabled entry for the engine lets the
-    # save through. TTS gates on (engine, engine) -- see routes/tts_profiles.py.
+def test_tts_profile_create_allows_catalogued_row(client, _with_password):
+    # The accept side of catalog-mode: an enabled row for the exact
+    # (engine, model_id) lets the save through. Reproduces the fix for the
+    # openai_tts/vieneu-cloudflare profile-save failure.
     store = ModelRegistryStore()
-    asyncio.run(store.create("tts", "vieneu", "vieneu", "VieNeu"))
+    asyncio.run(store.create("tts", "openai_tts", "vieneu-cloudflare", "VieNeu (Cloudflare)"))
 
     _signup_login(client, "toan")
-    resp = client.post("/v1/tts/profiles", json={"name": "p1", "engine": "vieneu"})
+    resp = client.post(
+        "/v1/tts/profiles",
+        json={"name": "p1", "engine": "openai_tts", "model_id": "vieneu-cloudflare"},
+    )
     assert resp.status_code == 200
 
 
-def test_tts_profile_save_survives_boot_seed_backfill(client, _with_password):
-    # Finding 1 regression: a TTS profile that already existed (e.g. from
-    # before this branch's catalog-mode flip -- Task 4) has no registry entry
-    # for its engine. Without seed_installed_models_to_registry() backfilling
-    # the (engine, engine) shim, re-saving it 403s forever. Written directly to
-    # the store (bypassing the route) to simulate data that predates the flip,
-    # mirroring the "Confirmed failure scenario" in the review finding.
-    from app.services.auth.users import user_store
-    from app.services.tts.profile_store import tts_profile_store
-    tts_profile_store.upsert(TtsProfile(name="legacy", engine="omnivoice"))  # template: owner_id=None
-
-    client.post("/api/auth/signup", json={"username": "root", "password": "pw"})
-    user = asyncio.run(user_store.get_by_username("root"))
-    asyncio.run(user_store.set_fields(user.id, role="admin"))
-    client.post("/api/auth/login", json={"username": "root", "password": "pw"})  # re-login: role in session must reflect the promotion above
-
-    resp = client.put("/v1/tts/profiles/legacy", json={"name": "legacy", "engine": "omnivoice"})
-    assert resp.status_code == 403  # reproduces the bug pre-seed
-
-    asyncio.run(seed_installed_models_to_registry())
-
-    resp = client.put("/v1/tts/profiles/legacy", json={"name": "legacy", "engine": "omnivoice"})
+def test_tts_profile_engine_only_is_not_gated(client, _with_password):
+    # An engine with no model_id is the "inherit / first-enabled fallback" case
+    # (the provider resolves the row via find_enabled). Like STT/LLM, the gate
+    # short-circuits on empty model_id, so a legacy engine-only profile saves
+    # without needing a (engine, engine) shim -- no boot-seed backfill required.
+    _signup_login(client, "toan")
+    resp = client.post("/v1/tts/profiles", json={"name": "p1", "engine": "omnivoice"})
     assert resp.status_code == 200

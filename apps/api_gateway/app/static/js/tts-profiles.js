@@ -131,17 +131,27 @@ export function toggleTtsVoiceMode() {
 // one engine (e.g. openai_tts) can have several enabled rows pointing at
 // different service base URLs, so picking by engine alone is ambiguous. Each
 // option value is "engine|model_id", mirroring the STT model picker
-// (renderProfileSttModelSelect in profiles.js).
+// (renderProfileSttModelSelect in profiles.js) and the playground picker
+// (loadTtsEngines in tts-engines.js) — including disabling rows whose engine
+// isn't installed/available.
 export async function renderTpEngineSelect(selEngine, selModel) {
   const sel = el("tp-engine");
   if (!sel) return;
   sel.innerHTML = '<option value="">(no engine)</option>';
   try {
-    const body = await (await fetch("/v1/model_registry/options?kind=tts")).json();
-    (body.data || []).forEach((o) => {
+    const [optionsBody, enginesBody] = await Promise.all([
+      (await fetch("/v1/model_registry/options?kind=tts")).json(),
+      (await fetch("/v1/tts/engines")).json(),
+    ]);
+    const availableEngines = new Set(
+      (enginesBody.data || []).filter((e) => e.available).map((e) => e.engine)
+    );
+    (optionsBody.data || []).forEach((o) => {
       const opt = document.createElement("option");
       opt.value = `${o.engine}|${o.model_id}`;
-      opt.textContent = o.label;
+      const ok = availableEngines.has(o.engine);
+      opt.textContent = ok ? o.label : `${o.label} — (not installed)`;
+      opt.disabled = !ok;
       sel.appendChild(opt);
     });
   } catch {
@@ -316,3 +326,8 @@ if (el("tp-mode-clone")) el("tp-mode-clone").addEventListener("change", toggleTt
 if (el("tp-save-btn")) el("tp-save-btn").addEventListener("click", saveTtsProfile);
 if (el("tp-cancel-btn")) el("tp-cancel-btn").addEventListener("click", resetTtsProfileForm);
 if (el("tp-delete-btn")) el("tp-delete-btn").addEventListener("click", () => deleteTtsProfile(ttsProfileEditName));
+
+// The "New TTS Profile" form is visible on page load, so populate its engine
+// dropdown up front — otherwise tp-engine stays empty until the user first
+// clicks Edit or Cancel.
+if (el("tp-engine")) resetTtsProfileForm();
