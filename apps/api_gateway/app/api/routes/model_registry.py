@@ -6,6 +6,7 @@ from app.core.audio import pcm16_to_wav_bytes
 from app.services.auth.users import user_store
 from app.schemas.tts import TTSRequest
 from app.services.conversation.responder import OpenAICompatResponder
+from app.services.model_registry.availability import is_artifact_installed
 from app.services.model_registry.config_schema import config_schema_for
 from app.services.model_registry.store import model_registry_store
 from app.services.stt.providers.openai_stt_provider import OpenAICompatSttProvider
@@ -89,6 +90,7 @@ async def list_entries() -> dict:
     for e in entries:
         e["api_key"] = _mask_api_key(e["api_key"])
         e["requires_base_url"] = _requires_base_url(e["kind"], e["engine"])
+        e["artifact_installed"] = is_artifact_installed(e["kind"], e["engine"], e["model_id"])
     return {"success": True, "data": entries}
 
 
@@ -118,6 +120,15 @@ async def list_options(kind: str, request: Request) -> dict:
 
 @router.post("")
 async def create_entry(payload: CreateEntryRequest) -> dict:
+    # A create() always defaults to enabled=True (no explicit `enabled` field
+    # on this request), so the same not-installed guard as the PATCH path
+    # applies here too -- reject before the network/provider test-call runs.
+    if is_artifact_installed(payload.kind, payload.engine, payload.model_id) is False:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{payload.engine}/{payload.model_id} is not installed -- download it via the Models page first",
+        )
+
     try:
         if payload.kind == "stt":
             if payload.engine in _OPENROUTER_STT_ENGINES:
@@ -175,6 +186,22 @@ async def update_entry(entry_id: str, payload: UpdateEntryRequest) -> dict:
         # secret field in this app (the UI never pre-fills a real key, so a
         # blank submit can only mean "didn't type a new one").
         del fields["api_key"]
+
+    if fields.get("enabled") is True:
+        existing = await model_registry_store.get(entry_id)
+        # existing is None -> pre-existing entry, let the set_fields()-returns-None
+        # 404 below handle it; don't duplicate the raise here.
+        if existing is not None and is_artifact_installed(
+            existing["kind"], existing["engine"], existing["model_id"]
+        ) is False:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{existing['engine']}/{existing['model_id']} is not installed -- "
+                    "download it via the Models page first"
+                ),
+            )
+
     updated = await model_registry_store.set_fields(entry_id, **fields)
     if updated is None:
         raise HTTPException(status_code=404, detail=f"model registry entry '{entry_id}' not found")
