@@ -13,6 +13,13 @@ from __future__ import annotations
 def is_artifact_installed(kind: str, engine: str, model_id: str) -> bool | None:
     if not model_id:
         return None  # sentinel/engine-config row, not a specific artifact
+    if model_id == engine:
+        # The (engine, engine) shim seed_installed_models_to_registry uses to
+        # satisfy the TTS-profile save gate (tts_profiles.py) -- model_id here
+        # is a placeholder equal to the engine name, never a real HF repo id
+        # or vieneu mode, so there's nothing to look up. Not the same thing
+        # as an admin-registered entry with a real model_id.
+        return None
 
     if kind == "stt":
         if engine in ("whisper", "whisper_local"):

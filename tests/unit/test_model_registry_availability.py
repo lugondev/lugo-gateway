@@ -117,3 +117,16 @@ def test_non_special_cased_engine_is_not_applicable(kind, engine):
 ])
 def test_empty_model_id_sentinel_row_is_not_applicable(kind, engine):
     assert is_artifact_installed(kind, engine, "") is None
+
+
+@pytest.mark.parametrize("kind,engine", [
+    ("tts", "omnivoice"),
+    ("tts", "vieneu"),
+])
+def test_engine_equals_model_id_shim_row_is_not_applicable(kind, engine):
+    """The (engine, engine) shim these entries use to satisfy the TTS-profile
+    gate (see seed_installed_models_to_registry's TTS backfill) is NOT a real
+    HF repo id / vieneu mode -- checking it against repo_cached()/VIENEU_MODES
+    would always report "not installed" for a profile that's actually working
+    fine, since model_id == engine never matches any real artifact identifier."""
+    assert is_artifact_installed(kind, engine, engine) is None
