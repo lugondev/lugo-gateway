@@ -529,3 +529,146 @@ def test_list_entries_surfaces_requires_base_url(client, _with_password):
     listed = client.get("/v1/model_registry").json()["data"]
     entry = next(e for e in listed if e["engine"] == "stub-registry-ok")
     assert entry["requires_base_url"] is False
+
+
+# ---------- Feature: block enabling an entry whose artifact isn't installed ----------
+
+
+@pytest.mark.asyncio
+async def test_patch_enabling_uncached_whisper_entry_is_rejected(client, _with_password, monkeypatch):
+    await _signup_login_async(client, "root", role="admin")
+    from app.services.model_registry.store import model_registry_store
+    from app.services.whisper_models import whisper_manager
+
+    monkeypatch.setattr(
+        whisper_manager, "snapshot",
+        lambda: {"models": [{"size": "medium", "label": "Medium", "cached": False}]},
+    )
+    entry = await model_registry_store.create("stt", "whisper", "medium", "Whisper Medium", enabled=False)
+
+    resp = client.patch(f"/v1/model_registry/{entry['id']}", json={"enabled": True})
+    assert resp.status_code == 400
+    assert "not installed" in resp.json()["detail"]
+
+    # rejected -- must not have flipped enabled in the store
+    fresh = await model_registry_store.get(entry["id"])
+    assert fresh["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_patch_enabling_cached_whisper_entry_succeeds(client, _with_password, monkeypatch):
+    await _signup_login_async(client, "root", role="admin")
+    from app.services.model_registry.store import model_registry_store
+    from app.services.whisper_models import whisper_manager
+
+    monkeypatch.setattr(
+        whisper_manager, "snapshot",
+        lambda: {"models": [{"size": "medium", "label": "Medium", "cached": True}]},
+    )
+    entry = await model_registry_store.create("stt", "whisper", "medium", "Whisper Medium", enabled=False)
+
+    resp = client.patch(f"/v1/model_registry/{entry['id']}", json={"enabled": True})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_patch_enabling_missing_entry_still_404s(client, _with_password):
+    """The artifact-installed guard must not swallow the pre-existing 404 case
+    (fetching `existing` for the guard finds nothing -- fall through to the
+    normal set_fields()-returns-None 404, don't raise a second time)."""
+    await _signup_login_async(client, "root", role="admin")
+    resp = client.patch("/v1/model_registry/does-not-exist", json={"enabled": True})
+    assert resp.status_code == 404
+
+
+def test_create_vosk_entry_for_uninstalled_model_is_rejected_without_provider_call(
+    client, _with_password, monkeypatch
+):
+    from app.services.models import model_manager
+    from app.services.stt.providers.vosk_provider import VoskProvider
+
+    monkeypatch.setattr(model_manager, "snapshot", lambda: {"installed": []})
+
+    calls = []
+
+    async def spy_transcribe(self, audio_bytes, language=None, model=None):
+        calls.append(1)
+        from app.schemas.stt import STTResult
+        return STTResult(engine=self.name, text="ok", is_final=True)
+
+    monkeypatch.setattr(VoskProvider, "transcribe_bytes", spy_transcribe)
+
+    _signup_login(client, "root", role="admin")
+    resp = client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "vosk", "model_id": "vosk-model-vn-0.4", "label": "Vosk VN",
+    })
+    assert resp.status_code == 400
+    assert "not installed" in resp.json()["detail"]
+    assert calls == []  # rejected before the provider test-call ever ran
+
+    listed = client.get("/v1/model_registry").json()["data"]
+    assert not any(e["engine"] == "vosk" for e in listed)
+
+
+def test_create_vosk_entry_for_installed_model_succeeds(client, _with_password, monkeypatch):
+    from app.services.models import model_manager
+    from app.services.stt.providers.vosk_provider import VoskProvider
+
+    monkeypatch.setattr(
+        model_manager, "snapshot",
+        lambda: {"installed": [{"name": "vosk-model-vn-0.4", "active": True}]},
+    )
+
+    async def fake_transcribe(self, audio_bytes, language=None, model=None):
+        from app.schemas.stt import STTResult
+        return STTResult(engine=self.name, text="ok", is_final=True)
+
+    monkeypatch.setattr(VoskProvider, "transcribe_bytes", fake_transcribe)
+
+    _signup_login(client, "root", role="admin")
+    resp = client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "vosk", "model_id": "vosk-model-vn-0.4", "label": "Vosk VN",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["data"]["enabled"] is True
+
+
+def test_create_and_patch_for_non_special_cased_engine_is_unaffected_by_the_guard(
+    client, _with_password
+):
+    """edge_tts has no per-model artifact concept -- is_artifact_installed()
+    returns None for it, so the enable-guard must be a no-op."""
+    _signup_login(client, "root", role="admin")
+    resp = client.post("/v1/model_registry", json={
+        "kind": "tts", "engine": "edge_tts", "model_id": "vi-VN-NamMinhNeural", "label": "Edge TTS",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["data"]["enabled"] is True
+
+    entry_id = resp.json()["data"]["id"]
+    resp2 = client.patch(f"/v1/model_registry/{entry_id}", json={"enabled": True})
+    assert resp2.status_code == 200
+    assert resp2.json()["data"]["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_entries_surfaces_artifact_installed(client, _with_password, monkeypatch):
+    await _signup_login_async(client, "root", role="admin")
+    from app.services.model_registry.store import model_registry_store
+    from app.services.whisper_models import whisper_manager
+
+    monkeypatch.setattr(
+        whisper_manager, "snapshot",
+        lambda: {"models": [{"size": "medium", "label": "Medium", "cached": True}]},
+    )
+    cached = await model_registry_store.create("stt", "whisper", "medium", "Whisper Medium (cached)")
+    uncached = await model_registry_store.create("stt", "whisper", "large-v3", "Whisper Large (uncached)")
+    not_applicable = await model_registry_store.create("stt", "stub-registry-ok", "v1", "Stub OK")
+
+    listed = client.get("/v1/model_registry").json()["data"]
+    by_id = {e["id"]: e for e in listed}
+    assert by_id[cached["id"]]["artifact_installed"] is True
+    assert by_id[uncached["id"]]["artifact_installed"] is False
+    assert by_id[not_applicable["id"]]["artifact_installed"] is None
+
