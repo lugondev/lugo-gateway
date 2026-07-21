@@ -101,6 +101,7 @@ def test_vieneu_mode_with_no_repo_is_not_installed():
     ("stt", "openai_stt"),
     ("tts", "edge_tts"),
     ("tts", "qwen3_tts_0_6b"),
+    ("llm", "openrouter"),
 ])
 def test_non_special_cased_engine_is_not_applicable(kind, engine):
     assert is_artifact_installed(kind, engine, "some-model-id") is None
