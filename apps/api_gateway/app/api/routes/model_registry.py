@@ -223,6 +223,14 @@ async def update_entry(entry_id: str, payload: UpdateEntryRequest) -> dict:
 
 @router.delete("/{entry_id}")
 async def delete_entry(entry_id: str) -> dict:
+    existing = await model_registry_store.get(entry_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"model registry entry '{entry_id}' not found")
+    if existing["enabled"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"disable '{existing['engine']}/{existing['model_id']}' before deleting it",
+        )
     deleted = await model_registry_store.delete(entry_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"model registry entry '{entry_id}' not found")

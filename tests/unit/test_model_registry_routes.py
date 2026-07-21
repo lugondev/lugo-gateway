@@ -676,11 +676,12 @@ async def test_list_entries_surfaces_artifact_installed(client, _with_password, 
 # ---------- Feature: hard DELETE ----------
 
 
-def test_admin_can_delete_an_entry(client, _with_password):
+def test_admin_can_delete_a_disabled_entry(client, _with_password):
     _signup_login(client, "root", role="admin")
     created = client.post("/v1/model_registry", json={
         "kind": "stt", "engine": "stub-registry-ok", "model_id": "v1", "label": "Stub OK",
     }).json()["data"]
+    client.patch(f"/v1/model_registry/{created['id']}", json={"enabled": False})
 
     resp = client.delete(f"/v1/model_registry/{created['id']}")
     assert resp.status_code == 200
@@ -688,6 +689,25 @@ def test_admin_can_delete_an_entry(client, _with_password):
 
     listed = client.get("/v1/model_registry").json()["data"]
     assert not any(e["id"] == created["id"] for e in listed)
+
+
+def test_delete_enabled_entry_is_rejected(client, _with_password):
+    """Deleting is a destructive, unrecoverable action -- requiring
+    disable-first is a safety rail against hard-deleting something still
+    actively in use, and matches how the admin UI's Delete button gates on
+    the entry already being disabled."""
+    _signup_login(client, "root", role="admin")
+    created = client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "stub-registry-ok", "model_id": "v1", "label": "Stub OK",
+    }).json()["data"]
+    assert created["enabled"] is True
+
+    resp = client.delete(f"/v1/model_registry/{created['id']}")
+    assert resp.status_code == 400
+    assert "disable" in resp.json()["detail"].lower()
+
+    listed = client.get("/v1/model_registry").json()["data"]
+    assert any(e["id"] == created["id"] for e in listed)
 
 
 def test_delete_nonexistent_entry_is_404(client, _with_password):

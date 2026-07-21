@@ -96,7 +96,7 @@ function renderModelRegistry() {
         render: (e) => `
           <button class="mini" data-registry-edit="${escapeHtml(e.id)}">Edit</button>
           <button class="mini" data-registry-toggle="${escapeHtml(e.id)}">${e.enabled ? "Disable" : "Enable"}</button>
-          <button class="mini danger" data-registry-delete="${escapeHtml(e.id)}">Delete</button>
+          <button class="mini danger" data-registry-delete="${escapeHtml(e.id)}" ${e.enabled ? `disabled title="Disable this entry first"` : ""}>Delete</button>
         `,
       },
     ],
