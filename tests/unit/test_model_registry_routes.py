@@ -499,3 +499,33 @@ def test_bad_service_url_is_rejected_at_add_time(client, monkeypatch):
     # short-circuited "not configured" from a provider that never saw the payload.
     assert "not configured" not in detail
     assert "request failed" in detail
+
+
+def test_requires_base_url_classification():
+    """Pure classification: True for service/protocol engines that call out
+    over HTTP (openai_stt/openai_tts, and every kind="llm" entry -- always
+    base_url+api_key based); False for local engines that run in-process and
+    never read base_url (whisper, vosk, qwen3_asr, omnivoice, vieneu,
+    edge_tts, qwen3_tts_*, voxcpm2, ...), including the OpenRouter-backed STT
+    engines (qwen3_asr_or/whisper_or use api_key only, no base_url)."""
+    from app.api.routes.model_registry import _requires_base_url
+
+    assert _requires_base_url("llm", "anything") is True
+    assert _requires_base_url("stt", "openai_stt") is True
+    assert _requires_base_url("tts", "openai_tts") is True
+    assert _requires_base_url("stt", "whisper") is False
+    assert _requires_base_url("stt", "qwen3_asr_or") is False
+    assert _requires_base_url("stt", "whisper_or") is False
+    assert _requires_base_url("tts", "vieneu") is False
+    assert _requires_base_url("tts", "omnivoice") is False
+
+
+def test_list_entries_surfaces_requires_base_url(client, _with_password):
+    _signup_login(client, "root", role="admin")
+    client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "stub-registry-ok", "model_id": "v1", "label": "Stub OK",
+    })
+
+    listed = client.get("/v1/model_registry").json()["data"]
+    entry = next(e for e in listed if e["engine"] == "stub-registry-ok")
+    assert entry["requires_base_url"] is False

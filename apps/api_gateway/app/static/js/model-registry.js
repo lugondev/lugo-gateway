@@ -13,6 +13,21 @@ export async function loadModelRegistry() {
   }
 }
 
+// requires_base_url comes from the backend (true for openai_stt/openai_tts +
+// every llm entry -- the "service" engines that call out over HTTP; false
+// for local engines that run in-process and never read base_url). This
+// distinguishes "blank because it's genuinely not needed" (local) from
+// "blank because it's misconfigured" (service, no endpoint set).
+function _baseUrlBadge(e) {
+  if (!e.requires_base_url) {
+    return `<span class="hint" title="Runs in-process -- no base URL needed">local</span>`;
+  }
+  if (!e.base_url) {
+    return `<span class="hint" style="color:#c0392b" title="This engine needs a base URL to work">service — no base URL set!</span>`;
+  }
+  return `<span class="hint" title="${escapeHtml(e.base_url)}">service</span>`;
+}
+
 function _filteredRegistryData() {
   const kind = el("registry-filter-kind")?.value || "";
   const stage = el("registry-filter-stage")?.value || "";
@@ -41,7 +56,14 @@ function renderModelRegistry() {
     emptyMessage: registryData.length ? "No entries match the current filters." : "No entries yet.",
     columns: [
       { key: "kind", label: "Kind", render: (e) => `<strong>${escapeHtml(e.kind)}</strong>` },
-      { key: "model", label: "Engine / Model", render: (e) => `<code>${escapeHtml(e.engine)}/${escapeHtml(e.model_id)}</code>` },
+      {
+        key: "model",
+        label: "Engine / Model",
+        render: (e) => `
+          <code>${escapeHtml(e.engine)}/${escapeHtml(e.model_id)}</code>
+          ${_baseUrlBadge(e)}
+        `,
+      },
       { key: "label", label: "Label", render: (e) => escapeHtml(e.label) },
       {
         key: "stage",
@@ -162,8 +184,8 @@ function _detailHtml(e) {
         <input type="password" class="mini" data-detail-apikey placeholder="new key…" autocomplete="off" />
       </label>
       <label class="registry-field">
-        <span>Base URL</span>
-        <input type="text" class="mini" data-detail-baseurl value="${escapeHtml(e.base_url || "")}" placeholder="https://…" />
+        <span>Base URL ${e.requires_base_url ? "(required)" : "(not needed — runs in-process)"}</span>
+        <input type="text" class="mini" data-detail-baseurl value="${escapeHtml(e.base_url || "")}" placeholder="https://…" ${e.requires_base_url ? "" : "disabled"} />
       </label>
       <div class="registry-field">
         <span>Config</span>
