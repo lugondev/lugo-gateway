@@ -37,6 +37,13 @@ _OPENROUTER_STT_ENGINES = {"qwen3_asr_or", "whisper_or"}
 _SERVICE_STT_ENGINES = {"openai_stt"}
 _SERVICE_TTS_ENGINES = {"openai_tts"}
 
+# base_url-driven remote STT services that read their endpoint from the entry
+# but use RemoteWhisperProvider (rebuilt via reinit_remote_providers on edit),
+# not the payload-built OpenAICompatSttProvider -- so they're "service" for
+# locality/base_url purposes but stay OUT of _SERVICE_STT_ENGINES, which only
+# selects the add-time test-call provider.
+_BASE_URL_STT_ENGINES = {"whisper_service", "eventlab"}
+
 
 def _mask_api_key(key: str) -> str:
     """Partial reveal (e.g. 'sk-or-v1-cae...363') so an admin managing several
@@ -49,17 +56,39 @@ def _mask_api_key(key: str) -> str:
     return f"{key[:12]}...{key[-3:]}"
 
 
+def _location(kind: str, engine: str) -> str:
+    """Three-state locality, surfaced so the admin UI can label each entry
+    honestly instead of collapsing everything-that-lacks-a-base_url into
+    "local":
+
+    - "service": talks to a configurable HTTP endpoint and needs a base_url --
+      openai_stt/openai_tts, whisper_service/eventlab, and every kind="llm"
+      entry (always base_url+api_key based).
+    - "remote": hits a fixed remote API with api_key only, no base_url -- the
+      OpenRouter-backed STT engines (qwen3_asr_or/whisper_or). Remote, so NOT
+      "local", but nothing to configure as an endpoint.
+    - "local": runs in-process, no network endpoint at all (whisper, vosk,
+      qwen3_asr, omnivoice, vieneu, edge_tts, qwen3_tts_*, voxcpm2, ...).
+    """
+    if (
+        kind == "llm"
+        or engine in _SERVICE_STT_ENGINES
+        or engine in _SERVICE_TTS_ENGINES
+        or engine in _BASE_URL_STT_ENGINES
+    ):
+        return "service"
+    if engine in _OPENROUTER_STT_ENGINES:
+        return "remote"
+    return "local"
+
+
 def _requires_base_url(kind: str, engine: str) -> bool:
-    """True for the "service" engines that call out over HTTP and need an
-    endpoint configured (openai_stt/openai_tts, and every kind="llm" entry,
-    which is always base_url+api_key based). False for local engines that
-    run in-process and never read base_url at all (whisper, vosk, qwen3_asr,
-    omnivoice, vieneu, edge_tts, qwen3_tts_*, voxcpm2, ...) -- including the
-    OpenRouter-backed STT engines (qwen3_asr_or/whisper_or), which use
-    api_key only, no base_url. Surfaced in the list response so the admin UI
-    can tell "blank because it's genuinely not needed" from "blank because
-    it's misconfigured"."""
-    return kind == "llm" or engine in _SERVICE_STT_ENGINES or engine in _SERVICE_TTS_ENGINES
+    """base_url is required exactly for the "service" location (a configurable
+    HTTP endpoint). "remote" (OpenRouter, api_key only) and "local" engines
+    both return False. Surfaced in the list response so the admin UI can tell
+    "blank because it's genuinely not needed" from "blank because it's
+    misconfigured"."""
+    return _location(kind, engine) == "service"
 
 
 class CreateEntryRequest(BaseModel):
@@ -89,6 +118,7 @@ async def list_entries() -> dict:
     entries = await model_registry_store.list_all()
     for e in entries:
         e["api_key"] = _mask_api_key(e["api_key"])
+        e["location"] = _location(e["kind"], e["engine"])
         e["requires_base_url"] = _requires_base_url(e["kind"], e["engine"])
         e["artifact_installed"] = is_artifact_installed(e["kind"], e["engine"], e["model_id"])
     return {"success": True, "data": entries}

@@ -501,18 +501,40 @@ def test_bad_service_url_is_rejected_at_add_time(client, monkeypatch):
     assert "request failed" in detail
 
 
+def test_location_classification():
+    """Three-state locality: 'service' for engines that call a configurable
+    HTTP endpoint and need a base_url (openai_stt/openai_tts, whisper_service/
+    eventlab, and every kind='llm' entry); 'remote' for the OpenRouter-backed
+    STT engines that hit a fixed API with api_key only (qwen3_asr_or/whisper_or)
+    -- remote, so NOT 'local', but no base_url either; 'local' for engines that
+    run in-process (whisper, vosk, qwen3_asr, omnivoice, vieneu, edge_tts,
+    qwen3_tts_*, voxcpm2, ...)."""
+    from app.api.routes.model_registry import _location
+
+    assert _location("llm", "anything") == "service"
+    assert _location("stt", "openai_stt") == "service"
+    assert _location("tts", "openai_tts") == "service"
+    assert _location("stt", "whisper_service") == "service"
+    assert _location("stt", "eventlab") == "service"
+    assert _location("stt", "qwen3_asr_or") == "remote"
+    assert _location("stt", "whisper_or") == "remote"
+    assert _location("stt", "whisper") == "local"
+    assert _location("stt", "vosk") == "local"
+    assert _location("tts", "vieneu") == "local"
+    assert _location("tts", "omnivoice") == "local"
+
+
 def test_requires_base_url_classification():
-    """Pure classification: True for service/protocol engines that call out
-    over HTTP (openai_stt/openai_tts, and every kind="llm" entry -- always
-    base_url+api_key based); False for local engines that run in-process and
-    never read base_url (whisper, vosk, qwen3_asr, omnivoice, vieneu,
-    edge_tts, qwen3_tts_*, voxcpm2, ...), including the OpenRouter-backed STT
-    engines (qwen3_asr_or/whisper_or use api_key only, no base_url)."""
+    """base_url is required exactly for the 'service' location -- the engines
+    that talk to a configurable HTTP endpoint. OpenRouter ('remote') and
+    in-process ('local') engines both return False (neither reads base_url)."""
     from app.api.routes.model_registry import _requires_base_url
 
     assert _requires_base_url("llm", "anything") is True
     assert _requires_base_url("stt", "openai_stt") is True
     assert _requires_base_url("tts", "openai_tts") is True
+    assert _requires_base_url("stt", "whisper_service") is True
+    assert _requires_base_url("stt", "eventlab") is True
     assert _requires_base_url("stt", "whisper") is False
     assert _requires_base_url("stt", "qwen3_asr_or") is False
     assert _requires_base_url("stt", "whisper_or") is False
@@ -529,6 +551,7 @@ def test_list_entries_surfaces_requires_base_url(client, _with_password):
     listed = client.get("/v1/model_registry").json()["data"]
     entry = next(e for e in listed if e["engine"] == "stub-registry-ok")
     assert entry["requires_base_url"] is False
+    assert entry["location"] == "local"
 
 
 # ---------- Feature: block enabling an entry whose artifact isn't installed ----------
