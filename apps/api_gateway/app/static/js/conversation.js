@@ -1,6 +1,7 @@
 import { el, wsUrl, restoreAndBind, savePref } from "./helpers.js";
 import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
 import { currentSessionId, setCurrentSessionId } from "./chat.js";
+import { profileData } from "./profiles.js";
 
 export const conv = { ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null, assistantBubble: null, opusMode: false, opusDec: null, opusTs: 0, outRate: 24000 };
 
@@ -132,18 +133,84 @@ export function convResetOpus() {
 
 export const convDetails = { stt: {}, llm: "", sttAvailable: true };
 
+// Model Registry options cached for client-side label resolution, so the chat
+// header can show the ACTIVE profile's friendly STT/LLM labels before the
+// session even starts (mirrors what the server resolves in session_started).
+// Keyed the same way the /options endpoint returns: [{engine, model_id, label}].
+export const convCatalog = { stt: [], llm: [] };
+
+export async function loadConvCatalog() {
+  const fetchOpts = async (kind) => {
+    try {
+      const body = await (await fetch(`/v1/model_registry/options?kind=${kind}`)).json();
+      return body.data || [];
+    } catch {
+      return [];
+    }
+  };
+  const [stt, llm] = await Promise.all([fetchOpts("stt"), fetchOpts("llm")]);
+  convCatalog.stt = stt;
+  convCatalog.llm = llm;
+}
+
+// Resolve (engine, model) to the registry label the SAME way the server does:
+// exact (engine, model_id) match first, else the first enabled row for the
+// engine, else the raw engine name. Returns "" when no engine is set.
+function catalogLabel(kind, engine, model) {
+  if (!engine) return "";
+  const opts = convCatalog[kind] || [];
+  const exact = opts.find((o) => o.engine === engine && o.model_id === (model || ""));
+  if (exact?.label) return exact.label;
+  const byEngine = opts.find((o) => o.engine === engine);
+  if (byEngine?.label) return byEngine.label;
+  return engine;
+}
+
 export function updateConvEnginesInfo() {
   const info = el("conv-engines-info");
   if (!info) return;
+  const profileName = el("profile-select")?.value || "";
+  if (profileName) {
+    // A profile is authoritative for STT/LLM/TTS: show ITS models as friendly
+    // registry labels (resolved client-side, same as the server would), so the
+    // user sees exactly what's active without having to start the session.
+    const p = profileData[profileName] || {};
+    const sttLabel = catalogLabel("stt", p.stt?.engine || "", p.stt?.model || "") || "server default";
+    const llmLabel = catalogLabel("llm", p.llm?.engine || "", p.llm?.model || "")
+      || p.llm?.model || "server default";
+    // TTS is a whole profile; its friendly name IS the linked TTS profile name.
+    const ttsLabel = p.tts?.profile_name || "server default";
+    info.textContent = `STT: ${sttLabel} · LLM: ${llmLabel} · TTS: ${ttsLabel}`;
+    return;
+  }
+  // No profile — the user's own manual selections (or server defaults) apply.
   const sttEng = el("conv-stt-engine")?.value || "";
-  // Strip the " · cached" status suffix so the model name reads clearly.
-  const clean = (d) => (d || "").split(" · ")[0];
-  const sttDet = clean(convDetails.stt[sttEng]);
   const ttsProfileName = el("conv-tts-profile")?.value || "";
-  const llmPart = convDetails.llm ? `LLM: ${convDetails.llm}` : "LLM: echo (no LLM configured)";
-  const sttPart = `STT: ${sttEng || "profile/server default"}${sttDet ? ` → ${sttDet}` : ""}`;
-  const ttsPart = `TTS: ${ttsProfileName || "profile/server default"}`;
+  const sttLabel = catalogLabel("stt", sttEng, "") || "server default";
+  const sttPart = `STT: ${sttEng ? sttLabel : "server default"}`;
+  const llmPart = convDetails.llm ? `LLM: ${convDetails.llm}` : "LLM: server default";
+  const ttsPart = `TTS: ${ttsProfileName || "server default"}`;
   info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
+}
+
+// When a profile is selected, its STT/TTS/LLM are authoritative and the user
+// must NOT hand-pick engines that would override them — the chat then simply
+// "follows the profile". Only "(none — server defaults)" lets the user choose.
+// LLM has no chat control, so it already follows the profile/server unconditionally.
+export function applyConvProfileLock() {
+  const profileActive = !!(el("profile-select")?.value || "");
+  const sttSel = el("conv-stt-engine");
+  const ttsSel = el("conv-tts-profile");
+  const langInput = el("conv-language");
+  [sttSel, ttsSel, langInput].forEach((sel) => {
+    if (!sel) return;
+    sel.disabled = profileActive;
+    sel.title = profileActive
+      ? "Following the selected profile — pick “(none — server defaults)” to choose engines manually"
+      : "";
+  });
+  const hint = el("conv-engines-locked-hint");
+  if (hint) hint.hidden = !profileActive;
 }
 
 // Called when the active profile changes: manual STT/TTS overrides must not
@@ -157,6 +224,7 @@ export function resetConvManualOverrides() {
   const ttsSel = el("conv-tts-profile");
   if (ttsSel) ttsSel.value = "";
   savePref("conv-tts-profile", "");
+  applyConvProfileLock();
   updateConvEnginesInfo();
 }
 
@@ -165,6 +233,7 @@ export async function loadConversationEngines() {
     const [stt, models] = await Promise.all([
       (await fetch("/v1/stt/engines")).json(),
       (await fetch("/v1/models")).json().catch(() => null),
+      loadConvCatalog(),
     ]);
     stt.data.forEach((e) => (convDetails.stt[e.engine] = e.detail));
     convDetails.llm = models?.data?.llm?.active || "";
@@ -198,6 +267,7 @@ export async function loadConversationEngines() {
     restoreAndBind("conv-tts-profile");
     el("conv-stt-engine").addEventListener("change", updateConvEnginesInfo);
     el("conv-tts-profile")?.addEventListener("change", updateConvEnginesInfo);
+    applyConvProfileLock();
     updateConvEnginesInfo();
   } catch (error) {
     convLog(`engines error: ${error}`);
@@ -254,7 +324,12 @@ export async function startConversation() {
   const ttsProfile = el("conv-tts-profile")?.value;
   if (ttsProfile) params += `&tts_profile=${encodeURIComponent(ttsProfile)}`;
   if (currentSessionId) params += `&session_id=${encodeURIComponent(currentSessionId)}`;
-  if (el("conv-language").value.trim()) params += `&language=${encodeURIComponent(el("conv-language").value.trim())}`;
+  // A locked language input (profile active) must not override the profile's
+  // own STT language — only send it when the user can actually edit it.
+  const langVal = el("conv-language");
+  if (langVal && !langVal.disabled && langVal.value.trim()) {
+    params += `&language=${encodeURIComponent(langVal.value.trim())}`;
+  }
 
   // Opus downlink: stream reply audio as Opus frames decoded in-browser (WebCodecs).
   // Falls back to the default URL/WAV path if unchecked or unsupported.
@@ -319,12 +394,14 @@ export async function startConversation() {
       case "session_started": {
         if (d.session_id) setCurrentSessionId(d.session_id);
         if (d.output_sample_rate) conv.outRate = d.output_sample_rate;
-        // Authoritative: show exactly which models this session is using.
+        // Authoritative: show exactly which models this session is using, using
+        // the friendly Model Registry labels the server resolved (never raw
+        // engine names or verbose provider "detail" strings).
         const info = el("conv-engines-info");
         if (info) {
-          const sttPart = `STT: ${d.stt_engine}${d.stt_detail ? ` → ${d.stt_detail}` : ""}`;
-          const llmPart = d.responder === "llm" ? `LLM: ${d.llm_model}` : "LLM: echo (no LLM configured)";
-          const ttsPart = `TTS: ${d.tts_engine}${d.tts_detail ? ` → ${d.tts_detail}` : ""}`;
+          const sttPart = `STT: ${d.stt_label || d.stt_engine}`;
+          const llmPart = d.responder === "llm" ? `LLM: ${d.llm_label || d.llm_model}` : "LLM: echo (no LLM configured)";
+          const ttsPart = `TTS: ${d.tts_label || d.tts_engine}`;
           info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
         }
         // Engines may still be cold-loading — tell the user to hold off speaking

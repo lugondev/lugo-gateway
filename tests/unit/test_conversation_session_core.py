@@ -170,6 +170,49 @@ async def test_session_started_reports_the_profiles_actual_llm_model(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_session_started_emits_friendly_registry_labels(monkeypatch, tmp_path):
+    """session_started must carry the Model Registry's human labels
+    (stt_label/tts_label/llm_label) so the admin chat header shows the same
+    friendly name every profile/service select shows — never the raw engine
+    name or a verbose provider "detail" string. When a registry row exists for
+    the active (kind, engine, model), its label wins."""
+    from app.services.model_registry.store import ModelRegistryStore
+    from app.services.profiles.models import LlmConfig, Profile
+    from app.services.profiles.store import ProfileStore
+
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    fresh_profiles.upsert(Profile(
+        name="labelled",
+        llm=LlmConfig(base_url="https://api.example.com/v1", api_key="k",
+                      model="gpt-4o-mini", engine="openai"),
+    ))
+
+    registry = ModelRegistryStore()
+    await registry.create("stt", "stub-core-stt", "", "STT sentinel")  # config sentinel
+    await registry.create("stt", "stub-core-stt", "small-v3", "Whisper Small v3", enabled=True)
+    await registry.create("llm", "openai", "gpt-4o-mini", "OpenAI · GPT-4o mini")
+    monkeypatch.setattr("app.services.conversation.session.model_registry_store", registry)
+
+    events = []
+    async def emit(name, **p): events.append((name, p))
+    async def emit_audio(pkt): pass
+
+    sess = ConversationSession(
+        _cfg(profile_name="labelled", stt_engine="stub-core-stt", stt_model="small-v3"),
+        emit, emit_audio,
+    )
+    await sess.start()
+    await sess.close()
+
+    started = next(p for n, p in events if n == "session_started")
+    assert started["stt_label"] == "Whisper Small v3"
+    assert started["llm_label"] == "OpenAI · GPT-4o mini"
+    # Raw engine names must not leak into the friendly labels.
+    assert "stub-core-stt" not in started["stt_label"]
+
+
+@pytest.mark.asyncio
 async def test_session_start_applies_registry_llm_override_for_profile(monkeypatch, tmp_path):
     """A profile that picks a Model Registry LLM (base_url/api_key cleared,
     engine+model set -- see profiles.js's registry-select save path) must have

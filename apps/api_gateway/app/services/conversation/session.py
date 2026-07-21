@@ -38,9 +38,9 @@ from app.services.mcp.pool import mcp_pool
 from app.services.mcp.server_store import mcp_server_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
+from app.services.model_registry.store import model_registry_store
 from app.services.profiles.store import profile_store
 from app.services.stt.model_catalog import resolve_default_stt_model
-from app.services.stt.providers.whisper_provider import get_active_whisper_model
 from app.services.stt.routing import select_stt_engine
 from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
@@ -236,16 +236,35 @@ class ConversationSession:
 
         self.tool_registry = await _build_tool_registry(profile)
 
-        # Detail strings so the UI can show exactly WHICH models are active this session.
-        if hasattr(self.stt_provider, "detail"):
-            stt_detail = self.stt_provider.detail()  # whisper_mlx / qwen3_asr expose this
-        elif cfg.stt_engine in {"whisper", "whisper_local"}:
-            stt_detail = get_active_whisper_model()
-        else:
-            stt_detail = cfg.stt_engine
-        tts_detail = self.tts_provider.detail() if hasattr(self.tts_provider, "detail") else cfg.tts_engine
+        # Friendly labels for the UI: the Model Registry is the single source of
+        # truth every profile/service select reads, so the chat header must show
+        # the SAME human label (never the raw engine name or a verbose provider
+        # "detail" string). Fall back to the engine name only when no registry
+        # row matches (e.g. a built-in engine with no catalogue entry).
+        async def _registry_label(kind: str, engine: str, model_id: str) -> str:
+            if not engine:
+                return "—"
+            row = await model_registry_store.find(kind, engine, model_id or "")
+            if row and row.get("label"):
+                return row["label"]
+            # Some engines carry only a model_id="" sentinel; try the enabled row.
+            enabled = await model_registry_store.find_enabled(kind, engine)
+            if enabled and enabled.get("label"):
+                return enabled["label"]
+            return engine
+
+        stt_label = await _registry_label("stt", cfg.stt_engine, self.stt_model_id)
+        # TTS is chosen as a whole profile in this UI; its friendly name IS the
+        # profile name (TtsProfile has no separate nickname field).
+        tts_label = cfg.profile_name and (profile.tts.profile_name if profile else "")
+        tts_label = tts_label or await _registry_label("tts", cfg.tts_engine, cfg.tts_model)
 
         model_label = self.responder.model if self.responder.name == "llm" else self.responder.name
+        # Friendly LLM label from the registry too, keyed on the profile's LLM row.
+        if profile and profile.llm.engine and self.responder.name == "llm":
+            llm_label = await _registry_label("llm", profile.llm.engine, profile.llm.model)
+        else:
+            llm_label = model_label
 
         conv_cfg = system_config_store.get().conversation
         self.endpointer = VadEndpointer(
@@ -293,12 +312,13 @@ class ConversationSession:
             profile=cfg.profile_name,
             active_tools=active_tools,
             stt_engine=cfg.stt_engine,
-            stt_detail=stt_detail,
+            stt_label=stt_label,
             language=cfg.language,
             tts_engine=cfg.tts_engine,
-            tts_detail=tts_detail,
+            tts_label=tts_label,
             responder=self.responder.name,
             llm_model=model_label,
+            llm_label=llm_label,
             sample_rate=cfg.sample_rate,
             audio_codec=self.audio_codec,
             output=output,
