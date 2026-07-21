@@ -1,5 +1,6 @@
 import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
 import { renderDataTable } from "./data-table.js";
+import { confirmDialog } from "./modal.js";
 
 export let registryData = [];
 
@@ -26,6 +27,17 @@ function _baseUrlBadge(e) {
     return `<span class="hint" style="color:#c0392b" title="This engine needs a base URL to work">service — no base URL set!</span>`;
   }
   return `<span class="hint" title="${escapeHtml(e.base_url)}">service</span>`;
+}
+
+// artifact_installed comes from the backend (is_artifact_installed()):
+// true/false for local artifact-backed engines (whisper, vosk, omnivoice,
+// vieneu) whose model has (or hasn't) actually been downloaded via the
+// Models page, null/None for everything else (service engines, sentinel
+// rows, package-only engines) where the concept doesn't apply -- only the
+// explicit `false` case gets a warning, not null.
+function _artifactBadge(e) {
+  if (e.artifact_installed !== false) return "";
+  return `<span class="hint" style="color:#c0392b" title="Enabling this will be rejected until it's downloaded">not installed!</span>`;
 }
 
 function _filteredRegistryData() {
@@ -62,6 +74,7 @@ function renderModelRegistry() {
         render: (e) => `
           <code>${escapeHtml(e.engine)}/${escapeHtml(e.model_id)}</code>
           ${_baseUrlBadge(e)}
+          ${_artifactBadge(e)}
         `,
       },
       { key: "label", label: "Label", render: (e) => escapeHtml(e.label) },
@@ -83,6 +96,7 @@ function renderModelRegistry() {
         render: (e) => `
           <button class="mini" data-registry-edit="${escapeHtml(e.id)}">Edit</button>
           <button class="mini" data-registry-toggle="${escapeHtml(e.id)}">${e.enabled ? "Disable" : "Enable"}</button>
+          <button class="mini danger" data-registry-delete="${escapeHtml(e.id)}">Delete</button>
         `,
       },
     ],
@@ -107,6 +121,9 @@ function renderModelRegistry() {
       const entry = registryData.find((e) => e.id === id);
       patchEntry(id, { enabled: !entry.enabled });
     })
+  );
+  table.querySelectorAll("[data-registry-delete]").forEach((btn) =>
+    btn.addEventListener("click", () => deleteEntry(btn.getAttribute("data-registry-delete")))
   );
 
   const detailState = new Map(); // id -> { schema, mode }
@@ -285,6 +302,22 @@ async function patchEntry(id, fields) {
     return;
   }
   await loadModelRegistry();
+}
+
+async function deleteEntry(id) {
+  const entry = registryData.find((e) => e.id === id);
+  if (!(await confirmDialog(`Delete "${entry?.label || id}" permanently? This cannot be undone.`, { danger: true }))) return;
+  try {
+    const resp = await fetch(`/v1/model_registry/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      print(el("model-registry-status"), body.detail || "Delete failed", true);
+      return;
+    }
+    await loadModelRegistry();
+  } catch (error) {
+    print(el("model-registry-status"), String(error), true);
+  }
 }
 
 async function bulkPatchEntries(ids, fields, verb) {
