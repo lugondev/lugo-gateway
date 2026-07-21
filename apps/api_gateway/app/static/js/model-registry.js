@@ -15,25 +15,23 @@ export async function loadModelRegistry() {
 }
 
 // location comes from the backend (_location): "local" runs in-process,
-// "remote" hits a fixed remote API with api_key only (OpenRouter STT --
-// no base URL to configure but NOT local), "service" talks to a configurable
-// HTTP endpoint and needs a base_url (openai_stt/openai_tts, whisper_service/
-// eventlab, every llm). This lets the admin tell "blank base URL because it's
-// genuinely not needed" (local/remote) from "blank because it's misconfigured"
-// (service). Falls back to the old requires_base_url two-state read for any
-// response predating the `location` field.
+// "service" calls out to an external HTTP API (openai_stt/openai_tts,
+// whisper_service/eventlab, OpenRouter STT, every llm -- OpenRouter/OpenAI/
+// Together are all just "service"). requires_base_url is a SEPARATE axis: a
+// service whose endpoint the admin must supply shows the missing-base-URL
+// warning; OpenRouter is a service with a fixed endpoint (api_key only) so it
+// never warns. Falls back to requires_base_url for responses predating
+// `location`.
 function _baseUrlBadge(e) {
   const loc = e.location || (e.requires_base_url ? "service" : "local");
   if (loc === "local") {
-    return `<span class="hint" title="Runs in-process -- no base URL needed">local</span>`;
+    return `<span class="hint" title="Runs in-process -- no network call">local</span>`;
   }
-  if (loc === "remote") {
-    return `<span class="hint" title="Fixed remote API (OpenRouter) -- api key only, no base URL">remote</span>`;
-  }
-  if (!e.base_url) {
+  if (e.requires_base_url && !e.base_url) {
     return `<span class="hint" style="color:#c0392b" title="This engine needs a base URL to work">service — no base URL set!</span>`;
   }
-  return `<span class="hint" title="${escapeHtml(e.base_url)}">service</span>`;
+  const title = e.base_url || "Fixed remote API endpoint — api key only";
+  return `<span class="hint" title="${escapeHtml(title)}">service</span>`;
 }
 
 // artifact_installed comes from the backend (is_artifact_installed()):
@@ -208,7 +206,7 @@ function _detailHtml(e) {
         <input type="password" class="mini" data-detail-apikey placeholder="new key…" autocomplete="off" />
       </label>
       <label class="registry-field">
-        <span>Base URL ${e.requires_base_url ? "(required)" : (e.location === "remote" ? "(not needed — fixed remote API)" : "(not needed — runs in-process)")}</span>
+        <span>Base URL ${e.requires_base_url ? "(required)" : (e.location === "service" ? "(not needed — fixed remote API)" : "(not needed — runs in-process)")}</span>
         <input type="text" class="mini" data-detail-baseurl value="${escapeHtml(e.base_url || "")}" placeholder="https://…" ${e.requires_base_url ? "" : "disabled"} />
       </label>
       <div class="registry-field">

@@ -57,38 +57,38 @@ def _mask_api_key(key: str) -> str:
 
 
 def _location(kind: str, engine: str) -> str:
-    """Three-state locality, surfaced so the admin UI can label each entry
-    honestly instead of collapsing everything-that-lacks-a-base_url into
-    "local":
+    """Two-state locality, surfaced so the admin UI can label each entry:
 
-    - "service": talks to a configurable HTTP endpoint and needs a base_url --
-      openai_stt/openai_tts, whisper_service/eventlab, and every kind="llm"
-      entry (always base_url+api_key based).
-    - "remote": hits a fixed remote API with api_key only, no base_url -- the
-      OpenRouter-backed STT engines (qwen3_asr_or/whisper_or). Remote, so NOT
-      "local", but nothing to configure as an endpoint.
-    - "local": runs in-process, no network endpoint at all (whisper, vosk,
+    - "local": runs in-process, no network call at all (whisper, vosk,
       qwen3_asr, omnivoice, vieneu, edge_tts, qwen3_tts_*, voxcpm2, ...).
+    - "service": calls out to an external HTTP API -- openai_stt/openai_tts,
+      whisper_service/eventlab, the OpenRouter-backed STT engines
+      (qwen3_asr_or/whisper_or), and every kind="llm" entry. OpenRouter,
+      OpenAI, Together, ... are all just "service"; there is no third bucket.
+
+    Whether a service needs a *configurable* base_url is a separate axis --
+    see _requires_base_url (OpenRouter hits a fixed endpoint, api_key only).
     """
     if (
         kind == "llm"
         or engine in _SERVICE_STT_ENGINES
         or engine in _SERVICE_TTS_ENGINES
         or engine in _BASE_URL_STT_ENGINES
+        or engine in _OPENROUTER_STT_ENGINES
     ):
         return "service"
-    if engine in _OPENROUTER_STT_ENGINES:
-        return "remote"
     return "local"
 
 
 def _requires_base_url(kind: str, engine: str) -> bool:
-    """base_url is required exactly for the "service" location (a configurable
-    HTTP endpoint). "remote" (OpenRouter, api_key only) and "local" engines
-    both return False. Surfaced in the list response so the admin UI can tell
-    "blank because it's genuinely not needed" from "blank because it's
-    misconfigured"."""
-    return _location(kind, engine) == "service"
+    """Whether the admin must configure a base_url. True for the service
+    engines whose endpoint is admin-supplied (openai_stt/openai_tts,
+    whisper_service/eventlab, every kind="llm" entry). False for the
+    OpenRouter-backed STT engines -- "service", but they hit a fixed endpoint
+    with api_key only -- and for every "local" engine. Surfaced in the list
+    response so the admin UI can tell "blank because it's genuinely not needed"
+    from "blank because it's misconfigured"."""
+    return _location(kind, engine) == "service" and engine not in _OPENROUTER_STT_ENGINES
 
 
 class CreateEntryRequest(BaseModel):

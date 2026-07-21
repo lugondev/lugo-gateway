@@ -502,13 +502,12 @@ def test_bad_service_url_is_rejected_at_add_time(client, monkeypatch):
 
 
 def test_location_classification():
-    """Three-state locality: 'service' for engines that call a configurable
-    HTTP endpoint and need a base_url (openai_stt/openai_tts, whisper_service/
-    eventlab, and every kind='llm' entry); 'remote' for the OpenRouter-backed
-    STT engines that hit a fixed API with api_key only (qwen3_asr_or/whisper_or)
-    -- remote, so NOT 'local', but no base_url either; 'local' for engines that
-    run in-process (whisper, vosk, qwen3_asr, omnivoice, vieneu, edge_tts,
-    qwen3_tts_*, voxcpm2, ...)."""
+    """Two-state locality: 'local' for engines that run in-process (whisper,
+    vosk, qwen3_asr, omnivoice, vieneu, edge_tts, qwen3_tts_*, voxcpm2, ...);
+    'service' for every engine that calls out to an external HTTP API --
+    openai_stt/openai_tts, whisper_service/eventlab, the OpenRouter-backed STT
+    engines (qwen3_asr_or/whisper_or), and every kind='llm' entry. OpenRouter,
+    OpenAI, Together, ... are all just 'service' -- no third category."""
     from app.api.routes.model_registry import _location
 
     assert _location("llm", "anything") == "service"
@@ -516,8 +515,8 @@ def test_location_classification():
     assert _location("tts", "openai_tts") == "service"
     assert _location("stt", "whisper_service") == "service"
     assert _location("stt", "eventlab") == "service"
-    assert _location("stt", "qwen3_asr_or") == "remote"
-    assert _location("stt", "whisper_or") == "remote"
+    assert _location("stt", "qwen3_asr_or") == "service"
+    assert _location("stt", "whisper_or") == "service"
     assert _location("stt", "whisper") == "local"
     assert _location("stt", "vosk") == "local"
     assert _location("tts", "vieneu") == "local"
@@ -525,9 +524,11 @@ def test_location_classification():
 
 
 def test_requires_base_url_classification():
-    """base_url is required exactly for the 'service' location -- the engines
-    that talk to a configurable HTTP endpoint. OpenRouter ('remote') and
-    in-process ('local') engines both return False (neither reads base_url)."""
+    """base_url is required for the service engines whose endpoint the admin
+    must configure (openai_stt/openai_tts, whisper_service/eventlab, every
+    kind='llm' entry). The OpenRouter-backed STT engines are 'service' too but
+    hit a fixed endpoint with api_key only, so they don't require a base_url;
+    'local' engines never read one either."""
     from app.api.routes.model_registry import _requires_base_url
 
     assert _requires_base_url("llm", "anything") is True
@@ -535,9 +536,9 @@ def test_requires_base_url_classification():
     assert _requires_base_url("tts", "openai_tts") is True
     assert _requires_base_url("stt", "whisper_service") is True
     assert _requires_base_url("stt", "eventlab") is True
-    assert _requires_base_url("stt", "whisper") is False
     assert _requires_base_url("stt", "qwen3_asr_or") is False
     assert _requires_base_url("stt", "whisper_or") is False
+    assert _requires_base_url("stt", "whisper") is False
     assert _requires_base_url("tts", "vieneu") is False
     assert _requires_base_url("tts", "omnivoice") is False
 
