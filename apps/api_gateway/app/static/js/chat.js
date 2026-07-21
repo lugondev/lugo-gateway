@@ -232,7 +232,7 @@ if (el("t2v-submit")) {
         audio.src = body.data.audio_url;
         audio.classList.remove("hidden");
         audio.play().catch(() => {});
-        if (meta) meta.textContent = `${body.data.duration_seconds ?? "?"}s @ ${body.data.sample_rate}Hz`;
+        if (meta) meta.textContent = `${body.data.duration_seconds ?? "?"}s @ ${body.data.sample_rate}Hz${body.data.process_seconds != null ? ` · synthesized in ${body.data.process_seconds}s` : ""}`;
       }
     } catch (error) {
       if (meta) meta.textContent = String(error);

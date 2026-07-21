@@ -96,7 +96,8 @@ export function renderChunkItem(payload) {
   const li = document.createElement("li");
   const text = document.createElement("span");
   text.className = "chunk-text";
-  text.textContent = payload.text || "(chunk)";
+  const proc = payload.process_seconds != null ? ` (${payload.process_seconds}s)` : "";
+  text.textContent = (payload.text || "(chunk)") + proc;
   li.appendChild(text);
   if (payload.audio_url) {
     const play = document.createElement("button");

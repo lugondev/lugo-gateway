@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 import uuid
 
 from fastapi import APIRouter
@@ -33,7 +34,9 @@ async def list_tts_voices(engine: str = "vieneu") -> dict:
 @router.post("/synthesize")
 async def synthesize(payload: TTSRequest) -> dict:
     provider = tts_service.get_provider(payload.engine)
+    started = time.perf_counter()
     result = await provider.synthesize(payload)
+    result.process_seconds = round(time.perf_counter() - started, 3)
     return {"success": True, "data": result.model_dump()}
 
 
@@ -60,7 +63,9 @@ async def create_stream_job(payload: TTSRequest) -> dict:
 
             for index, segment in enumerate(segments):
                 chunk_request = payload.model_copy(update={"text": segment})
+                started = time.perf_counter()
                 result = await provider.synthesize(chunk_request)
+                process_seconds = round(time.perf_counter() - started, 3)
                 sequence += 1
                 await event_bus.publish(
                     channel,
@@ -73,6 +78,7 @@ async def create_stream_job(payload: TTSRequest) -> dict:
                             "text": segment,
                             "audio_url": result.audio_url,
                             "duration_seconds": result.duration_seconds,
+                            "process_seconds": process_seconds,
                         },
                     ),
                 )

@@ -21,6 +21,7 @@ class TTSResult(BaseModel):
     engine: str
     sample_rate: int
     audio_url: str | None = None
-    duration_seconds: float | None = None
+    duration_seconds: float | None = None  # length of the produced audio
+    process_seconds: float | None = None  # wall-clock time spent synthesizing it
     job_id: str | None = None
     text: str | None = None

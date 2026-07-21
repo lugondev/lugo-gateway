@@ -109,3 +109,15 @@ async def test_stream_job_task_reference_is_retained_while_running(stubs):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert task not in tts_routes._stream_jobs  # and it's released when done
+
+
+async def test_synthesize_reports_wall_clock_process_seconds(stubs):
+    # The response must carry how long synthesis actually took, distinct from
+    # duration_seconds (the length of the produced audio).
+    resp = await tts_routes.synthesize(
+        TTSRequest(text="xin chào", engine="stub-tts-stream-ok")
+    )
+    data = resp["data"]
+    assert "process_seconds" in data
+    assert isinstance(data["process_seconds"], float)
+    assert data["process_seconds"] >= 0
