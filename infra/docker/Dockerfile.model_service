@@ -31,9 +31,10 @@ RUN pip install --no-cache-dir ".[tts,opus]"
 ARG BUILD_QWEN3_ASR_GGUF=0
 RUN if [ "$BUILD_QWEN3_ASR_GGUF" = "1" ]; then \
         apt-get update \
-        && apt-get install -y --no-install-recommends git cmake g++ curl ca-certificates \
+        && apt-get install -y --no-install-recommends git cmake make g++ curl ca-certificates \
         && bash apps/model_service/scripts/build_qwen3_asr_cpp.sh \
-        && apt-get purge -y git cmake g++ && apt-get autoremove -y \
+        && cmake --install apps/model_service/vendor/qwen3-asr.cpp/build \
+        && apt-get purge -y git cmake make g++ && apt-get autoremove -y \
         && rm -rf /var/lib/apt/lists/*; \
     fi
 

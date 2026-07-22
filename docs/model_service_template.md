@@ -7,9 +7,10 @@ plug into both without touching the others:
    latency, keeps warm state, thread-pinning, streaming.
 2. **As an OpenAI-compatible model_service** — the same provider wrapped by
    `apps/model_service` and served at `POST /v1/audio/transcriptions`. The gateway
-   consumes it through `OpenAICompatSttProvider` (engine `openai_stt`) using the
-   registry `base_url`. This is how CPU-only / GPU-isolated engines run in their own
-   container in prod.
+   consumes it through `HttpSttProvider` (engine `http_stt`) using the registry
+   `base_url`. This is how CPU-only / GPU-isolated engines run in their own container
+   in prod. (Named `http_stt`/`http_tts`, not `remote_stt`/`remote_tts` — that name is
+   already taken by `RemoteSttConfig`'s fixed `whisper_service`/`eventlab` slots.)
 
 You write the provider once; both surfaces reuse it. There is **no separate HTTP
 handler to write** — model_service builds its `/v1` route from the provider you
@@ -88,11 +89,18 @@ the engine as its own container:
   `apps/model_service`, then `curl` `POST /v1/audio/transcriptions` (multipart:
   `file=@sample.wav`, `model=<engine>`) and confirm the OpenAI envelope
   (`{"text": "..."}`).
-- The gateway consumes it via a registry row for `openai_stt` pointing `base_url` at
+- The gateway consumes it via a registry row for `http_stt` pointing `base_url` at
   the container. No gateway code change beyond the registry row.
 - If the engine needs native build steps (like the GGUF binary), gate them in
   `infra/docker/Dockerfile.model_service` behind a build ARG so other engines'
   images stay slim. See `BUILD_QWEN3_ASR_GGUF`.
+- A CMake-built binary needs `make` installed alongside `cmake`/`g++` (CMake's
+  default Unix Makefiles generator shells out to it; `cmake --build` fails with
+  "CMAKE_MAKE_PROGRAM is not set" without it) and should end with
+  `cmake --install <build-dir>` so the binary lands on `PATH` (e.g.
+  `/usr/local/bin`) instead of only being reachable via the provider's
+  build-dir fallback path. Only works if the project's `CMakeLists.txt` declares
+  an `install(TARGETS ...)` rule — check before relying on it.
 
 ### 7. Tests
 
@@ -107,6 +115,54 @@ Run the **changed repo's** tests before pushing (this repo auto-deploys `main` t
 prod). Full suite is a pre-commit gate, not for static-UI edits.
 
 ---
+
+## Deploying a model_service engine to Coolify
+
+Each engine gets its own one-service compose file in `infra/compose/` (e.g.
+`docker-compose.stt-qwen3-asr-gguf.yml`) built from the shared
+`Dockerfile.model_service` — see `docker-compose.vm.yml` for running several
+engines together on one plain SSH+docker-compose VM instead.
+
+Gotchas hit standing these up (in case they resurface):
+
+- **`build.context` must be `.`, not `../..`.** Coolify invokes `docker compose`
+  with `--project-directory` set to the app's `base_directory` (repo root), which
+  becomes the resolution base for every relative `build.context` — not the
+  compose file's own directory. `../..` (correct for a bare `docker compose -f
+  infra/compose/x.yml build` with no `--project-directory` override) overshoots
+  by two levels under Coolify and fails with `lstat /infra: no such file or
+  directory`. Building the same file locally the way Coolify does needs
+  `docker compose -f infra/compose/<file> --project-directory . build` from the
+  repo root.
+- **`POST /api/v1/applications/private-github-app` hangs → nginx 504** for this
+  repo specifically (confirmed reproducible on Coolify 4.0.0-beta.459), rolling
+  back with no app created. Workaround: `POST
+  /api/v1/applications/private-deploy-key` instead — add an SSH deploy key to the
+  repo (`gh api repos/<owner>/<repo>/keys`), register the private half via `POST
+  /api/v1/security/keys`, and pass its `private_key_uuid`. This path returns in
+  well under a second.
+- **Submodules break the deploy-key path.** Coolify runs `git submodule update
+  --init --recursive` unconditionally whenever `.gitmodules` exists, using the
+  app's one configured SSH key for the whole clone. A deploy key is scoped to a
+  single repo (GitHub rejects reusing one public key as a deploy key across
+  repos), so any submodule outside that repo fails to clone and aborts the whole
+  deployment — even if the submodule is irrelevant to the image being built.
+  Fix: point the Coolify app at a `deploy` branch that has the submodule gitlinks
+  and `.gitmodules` stripped (`git rm --cached <path>...` + `git rm --cached
+  .gitmodules`), regenerated from `main` before each deploy. (The GitHub App
+  path doesn't have this problem — its installation already covers every repo
+  under the account — which is the real reason to prefer fixing the 504 over
+  living with the deploy-key workaround long-term.)
+- **`ports_exposes` doesn't drive the Traefik label port for `dockercompose`
+  builds** the way it does for `dockerfile`/`dockerimage` builds — PATCHing it
+  and redeploying did not change the generated
+  `loadbalancer.server.port` label (stayed `80` even with `ports_exposes=8100`).
+  Adding an explicit `expose:` entry in the compose service didn't fix it either
+  in testing. Unresolved: the public sslip/Traefik URL for a `dockercompose` app
+  may 404 even while the container itself is `running:healthy`. Treat the public
+  domain as unreliable for these apps for now; call the service from another
+  Coolify app on the same server over the internal `coolify` Docker network
+  instead of through the public URL.
 
 ## Why not move every engine into model_service?
 

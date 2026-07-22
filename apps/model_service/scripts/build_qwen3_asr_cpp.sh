@@ -7,8 +7,8 @@
 # Python backends are GPU-only and auto-hide). On Apple Silicon it builds with
 # Metal for GPU acceleration.
 #
-# Requires: git, cmake (>=3.14), a C++17 compiler. On Debian slim:
-#           apt-get install -y git cmake g++
+# Requires: git, cmake (>=3.14), make, a C++17 compiler. On Debian slim:
+#           apt-get install -y git cmake make g++
 # Usage:    bash apps/model_service/scripts/build_qwen3_asr_cpp.sh [GGUF_URL]
 #
 # Outputs (both git-ignored via build/ and *.gguf):
@@ -42,7 +42,7 @@ MODEL_FILE="$MODEL_DIR/${MODEL_SLUG}-${QUANT}.gguf"
 PY="${PYTHON:-$SCRIPT_DIR/../../../.venv/bin/python}"
 [ -x "$PY" ] || PY="python3"
 
-for tool in git cmake; do
+for tool in git cmake make; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "Missing required tool: $tool" >&2
     exit 1
