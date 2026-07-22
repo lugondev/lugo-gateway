@@ -19,6 +19,7 @@ The engine auto-hides when the binary or the GGUF model file is absent.
 
 import asyncio
 import concurrent.futures
+import logging
 import os
 import shutil
 import subprocess
@@ -28,6 +29,8 @@ from app.core.audio import pcm16_to_wav_bytes, wav_bytes_to_pcm16
 from app.schemas.stt import STTResult
 from app.services.model_registry.resolve import resolve_stt_engine_config
 from app.services.stt.base import STTProvider
+
+logger = logging.getLogger(__name__)
 
 # qwen3-asr-cli REQUIRES 16 kHz mono PCM16 WAV. It reads the header but does NOT
 # resample: feeding 24k/48k (browser/device capture) produces empty or garbage
@@ -163,8 +166,12 @@ class Qwen3AsrGgufProvider(STTProvider):
         try:
             pcm = wav_bytes_to_pcm16(audio_bytes, _TARGET_SR)
             audio_bytes = pcm16_to_wav_bytes(pcm, _TARGET_SR)
-        except Exception:  # noqa: BLE001 - not a decodable WAV; let the binary report it
-            pass
+        except Exception as exc:  # noqa: BLE001 - not a decodable WAV; let the binary report it
+            # Logged (not just swallowed): this once masked a missing `scipy`
+            # dependency in the model_service image -- the resample silently
+            # no-opped and the binary rejected the un-resampled audio with its
+            # own (much less useful) "must be 16kHz" error.
+            logger.warning("qwen3_asr_gguf: resample to %dHz failed, sending audio as-is: %s", _TARGET_SR, exc)
         tmp = ""
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
