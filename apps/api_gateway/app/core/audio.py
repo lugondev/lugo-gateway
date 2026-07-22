@@ -8,6 +8,12 @@ import io
 import wave
 
 import numpy as np
+import soundfile as sf
+
+# Raised by the WAV-first/soundfile-fallback readers below (wav_duration_seconds,
+# read_wav, wav_bytes_to_pcm16) when bytes are genuinely unparseable by either --
+# not just "not a WAV container" (mp3/ogg/flac all decode fine via soundfile).
+_UNDECODABLE_AUDIO_ERRORS = (wave.Error, sf.LibsndfileError)
 
 
 def pcm16_to_wav_bytes(pcm: bytes, sample_rate: int, channels: int = 1) -> bytes:
@@ -38,11 +44,19 @@ def pcm16_to_float_array(pcm: bytes) -> np.ndarray:
 
 
 def wav_duration_seconds(wav_bytes: bytes) -> float:
-    """Return the duration in seconds of a WAV byte payload."""
-    with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
-        frames = wav_file.getnframes()
-        rate = wav_file.getframerate()
-    return frames / float(rate) if rate else 0.0
+    """Return the duration in seconds of an audio byte payload.
+
+    Same WAV-first, soundfile-fallback shape as wav_bytes_to_pcm16 above --
+    needed because /v1/stt/transcribe calls this on the *original* upload
+    bytes (mp3/ogg/flac included) to report duration in the response, after
+    a provider has already decoded its own private copy for transcription."""
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
+            frames = wav_file.getnframes()
+            rate = wav_file.getframerate()
+        return frames / float(rate) if rate else 0.0
+    except wave.Error:
+        return sf.info(io.BytesIO(wav_bytes)).duration
 
 
 def silent_wav_bytes(duration_seconds: float, sample_rate: int) -> bytes:
@@ -53,10 +67,19 @@ def silent_wav_bytes(duration_seconds: float, sample_rate: int) -> bytes:
 
 
 def read_wav(wav_bytes: bytes) -> tuple[bytes, int, int, int]:
-    """Return (pcm_frames, sample_rate, channels, sample_width) of a WAV payload."""
-    with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
-        frames = wav_file.readframes(wav_file.getnframes())
-        return frames, wav_file.getframerate(), wav_file.getnchannels(), wav_file.getsampwidth()
+    """Return (pcm_frames, sample_rate, channels, sample_width) of an audio payload.
+
+    Same WAV-first, soundfile-fallback shape as wav_bytes_to_pcm16 above -- the
+    segmented-transcribe path (stt.py's use_segment branch) calls this on the
+    raw upload, mp3/ogg/flac included."""
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
+            frames = wav_file.readframes(wav_file.getnframes())
+            return frames, wav_file.getframerate(), wav_file.getnchannels(), wav_file.getsampwidth()
+    except wave.Error:
+        samples, rate = sf.read(io.BytesIO(wav_bytes), dtype="int16", always_2d=True)
+        channels = samples.shape[1]
+        return samples.tobytes(), rate, channels, 2
 
 
 def wav_bytes_to_pcm16(wav_bytes: bytes, target_sr: int) -> bytes:
@@ -85,8 +108,6 @@ def wav_bytes_to_pcm16(wav_bytes: bytes, target_sr: int) -> bytes:
         if ch > 1:
             samples = samples.reshape(-1, ch).mean(axis=1)
     except wave.Error:
-        import soundfile as sf
-
         samples, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32", always_2d=True)
         samples = samples.mean(axis=1) if samples.shape[1] > 1 else samples[:, 0]
     if sr != target_sr:
@@ -212,8 +233,11 @@ def preprocess_wav_bytes(
         return wav_bytes
     try:
         pcm, rate, channels, width = read_wav(wav_bytes)
-    except wave.Error:
-        return wav_bytes  # non-WAV (e.g. mp3) — leave for the engine to decode
+    except _UNDECODABLE_AUDIO_ERRORS:
+        # read_wav already falls back from wave to soundfile (mp3/ogg/flac all
+        # decode fine there) -- reaching here means genuinely unparseable bytes,
+        # not just "not a WAV container". Leave those for the engine to reject.
+        return wav_bytes
     if channels != 1 or width != 2:
         return wav_bytes
     processed = preprocess_pcm16(
