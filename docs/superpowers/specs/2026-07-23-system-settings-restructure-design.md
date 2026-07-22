@@ -37,6 +37,12 @@ env-var-backed settings with code defaults.
   for how sub-grouping is achieved without this).
 - No change to the Base Context or Status subtabs (siblings of Settings,
   out of scope).
+- This spec's scope grew beyond the Settings page itself: removing the
+  `conversation_stt_engine`/`conversation_tts_engine`/query-param override
+  tier (user-requested simplification, see below) also requires removing
+  the STT engine-select dropdown from the Chat and Livehost pages and
+  updating device-integration docs — flagged explicitly rather than treated
+  as incidental.
 
 ## Field classification
 
@@ -76,29 +82,66 @@ process restart, which already resets any in-memory cache.
 grep confirms **zero read call sites**; only reference is a stale comment at
 `app/main.py:46`. Remove the fields, the comment, and their UI rows.
 
-### Delete + collapse the STT/TTS engine override tier
+### Delete + collapse the STT/TTS engine override tier (config + default only, no query param)
 
-`conversation_stt_engine` and `conversation_tts_engine` (both in
-`ConversationTuningConfig`) are a middle fallback tier between
-`profile.stt.engine`/query-param overrides and `engines.default_stt_engine`/
-`default_tts_engine`. Having both a global default *and* a
-conversation-wide override that itself falls back to the global default adds
-a field pair that's confusing for little value — a profile-level override
-already exists for genuine per-profile customization, and a
-request/query-param override exists for one-off cases. Removing this tier
-simplifies STT resolution to `query param > profile.stt.engine >
-default_stt_engine` (same pattern for TTS). This is a real code change, not
-just a UI hide — 5 call sites update:
+`conversation_stt_engine`/`conversation_tts_engine` (a system-wide
+conversation override) **and** the per-request `stt_engine`/`tts_engine`
+query-param override are both removed. The resolution chain collapses to
+just two tiers: **profile config, then system default** —
+`profile.stt.engine > default_stt_engine` (same pattern for TTS: a matched
+`tts_profile` entry, then `default_tts_engine`). No query-param tier, no
+system-wide conversation-tuning override.
 
-- `app/services/stt/profile.py:35-40` (`resolve_stt`) — drop the
-  `conv_cfg.conversation_stt_engine or` tier.
-- `app/api/routes/conversation.py:241-242`, `app/api/routes/lugo.py:61`,
-  `app/api/routes/livehost.py:125-126` — drop the
-  `conv_cfg.conversation_tts_engine or` tier (TTS equivalent).
+This is confirmed *not* dead-flexibility removal for the query-param tier —
+it has two real, currently-working consumers that this change intentionally
+breaks:
+
+1. **Chat/Livehost engine-select dropdown**: `app/static/js/conversation.js`
+   (`<select>` at line 297, sends `&stt_engine=...` on WS connect at line
+   322) and `app/static/js/livehost.js` (line 249 / line 275, same pattern).
+   These dropdowns become non-functional once the backend stops reading
+   `stt_engine` from the query string — **remove the dropdown control from
+   both pages** rather than leave a UI element that silently does nothing.
+   (TTS has no equivalent dropdown — the UI only ever sent `tts_profile`,
+   never `tts_engine`, so no TTS-side UI change needed.)
+2. **Documented raw device-connect protocol** (devices connecting without a
+   Lugo profile): `docs/api.md:124-144`, `docs/device-integration.md:24-72`,
+   `rpi-assistant/integration.md:24-45`, `esp32-assistant/README.md:147` all
+   document `?stt_engine=&tts_engine=` as how a raw-connecting device picks
+   its engine. Update all four to remove this — raw-connecting devices now
+   always get `default_stt_engine`/`default_tts_engine` (or a profile match,
+   if they do send a profile), with no per-connection override. This is an
+   accepted, intentional behavior change to the device protocol, not an
+   oversight.
+
+Code call sites to update:
+
+- `app/services/stt/profile.py:10-40` (`resolve_stt`) — drop the `q_engine`
+  parameter entirely (its only use was this tier); resolution becomes
+  `stt_cfg.engine or default_stt_engine`. `q_language`/`q_model` are
+  untouched — this change is scoped to engine selection only, not
+  language/model overrides, which are a separate, unaffected concern.
+- `app/api/routes/conversation.py:221-223`, `app/api/routes/livehost.py:105-107`
+  — stop passing `q.get("stt_engine")` into `resolve_stt`.
+- `app/api/routes/conversation.py:239-243`, `app/api/routes/livehost.py:123-127`
+  — drop both `q.get("tts_engine") or` and `conv_cfg.conversation_tts_engine or`,
+  leaving just `default_tts_engine` as the tail-end fallback after any
+  `tts_profile` match.
+- `app/api/routes/lugo.py:51,61` — already never passed a query param
+  (comment: "No query params on the Lugo wire") and its TTS line already had
+  no query tier; only the `conversation_tts_engine or` removal applies here
+  (no additional change beyond the field's removal below).
 - `app/services/system_config.py:255,265` (`warmup_stt_engines()` /
-  `warmup_tts_engines()`) — these currently warm up
+  `warmup_tts_engines()`) — currently warm up
   `conversation_stt_engine`/`conversation_tts_engine` as the primary engine;
   switch to `config.engines.default_stt_engine`/`default_tts_engine`.
+
+**Explicitly out of scope for this removal**: `/v1/stt/transcribe` and
+`/v1/stt/stream`'s own `engine` request parameter (`stt.py:54,165`) are
+unaffected — those are standalone batch/stream API calls where the caller
+is expected to name an engine per request; they don't go through
+`resolve_stt` and aren't part of the profile/config/default chain being
+simplified here.
 
 Fields removed from `ConversationTuningConfig`: `conversation_stt_engine`,
 `conversation_tts_engine`. `conversation_fast_stt_engine` is **not**
@@ -106,16 +149,24 @@ affected — it's a genuinely separate, independent low-latency fast-path
 tier (see its description below), not a duplicate of the default-engine
 concept.
 
+Tests to update (construct URLs with `?stt_engine=&tts_engine=` or assert
+the old 4-tier chain — need the query-param cases removed/rewritten):
+`tests/unit/test_stt_profile.py:43,73`,
+`tests/unit/test_conversation_tts_profile.py:96-160`,
+`tests/unit/test_livehost_tts_profile.py:96-136`,
+`tests/integration/test_conversation_ws.py:82-139`,
+`tests/integration/test_livehost_ws_voice.py:66-176`.
+
 **Behavior note**: today `default_stt_engine` (`"vosk"`, light, used by
 batch endpoints) and `conversation_stt_engine` (`"whisper"`, more accurate,
-used by live conversation) intentionally differ. After this change, both
+used by live conversation) intentionally differ, and either could
+previously be overridden per-connection via query param. After this change,
 batch transcription and live conversation share the single
-`default_stt_engine` value. If an operator wants live conversation to use a
-more accurate engine than batch transcription, they now do it via a
-profile-level override (`profile.stt.engine`) rather than a system-wide
-conversation default — that per-profile knob already exists and covers the
-case. Flagging this so the deploy-time default choice for
-`default_stt_engine` is a conscious decision, not a silent regression.
+`default_stt_engine` value, and no per-connection override exists at all —
+the only remaining lever is a profile-level override
+(`profile.stt.engine`/a matched `tts_profile`). Flagging this so the
+deploy-time default choice for `default_stt_engine`/`default_tts_engine` is
+a conscious decision, not a silent regression.
 
 ### Merge into Engine Defaults, drop the "STT (Shared Settings)" group
 
@@ -256,11 +307,12 @@ not assumed):
 
 ## Testing
 
-- Backend: unit tests for `resolve_stt`/TTS-equivalent confirming the
-  fallback chain is now `query param > profile.stt.engine >
-  default_stt_engine` (no middle tier), and `warmup_stt_engines()`/
-  `warmup_tts_engines()` now warm `default_stt_engine`/`default_tts_engine`.
-  Unit tests for `GET /v1/system/config/meta` (shape, all 3
+- Backend: rewrite the 5 test files listed above to drop query-param-engine
+  cases and assert the new 2-tier chain (`profile.stt.engine >
+  default_stt_engine`, matched `tts_profile` > `default_tts_engine`); unit
+  test that `warmup_stt_engines()`/`warmup_tts_engines()` now warm
+  `default_stt_engine`/`default_tts_engine`. Unit tests for
+  `GET /v1/system/config/meta` (shape, all 3
   remaining groups present, no leaked reference to removed fields); test
   that `SystemConfig` no longer has `stt_local`; test that PUT to
   `/v1/system/config` with only `{"engines": {...}}` doesn't touch
@@ -271,7 +323,10 @@ not assumed):
 - Frontend: manual pass in browser — load Settings subtab, confirm 3 groups
   render with sub-headings, textarea for system prompt, per-group Save
   works independently (change one group, Save, confirm other groups'
-  unsaved edits aren't sent), descriptions/units visible.
+  unsaved edits aren't sent), descriptions/units visible. Separately, on the
+  Chat and Livehost pages: confirm the STT engine-select dropdown is gone
+  and a voice session still connects/works using whatever
+  `default_stt_engine`/profile override applies.
 - Full backend test suite run before merge (per project convention — main
   auto-deploys to prod, tests must pass first).
 
