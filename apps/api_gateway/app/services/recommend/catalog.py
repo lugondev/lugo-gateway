@@ -69,6 +69,10 @@ CANDIDATES: list[Candidate] = [
               "Qwen3-ASR — NVIDIA GPU (CUDA), multilingual incl. Vietnamese ⭐",
               "nvidia_gpu", "high", True, 1.2, "~1.2 GB", None, ["qwen_asr"],
               _pip("pip install qwen-asr  (optional `qwen3-asr-cuda` extra; needs an NVIDIA GPU)")),
+    Candidate("stt", "qwen3-asr-gguf", "qwen3_asr_gguf",
+              "Qwen3-ASR — GGUF/CPU via qwen3-asr.cpp, multilingual incl. Vietnamese ⭐",
+              "cpu", "high", True, 0.8, "~0.8 GB", 4.0, ["qwen3_asr_cpp"],
+              _config("bash apps/model_service/scripts/build_qwen3_asr_cpp.sh (builds the CLI + fetches GGUF)")),
     # ---- STT: remote (config, no download) ----
     Candidate("stt", "whisper_service", "whisper_service", "Remote Whisper (OpenAI-compatible)",
               "cpu", "medium", False, None, "remote API", None, ["whisper_service"],

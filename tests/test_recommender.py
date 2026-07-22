@@ -16,6 +16,7 @@ def caps(**over) -> Capabilities:
         cuda=False,
         libopus=False,
         ollama=False,
+        qwen3_asr_cpp=False,
         modules={"faster_whisper": True, "vosk": True},
     )
     base.update(over)

@@ -17,6 +17,26 @@ COPY apps ./apps
 
 RUN pip install --no-cache-dir ".[tts,opus]"
 
+# Qwen3-ASR GGUF/CPU engine: build the qwen3-asr-cli binary + convert the GGUF only
+# when this image is for that engine. Off by default so every other engine's image
+# skips the C++ toolchain and the multi-minute compile. Enable with:
+#   docker build --build-arg BUILD_QWEN3_ASR_GGUF=1 -f infra/docker/Dockerfile.model_service .
+#
+# Note: predict-woo/qwen3-asr.cpp has no compatible prebuilt GGUF, so the build
+# script CONVERTS from the Alibaba HF weights (needs torch/transformers, already in
+# the image via the pip install above, plus a one-off `gguf`). The conversion also
+# downloads the ~1.2GB safetensors at build time. For a slimmer prod image, build
+# with =1 once to produce the .gguf, then bake or mount that file and set
+# STT_QWEN3_ASR_GGUF_BINARY_PATH / the registry default_model to it instead.
+ARG BUILD_QWEN3_ASR_GGUF=0
+RUN if [ "$BUILD_QWEN3_ASR_GGUF" = "1" ]; then \
+        apt-get update \
+        && apt-get install -y --no-install-recommends git cmake g++ curl ca-certificates \
+        && bash apps/model_service/scripts/build_qwen3_asr_cpp.sh \
+        && apt-get purge -y git cmake g++ && apt-get autoremove -y \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 ENV PYTHONPATH=/app/apps/api_gateway:/app/apps \
     PYTHONUNBUFFERED=1 \
     SERVICE_PORT=8100 \

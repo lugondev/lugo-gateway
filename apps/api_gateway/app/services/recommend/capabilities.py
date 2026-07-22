@@ -41,6 +41,7 @@ class Capabilities:
     cuda: bool
     libopus: bool
     ollama: bool
+    qwen3_asr_cpp: bool
     modules: dict
 
     def has(self, flag: str) -> bool:
@@ -51,6 +52,7 @@ class Capabilities:
             "cuda": self.cuda,
             "libopus": self.libopus,
             "ollama": self.ollama,
+            "qwen3_asr_cpp": self.qwen3_asr_cpp,
         }
         if flag in named:
             return bool(named[flag])
@@ -127,6 +129,18 @@ def _ollama() -> bool:
         return False
 
 
+def _qwen3_asr_cpp() -> bool:
+    """True if the qwen3-asr-cli binary is installed (PATH, config, or build dir)."""
+    try:
+        from app.services.stt.providers.qwen3_asr_gguf_provider import (
+            resolve_qwen3_asr_gguf_binary,
+        )
+
+        return resolve_qwen3_asr_gguf_binary() is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def detect_capabilities() -> Capabilities:
     try:
         sys_os = platform.system().lower()
@@ -160,5 +174,6 @@ def detect_capabilities() -> Capabilities:
         cuda=_cuda(),
         libopus=_libopus(),
         ollama=_ollama(),
+        qwen3_asr_cpp=_qwen3_asr_cpp(),
         modules=modules,
     )

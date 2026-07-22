@@ -127,6 +127,17 @@ _STT_LOCAL_LEGACY_FIELDS: dict[str, dict[str, str]] = {
         "initial_prompt": "whisper_initial_prompt",
     },
     "qwen3_asr": {"default_model": "qwen3_asr_model"},
+    # qwen3_asr_gguf has no legacy SttLocalConfig fields (it was born after the
+    # sentinel-row migration). The legacy names below never exist in the raw
+    # stt_local group, so raw.get() always falls through to
+    # STT_ENGINE_CONFIG_DEFAULTS -- which is exactly how we want a brand-new
+    # engine seeded: full default config, no migration source.
+    "qwen3_asr_gguf": {
+        "default_model": "qwen3_asr_gguf_model",
+        "binary_path": "qwen3_asr_gguf_binary_path",
+        "n_threads": "qwen3_asr_gguf_n_threads",
+        "timeout_seconds": "qwen3_asr_gguf_timeout_seconds",
+    },
     "vosk": {"model_path": "vosk_model_path"},
 }
 
@@ -134,6 +145,7 @@ _STT_LOCAL_SENTINEL_LABELS = {
     "whisper_local": "Whisper Local (engine config)",
     "whisper_mlx": "Whisper MLX (engine config)",
     "qwen3_asr": "Qwen3-ASR (engine config)",
+    "qwen3_asr_gguf": "Qwen3-ASR GGUF/CPU (engine config)",
     "vosk": "Vosk (engine config)",
 }
 

@@ -89,6 +89,15 @@ STT_ENGINE_CONFIG_DEFAULTS: dict[str, dict] = {
         "initial_prompt": "",
     },
     "qwen3_asr": {"default_model": "Qwen/Qwen3-ASR-0.6B"},
+    # GGUF/CPU backend via the qwen3-asr-cli binary. default_model is a filesystem
+    # path to a .gguf (not an HF repo); binary_path "" -> auto-locate (PATH / build
+    # dir). See qwen3_asr_gguf_provider.py.
+    "qwen3_asr_gguf": {
+        "default_model": "apps/model_service/vendor/qwen3-asr.cpp/models/qwen3-asr-1.7b-q8_0.gguf",
+        "binary_path": "",
+        "n_threads": 8,
+        "timeout_seconds": 120.0,
+    },
     "vosk": {"model_path": "models/stt/vosk-model-small-en-us-0.15"},
 }
 

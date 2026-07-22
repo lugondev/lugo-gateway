@@ -101,6 +101,9 @@ Thumbs.db
 # Make: background service PID/log
 .run/
 
+# Cloned by build_qwen3_asr_cpp.sh; not a submodule, just a build-time fetch
+apps/model_service/vendor/
+
 # JSON data files (profiles, MCP server configs)
 profiles.json
 tts_profiles.json
