@@ -61,7 +61,7 @@ async def system_status() -> dict:
     data = {
         "app": {"name": settings.app_name, "env": settings.app_env},
         "stt_engines": await stt_service.list_engines(),
-        "tts_engines": [{"engine": name} for name in tts_service.providers],
+        "tts_engines": tts_service.list_engines(),
         "tts": {
             "omnivoice_path": omnivoice.omnivoice_path,
             "omnivoice_present": os.path.isdir(omnivoice.omnivoice_path),

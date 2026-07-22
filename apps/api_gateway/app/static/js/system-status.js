@@ -9,7 +9,7 @@ export async function loadSystemStatus() {
       `<div class="stat ${ok === undefined ? "" : ok ? "ok" : "warn"}"><span>${label}</span><strong>${value}</strong></div>`;
 
     const sttOk = (d.stt_engines || []).some((e) => e.available);
-    const ttsOk = Boolean(d.tts.omnivoice_present);
+    const ttsOk = (d.tts_engines || []).some((e) => e.available);
 
     const groups = [
       {
