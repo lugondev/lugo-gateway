@@ -103,6 +103,40 @@ def test_wav_bytes_and_wav_file_agree_stereo_downmix(tmp_path):
     assert len(from_bytes) // 2 == len(left_arr)
 
 
+def test_wav_bytes_to_pcm16_decodes_mp3_via_soundfile_fallback():
+    # Not a RIFF/WAVE container -- wave.open() raises, and wav_bytes_to_pcm16
+    # falls back to soundfile/libsndfile, which decodes mp3 (and ogg/flac)
+    # directly. This is what lets an mp3 uploaded through the admin STT test
+    # page just work instead of needing a clear rejection or manual conversion.
+    import io
+
+    import soundfile as sf
+
+    samples = _tone_pcm16(1600, 220.0, 16000)  # 100ms @ 16kHz
+    float_samples = np.frombuffer(samples, dtype="<i2").astype(np.float32) / 32768.0
+    buffer = io.BytesIO()
+    sf.write(buffer, float_samples, 16000, format="MP3")
+    mp3_bytes = buffer.getvalue()
+    assert mp3_bytes[:4] != b"RIFF"  # sanity: genuinely not a WAV container
+
+    pcm = wav_bytes_to_pcm16(mp3_bytes, target_sr=16000)
+    # Lossy round-trip through mp3 encoding, so this isn't sample-exact -- just
+    # assert it decoded to roughly the right length and isn't silence/garbage.
+    assert abs(len(pcm) // 2 - 1600) <= 200
+    out_arr = np.frombuffer(pcm, dtype="<i2").astype(np.float32)
+    assert out_arr.std() > 1000  # a 220Hz tone, not near-zero noise
+
+
+def test_wav_bytes_to_pcm16_raises_libsndfile_error_for_garbage():
+    import soundfile as sf
+
+    try:
+        wav_bytes_to_pcm16(b"not audio at all", target_sr=16000)
+        raise AssertionError("expected LibsndfileError for undecodable bytes")
+    except sf.LibsndfileError:
+        pass
+
+
 def test_wav_bytes_to_pcm16_rejects_non_pcm16_width():
     import io
     import wave
