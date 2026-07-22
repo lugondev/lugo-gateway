@@ -24,7 +24,8 @@ import os
 import shutil
 import subprocess
 import tempfile
-import wave
+
+import soundfile as sf
 
 from app.core.audio import pcm16_to_wav_bytes, wav_bytes_to_pcm16
 from app.schemas.stt import STTResult
@@ -161,24 +162,24 @@ class Qwen3AsrGgufProvider(STTProvider):
         self, audio_bytes: bytes, language: str | None = None, model: str | None = None
     ) -> STTResult:
         # The binary needs 16 kHz mono PCM16 and won't resample -- downmix +
-        # resample here (no-op if already 16k mono). Any WAV the gateway accepts
-        # (24k/48k, stereo) becomes what qwen3-asr-cli expects.
+        # resample here (no-op if already 16k mono). wav_bytes_to_pcm16 now
+        # decodes mp3/ogg/flac too (via soundfile), not just WAV, so most
+        # uploads just work; only bytes neither reader can parse reach here.
         try:
             pcm = wav_bytes_to_pcm16(audio_bytes, _TARGET_SR)
             audio_bytes = pcm16_to_wav_bytes(pcm, _TARGET_SR)
-        except wave.Error as exc:
-            # Not a WAV container at all (mp3/m4a/ogg upload, etc). qwen3-asr-cli
-            # has no format sniffing of its own -- it reads whatever bytes land at
-            # a WAV header's offsets and happily misreports garbage as e.g. "Audio
+        except sf.LibsndfileError as exc:
+            # Not decodable as WAV *or* any libsndfile format. qwen3-asr-cli has
+            # no format sniffing of its own -- it reads whatever bytes land at a
+            # WAV header's offsets and happily misreports garbage as e.g. "Audio
             # must be 16kHz, got <nonsense> Hz", which sent people chasing the
             # wrong bug. Raise our own clear error instead of letting the binary
             # see it at all.
             raise RuntimeError(
-                "qwen3_asr_gguf needs WAV audio (16-bit PCM) -- got a non-WAV "
-                "upload (mp3/m4a/ogg are not decoded by this engine). Convert to "
-                "WAV first or use the browser mic recorder, which already emits WAV."
+                f"qwen3_asr_gguf could not decode this audio: {exc}. Upload a "
+                "WAV/mp3/ogg/flac file or use the browser mic recorder."
             ) from exc
-        except Exception as exc:  # noqa: BLE001 - a genuine WAV that failed to resample; let the binary report it
+        except Exception as exc:  # noqa: BLE001 - decoded fine but failed to resample; let the binary report it
             # Logged (not just swallowed): this once masked a missing `scipy`
             # dependency in the model_service image -- the resample silently
             # no-opped and the binary rejected the un-resampled audio with its

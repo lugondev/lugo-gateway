@@ -60,22 +60,35 @@ def read_wav(wav_bytes: bytes) -> tuple[bytes, int, int, int]:
 
 
 def wav_bytes_to_pcm16(wav_bytes: bytes, target_sr: int) -> bytes:
-    """Decode a WAV payload, downmix to mono, resample to target_sr, return PCM16 bytes.
+    """Decode an audio payload, downmix to mono, resample to target_sr, return PCM16 bytes.
+
+    WAV is read directly (no extra dependency for the common case); anything
+    else that isn't a RIFF/WAVE container (mp3, ogg, flac, ...) falls back to
+    soundfile/libsndfile, which decodes all of those already -- this is what
+    lets e.g. an mp3 uploaded through the admin STT test page just work instead
+    of needing a clear rejection or a manual conversion step. Raises
+    ``soundfile.LibsndfileError`` for bytes neither reader can make sense of.
 
     The single implementation behind both this and ``wav_file_to_pcm16`` below --
     the latter exists only because some callers have a path (an artifact on
     disk) rather than bytes already in hand (e.g. real synthesis output on the
     Opus hot path, which never touches disk)."""
-    with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
-        sr = wav_file.getframerate()
-        ch = wav_file.getnchannels()
-        width = wav_file.getsampwidth()
-        raw = wav_file.readframes(wav_file.getnframes())
-    if width != 2:  # only PCM16 inputs expected from our TTS engines
-        raise ValueError(f"unsupported sample width: {width}")
-    samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
-    if ch > 1:
-        samples = samples.reshape(-1, ch).mean(axis=1)
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
+            sr = wav_file.getframerate()
+            ch = wav_file.getnchannels()
+            width = wav_file.getsampwidth()
+            raw = wav_file.readframes(wav_file.getnframes())
+        if width != 2:  # only PCM16 inputs expected from our TTS engines
+            raise ValueError(f"unsupported sample width: {width}")
+        samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+        if ch > 1:
+            samples = samples.reshape(-1, ch).mean(axis=1)
+    except wave.Error:
+        import soundfile as sf
+
+        samples, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32", always_2d=True)
+        samples = samples.mean(axis=1) if samples.shape[1] > 1 else samples[:, 0]
     if sr != target_sr:
         from math import gcd
 
