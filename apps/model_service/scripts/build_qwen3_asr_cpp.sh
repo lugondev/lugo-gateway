@@ -80,7 +80,13 @@ if [ -f "$MODEL_FILE" ]; then
   echo "Model already present: $MODEL_FILE"
 else
   echo "Converting $HF_MODEL -> $MODEL_FILE ($QUANT) using $PY"
-  # The converter needs torch/transformers/safetensors (in the repo venv) plus gguf.
+  # The converter needs torch/safetensors/tqdm/gguf. Present already in the repo
+  # venv (other engines pull in torch), but NOT in the model_service Docker image
+  # (that image's [tts,opus] extras have no ML training deps) -- install on
+  # demand there. CPU-only torch wheel to avoid a multi-GB CUDA pull.
+  "$PY" -c "import torch" 2>/dev/null \
+    || "$PY" -m pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+  "$PY" -c "import safetensors, tqdm" 2>/dev/null || "$PY" -m pip install -q safetensors tqdm
   "$PY" -c "import gguf" 2>/dev/null || "$PY" -m pip install -q gguf
   # download_hf_snapshot: reuse the HF cache if already present (the mlx/qwen-asr
   # engines share it), else huggingface_hub pulls it. -m gguf resolves the snapshot.

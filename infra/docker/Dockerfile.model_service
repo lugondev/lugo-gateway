@@ -23,8 +23,9 @@ RUN pip install --no-cache-dir ".[tts,opus]"
 #   docker build --build-arg BUILD_QWEN3_ASR_GGUF=1 -f infra/docker/Dockerfile.model_service .
 #
 # Note: predict-woo/qwen3-asr.cpp has no compatible prebuilt GGUF, so the build
-# script CONVERTS from the Alibaba HF weights (needs torch/transformers, already in
-# the image via the pip install above, plus a one-off `gguf`). The conversion also
+# script CONVERTS from the Alibaba HF weights -- needs torch/safetensors/tqdm/gguf,
+# NOT in this image's [tts,opus] extras, so the script pip-installs a CPU-only torch
+# wheel + the rest on demand (several extra minutes + ~200MB). The conversion also
 # downloads the ~1.2GB safetensors at build time. For a slimmer prod image, build
 # with =1 once to produce the .gguf, then bake or mount that file and set
 # STT_QWEN3_ASR_GGUF_BINARY_PATH / the registry default_model to it instead.
