@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY apps ./apps
+
+# libsndfile1: required by soundfile (VieNeu TTS audio I/O).
+# libopus0: enables the Opus audio transport (ESP32/RPi devices + browser WebCodecs).
+RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 libopus0 && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir ".[tts,opus]"
+
+ENV PYTHONPATH=/app/apps/api_gateway
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
