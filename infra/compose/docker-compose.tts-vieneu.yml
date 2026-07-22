@@ -3,11 +3,18 @@
 # of the STT app (docker-compose.stt-qwen3-asr-gguf.yml) — see
 # docker-compose.vm.yml for the combined two-service form (plain SSH + docker
 # compose deploys).
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
 
 services:
   tts-vieneu:
     build:
-      context: ../..
+      context: .
       dockerfile: infra/docker/Dockerfile.model_service
     environment:
       SERVICE_KIND: tts

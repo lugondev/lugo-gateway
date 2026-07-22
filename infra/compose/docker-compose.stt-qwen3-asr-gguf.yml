@@ -2,11 +2,18 @@
 # One service per file so it deploys as its own Coolify resource, independent
 # of the TTS app (docker-compose.tts-vieneu.yml) — see docker-compose.vm.yml
 # for the combined two-service form (plain SSH + docker compose deploys).
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
 
 services:
   stt-qwen3-asr-gguf:
     build:
-      context: ../..
+      context: .
       dockerfile: infra/docker/Dockerfile.model_service
       # Compiles qwen3-asr-cli + converts the GGUF at build time (network
       # access needed: clones qwen3-asr.cpp, pulls the ~1.2GB HF safetensors).
