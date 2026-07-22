@@ -23,4 +23,6 @@ services:
       SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
     ports:
       - "8100:8100"
+    expose:
+      - "8100"
     restart: unless-stopped

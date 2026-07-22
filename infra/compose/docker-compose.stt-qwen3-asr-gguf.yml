@@ -27,4 +27,6 @@ services:
       STT_QWEN3_ASR_GGUF_N_THREADS: ${STT_QWEN3_ASR_GGUF_N_THREADS:-2}
     ports:
       - "8100:8100"
+    expose:
+      - "8100"
     restart: unless-stopped
