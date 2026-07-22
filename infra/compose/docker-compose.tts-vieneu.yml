@@ -1,0 +1,19 @@
+# Standalone Coolify "Docker Compose" app: vieneu (TTS, CPU/onnxruntime) only.
+# One service per file so it deploys as its own Coolify resource, independent
+# of the STT app (docker-compose.stt-qwen3-asr-gguf.yml) — see
+# docker-compose.vm.yml for the combined two-service form (plain SSH + docker
+# compose deploys).
+
+services:
+  tts-vieneu:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.model_service
+    environment:
+      SERVICE_KIND: tts
+      SERVICE_ENGINE: vieneu
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
+    ports:
+      - "8100:8100"
+    restart: unless-stopped
