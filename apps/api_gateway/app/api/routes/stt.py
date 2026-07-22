@@ -91,7 +91,9 @@ async def transcribe(
     except Exception as exc:  # noqa: BLE001 - never leak a plain-text 500 to the client
         logger.exception("STT transcribe failed (%s)", payload.engine)
         raise HTTPException(status_code=500, detail=f"STT failed ({payload.engine}): {exc}") from exc
-    return {"success": True, "data": result.model_dump()}
+    data = result.model_dump()
+    data["duration"] = wav_duration_seconds(audio_bytes)
+    return {"success": True, "data": data}
 
 
 @router.get("/engines")
