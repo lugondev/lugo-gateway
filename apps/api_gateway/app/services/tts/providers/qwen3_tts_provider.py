@@ -106,6 +106,8 @@ class _Qwen3TTSProviderBase(RenderingTTSProvider):
         )
 
     def detail(self) -> str:
+        if not self.available():
+            return f"Qwen3-TTS {self._size} · needs qwen_tts + torch"
         device, _dtype, _attn = _pick_device_dtype_attn()
         backend = "faster_qwen3_tts (CUDA graphs)" if _use_faster_backend(device) else "qwen_tts"
         return f"Qwen3-TTS {self._size} · 12Hz codec · Base+CustomVoice · {backend}"

@@ -33,11 +33,16 @@ class TTSService:
         result: list[dict] = []
         default_engine = system_config_store.get().engines.default_tts_engine
         for name, provider in self.providers.items():
+            available = provider.available()
+            try:
+                detail = provider.detail()
+            except Exception as exc:  # noqa: BLE001 -- one bad engine must not 500 the whole list
+                detail = f"detail() failed: {exc}"
             result.append(
                 {
                     "engine": name,
-                    "available": provider.available(),
-                    "detail": provider.detail(),
+                    "available": available,
+                    "detail": detail,
                     "install_hint": provider.install_hint(),
                     "install_package": provider.install_package,
                     "install_enabled": settings.allow_runtime_install,
