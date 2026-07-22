@@ -88,6 +88,7 @@ else
     || "$PY" -m pip install -q torch --index-url https://download.pytorch.org/whl/cpu
   "$PY" -c "import safetensors, tqdm" 2>/dev/null || "$PY" -m pip install -q safetensors tqdm
   "$PY" -c "import gguf" 2>/dev/null || "$PY" -m pip install -q gguf
+  "$PY" -c "import huggingface_hub" 2>/dev/null || "$PY" -m pip install -q huggingface_hub
   # download_hf_snapshot: reuse the HF cache if already present (the mlx/qwen-asr
   # engines share it), else huggingface_hub pulls it. -m gguf resolves the snapshot.
   SNAP="$("$PY" - "$HF_MODEL" <<'PYEOF'
