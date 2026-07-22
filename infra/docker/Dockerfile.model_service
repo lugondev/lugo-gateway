@@ -7,29 +7,41 @@ FROM python:3.11-slim
 # libsndfile1: soundfile (VieNeu TTS audio I/O). libopus0: Opus transport.
 # libatomic1: vosk's libvosk.so dlopen-fails without it on Debian slim images
 # ("cannot open shared object file") -- python:3.11-slim omits it by default.
+# libgomp1: OpenMP runtime the compiled qwen3-asr-cli binary dynamically links
+# against. Installed explicitly here (not just pulled in transitively by g++
+# below) so it survives the `apt-get purge g++ && apt-get autoremove` in the
+# GGUF build step -- autoremove drops anything only auto-installed, and g++'s
+# copy of libgomp1 is exactly that, which left the final image's cli failing
+# at runtime with "error while loading shared libraries: libgomp.so.1".
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libsndfile1 libopus0 libatomic1 \
+    && apt-get install -y --no-install-recommends libsndfile1 libopus0 libatomic1 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY pyproject.toml README.md ./
-COPY apps ./apps
-
-RUN pip install --no-cache-dir ".[tts,opus]"
 
 # Qwen3-ASR GGUF/CPU engine: build the qwen3-asr-cli binary + convert the GGUF only
 # when this image is for that engine. Off by default so every other engine's image
 # skips the C++ toolchain and the multi-minute compile. Enable with:
 #   docker build --build-arg BUILD_QWEN3_ASR_GGUF=1 -f infra/docker/Dockerfile.model_service .
 #
+# Deliberately placed BEFORE `COPY apps ./apps` below and scoped to a single COPY of
+# just this script -- this layer is the expensive part of the image (C++ compile +
+# ~1.2GB HF download), and putting it after a COPY of the whole monorepo meant any
+# unrelated commit anywhere under apps/ (a different engine, the web client, ...)
+# busted the cache and forced a full from-scratch rebuild every deploy. Scoping the
+# COPY to this one file means the layer only invalidates when the script itself, the
+# apt package list, or the base image changes.
+#
 # Note: predict-woo/qwen3-asr.cpp has no compatible prebuilt GGUF, so the build
-# script CONVERTS from the Alibaba HF weights -- needs torch/safetensors/tqdm/gguf,
-# NOT in this image's [tts,opus] extras, so the script pip-installs a CPU-only torch
-# wheel + the rest on demand (several extra minutes + ~200MB). The conversion also
-# downloads the ~1.2GB safetensors at build time. For a slimmer prod image, build
-# with =1 once to produce the .gguf, then bake or mount that file and set
-# STT_QWEN3_ASR_GGUF_BINARY_PATH / the registry default_model to it instead.
+# script CONVERTS from the Alibaba HF weights -- needs torch/safetensors/tqdm/gguf/
+# huggingface_hub, none of which are installed yet at this point in the build (the
+# script pip-installs each on demand against the bare system python3, several extra
+# minutes + ~200MB). The conversion also downloads the ~1.2GB safetensors at build
+# time. For a slimmer prod image, build with =1 once to produce the .gguf, then bake
+# or mount that file and set STT_QWEN3_ASR_GGUF_BINARY_PATH / the registry
+# default_model to it instead.
 ARG BUILD_QWEN3_ASR_GGUF=0
+COPY apps/model_service/scripts/build_qwen3_asr_cpp.sh apps/model_service/scripts/build_qwen3_asr_cpp.sh
 RUN if [ "$BUILD_QWEN3_ASR_GGUF" = "1" ]; then \
         apt-get update \
         && apt-get install -y --no-install-recommends git cmake make g++ curl ca-certificates \
@@ -38,6 +50,11 @@ RUN if [ "$BUILD_QWEN3_ASR_GGUF" = "1" ]; then \
         && apt-get purge -y git cmake make g++ && apt-get autoremove -y \
         && rm -rf /var/lib/apt/lists/*; \
     fi
+
+COPY pyproject.toml README.md ./
+COPY apps ./apps
+
+RUN pip install --no-cache-dir ".[tts,opus]"
 
 ENV PYTHONPATH=/app/apps/api_gateway:/app/apps \
     PYTHONUNBUFFERED=1 \

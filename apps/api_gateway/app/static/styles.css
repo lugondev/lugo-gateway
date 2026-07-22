@@ -110,6 +110,13 @@ body {
   gap: 10px;
 }
 
+.app-logo {
+  display: block;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
 .app-title {
   font-family: "Chakra Petch", sans-serif;
   font-weight: 700;
@@ -1483,6 +1490,12 @@ tr.dt-detail[hidden] { display: none; }
   padding: 24px;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+.login-logo {
+  display: block;
+  width: 40px;
+  height: 40px;
+  margin: 0 auto;
 }
 .login-card h1 {
   font-size: 16px;
