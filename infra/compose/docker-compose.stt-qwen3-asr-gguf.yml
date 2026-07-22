@@ -25,8 +25,10 @@ services:
       SERVICE_PORT: "8100"
       SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
       STT_QWEN3_ASR_GGUF_N_THREADS: ${STT_QWEN3_ASR_GGUF_N_THREADS:-2}
-    ports:
-      - "8100:8100"
+    # No host port publish: this app and tts-vieneu share one physical server,
+    # so both containers binding host port 8100 collides ("port is already
+    # allocated"). `expose` is enough for Traefik + other Coolify apps on the
+    # same internal "coolify" network to reach this container.
     expose:
       - "8100"
     restart: unless-stopped
