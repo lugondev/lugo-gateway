@@ -43,8 +43,8 @@ def test_upload_reference_audio_saves_and_returns_a_path(client, tmp_path, monke
     """Backs the TTS profile form's "Clone from reference audio" upload button:
     the operator picks a file, this saves it server-side, and the returned
     ref_audio_path is what gets stored on the TtsProfile (and, for a remote
-    engine, base64-forwarded by OpenAICompatTTSProvider -- see
-    tests/unit/test_openai_tts_provider.py)."""
+    engine, base64-forwarded by HttpTtsProvider -- see
+    tests/unit/test_http_tts_provider.py)."""
     from app.services.artifacts import ArtifactStore
 
     fresh_store = ArtifactStore(str(tmp_path))

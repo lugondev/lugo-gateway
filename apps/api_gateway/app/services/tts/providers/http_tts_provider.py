@@ -45,13 +45,13 @@ def _looks_like_wav(data: bytes) -> bool:
     return len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WAVE"
 
 
-class OpenAICompatTTSProvider(RenderingTTSProvider):
-    name = "openai_tts"
+class HttpTtsProvider(RenderingTTSProvider):
+    name = "http_tts"
     sample_rate = 24000
 
     def __init__(
         self,
-        name: str = "openai_tts",
+        name: str = "http_tts",
         timeout_seconds: float = _DEFAULT_TIMEOUT,
         entry: dict | None = None,
     ) -> None:

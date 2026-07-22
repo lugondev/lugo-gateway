@@ -15,7 +15,7 @@ export async function loadModelRegistry() {
 }
 
 // location comes from the backend (_location): "local" runs in-process,
-// "service" calls out to an external HTTP API (openai_stt/openai_tts,
+// "service" calls out to an external HTTP API (http_stt/http_tts,
 // whisper_service/eventlab, OpenRouter STT, every llm -- OpenRouter/OpenAI/
 // Together are all just "service"). requires_base_url is a SEPARATE axis: a
 // service whose endpoint the admin must supply shows the missing-base-URL
@@ -367,7 +367,7 @@ function _updateKindFields() {
   const kind = el("registry-add-kind").value;
   const isLlmOrStt = kind === "llm" || kind === "stt";
   // Base URL matters for every kind now: llm/stt point at an OpenAI-compatible
-  // endpoint, and tts (e.g. openai_tts) needs one too -- apps/model_service is
+  // endpoint, and tts (e.g. http_tts) needs one too -- apps/model_service is
   // wired in as a remote engine the same way for all three.
   el("registry-add-llm-fields").classList.toggle("hidden", !(isLlmOrStt || kind === "tts"));
   // tts still uses the plain "API Key" field below rather than the one paired
@@ -396,7 +396,7 @@ export async function createModelRegistryEntry() {
     payload.base_url = el("registry-add-base-url").value.trim();
     payload.api_key = el("registry-add-api-key").value.trim();
   } else {
-    // tts: base_url matters for openai_tts (the apps/model_service base URL);
+    // tts: base_url matters for http_tts (the apps/model_service base URL);
     // other tts engines just ignore it being empty. api_key still comes from
     // the plain field -- no current engine reads it, stored for a future
     // key-requiring one.

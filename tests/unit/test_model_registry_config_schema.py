@@ -22,7 +22,7 @@ def test_whisper_local_rich_schema_with_correct_types():
 def test_remote_engines_expose_only_timeout_seconds():
     # config_schema_for keys off engine, not kind, for remote engines -- the
     # kind arg is irrelevant here, so pass a fixed one.
-    for engine in ("openai_stt", "openai_tts", "whisper_service", "eventlab"):
+    for engine in ("http_stt", "http_tts", "whisper_service", "eventlab"):
         fields = config_schema_for("stt", engine)
         assert set(_by_key(fields)) == {"timeout_seconds"}
         assert _by_key(fields)["timeout_seconds"]["type"] == "float"

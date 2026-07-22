@@ -32,7 +32,7 @@ async def _validate_profile_models(profile: Profile, acting_user) -> None:
         # STT_MODEL_CATALOGS only covers local engines with selectable
         # sizes/repos (whisper, qwen3_asr) -- it predates the Model Registry
         # options endpoint, which now also lists remote-engine models an
-        # admin has registered (qwen3_asr_or, whisper_or, openai_stt).
+        # admin has registered (qwen3_asr_or, whisper_or, http_stt).
         # Engines with no variant catalog have nothing to shape-validate
         # here; check_model_allowed is the real, generic gate.
         registry = STT_MODEL_CATALOGS.get(engine)

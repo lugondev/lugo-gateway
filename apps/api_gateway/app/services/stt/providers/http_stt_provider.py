@@ -21,10 +21,10 @@ from app.services.stt.base import STTProvider
 _DEFAULT_TIMEOUT = 60.0
 
 
-class OpenAICompatSttProvider(STTProvider):
+class HttpSttProvider(STTProvider):
     def __init__(
         self,
-        name: str = "openai_stt",
+        name: str = "http_stt",
         timeout_seconds: float = _DEFAULT_TIMEOUT,
         entry: dict | None = None,
     ) -> None:

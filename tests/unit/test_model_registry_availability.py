@@ -98,7 +98,7 @@ def test_vieneu_mode_with_no_repo_is_not_installed():
 @pytest.mark.parametrize("kind,engine", [
     ("stt", "edge_tts"),
     ("stt", "qwen3_asr"),
-    ("stt", "openai_stt"),
+    ("stt", "http_stt"),
     ("tts", "edge_tts"),
     ("tts", "qwen3_tts_0_6b"),
     ("llm", "openrouter"),

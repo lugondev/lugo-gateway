@@ -1,6 +1,6 @@
 """Shared httpx -> RuntimeError translation for remote STT/TTS providers.
 
-Four providers (openai_stt_provider, openai_tts_provider,
+Four providers (http_stt_provider, http_tts_provider,
 remote_whisper_provider, openrouter_provider) each make an httpx call to a
 remote engine and want the same two outcomes: a non-2xx response becomes a
 RuntimeError naming the status and a snippet of the body, and any other httpx

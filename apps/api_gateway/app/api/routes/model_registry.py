@@ -9,10 +9,10 @@ from app.services.conversation.responder import OpenAICompatResponder
 from app.services.model_registry.availability import is_artifact_installed
 from app.services.model_registry.config_schema import config_schema_for
 from app.services.model_registry.store import model_registry_store
-from app.services.stt.providers.openai_stt_provider import OpenAICompatSttProvider
+from app.services.stt.providers.http_stt_provider import HttpSttProvider
 from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
 from app.services.stt.service import stt_service
-from app.services.tts.providers.openai_tts_provider import OpenAICompatTTSProvider
+from app.services.tts.providers.http_tts_provider import HttpTtsProvider
 from app.services.tts.service import tts_service
 
 router = APIRouter(prefix="/v1/model_registry", tags=["model_registry"])
@@ -34,12 +34,12 @@ _OPENROUTER_STT_ENGINES = {"qwen3_asr_or", "whisper_or"}
 # (base_url + api_key). Like the OpenRouter engines, the singleton provider
 # would look up a row that doesn't exist yet, so the add-time test call gets an
 # explicit entry built from the payload.
-_SERVICE_STT_ENGINES = {"openai_stt"}
-_SERVICE_TTS_ENGINES = {"openai_tts"}
+_SERVICE_STT_ENGINES = {"http_stt"}
+_SERVICE_TTS_ENGINES = {"http_tts"}
 
 # base_url-driven remote STT services that read their endpoint from the entry
 # but use RemoteWhisperProvider (rebuilt via reinit_remote_providers on edit),
-# not the payload-built OpenAICompatSttProvider -- so they're "service" for
+# not the payload-built HttpSttProvider -- so they're "service" for
 # locality/base_url purposes but stay OUT of _SERVICE_STT_ENGINES, which only
 # selects the add-time test-call provider.
 _BASE_URL_STT_ENGINES = {"whisper_service", "eventlab"}
@@ -61,7 +61,7 @@ def _location(kind: str, engine: str) -> str:
 
     - "local": runs in-process, no network call at all (whisper, vosk,
       qwen3_asr, omnivoice, vieneu, edge_tts, qwen3_tts_*, voxcpm2, ...).
-    - "service": calls out to an external HTTP API -- openai_stt/openai_tts,
+    - "service": calls out to an external HTTP API -- http_stt/http_tts,
       whisper_service/eventlab, the OpenRouter-backed STT engines
       (qwen3_asr_or/whisper_or), and every kind="llm" entry. OpenRouter,
       OpenAI, Together, ... are all just "service"; there is no third bucket.
@@ -82,7 +82,7 @@ def _location(kind: str, engine: str) -> str:
 
 def _requires_base_url(kind: str, engine: str) -> bool:
     """Whether the admin must configure a base_url. True for the service
-    engines whose endpoint is admin-supplied (openai_stt/openai_tts,
+    engines whose endpoint is admin-supplied (http_stt/http_tts,
     whisper_service/eventlab, every kind="llm" entry). False for the
     OpenRouter-backed STT engines -- "service", but they hit a fixed endpoint
     with api_key only -- and for every "local" engine. Surfaced in the list
@@ -166,13 +166,13 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
                     name=payload.engine, model=payload.model_id, api_key=payload.api_key
                 )
             elif payload.engine in _SERVICE_STT_ENGINES:
-                provider = OpenAICompatSttProvider(name=payload.engine, entry=payload.model_dump())
+                provider = HttpSttProvider(name=payload.engine, entry=payload.model_dump())
             else:
                 provider = stt_service.get_provider(payload.engine)
             await provider.transcribe_bytes(_SAMPLE_WAV)
         elif payload.kind == "tts":
             if payload.engine in _SERVICE_TTS_ENGINES:
-                provider = OpenAICompatTTSProvider(name=payload.engine, entry=payload.model_dump())
+                provider = HttpTtsProvider(name=payload.engine, entry=payload.model_dump())
             else:
                 provider = tts_service.get_provider(payload.engine)
             await provider.synthesize(TTSRequest(text=payload.sample_text, engine=payload.engine))
@@ -193,9 +193,9 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Persist api_key for every kind (stt: read by openrouter_provider.py and
-    # openai_stt_provider.py; llm: read by responder.py's
-    # resolve_llm_override_from_registry; tts: read by openai_tts_provider.py).
-    # base_url is meaningful for every kind now: llm and the openai_stt/openai_tts
+    # http_stt_provider.py; llm: read by responder.py's
+    # resolve_llm_override_from_registry; tts: read by http_tts_provider.py).
+    # base_url is meaningful for every kind now: llm and the http_stt/http_tts
     # service engines all pair a model with an OpenAI-compatible endpoint.
     created = await model_registry_store.create(
         payload.kind, payload.engine, payload.model_id, payload.label, stage=payload.stage,

@@ -28,7 +28,7 @@ class SpeechRequest(BaseModel):
     language: str | None = None
     response_format: str = "wav"
     # Voice-clone reference clip. A filesystem path is meaningless across the
-    # gateway<->model_service network hop, so the caller (OpenAICompatTTSProvider)
+    # gateway<->model_service network hop, so the caller (HttpTtsProvider)
     # sends the actual bytes instead; create_speech below decodes them to a
     # local temp file before handing off to the (in-process, same-host) provider.
     ref_audio_base64: str | None = None
@@ -44,7 +44,7 @@ def build_tts_router(config: ServiceConfig, provider: RenderingTTSProvider) -> A
 
     @router.get("/voices")
     async def list_voices() -> dict:
-        """The self-described capability schema OpenAICompatTTSProvider fetches
+        """The self-described capability schema HttpTtsProvider fetches
         so the gateway knows what this deployed engine supports without any
         per-engine hardcoding on the gateway side."""
         return {

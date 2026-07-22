@@ -4,11 +4,11 @@ import httpx
 import pytest
 
 from app.schemas.stt import STTRequest
-from app.services.stt.providers.openai_stt_provider import OpenAICompatSttProvider
+from app.services.stt.providers.http_stt_provider import HttpSttProvider
 from app.services.stt.service import stt_service
 
 _ENTRY = {
-    "id": "e1", "kind": "stt", "engine": "openai_stt", "model_id": "large-v3-turbo",
+    "id": "e1", "kind": "stt", "engine": "http_stt", "model_id": "large-v3-turbo",
     "label": "local box", "enabled": True, "stage": "stable",
     "api_key": "t0ken", "base_url": "http://stt-service:8100/v1", "config": {},
 }
@@ -48,9 +48,9 @@ async def test_posts_to_the_entry_base_url_with_bearer(captured, monkeypatch):
         return _ENTRY
 
     monkeypatch.setattr(
-        "app.services.stt.providers.openai_stt_provider.model_registry_store.find", fake_find
+        "app.services.stt.providers.http_stt_provider.model_registry_store.find", fake_find
     )
-    provider = OpenAICompatSttProvider()
+    provider = HttpSttProvider()
     result = await provider.transcribe_bytes(b"RIFFDATA", "vi", "large-v3-turbo")
 
     assert captured["url"] == "http://stt-service:8100/v1/audio/transcriptions"
@@ -58,7 +58,7 @@ async def test_posts_to_the_entry_base_url_with_bearer(captured, monkeypatch):
     assert _multipart_field(captured["body"], "model") == "large-v3-turbo"
     assert _multipart_field(captured["body"], "language") == "vi"
     assert result.text == "xin chào"
-    assert result.engine == "openai_stt"
+    assert result.engine == "http_stt"
 
 
 @pytest.mark.asyncio
@@ -67,17 +67,17 @@ async def test_falls_back_to_the_enabled_entry_when_no_model_given(captured, mon
         return _ENTRY
 
     monkeypatch.setattr(
-        "app.services.stt.providers.openai_stt_provider.model_registry_store.find_enabled",
+        "app.services.stt.providers.http_stt_provider.model_registry_store.find_enabled",
         fake_find_enabled,
     )
-    result = await OpenAICompatSttProvider().transcribe_bytes(b"RIFFDATA")
+    result = await HttpSttProvider().transcribe_bytes(b"RIFFDATA")
     assert result.text == "xin chào"
 
 
 @pytest.mark.asyncio
 async def test_explicit_entry_override_skips_the_registry(captured):
     # The registry's test-before-add call has no row to look up yet.
-    provider = OpenAICompatSttProvider(entry=_ENTRY)
+    provider = HttpSttProvider(entry=_ENTRY)
     await provider.transcribe_bytes(b"RIFFDATA")
     assert captured["auth"] == "Bearer t0ken"
 
@@ -88,11 +88,11 @@ async def test_unconfigured_entry_raises_a_clear_error(monkeypatch):
         return None
 
     monkeypatch.setattr(
-        "app.services.stt.providers.openai_stt_provider.model_registry_store.find_enabled",
+        "app.services.stt.providers.http_stt_provider.model_registry_store.find_enabled",
         fake_find_enabled,
     )
     with pytest.raises(RuntimeError, match="not configured"):
-        await OpenAICompatSttProvider().transcribe_bytes(b"RIFFDATA")
+        await HttpSttProvider().transcribe_bytes(b"RIFFDATA")
 
 
 @pytest.mark.asyncio
@@ -106,13 +106,13 @@ async def test_http_error_surfaces_the_status_and_body(monkeypatch):
         httpx, "AsyncClient", lambda *a, **k: original(*a, **{**k, "transport": transport})
     )
     with pytest.raises(RuntimeError, match="HTTP 401"):
-        await OpenAICompatSttProvider(entry=_ENTRY).transcribe_bytes(b"RIFFDATA")
+        await HttpSttProvider(entry=_ENTRY).transcribe_bytes(b"RIFFDATA")
 
 
 @pytest.mark.asyncio
 async def test_timeout_comes_from_the_entry_config(captured, monkeypatch):
     entry = {**_ENTRY, "config": {"timeout_seconds": 5.0}}
-    provider = OpenAICompatSttProvider(entry=entry)
+    provider = HttpSttProvider(entry=entry)
     await provider.transcribe_bytes(b"RIFFDATA")
     assert captured["timeout"] == 5.0
 
@@ -121,7 +121,7 @@ async def test_timeout_comes_from_the_entry_config(captured, monkeypatch):
 async def test_timeout_falls_back_to_the_provider_default_when_entry_has_none(captured):
     # _ENTRY's config is {}, so no timeout_seconds override -- the provider's
     # own default (60.0, per _DEFAULT_TIMEOUT) must be what reaches httpx.
-    provider = OpenAICompatSttProvider(entry=_ENTRY)
+    provider = HttpSttProvider(entry=_ENTRY)
     await provider.transcribe_bytes(b"RIFFDATA")
     assert captured["timeout"] == 60.0
 
@@ -131,17 +131,17 @@ async def test_a_configured_zero_timeout_is_not_discarded(captured):
     # `0 or self.timeout_seconds` would silently replace an explicit 0 with
     # the provider default -- a plain `is not None` check must not do that.
     entry = {**_ENTRY, "config": {"timeout_seconds": 0}}
-    provider = OpenAICompatSttProvider(entry=entry)
+    provider = HttpSttProvider(entry=entry)
     await provider.transcribe_bytes(b"RIFFDATA")
     assert captured["timeout"] == 0
 
 
 def test_engine_is_registered():
-    assert stt_service.get_provider("openai_stt").name == "openai_stt"
+    assert stt_service.get_provider("http_stt").name == "http_stt"
 
 
 def test_schema_accepts_the_engine():
-    assert STTRequest(engine="openai_stt").engine == "openai_stt"
+    assert STTRequest(engine="http_stt").engine == "http_stt"
 
 
 @pytest.mark.asyncio
@@ -149,5 +149,5 @@ async def test_list_engines_does_not_keyerror_on_the_new_engine(monkeypatch):
     # service.py's list_engines ends in `remote[engine]`, a dict keyed only by
     # whisper_service/eventlab -- a new engine must not fall into that branch.
     engines = await stt_service.list_engines()
-    row = next(e for e in engines if e["engine"] == "openai_stt")
+    row = next(e for e in engines if e["engine"] == "http_stt")
     assert row["mode"] == "remote"

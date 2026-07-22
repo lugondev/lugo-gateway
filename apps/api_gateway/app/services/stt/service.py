@@ -5,7 +5,7 @@ from app.core.deps import module_available
 from app.core.errors import EngineNotFoundError
 from app.services.model_registry.resolve import resolve_remote_stt_config
 from app.services.stt.base import STTProvider
-from app.services.stt.providers.openai_stt_provider import OpenAICompatSttProvider
+from app.services.stt.providers.http_stt_provider import HttpSttProvider
 from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
 from app.services.stt.providers.remote_whisper_provider import RemoteWhisperProvider
 from app.services.stt.providers.vosk_provider import VoskProvider
@@ -50,7 +50,7 @@ class STTService:
                 model="openai/whisper-large-v3-turbo",
                 timeout_seconds=remote_stt.remote_stt_timeout_seconds,
             ),
-            "openai_stt": OpenAICompatSttProvider(
+            "http_stt": HttpSttProvider(
                 timeout_seconds=remote_stt.remote_stt_timeout_seconds
             ),
         }
@@ -155,10 +155,10 @@ class STTService:
                 # has a key set, so it's actually usable for some model.
                 configured = await model_registry_store.has_key_for_engine("stt", engine)
                 entry = {"mode": "remote", "available": configured, "detail": provider.model if configured else None}
-            elif engine == "openai_stt":
+            elif engine == "http_stt":
                 # Configured = some enabled entry carries a base_url pointing at a
                 # service; there is no per-engine singleton config to read.
-                row = await model_registry_store.find_enabled("stt", "openai_stt")
+                row = await model_registry_store.find_enabled("stt", "http_stt")
                 base_url = (row or {}).get("base_url", "")
                 entry = {"mode": "remote", "available": bool(base_url), "detail": base_url or None}
             else:

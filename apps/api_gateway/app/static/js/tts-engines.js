@@ -4,7 +4,7 @@ import { modelRow } from "./model-manager.js";
 export let ttsEngineDetails = {};
 
 // The playground TTS pickers select a specific Model Registry row, not just an
-// engine: one engine (e.g. openai_tts) can back several enabled rows pointing
+// engine: one engine (e.g. http_tts) can back several enabled rows pointing
 // at different service base URLs, so an engine-only pick is ambiguous and picks
 // a non-deterministic row server-side. Each option value is "engine|model_id",
 // mirroring the STT/LLM model pickers. `/v1/tts/engines` is still fetched for

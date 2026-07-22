@@ -14,7 +14,7 @@ from app.services.model_registry.resolve import STT_ENGINE_CONFIG_DEFAULTS
 from app.services.system_config import OmnivoiceConfig
 
 # Remote STT/TTS providers read exactly one config key.
-_REMOTE_ENGINES = {"openai_stt", "openai_tts", "whisper_service", "eventlab"}
+_REMOTE_ENGINES = {"http_stt", "http_tts", "whisper_service", "eventlab"}
 
 
 def _type_of(value) -> str:

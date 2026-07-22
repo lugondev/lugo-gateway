@@ -7,10 +7,10 @@ import pytest
 
 from app.core.errors import ProviderError
 from app.schemas.tts import TTSRequest
-from app.services.tts.providers.openai_tts_provider import OpenAICompatTTSProvider
+from app.services.tts.providers.http_tts_provider import HttpTtsProvider
 
 _ENTRY = {
-    "id": "t1", "kind": "tts", "engine": "openai_tts", "model_id": "vieneu",
+    "id": "t1", "kind": "tts", "engine": "http_tts", "model_id": "vieneu",
     "label": "local box", "enabled": True, "stage": "stable",
     "api_key": "t0ken", "base_url": "http://tts-service:8100/v1", "config": {},
 }
@@ -57,8 +57,8 @@ def captured(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_posts_to_audio_speech_and_returns_wav_bytes(captured):
-    provider = OpenAICompatTTSProvider(entry=_ENTRY)
-    wav = await provider.render_wav(TTSRequest(text="xin chào", engine="openai_tts", voice="v1"))
+    provider = HttpTtsProvider(entry=_ENTRY)
+    wav = await provider.render_wav(TTSRequest(text="xin chào", engine="http_tts", voice="v1"))
 
     assert wav == _WAV_BYTES
     assert captured["url"] == "http://tts-service:8100/v1/audio/speech"
@@ -75,17 +75,17 @@ async def test_resolves_the_enabled_entry_from_the_registry(captured, monkeypatc
         return _ENTRY
 
     monkeypatch.setattr(
-        "app.services.tts.providers.openai_tts_provider.model_registry_store.find_enabled",
+        "app.services.tts.providers.http_tts_provider.model_registry_store.find_enabled",
         fake_find_enabled,
     )
-    wav = await OpenAICompatTTSProvider().render_wav(TTSRequest(text="hi", engine="openai_tts"))
+    wav = await HttpTtsProvider().render_wav(TTSRequest(text="hi", engine="http_tts"))
     assert wav == _WAV_BYTES
     assert captured["url"] == "http://tts-service:8100/v1/audio/speech"
 
 
 @pytest.mark.asyncio
 async def test_model_id_resolves_the_exact_registry_row(captured, monkeypatch):
-    # Several rows can share engine "openai_tts" pointing at different service
+    # Several rows can share engine "http_tts" pointing at different service
     # base URLs. A concrete model_id (the "engine|model_id" the picker sends)
     # must resolve that exact row via find(), not the non-deterministic
     # first-enabled fallback.
@@ -99,18 +99,18 @@ async def test_model_id_resolves_the_exact_registry_row(captured, monkeypatch):
         raise AssertionError("find_enabled must not be called when model_id is set")
 
     monkeypatch.setattr(
-        "app.services.tts.providers.openai_tts_provider.model_registry_store.find",
+        "app.services.tts.providers.http_tts_provider.model_registry_store.find",
         fake_find,
     )
     monkeypatch.setattr(
-        "app.services.tts.providers.openai_tts_provider.model_registry_store.find_enabled",
+        "app.services.tts.providers.http_tts_provider.model_registry_store.find_enabled",
         fail_find_enabled,
     )
-    wav = await OpenAICompatTTSProvider().render_wav(
-        TTSRequest(text="hi", engine="openai_tts", model_id="vieneu-fly")
+    wav = await HttpTtsProvider().render_wav(
+        TTSRequest(text="hi", engine="http_tts", model_id="vieneu-fly")
     )
     assert wav == _WAV_BYTES
-    assert seen["find"] == ("tts", "openai_tts", "vieneu-fly")
+    assert seen["find"] == ("tts", "http_tts", "vieneu-fly")
     assert captured["url"] == "http://box-b:8100/v1/audio/speech"
     assert '"model":"vieneu-fly"' in captured["json"]
 
@@ -126,15 +126,15 @@ async def test_empty_model_id_falls_back_to_first_enabled(captured, monkeypatch)
         raise AssertionError("find must not be called when model_id is empty")
 
     monkeypatch.setattr(
-        "app.services.tts.providers.openai_tts_provider.model_registry_store.find_enabled",
+        "app.services.tts.providers.http_tts_provider.model_registry_store.find_enabled",
         fake_find_enabled,
     )
     monkeypatch.setattr(
-        "app.services.tts.providers.openai_tts_provider.model_registry_store.find",
+        "app.services.tts.providers.http_tts_provider.model_registry_store.find",
         fail_find,
     )
-    wav = await OpenAICompatTTSProvider().render_wav(
-        TTSRequest(text="hi", engine="openai_tts")
+    wav = await HttpTtsProvider().render_wav(
+        TTSRequest(text="hi", engine="http_tts")
     )
     assert wav == _WAV_BYTES
     assert captured["url"] == "http://tts-service:8100/v1/audio/speech"
@@ -146,12 +146,12 @@ async def test_unconfigured_raises_provider_error(monkeypatch):
         return None
 
     monkeypatch.setattr(
-        "app.services.tts.providers.openai_tts_provider.model_registry_store.find_enabled",
+        "app.services.tts.providers.http_tts_provider.model_registry_store.find_enabled",
         fake_find_enabled,
     )
     # render_wav wraps everything as ProviderError (tts/base.py).
     with pytest.raises(ProviderError, match="not configured"):
-        await OpenAICompatTTSProvider().render_wav(TTSRequest(text="hi", engine="openai_tts"))
+        await HttpTtsProvider().render_wav(TTSRequest(text="hi", engine="http_tts"))
 
 
 @pytest.mark.asyncio
@@ -162,8 +162,8 @@ async def test_http_error_becomes_provider_error(monkeypatch):
         httpx, "AsyncClient", lambda *a, **k: original(*a, **{**k, "transport": transport})
     )
     with pytest.raises(ProviderError, match="HTTP 502"):
-        await OpenAICompatTTSProvider(entry=_ENTRY).render_wav(
-            TTSRequest(text="hi", engine="openai_tts")
+        await HttpTtsProvider(entry=_ENTRY).render_wav(
+            TTSRequest(text="hi", engine="http_tts")
         )
 
 
@@ -180,16 +180,16 @@ async def test_non_wav_200_response_becomes_a_clean_provider_error(monkeypatch):
         httpx, "AsyncClient", lambda *a, **k: original(*a, **{**k, "transport": transport})
     )
     with pytest.raises(ProviderError, match="not a WAV file"):
-        await OpenAICompatTTSProvider(entry=_ENTRY).render_wav(
-            TTSRequest(text="hi", engine="openai_tts")
+        await HttpTtsProvider(entry=_ENTRY).render_wav(
+            TTSRequest(text="hi", engine="http_tts")
         )
 
 
 @pytest.mark.asyncio
 async def test_timeout_comes_from_the_entry_config(captured):
     entry = {**_ENTRY, "config": {"timeout_seconds": 5.0}}
-    provider = OpenAICompatTTSProvider(entry=entry)
-    await provider.render_wav(TTSRequest(text="hi", engine="openai_tts"))
+    provider = HttpTtsProvider(entry=entry)
+    await provider.render_wav(TTSRequest(text="hi", engine="http_tts"))
     assert captured["timeout"] == 5.0
 
 
@@ -197,8 +197,8 @@ async def test_timeout_comes_from_the_entry_config(captured):
 async def test_timeout_falls_back_to_the_provider_default_when_entry_has_none(captured):
     # _ENTRY's config is {}, so no timeout_seconds override -- the provider's
     # own default (60.0, per _DEFAULT_TIMEOUT) must be what reaches httpx.
-    provider = OpenAICompatTTSProvider(entry=_ENTRY)
-    await provider.render_wav(TTSRequest(text="hi", engine="openai_tts"))
+    provider = HttpTtsProvider(entry=_ENTRY)
+    await provider.render_wav(TTSRequest(text="hi", engine="http_tts"))
     assert captured["timeout"] == 60.0
 
 
@@ -207,15 +207,15 @@ async def test_a_configured_zero_timeout_is_not_discarded(captured):
     # `0 or self.timeout_seconds` would silently replace an explicit 0 with
     # the provider default -- a plain `is not None` check must not do that.
     entry = {**_ENTRY, "config": {"timeout_seconds": 0}}
-    provider = OpenAICompatTTSProvider(entry=entry)
-    await provider.render_wav(TTSRequest(text="hi", engine="openai_tts"))
+    provider = HttpTtsProvider(entry=entry)
+    await provider.render_wav(TTSRequest(text="hi", engine="http_tts"))
     assert captured["timeout"] == 0
 
 
 def test_engine_is_registered():
     from app.services.tts.service import tts_service
 
-    assert tts_service.get_provider("openai_tts").name == "openai_tts"
+    assert tts_service.get_provider("http_tts").name == "http_tts"
 
 
 # ------------------------------------------------------------- voice capabilities
@@ -248,7 +248,7 @@ def voices_handler(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_list_voices_fetches_from_the_remote_voices_endpoint(voices_handler):
-    provider = OpenAICompatTTSProvider(entry=_ENTRY)
+    provider = HttpTtsProvider(entry=_ENTRY)
     voices = await provider.list_voices()
     assert voices == [{"label": "Host", "voice": "host"}]
     assert voices_handler["calls"] == ["http://tts-service:8100/v1/voices"]
@@ -256,7 +256,7 @@ async def test_list_voices_fetches_from_the_remote_voices_endpoint(voices_handle
 
 @pytest.mark.asyncio
 async def test_supports_voice_clone_reads_the_remote_flag(voices_handler):
-    provider = OpenAICompatTTSProvider(entry=_ENTRY)
+    provider = HttpTtsProvider(entry=_ENTRY)
     assert await provider.supports_voice_clone() is True
 
 
@@ -264,7 +264,7 @@ async def test_supports_voice_clone_reads_the_remote_flag(voices_handler):
 async def test_list_voices_and_supports_voice_clone_share_one_remote_call(voices_handler):
     """A caller (the /v1/tts/voices route) asks both back-to-back -- that must
     not cost two round trips to the same base_url."""
-    provider = OpenAICompatTTSProvider(entry=_ENTRY)
+    provider = HttpTtsProvider(entry=_ENTRY)
     await provider.list_voices()
     await provider.supports_voice_clone()
     assert len(voices_handler["calls"]) == 1
@@ -276,10 +276,10 @@ async def test_list_voices_returns_empty_when_unconfigured(monkeypatch):
         return None
 
     monkeypatch.setattr(
-        "app.services.tts.providers.openai_tts_provider.model_registry_store.find_enabled",
+        "app.services.tts.providers.http_tts_provider.model_registry_store.find_enabled",
         fake_find_enabled,
     )
-    provider = OpenAICompatTTSProvider()
+    provider = HttpTtsProvider()
     assert await provider.list_voices() == []
     assert await provider.supports_voice_clone() is False
 
@@ -291,7 +291,7 @@ async def test_list_voices_returns_empty_when_remote_call_fails(monkeypatch):
     monkeypatch.setattr(
         httpx, "AsyncClient", lambda *a, **k: original(*a, **{**k, "transport": transport})
     )
-    provider = OpenAICompatTTSProvider(entry=_ENTRY)
+    provider = HttpTtsProvider(entry=_ENTRY)
     # Voices are a UI nicety, not core synthesis -- a broken/unreachable
     # remote /voices endpoint must degrade to "no presets", not raise.
     assert await provider.list_voices() == []
@@ -306,10 +306,10 @@ async def test_render_wav_forwards_ref_audio_as_base64(captured, tmp_path):
     ref_path = tmp_path / "ref.wav"
     ref_path.write_bytes(_WAV_BYTES)
 
-    provider = OpenAICompatTTSProvider(entry=_ENTRY)
+    provider = HttpTtsProvider(entry=_ENTRY)
     await provider.render_wav(
         TTSRequest(
-            text="xin chào", engine="openai_tts",
+            text="xin chào", engine="http_tts",
             ref_audio_path=str(ref_path), ref_text="reference words",
         )
     )
@@ -325,8 +325,8 @@ async def test_render_wav_forwards_ref_audio_as_base64(captured, tmp_path):
 
 @pytest.mark.asyncio
 async def test_render_wav_omits_clone_fields_when_no_ref_audio(captured):
-    provider = OpenAICompatTTSProvider(entry=_ENTRY)
-    await provider.render_wav(TTSRequest(text="hi", engine="openai_tts"))
+    provider = HttpTtsProvider(entry=_ENTRY)
+    await provider.render_wav(TTSRequest(text="hi", engine="http_tts"))
 
     import json
 

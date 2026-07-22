@@ -63,12 +63,12 @@ def test_tts_profile_create_rejects_disabled_row(client, _with_password):
 
 def test_tts_profile_create_rejects_row_not_in_registry(client, _with_password):
     # Catalog-mode: a concrete (engine, model_id) with no enabled registry entry
-    # is rejected. This is exactly the openai_tts/vieneu-cloudflare bug's inverse
+    # is rejected. This is exactly the http_tts/vieneu-cloudflare bug's inverse
     # -- the gate must check the selected row, not the engine name against itself.
     _signup_login(client, "toan")
     resp = client.post(
         "/v1/tts/profiles",
-        json={"name": "p1", "engine": "openai_tts", "model_id": "ghost-model"},
+        json={"name": "p1", "engine": "http_tts", "model_id": "ghost-model"},
     )
     assert resp.status_code == 403
 
@@ -76,14 +76,14 @@ def test_tts_profile_create_rejects_row_not_in_registry(client, _with_password):
 def test_tts_profile_create_allows_catalogued_row(client, _with_password):
     # The accept side of catalog-mode: an enabled row for the exact
     # (engine, model_id) lets the save through. Reproduces the fix for the
-    # openai_tts/vieneu-cloudflare profile-save failure.
+    # http_tts/vieneu-cloudflare profile-save failure.
     store = ModelRegistryStore()
-    asyncio.run(store.create("tts", "openai_tts", "vieneu-cloudflare", "VieNeu (Cloudflare)"))
+    asyncio.run(store.create("tts", "http_tts", "vieneu-cloudflare", "VieNeu (Cloudflare)"))
 
     _signup_login(client, "toan")
     resp = client.post(
         "/v1/tts/profiles",
-        json={"name": "p1", "engine": "openai_tts", "model_id": "vieneu-cloudflare"},
+        json={"name": "p1", "engine": "http_tts", "model_id": "vieneu-cloudflare"},
     )
     assert resp.status_code == 200
 

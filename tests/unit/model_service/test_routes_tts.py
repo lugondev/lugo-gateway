@@ -92,7 +92,7 @@ def test_models_lists_the_running_engine():
 
 def test_voices_route_returns_the_providers_schema():
     """This is the "schema" a deployed model_service instance returns so the
-    gateway's OpenAICompatTTSProvider knows what the remote engine supports,
+    gateway's HttpTtsProvider knows what the remote engine supports,
     without hardcoding per-engine special cases."""
     provider = _FakeTTS(voices=[{"label": "Host", "voice": "host"}], clone=True)
     r = _client(provider).get("/v1/voices", headers=_AUTH)

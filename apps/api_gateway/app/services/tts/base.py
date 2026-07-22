@@ -40,7 +40,7 @@ class TTSProvider(ABC):
     async def list_voices(self) -> list[dict]:
         """Preset voices as [{"label":..., "voice":...}], or [] if none.
 
-        Async so a remote/proxy engine (see OpenAICompatTTSProvider) can fetch
+        Async so a remote/proxy engine (see HttpTtsProvider) can fetch
         this from the deployed service instead of only ever answering for
         in-process engines."""
         return []

@@ -128,7 +128,7 @@ export function toggleTtsVoiceMode() {
 }
 
 // The engine picker selects a specific Model Registry row, not just an engine:
-// one engine (e.g. openai_tts) can have several enabled rows pointing at
+// one engine (e.g. http_tts) can have several enabled rows pointing at
 // different service base URLs, so picking by engine alone is ambiguous. Each
 // option value is "engine|model_id", mirroring the STT model picker
 // (renderProfileSttModelSelect in profiles.js) and the playground picker

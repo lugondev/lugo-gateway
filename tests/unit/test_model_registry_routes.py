@@ -381,8 +381,8 @@ async def test_patch_unrelated_qwen3_asr_field_does_not_clear_the_model_cache(cl
 @pytest.mark.asyncio
 async def test_patch_whisper_service_entry_rebuilds_the_provider(client, _with_password):
     """Ported from test_system_config_routes.py's
-    test_changing_remote_stt_base_url_rebuilds_the_provider -- moved to
-    PATCH /v1/model_registry/{id} (Task 7 removed SystemConfig.remote_stt)."""
+    test_changing_http_stt_base_url_rebuilds_the_provider -- moved to
+    PATCH /v1/model_registry/{id} (Task 7 removed SystemConfig.http_stt)."""
     await _signup_login_async(client, "root", role="admin")
     from app.services.model_registry.store import model_registry_store
     from app.services.stt.service import stt_service
@@ -424,8 +424,8 @@ _SERVICE_BASE = "http://tts-service:8100/v1"
 
 def test_tts_entry_keeps_its_base_url(client, monkeypatch):
     """Regression: create_entry whitelisted base_url to (llm, stt), so a TTS
-    service entry lost its URL on save and openai_tts could never resolve it."""
-    from app.services.tts.providers import openai_tts_provider
+    service entry lost its URL on save and http_tts could never resolve it."""
+    from app.services.tts.providers import http_tts_provider
 
     async def fake_render(self, payload):
         # Must be a real WAV container, not just the "RIFFWAVEDATA" placeholder:
@@ -436,13 +436,13 @@ def test_tts_entry_keeps_its_base_url(client, monkeypatch):
         # is meant to pin.
         return pcm16_to_wav_bytes(b"\x00\x00" * 100, sample_rate=24000)
 
-    monkeypatch.setattr(openai_tts_provider.OpenAICompatTTSProvider, "_render_wav", fake_render)
+    monkeypatch.setattr(http_tts_provider.HttpTtsProvider, "_render_wav", fake_render)
     _signup_login(client, "admin_base_url", role="admin")
 
     r = client.post(
         "/v1/model_registry",
         json={
-            "kind": "tts", "engine": "openai_tts", "model_id": "vieneu",
+            "kind": "tts", "engine": "http_tts", "model_id": "vieneu",
             "label": "local box", "base_url": _SERVICE_BASE, "api_key": "t0ken",
         },
     )
@@ -454,21 +454,21 @@ def test_bad_service_url_is_rejected_at_add_time(client, monkeypatch):
     """The admin should learn the URL/token is wrong when they click Add, not on
     the first real transcription.
 
-    Asserting only `"openai_stt" in detail` would also pass if the add-time
-    test call never reached the network at all: the *singleton* openai_stt
+    Asserting only `"http_stt" in detail` would also pass if the add-time
+    test call never reached the network at all: the *singleton* http_stt
     provider (no entry override) resolves its entry by looking up a registry
-    row, finds none yet (this row hasn't been created), and raises "openai_stt
-    is not configured" -- which also contains the substring "openai_stt", so a
+    row, finds none yet (this row hasn't been created), and raises "http_stt
+    is not configured" -- which also contains the substring "http_stt", so a
     bare substring check can't tell a short-circuited lookup apart from an
     actual failed HTTP attempt against the submitted base_url. Pin the latter
-    specifically: the provider must reach OpenAICompatSttProvider.transcribe_bytes
+    specifically: the provider must reach HttpSttProvider.transcribe_bytes
     and fail there with a network/request error, using the base_url from *this*
     payload, not report a missing config.
 
     The base_url is deliberately bogus (".invalid" TLD, per RFC 2606), but the
     test must stay hermetic -- no real DNS/socket call. httpx.AsyncClient is
     swapped for a MockTransport whose handler raises httpx.ConnectError, same
-    pattern as test_openai_stt_provider.py's `captured` fixture, so the
+    pattern as test_http_stt_provider.py's `captured` fixture, so the
     provider's `except httpx.HTTPError` branch fires exactly like it would
     against an unreachable host, without ever touching the network."""
 
@@ -488,13 +488,13 @@ def test_bad_service_url_is_rejected_at_add_time(client, monkeypatch):
     r = client.post(
         "/v1/model_registry",
         json={
-            "kind": "stt", "engine": "openai_stt", "model_id": "whisper-medium",
+            "kind": "stt", "engine": "http_stt", "model_id": "whisper-medium",
             "label": "typo", "base_url": "http://nonexistent.invalid:9/v1", "api_key": "t0ken",
         },
     )
     assert r.status_code == 400
     detail = r.json()["detail"]
-    assert "openai_stt" in detail
+    assert "http_stt" in detail
     # Proves an HTTP attempt was actually made against the submitted URL, not a
     # short-circuited "not configured" from a provider that never saw the payload.
     assert "not configured" not in detail
@@ -505,14 +505,14 @@ def test_location_classification():
     """Two-state locality: 'local' for engines that run in-process (whisper,
     vosk, qwen3_asr, omnivoice, vieneu, edge_tts, qwen3_tts_*, voxcpm2, ...);
     'service' for every engine that calls out to an external HTTP API --
-    openai_stt/openai_tts, whisper_service/eventlab, the OpenRouter-backed STT
+    http_stt/http_tts, whisper_service/eventlab, the OpenRouter-backed STT
     engines (qwen3_asr_or/whisper_or), and every kind='llm' entry. OpenRouter,
     OpenAI, Together, ... are all just 'service' -- no third category."""
     from app.api.routes.model_registry import _location
 
     assert _location("llm", "anything") == "service"
-    assert _location("stt", "openai_stt") == "service"
-    assert _location("tts", "openai_tts") == "service"
+    assert _location("stt", "http_stt") == "service"
+    assert _location("tts", "http_tts") == "service"
     assert _location("stt", "whisper_service") == "service"
     assert _location("stt", "eventlab") == "service"
     assert _location("stt", "qwen3_asr_or") == "service"
@@ -525,15 +525,15 @@ def test_location_classification():
 
 def test_requires_base_url_classification():
     """base_url is required for the service engines whose endpoint the admin
-    must configure (openai_stt/openai_tts, whisper_service/eventlab, every
+    must configure (http_stt/http_tts, whisper_service/eventlab, every
     kind='llm' entry). The OpenRouter-backed STT engines are 'service' too but
     hit a fixed endpoint with api_key only, so they don't require a base_url;
     'local' engines never read one either."""
     from app.api.routes.model_registry import _requires_base_url
 
     assert _requires_base_url("llm", "anything") is True
-    assert _requires_base_url("stt", "openai_stt") is True
-    assert _requires_base_url("tts", "openai_tts") is True
+    assert _requires_base_url("stt", "http_stt") is True
+    assert _requires_base_url("tts", "http_tts") is True
     assert _requires_base_url("stt", "whisper_service") is True
     assert _requires_base_url("stt", "eventlab") is True
     assert _requires_base_url("stt", "qwen3_asr_or") is False

@@ -5,7 +5,7 @@ from app.services.tts.base import TTSProvider
 from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
 from app.services.tts.providers.extra_engines import EXTRA_TTS_PROVIDERS
 from app.services.tts.providers.omnivoice_provider import OmniVoiceProvider
-from app.services.tts.providers.openai_tts_provider import OpenAICompatTTSProvider
+from app.services.tts.providers.http_tts_provider import HttpTtsProvider
 from app.services.tts.providers.qwen3_tts_provider import QWEN3_TTS_PROVIDERS
 from app.services.tts.providers.vieneu_provider import VieNeuProvider
 
@@ -16,7 +16,7 @@ class TTSService:
             "omnivoice": OmniVoiceProvider(),
             "vieneu": VieNeuProvider(),
             "edge_tts": EdgeTTSProvider(),
-            "openai_tts": OpenAICompatTTSProvider(),
+            "http_tts": HttpTtsProvider(),
         }
         for provider in EXTRA_TTS_PROVIDERS:
             self.providers[provider.name] = provider
