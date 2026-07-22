@@ -10,7 +10,7 @@ COPY apps ./apps
 RUN apt-get update && apt-get install -y --no-install-recommends libsndfile1 libopus0 && \
     rm -rf /var/lib/apt/lists/* && \
     pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir ".[tts,opus]"
+    pip install --no-cache-dir ".[tts,opus,whisper]"
 
 ENV PYTHONPATH=/app/apps/api_gateway
 

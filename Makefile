@@ -34,7 +34,7 @@ help: ## Show this help
 .PHONY: install
 install: ## Install the package + dev deps into .venv
 	@test -d $(VENV) || python3 -m venv $(VENV)
-	$(PY) -m pip install -e ".[dev]"
+	$(PY) -m pip install -e ".[dev,whisper]"
 
 .PHONY: setup
 setup: ## Interactive setup checklist: tick engines to install (host-aware). Scripted: scripts/setup.sh
