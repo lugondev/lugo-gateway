@@ -584,7 +584,7 @@
                 <label class="check">
                   <input type="radio" name="tp-voice-mode" id="tp-mode-preset" value="preset" checked /> Preset voice
                 </label>
-                <label class="check">
+                <label class="check" id="tp-mode-clone-label">
                   <input type="radio" name="tp-voice-mode" id="tp-mode-clone" value="clone" /> Clone from reference audio
                 </label>
               </div>
@@ -594,9 +594,11 @@
               </label>
               <div id="tp-clone-wrap" class="hidden">
                 <label>
-                  Reference audio path <span class="hint" style="display:inline;margin:0">(server-side path)</span>
+                  Reference audio <span class="hint" style="display:inline;margin:0">(upload a clip, or paste a server-side path)</span>
+                  <input id="tp-ref-audio-file" type="file" accept="audio/*" />
                   <input id="tp-ref-audio" type="text" placeholder="artifacts/refs/host.wav" />
                 </label>
+                <p id="tp-ref-audio-status" class="meta"></p>
                 <label>
                   Reference transcript
                   <textarea id="tp-ref-text" rows="2" placeholder="Exact words spoken in the reference audio…"></textarea>

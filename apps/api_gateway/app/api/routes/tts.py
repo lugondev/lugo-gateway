@@ -3,10 +3,11 @@ import logging
 import time
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, UploadFile
 
 from app.schemas.common import StreamEvent
 from app.schemas.tts import TTSRequest
+from app.services.artifacts import artifact_store
 from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
 from app.streaming.event_bus import event_bus
@@ -27,8 +28,20 @@ async def list_tts_engines() -> dict:
 @router.get("/voices")
 async def list_tts_voices(engine: str = "vieneu") -> dict:
     provider = tts_service.get_provider(engine)
-    voices = provider.list_voices() if hasattr(provider, "list_voices") else []
-    return {"success": True, "data": voices}
+    voices = await provider.list_voices()
+    supports_clone = await provider.supports_voice_clone()
+    return {"success": True, "data": {"voices": voices, "supports_clone": supports_clone}}
+
+
+@router.post("/reference-audio")
+async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
+    """Save a voice-clone reference clip; the returned ref_audio_path is what
+    a TtsProfile's voice_mode="clone" stores (see profile_models.py). Persists
+    like OmniVoice's pinned reference -- not swept by artifact prune, see
+    ArtifactStore.save_reference_audio."""
+    data = await audio.read()
+    ref_id, _url = artifact_store.save_reference_audio(data)
+    return {"success": True, "data": {"ref_audio_path": str(artifact_store.path_for(ref_id))}}
 
 
 @router.post("/synthesize")

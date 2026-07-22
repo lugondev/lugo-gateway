@@ -67,6 +67,9 @@ class VoxCPM2Provider(_ExtraTTSProvider):
     def detail(self) -> str:
         return os.environ.get("OMNIVOICE_VOXCPM_MODEL", "openbmb/VoxCPM2")
 
+    async def supports_voice_clone(self) -> bool:
+        return True
+
     def _model(self):
         if self.name not in _CACHE:
             from voxcpm import VoxCPM
@@ -103,7 +106,7 @@ class KokoroVietnameseProvider(_ExtraTTSProvider):
     def detail(self) -> str:
         return "Kokoro-Vietnamese fine-tune · 24kHz · fixed voicepacks"
 
-    def list_voices(self) -> list[dict]:
+    async def list_voices(self) -> list[dict]:
         if not self.available():
             return []
         from kokoro_vietnamese import VOICES

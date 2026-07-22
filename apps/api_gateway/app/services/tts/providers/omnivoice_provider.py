@@ -102,6 +102,9 @@ class OmniVoiceProvider(RenderingTTSProvider):
     def detail(self) -> str:
         return get_active_omnivoice_model()
 
+    async def supports_voice_clone(self) -> bool:
+        return True
+
     # ---------------------------------------------------------------- synth
     async def _synth(
         self, text: str, *, instruct=None, ref_audio=None, ref_text=None, speed=None

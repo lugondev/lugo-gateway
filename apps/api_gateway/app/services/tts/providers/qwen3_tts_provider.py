@@ -110,8 +110,11 @@ class _Qwen3TTSProviderBase(RenderingTTSProvider):
         backend = "faster_qwen3_tts (CUDA graphs)" if _use_faster_backend(device) else "qwen_tts"
         return f"Qwen3-TTS {self._size} · 12Hz codec · Base+CustomVoice · {backend}"
 
-    def list_voices(self) -> list[dict]:
+    async def list_voices(self) -> list[dict]:
         return list(PRESET_SPEAKERS)
+
+    async def supports_voice_clone(self) -> bool:
+        return True
 
     def _checkpoint_id(self, kind: str) -> str:
         return f"Qwen/Qwen3-TTS-12Hz-{self._size}-{kind}"

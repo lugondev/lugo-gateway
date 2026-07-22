@@ -48,7 +48,7 @@ class EdgeTTSProvider(TTSProvider):
     def install_hint(self) -> str:
         return "pip install edge-tts"
 
-    def list_voices(self) -> list[dict]:
+    async def list_voices(self) -> list[dict]:
         return self.VOICES
 
     @staticmethod

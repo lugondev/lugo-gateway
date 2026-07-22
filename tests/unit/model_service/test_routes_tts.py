@@ -1,3 +1,5 @@
+import base64
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -13,15 +15,23 @@ _AUTH = {"Authorization": "Bearer t0ken"}
 class _FakeTTS:
     name = "vieneu"
 
-    def __init__(self, exc: Exception | None = None):
+    def __init__(self, exc: Exception | None = None, voices=None, clone: bool = False):
         self.calls: list[TTSRequest] = []
         self._exc = exc
+        self._voices = voices or []
+        self._clone = clone
 
     async def render_wav(self, payload: TTSRequest) -> bytes:
         self.calls.append(payload)
         if self._exc:
             raise self._exc
         return b"RIFFWAVEDATA"
+
+    async def list_voices(self) -> list[dict]:
+        return self._voices
+
+    async def supports_voice_clone(self) -> bool:
+        return self._clone
 
 
 def _client(provider):
@@ -78,3 +88,49 @@ def test_tts_container_does_not_expose_transcriptions():
 def test_models_lists_the_running_engine():
     r = _client(_FakeTTS()).get("/v1/models", headers=_AUTH)
     assert [m["id"] for m in r.json()["data"]] == ["vieneu"]
+
+
+def test_voices_route_returns_the_providers_schema():
+    """This is the "schema" a deployed model_service instance returns so the
+    gateway's OpenAICompatTTSProvider knows what the remote engine supports,
+    without hardcoding per-engine special cases."""
+    provider = _FakeTTS(voices=[{"label": "Host", "voice": "host"}], clone=True)
+    r = _client(provider).get("/v1/voices", headers=_AUTH)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["data"] == [{"label": "Host", "voice": "host"}]
+    assert body["supports_clone"] is True
+
+
+def test_voices_route_requires_auth():
+    r = _client(_FakeTTS()).get("/v1/voices")
+    assert r.status_code == 401
+
+
+def test_create_speech_decodes_ref_audio_base64_to_a_temp_path():
+    provider = _FakeTTS()
+    ref_bytes = b"RIFF-fake-reference-wav-bytes"
+    _client(provider).post(
+        "/v1/audio/speech",
+        headers=_AUTH,
+        json={
+            "input": "xin chào",
+            "ref_audio_base64": base64.b64encode(ref_bytes).decode("ascii"),
+            "ref_text": "reference words",
+        },
+    )
+    payload = provider.calls[0]
+    assert payload.ref_text == "reference words"
+    assert payload.ref_audio_path is not None
+    from pathlib import Path
+
+    # The temp file existed long enough to be read by the (fake) provider's
+    # render_wav call, which already ran by the time the response returned --
+    # but it must be cleaned up afterward, not leaked.
+    assert not Path(payload.ref_audio_path).exists()
+
+
+def test_create_speech_without_ref_audio_leaves_ref_audio_path_unset():
+    provider = _FakeTTS()
+    _client(provider).post("/v1/audio/speech", headers=_AUTH, json={"input": "hi"})
+    assert provider.calls[0].ref_audio_path is None

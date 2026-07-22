@@ -108,7 +108,7 @@ async function populateVoiceOptions() {
   let voices = [];
   try {
     const body = await (await fetch(`/v1/tts/voices?engine=${encodeURIComponent(engineInput.value)}`)).json();
-    voices = body.data || [];
+    voices = body.data?.voices || [];
   } catch (error) {
     /* voices optional */
   }

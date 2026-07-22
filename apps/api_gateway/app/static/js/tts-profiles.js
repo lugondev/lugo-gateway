@@ -179,21 +179,57 @@ function readTpEngineSelection() {
   return { engine, model };
 }
 
+// Some engines (e.g. kokoro_vi, edge_tts) have fixed voicepacks and never
+// support cloning from a reference clip -- hide/disable that mode instead of
+// letting the operator fill in a clone config that will silently be ignored.
+function applyCloneSupport(supportsClone) {
+  const cloneRadio = el("tp-mode-clone");
+  const cloneLabel = el("tp-mode-clone-label");
+  if (!cloneRadio) return;
+  cloneRadio.disabled = !supportsClone;
+  if (cloneLabel) cloneLabel.classList.toggle("hidden", !supportsClone);
+  if (!supportsClone && cloneRadio.checked) {
+    el("tp-mode-preset").checked = true;
+    toggleTtsVoiceMode();
+  }
+}
+
 export async function loadTtsProfileVoiceOptions(engine) {
   const sel = el("tp-voice");
   if (!sel) return;
   sel.innerHTML = '<option value="">(auto)</option>';
-  if (!engine) return;
+  if (!engine) {
+    applyCloneSupport(true); // no engine picked yet -- don't preemptively hide clone mode
+    return;
+  }
   try {
     const body = await (await fetch(`/v1/tts/voices?engine=${encodeURIComponent(engine)}`)).json();
-    (body.data || []).forEach((v) => {
+    const { voices = [], supports_clone: supportsClone = false } = body.data || {};
+    voices.forEach((v) => {
       const opt = document.createElement("option");
       opt.value = v.voice;
       opt.textContent = v.label;
       sel.appendChild(opt);
     });
+    applyCloneSupport(supportsClone);
   } catch {
     /* voices optional */
+  }
+}
+
+async function uploadTtsReferenceAudioFile(file) {
+  const status = el("tp-ref-audio-status");
+  if (status) status.textContent = "Uploading…";
+  try {
+    const body = new FormData();
+    body.append("audio", file);
+    const resp = await fetch("/v1/tts/reference-audio", { method: "POST", body });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || data.error || "Upload failed");
+    el("tp-ref-audio").value = data.data.ref_audio_path;
+    if (status) status.textContent = `Uploaded ✓ (${file.name})`;
+  } catch (error) {
+    if (status) status.textContent = String(error);
   }
 }
 
@@ -213,6 +249,8 @@ export function openTtsProfileForm(name) {
     if (p?.voice) el("tp-voice").value = p.voice;
   });
   el("tp-ref-audio").value = p?.ref_audio_path || "";
+  if (el("tp-ref-audio-file")) el("tp-ref-audio-file").value = "";
+  if (el("tp-ref-audio-status")) el("tp-ref-audio-status").textContent = "";
   el("tp-ref-text").value = p?.ref_text || "";
   el("tp-instruct").value = p?.instruct || "";
   el("tp-speed").value = p?.speed ?? "";
@@ -323,6 +361,12 @@ if (el("tp-engine")) {
 }
 if (el("tp-mode-preset")) el("tp-mode-preset").addEventListener("change", toggleTtsVoiceMode);
 if (el("tp-mode-clone")) el("tp-mode-clone").addEventListener("change", toggleTtsVoiceMode);
+if (el("tp-ref-audio-file")) {
+  el("tp-ref-audio-file").addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (file) uploadTtsReferenceAudioFile(file);
+  });
+}
 if (el("tp-save-btn")) el("tp-save-btn").addEventListener("click", saveTtsProfile);
 if (el("tp-cancel-btn")) el("tp-cancel-btn").addEventListener("click", resetTtsProfileForm);
 if (el("tp-delete-btn")) el("tp-delete-btn").addEventListener("click", () => deleteTtsProfile(ttsProfileEditName));

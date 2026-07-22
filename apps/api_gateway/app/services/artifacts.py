@@ -42,6 +42,27 @@ class ArtifactStore:
         (self.base_dir / filename).write_bytes(data)
         return artifact_id, f"{self.url_prefix}/{filename}"
 
+    def save_reference_audio(self, data: bytes) -> tuple[str, str]:
+        """Persist a voice-clone reference clip; return (artifact_id, public_url).
+
+        Prefixed `ref_` (unlike the bare uuid4-hex names save_wav/save_mp3
+        use) so it never matches _ARTIFACT_FILENAME and is never swept up by
+        prune() -- the same protection OmniVoice's pinned reference already
+        relies on, see the module docstring above."""
+        artifact_id = f"ref_{uuid.uuid4().hex}"
+        filename = f"{artifact_id}.wav"
+        (self.base_dir / filename).write_bytes(data)
+        return artifact_id, f"{self.url_prefix}/{filename}"
+
+    def path_for(self, artifact_id: str) -> Path:
+        """Resolve an id from save_wav/save_mp3/save_reference_audio back to
+        its file on disk."""
+        for ext in ("wav", "mp3"):
+            path = self.base_dir / f"{artifact_id}.{ext}"
+            if path.exists():
+                return path
+        raise FileNotFoundError(artifact_id)
+
     def prune(self, max_age_s: float) -> int:
         """Delete artifacts older than `max_age_s`; return how many were removed.
 

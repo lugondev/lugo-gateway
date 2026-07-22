@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -36,6 +37,31 @@ def test_list_tts_profiles_empty(client):
     resp = client.get("/v1/tts/profiles")
     assert resp.status_code == 200
     assert resp.json()["data"] == {}
+
+
+def test_upload_reference_audio_saves_and_returns_a_path(client, tmp_path, monkeypatch):
+    """Backs the TTS profile form's "Clone from reference audio" upload button:
+    the operator picks a file, this saves it server-side, and the returned
+    ref_audio_path is what gets stored on the TtsProfile (and, for a remote
+    engine, base64-forwarded by OpenAICompatTTSProvider -- see
+    tests/unit/test_openai_tts_provider.py)."""
+    from app.services.artifacts import ArtifactStore
+
+    fresh_store = ArtifactStore(str(tmp_path))
+    monkeypatch.setattr("app.api.routes.tts.artifact_store", fresh_store)
+
+    resp = client.post(
+        "/v1/tts/reference-audio",
+        files={"audio": ("ref.wav", b"RIFF....WAVEfmt ", "audio/wav")},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    path = body["data"]["ref_audio_path"]
+    assert Path(path).read_bytes() == b"RIFF....WAVEfmt "
+    # Persists like OmniVoice's pinned reference -- not swept by artifact prune.
+    assert Path(path).name.startswith("ref_")
 
 
 def test_create_tts_profile(client):

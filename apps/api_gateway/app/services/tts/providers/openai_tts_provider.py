@@ -10,6 +10,11 @@ which all produce WAV.
 
 from __future__ import annotations
 
+import base64
+import logging
+import time
+from pathlib import Path
+
 import httpx
 
 from app.schemas.tts import TTSRequest
@@ -17,7 +22,15 @@ from app.services.http_errors import translate_httpx_error
 from app.services.model_registry.store import model_registry_store
 from app.services.tts.base import RenderingTTSProvider
 
+logger = logging.getLogger(__name__)
+
 _DEFAULT_TIMEOUT = 60.0
+# How long a fetched {"data": [...], "supports_clone": bool} capability schema
+# stays valid before the next list_voices()/supports_voice_clone() call re-fetches
+# it. Just long enough that a UI asking for both back-to-back (e.g. the TTS
+# profile form's engine-change handler) shares one round trip, short enough
+# that flipping the remote engine doesn't need a gateway restart to notice.
+_CAPABILITIES_TTL_SECONDS = 30.0
 
 
 def _looks_like_wav(data: bytes) -> bool:
@@ -46,6 +59,8 @@ class OpenAICompatTTSProvider(RenderingTTSProvider):
         self.timeout_seconds = timeout_seconds
         # Only the registry's test-before-add call passes an entry.
         self._entry_override = entry
+        # base_url -> (fetched_at, capabilities dict); see _CAPABILITIES_TTL_SECONDS.
+        self._capabilities_cache: dict[str, tuple[float, dict]] = {}
 
     async def _resolve_entry(self, model_id: str = "") -> dict | None:
         if self._entry_override is not None:
@@ -65,6 +80,46 @@ class OpenAICompatTTSProvider(RenderingTTSProvider):
 
     def install_hint(self) -> str:
         return "Add a Model Registry entry pointing at a TTS service base URL."
+
+    async def _fetch_capabilities(self) -> dict:
+        """GET {base_url}/voices -- the deployed engine's self-described schema
+        of preset voices + clone support (see model_service's routes_tts.py).
+        Cached briefly per base_url; degrades to "no voices, no clone" rather
+        than raising, since this is a UI nicety, not part of synthesis itself."""
+        entry = await self._resolve_entry()
+        base_url = (entry or {}).get("base_url", "").strip()
+        empty = {"voices": [], "supports_clone": False}
+        if not base_url:
+            return empty
+
+        cached = self._capabilities_cache.get(base_url)
+        if cached is not None and (time.monotonic() - cached[0]) < _CAPABILITIES_TTL_SECONDS:
+            return cached[1]
+
+        api_key = (entry or {}).get("api_key", "").strip()
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        timeout = (entry.get("config") or {}).get("timeout_seconds", self.timeout_seconds)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(f"{base_url.rstrip('/')}/voices", headers=headers)
+                response.raise_for_status()
+            body = response.json()
+            result = {
+                "voices": body.get("data") or [],
+                "supports_clone": bool(body.get("supports_clone")),
+            }
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("%s: failed to fetch remote voice capabilities: %s", self.name, exc)
+            result = empty
+
+        self._capabilities_cache[base_url] = (time.monotonic(), result)
+        return result
+
+    async def list_voices(self) -> list[dict]:
+        return (await self._fetch_capabilities())["voices"]
+
+    async def supports_voice_clone(self) -> bool:
+        return (await self._fetch_capabilities())["supports_clone"]
 
     async def _render_wav(self, payload: TTSRequest) -> bytes:
         entry = await self._resolve_entry(payload.model_id)
@@ -89,6 +144,14 @@ class OpenAICompatTTSProvider(RenderingTTSProvider):
             "language": payload.language,
             "response_format": "wav",
         }
+        if payload.ref_audio_path:
+            # A gateway-local filesystem path means nothing on the far side of
+            # this HTTP call -- send the actual bytes instead, the same way
+            # model_service's /v1/voices tells us whether this engine even
+            # supports cloning before we bother.
+            ref_bytes = Path(payload.ref_audio_path).read_bytes()
+            body["ref_audio_base64"] = base64.b64encode(ref_bytes).decode("ascii")
+            body["ref_text"] = payload.ref_text
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:

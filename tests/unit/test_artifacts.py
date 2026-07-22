@@ -77,6 +77,39 @@ async def test_prune_loop_prunes_periodically_and_sleeps_first(tmp_path):
     assert not old.exists()
 
 
+def test_save_reference_audio_writes_file_and_returns_path(tmp_path):
+    store = ArtifactStore(str(tmp_path))
+    data = b"reference-clip-bytes"
+
+    ref_id, url = store.save_reference_audio(data)
+
+    assert ref_id.startswith("ref_")
+    assert url == f"{store.url_prefix}/{ref_id}.wav"
+    resolved = store.path_for(ref_id)
+    assert resolved.read_bytes() == data
+
+
+def test_save_reference_audio_is_excluded_from_prune(tmp_path):
+    """A voice-clone reference is meant to persist as long as the TtsProfile
+    referencing it does -- it must not be swept up by the same TTL that
+    reclaims ephemeral synthesized-speech artifacts."""
+    store = ArtifactStore(str(tmp_path))
+    ref_id, url = store.save_reference_audio(b"keep-me")
+    path = tmp_path / url.rsplit("/", 1)[-1]
+    _age_file(path, seconds=7200)
+
+    assert store.prune(max_age_s=3600) == 0
+    assert path.exists()
+
+
+def test_path_for_raises_when_artifact_missing(tmp_path):
+    import pytest
+
+    store = ArtifactStore(str(tmp_path))
+    with pytest.raises(FileNotFoundError):
+        store.path_for("does-not-exist")
+
+
 def test_save_mp3_writes_file_and_returns_url():
     data = b"fake-mp3-bytes"
     artifact_id, url = artifact_store.save_mp3(data)

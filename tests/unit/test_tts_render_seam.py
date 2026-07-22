@@ -72,3 +72,21 @@ async def test_synthesize_delegates_to_render_wav():
     assert result.sample_rate == 24000
     assert result.audio_url == "http://example.com/audio.wav"
     assert result.duration_seconds == 1.5
+
+
+@pytest.mark.asyncio
+async def test_list_voices_defaults_to_empty():
+    """An engine that doesn't override list_voices() (no presets) must not
+    crash callers that always await it -- the base class needs a concrete
+    default, not an abstract/missing method."""
+    provider = _FakeProvider()
+    assert await provider.list_voices() == []
+
+
+@pytest.mark.asyncio
+async def test_supports_voice_clone_defaults_to_false():
+    """An engine that doesn't override this must declare no clone support by
+    default, so a client asking 'can I upload a reference clip here' gets a
+    safe false rather than an AttributeError."""
+    provider = _FakeProvider()
+    assert await provider.supports_voice_clone() is False

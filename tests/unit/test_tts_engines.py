@@ -45,12 +45,16 @@ def test_get_provider_resolves_and_rejects():
         tts_service.get_provider("nope")
 
 
-def test_vieneu_voices_shape():
-    voices = tts_service.get_provider("vieneu").list_voices()
+async def test_vieneu_voices_shape():
+    voices = await tts_service.get_provider("vieneu").list_voices()
     # vieneu is installed in this env -> returns preset voices
     assert isinstance(voices, list)
     if voices:
         assert {"label", "voice"} <= set(voices[0])
+
+
+async def test_vieneu_supports_voice_clone():
+    assert await tts_service.get_provider("vieneu").supports_voice_clone() is True
 
 
 def test_lists_kokoro_vi():
@@ -58,12 +62,25 @@ def test_lists_kokoro_vi():
     assert "kokoro_vi" in engines
 
 
-def test_kokoro_vi_voices_shape():
-    voices = tts_service.get_provider("kokoro_vi").list_voices()
+async def test_kokoro_vi_voices_shape():
+    voices = await tts_service.get_provider("kokoro_vi").list_voices()
     # kokoro-vietnamese is installed in this env -> returns preset voicepacks
     assert isinstance(voices, list)
     if voices:
         assert {"label", "voice"} <= set(voices[0])
+
+
+async def test_kokoro_vi_does_not_support_voice_clone():
+    # fixed voicepacks only, per the module docstring -- no ref-audio cloning.
+    assert await tts_service.get_provider("kokoro_vi").supports_voice_clone() is False
+
+
+async def test_voxcpm2_supports_voice_clone():
+    assert await tts_service.get_provider("voxcpm2").supports_voice_clone() is True
+
+
+async def test_omnivoice_supports_voice_clone():
+    assert await tts_service.get_provider("omnivoice").supports_voice_clone() is True
 
 
 async def test_render_failure_raises_provider_error_no_silent_fallback():
@@ -82,12 +99,16 @@ def test_lists_edge_tts():
     assert "edge_tts" in engines
 
 
-def test_edge_tts_voices_shape():
-    voices = tts_service.get_provider("edge_tts").list_voices()
+async def test_edge_tts_voices_shape():
+    voices = await tts_service.get_provider("edge_tts").list_voices()
     assert voices == [
         {"label": "Hoài My (nữ)", "voice": "vi-VN-HoaiMyNeural"},
         {"label": "Nam Minh (nam)", "voice": "vi-VN-NamMinhNeural"},
     ]
+
+
+async def test_edge_tts_does_not_support_voice_clone():
+    assert await tts_service.get_provider("edge_tts").supports_voice_clone() is False
 
 
 def test_edge_tts_rate_str():
@@ -279,13 +300,17 @@ def test_qwen3_tts_install_hint_mentions_package():
     assert "qwen-tts" in provider.install_hint()
 
 
-def test_qwen3_tts_voices_are_preset_speakers():
+async def test_qwen3_tts_voices_are_preset_speakers():
     from app.services.tts.providers.qwen3_tts_provider import PRESET_SPEAKERS
 
-    voices = tts_service.get_provider("qwen3_tts_1_7b").list_voices()
+    voices = await tts_service.get_provider("qwen3_tts_1_7b").list_voices()
     assert voices == PRESET_SPEAKERS
     assert len(voices) == 9
     assert {"label", "voice"} <= set(voices[0])
+
+
+async def test_qwen3_tts_supports_voice_clone():
+    assert await tts_service.get_provider("qwen3_tts_0_6b").supports_voice_clone() is True
 
 
 async def test_qwen3_tts_custom_voice_path_used_when_no_ref_audio(monkeypatch):

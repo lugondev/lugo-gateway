@@ -52,7 +52,7 @@ class VieNeuProvider(RenderingTTSProvider):
                     _CACHE[mode] = Vieneu(mode=mode)
         return _CACHE[mode]
 
-    def list_voices(self) -> list[dict]:
+    async def list_voices(self) -> list[dict]:
         if not self.available():
             return []
         try:
@@ -61,6 +61,9 @@ class VieNeuProvider(RenderingTTSProvider):
             logger.warning("VieNeu list_preset_voices failed: %s", exc)
             return []
         return [{"label": label, "voice": voice_id} for label, voice_id in voices]
+
+    async def supports_voice_clone(self) -> bool:
+        return True
 
     def _generate_wav(self, payload: TTSRequest) -> bytes:
         model = self._model()

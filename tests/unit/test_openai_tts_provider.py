@@ -1,3 +1,4 @@
+import base64
 import io
 import wave
 
@@ -215,3 +216,120 @@ def test_engine_is_registered():
     from app.services.tts.service import tts_service
 
     assert tts_service.get_provider("openai_tts").name == "openai_tts"
+
+
+# ------------------------------------------------------------- voice capabilities
+
+
+@pytest.fixture
+def voices_handler(monkeypatch):
+    """Mocks the remote model_service's GET {base_url}/voices -- the "schema"
+    a deployed engine returns describing its presets and clone support."""
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.setdefault("calls", []).append(str(request.url))
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [{"label": "Host", "voice": "host"}],
+                "supports_clone": True,
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda *a, **k: original(*a, **{**k, "transport": transport})
+    )
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_list_voices_fetches_from_the_remote_voices_endpoint(voices_handler):
+    provider = OpenAICompatTTSProvider(entry=_ENTRY)
+    voices = await provider.list_voices()
+    assert voices == [{"label": "Host", "voice": "host"}]
+    assert voices_handler["calls"] == ["http://tts-service:8100/v1/voices"]
+
+
+@pytest.mark.asyncio
+async def test_supports_voice_clone_reads_the_remote_flag(voices_handler):
+    provider = OpenAICompatTTSProvider(entry=_ENTRY)
+    assert await provider.supports_voice_clone() is True
+
+
+@pytest.mark.asyncio
+async def test_list_voices_and_supports_voice_clone_share_one_remote_call(voices_handler):
+    """A caller (the /v1/tts/voices route) asks both back-to-back -- that must
+    not cost two round trips to the same base_url."""
+    provider = OpenAICompatTTSProvider(entry=_ENTRY)
+    await provider.list_voices()
+    await provider.supports_voice_clone()
+    assert len(voices_handler["calls"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_voices_returns_empty_when_unconfigured(monkeypatch):
+    async def fake_find_enabled(kind, engine=None):
+        return None
+
+    monkeypatch.setattr(
+        "app.services.tts.providers.openai_tts_provider.model_registry_store.find_enabled",
+        fake_find_enabled,
+    )
+    provider = OpenAICompatTTSProvider()
+    assert await provider.list_voices() == []
+    assert await provider.supports_voice_clone() is False
+
+
+@pytest.mark.asyncio
+async def test_list_voices_returns_empty_when_remote_call_fails(monkeypatch):
+    transport = httpx.MockTransport(lambda r: httpx.Response(500, text="boom"))
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx, "AsyncClient", lambda *a, **k: original(*a, **{**k, "transport": transport})
+    )
+    provider = OpenAICompatTTSProvider(entry=_ENTRY)
+    # Voices are a UI nicety, not core synthesis -- a broken/unreachable
+    # remote /voices endpoint must degrade to "no presets", not raise.
+    assert await provider.list_voices() == []
+    assert await provider.supports_voice_clone() is False
+
+
+# --------------------------------------------------------- clone forwarding
+
+
+@pytest.mark.asyncio
+async def test_render_wav_forwards_ref_audio_as_base64(captured, tmp_path):
+    ref_path = tmp_path / "ref.wav"
+    ref_path.write_bytes(_WAV_BYTES)
+
+    provider = OpenAICompatTTSProvider(entry=_ENTRY)
+    await provider.render_wav(
+        TTSRequest(
+            text="xin chào", engine="openai_tts",
+            ref_audio_path=str(ref_path), ref_text="reference words",
+        )
+    )
+
+    import json
+
+    body = json.loads(captured["json"])
+    assert base64.b64decode(body["ref_audio_base64"]) == _WAV_BYTES
+    assert body["ref_text"] == "reference words"
+    # The local path is meaningless on the remote host -- must not leak it.
+    assert "ref_audio_path" not in body
+
+
+@pytest.mark.asyncio
+async def test_render_wav_omits_clone_fields_when_no_ref_audio(captured):
+    provider = OpenAICompatTTSProvider(entry=_ENTRY)
+    await provider.render_wav(TTSRequest(text="hi", engine="openai_tts"))
+
+    import json
+
+    body = json.loads(captured["json"])
+    assert "ref_audio_base64" not in body
+    assert "ref_audio_path" not in body

@@ -94,7 +94,7 @@ export async function loadTtsVoices(engine, { wrapId = "tts-voice-wrap", selectI
   if (!sel) return;
   try {
     const body = await (await fetch(`/v1/tts/voices?engine=${encodeURIComponent(engine)}`)).json();
-    const voices = body.data || [];
+    const voices = body.data?.voices || [];
     if (wrap) wrap.classList.toggle("hidden", voices.length === 0);
     sel.innerHTML = '<option value="">(auto)</option>';
     voices.forEach((v) => {

@@ -37,6 +37,18 @@ class TTSProvider(ABC):
         """Preload the model so the first synthesis isn't slow. Default: no-op."""
         return None
 
+    async def list_voices(self) -> list[dict]:
+        """Preset voices as [{"label":..., "voice":...}], or [] if none.
+
+        Async so a remote/proxy engine (see OpenAICompatTTSProvider) can fetch
+        this from the deployed service instead of only ever answering for
+        in-process engines."""
+        return []
+
+    async def supports_voice_clone(self) -> bool:
+        """Whether ref_audio_path/ref_text (voice cloning) works for this engine."""
+        return False
+
 
 class RenderingTTSProvider(TTSProvider):
     """Base that runs real synthesis and wraps the WAV as a fetchable artifact.
