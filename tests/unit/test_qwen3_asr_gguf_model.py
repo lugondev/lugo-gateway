@@ -238,17 +238,16 @@ async def test_transcribe_bytes_normalizes_to_16k_mono(monkeypatch, sample_rate,
 
 
 @pytest.mark.asyncio
-async def test_transcribe_bytes_passes_through_undecodable_bytes(monkeypatch):
-    """Non-WAV / undecodable bytes must not raise here -- they fall through so the
-    binary surfaces a clean audio error instead of a resample stack trace."""
+async def test_transcribe_bytes_rejects_undecodable_bytes(monkeypatch):
+    """Non-WAV bytes (mp3/m4a/...) must raise a clear error here rather than
+    reach the binary -- qwen3-asr-cli has no container sniffing of its own and
+    used to misreport garbage as a nonsense "must be 16kHz" error, which sent
+    people chasing the wrong bug (see the scipy-missing incident)."""
     p = g.Qwen3AsrGgufProvider()
-    seen = {}
 
-    def _fake_transcribe(self, wav_path, language, model=None):
-        seen["bytes"] = open(wav_path, "rb").read()
-        return "ok"
+    def _unexpected_transcribe(self, wav_path, language, model=None):
+        raise AssertionError("must not reach the binary with undecodable bytes")
 
-    monkeypatch.setattr(g.Qwen3AsrGgufProvider, "_transcribe", _fake_transcribe)
-    result = await p.transcribe_bytes(b"not a wav at all", "vi")
-    assert result.text == "ok"
-    assert seen["bytes"] == b"not a wav at all"  # unchanged
+    monkeypatch.setattr(g.Qwen3AsrGgufProvider, "_transcribe", _unexpected_transcribe)
+    with pytest.raises(RuntimeError, match="needs WAV audio"):
+        await p.transcribe_bytes(b"not a wav at all", "vi")
