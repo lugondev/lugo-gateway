@@ -41,14 +41,24 @@ WORKDIR /app
 # or mount that file and set STT_QWEN3_ASR_GGUF_BINARY_PATH / the registry
 # default_model to it instead.
 ARG BUILD_QWEN3_ASR_GGUF=0
+ARG QWEN3_ASR_GGUF_HF_MODEL=Qwen/Qwen3-ASR-1.7B
 COPY apps/model_service/scripts/build_qwen3_asr_cpp.sh apps/model_service/scripts/build_qwen3_asr_cpp.sh
 RUN if [ "$BUILD_QWEN3_ASR_GGUF" = "1" ]; then \
         apt-get update \
         && apt-get install -y --no-install-recommends git cmake make g++ curl ca-certificates \
-        && bash apps/model_service/scripts/build_qwen3_asr_cpp.sh \
+        && bash apps/model_service/scripts/build_qwen3_asr_cpp.sh "$QWEN3_ASR_GGUF_HF_MODEL" \
         && cmake --install apps/model_service/vendor/qwen3-asr.cpp/build \
         && apt-get purge -y git cmake make g++ && apt-get autoremove -y \
-        && rm -rf /var/lib/apt/lists/*; \
+        && rm -rf /var/lib/apt/lists/* \
+        # The conversion's only output we need is the .gguf under vendor/models/ --
+        # the multi-GB HF source snapshot it downloaded to produce that, plus the
+        # torch/gguf/etc. packages installed on-demand to run the conversion, are
+        # single-use here (unlike a local dev checkout, where the HF cache is
+        # shared with other engines -- see the script's own comment). Both are
+        # pure build-time disk pressure on a Coolify host that already ran out of
+        # space mid-build; drop them once the .gguf exists.
+        && rm -rf /root/.cache/huggingface /root/.cache/pip \
+        && pip uninstall -y torch safetensors tqdm gguf huggingface_hub 2>/dev/null || true; \
     fi
 
 COPY pyproject.toml README.md ./
