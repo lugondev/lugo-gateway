@@ -10,7 +10,13 @@ from app.core.actor import Actor
 from app.core.settings import settings
 from app.services.auth.tokens import verify_access_token
 
-_STATIC_ALLOWLIST = {"/static/login.html", "/static/js/auth.js", "/static/styles.css"}
+_STATIC_ALLOWLIST = {
+    "/static/login.html",
+    "/static/js/auth.js",
+    "/static/styles.css",
+    "/static/brand/favicon.svg",
+    "/static/brand/logo-mark-light.svg",
+}
 # Unauthenticated device-side pairing handshake (the device itself has no login).
 _NO_AUTH_PREFIXES = ("/v1/devices/pair/init", "/v1/devices/pair/status")
 # Any logged-in session (admin or user).
