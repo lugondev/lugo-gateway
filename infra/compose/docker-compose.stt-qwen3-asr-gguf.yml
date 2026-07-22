@@ -16,23 +16,23 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.model_service
       # Compiles qwen3-asr-cli + converts the GGUF at build time (network
-      # access needed: clones qwen3-asr.cpp, pulls the HF safetensors). Pinned
-      # to the 0.6B model here (not the 1.7B this repo's local dev uses) --
-      # this VM ran out of disk mid-build converting the 1.7B (source
-      # safetensors + gguf output peaks around ~6-7GB); 0.6B's ~2.5GB peak
-      # fits. Trade-off is slightly lower Vietnamese accuracy than 1.7B.
+      # access needed: clones qwen3-asr.cpp, pulls the ~1.2GB HF safetensors).
+      # Was pinned to 0.6B for a while -- this VM ran out of disk converting
+      # 1.7B (source safetensors + gguf output peaks ~6-7GB) even with the
+      # build-time cleanup in the Dockerfile. Retrying 1.7B now that a
+      # completed build has run since (Coolify's own disk-cleanup may have
+      # reclaimed space); if this fails with "no space left on device" again,
+      # fall back to the 0.6B args below (kept for reference) until the VM
+      # gets more disk or the .gguf is pre-baked elsewhere and mounted.
+      #   QWEN3_ASR_GGUF_HF_MODEL: Qwen/Qwen3-ASR-0.6B
       args:
         BUILD_QWEN3_ASR_GGUF: "1"
-        QWEN3_ASR_GGUF_HF_MODEL: Qwen/Qwen3-ASR-0.6B
     environment:
       SERVICE_KIND: stt
       SERVICE_ENGINE: qwen3_asr_gguf
       SERVICE_PORT: "8100"
       SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
       STT_QWEN3_ASR_GGUF_N_THREADS: ${STT_QWEN3_ASR_GGUF_N_THREADS:-2}
-      # Must match the build-arg above -- resolve.py's hardcoded default still
-      # points at the 1.7b filename, which this image never builds.
-      STT_QWEN3_ASR_GGUF_DEFAULT_MODEL: apps/model_service/vendor/qwen3-asr.cpp/models/qwen3-asr-0.6b-q8_0.gguf
     # No host port publish: this app and tts-vieneu share one physical server,
     # so both containers binding host port 8100 collides ("port is already
     # allocated"). `expose` is enough for Traefik + other Coolify apps on the
