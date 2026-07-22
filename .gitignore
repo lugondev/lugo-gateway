@@ -110,3 +110,8 @@ tts_profiles.json
 mcp_servers.json
 system_config.json
 .worktrees/
+
+# deployment artifacts
+.deployment/
+*.deb
+*.rpm

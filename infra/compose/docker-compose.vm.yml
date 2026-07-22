@@ -1,0 +1,50 @@
+# Standalone VM deploy: qwen3_asr_gguf (STT) + vieneu (TTS) as two containers
+# sharing one host. Both are CPU-only engines from the same model_service
+# image (infra/docker/Dockerfile.model_service), picked via SERVICE_ENGINE.
+#
+# Usage:
+#   QWEN3_ASR_GGUF_TOKEN=... VIENEU_TOKEN=... docker compose -f infra/compose/docker-compose.vm.yml up -d --build
+
+services:
+  stt-qwen3-asr-gguf:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.model_service
+      # Compiles qwen3-asr-cli + converts the GGUF at build time (needs network
+      # access to clone qwen3-asr.cpp and pull the ~1.2GB HF safetensors).
+      # Rebuild is slow because COPY apps precedes this stage in the Dockerfile,
+      # so any app code change invalidates the cache and re-triggers it.
+      args:
+        BUILD_QWEN3_ASR_GGUF: "1"
+    environment:
+      SERVICE_KIND: stt
+      SERVICE_ENGINE: qwen3_asr_gguf
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${QWEN3_ASR_GGUF_TOKEN:?set QWEN3_ASR_GGUF_TOKEN}
+      STT_QWEN3_ASR_GGUF_N_THREADS: "1"
+    ports:
+      - "8100:8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2g
+
+  tts-vieneu:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.model_service
+    environment:
+      SERVICE_KIND: tts
+      SERVICE_ENGINE: vieneu
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${VIENEU_TOKEN:?set VIENEU_TOKEN}
+    ports:
+      - "8101:8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2g
