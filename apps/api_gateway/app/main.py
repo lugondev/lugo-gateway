@@ -29,6 +29,7 @@ from app.api.routes.system import router as system_router
 from app.api.routes.tts import router as tts_router
 from app.api.routes.tts_profiles import router as tts_profiles_router
 from app.api.routes.ui import router as ui_router
+from app.api.routes.usage import router as usage_router
 from app.api.routes.users import router as users_router
 from app.core.auth_guard import AuthGuardMiddleware
 from app.core.errors import AppError
@@ -260,6 +261,7 @@ app.include_router(sessions_router)
 app.include_router(memories_router)
 app.include_router(model_registry_router)
 app.include_router(providers_router)
+app.include_router(usage_router)
 
 app.mount("/static", StaticFiles(directory="apps/api_gateway/app/static"), name="static")
 # Serve generated audio artifacts (foundation; swap for object storage later).

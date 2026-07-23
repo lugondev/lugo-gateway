@@ -38,9 +38,15 @@ _USER_PREFIXES = (
     # "/v1/model_registry" admin rule below while the rest of the CRUD surface
     # stays admin-only.
     "/v1/model_registry/options",
+    # Same carve-out, for the caller's own usage totals: /v1/usage/me is
+    # every logged-in user's "my usage" view, out of the otherwise
+    # admin-only /v1/usage prefix (see _ADMIN_PREFIXES below). Checked
+    # first, so this wins over the admin rule while /v1/usage/summary stays
+    # admin-only.
+    "/v1/usage/me",
 )
 # role == "admin" required.
-_ADMIN_PREFIXES = ("/v1/system", "/v1/models", "/v1/users", "/v1/devices", "/v1/model_registry", "/v1/providers")
+_ADMIN_PREFIXES = ("/v1/system", "/v1/models", "/v1/users", "/v1/devices", "/v1/model_registry", "/v1/providers", "/v1/usage")
 
 
 def _matches(path: str, prefixes: tuple[str, ...]) -> bool:
