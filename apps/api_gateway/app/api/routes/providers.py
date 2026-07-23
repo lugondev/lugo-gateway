@@ -1,8 +1,13 @@
+import logging
+
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.services.providers.resolve import PROVIDER_PRESETS
 from app.services.providers.store import provider_store
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/providers", tags=["providers"])
 
@@ -78,3 +83,51 @@ async def delete_provider(provider_id: str) -> dict:
     if not await provider_store.delete(provider_id):
         raise HTTPException(status_code=404, detail=f"provider '{provider_id}' not found")
     return {"success": True, "data": {"id": provider_id, "deleted": True}}
+
+
+def _parse_models(payload) -> list[str]:
+    """Extract model ids from an OpenAI-compatible /models response.
+    Accepts {"data":[{"id":...}]}, {"models":[...]}, or a bare list. Dedupes,
+    preserves order, drops blanks/non-str."""
+    if isinstance(payload, dict):
+        items = payload.get("data")
+        if items is None:
+            items = payload.get("models", [])
+    else:
+        items = payload
+    out, seen = [], set()
+    for it in items or []:
+        mid = it.get("id") if isinstance(it, dict) else it
+        if isinstance(mid, str) and mid and mid not in seen:
+            seen.add(mid)
+            out.append(mid)
+    return out
+
+
+async def _fetch_provider_models(base_url: str, api_key: str) -> tuple[list[str], str | None]:
+    """GET {base_url}/models (OpenAI-compat). Best-effort: never raises."""
+    if not base_url:
+        return [], "provider has no base_url"
+    url = f"{base_url.rstrip('/')}/models"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+        if resp.status_code != 200:
+            return [], f"provider returned HTTP {resp.status_code}"
+        return _parse_models(resp.json()), None
+    except Exception as exc:  # noqa: BLE001 - best-effort discovery
+        logger.warning("provider /models fetch failed (%s): %s", url, exc)
+        return [], str(exc)
+
+
+@router.get("/{provider_id}/models")
+async def list_provider_models(provider_id: str) -> dict:
+    """Best-effort list of the provider's available model ids (from its
+    OpenAI-compatible /models). Never 500s: on any fetch error returns an empty
+    list + an error message so the UI falls back to manual entry."""
+    provider = await provider_store.get(provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail=f"provider '{provider_id}' not found")
+    models, error = await _fetch_provider_models(provider["base_url"], provider["api_key"])
+    return {"success": True, "data": {"models": models, "error": error}}
