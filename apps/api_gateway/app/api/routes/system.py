@@ -54,7 +54,6 @@ async def system_status() -> dict:
 
     active_vosk_path = get_active_vosk_path()
     active_whisper = whisper_manager.snapshot()["active"]
-    stt_local = system_config_store.get().stt_local
     preprocessing = system_config_store.get().preprocessing
     omnivoice = resolve_omnivoice_config()
     whisper_device_cfg = resolve_stt_local_device("whisper_local")
@@ -77,7 +76,7 @@ async def system_status() -> dict:
             "installed": model_manager.list_installed(),
         },
         "artifacts": _artifacts_stats(),
-        "stream_sample_rate": stt_local.stt_stream_sample_rate,
+        "stream_sample_rate": settings.stt_stream_sample_rate,
         "stt_preprocess": {
             "vad": preprocessing.stt_vad_enabled,
             "vad_backend": preprocessing.stt_vad_backend,

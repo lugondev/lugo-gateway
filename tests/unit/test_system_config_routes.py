@@ -39,7 +39,6 @@ def test_set_config_clears_base_context(client):
 def test_get_config_includes_nested_groups_with_defaults(client):
     data = client.get("/v1/system/config").json()["data"]
     assert data["engines"]["default_stt_engine"] == "vosk"
-    assert data["stt_local"]["stt_model_dir"] == "models/stt"
     assert data["conversation"]["conversation_silence_ms"] == 700
     assert data["preprocessing"]["stt_vad_backend"] == "energy"
 
@@ -50,7 +49,7 @@ def test_put_updates_a_nested_field_and_preserves_others(client):
     resp = client.put("/v1/system/config", json=full)
     data = resp.json()["data"]
     assert data["engines"]["default_stt_engine"] == "qwen3_asr"
-    assert data["stt_local"]["stt_model_dir"] == "models/stt"  # unrelated group untouched
+    assert data["conversation"]["conversation_silence_ms"] == 700  # unrelated group untouched
 
 
 @pytest.mark.parametrize(

@@ -15,11 +15,11 @@ import concurrent.futures
 import os
 import tempfile
 
+from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.model_registry.resolve import resolve_stt_engine_config
 from app.services.stt.base import STTProvider
 from app.services.stt.glossary import resolve_initial_prompt
-from app.services.system_config import system_config_store
 
 # mlx_whisper runs on MLX, which is not safe for concurrent cross-thread use (see
 # qwen3_asr_provider.py for the same hazard in detail). The conversation warms this
@@ -56,7 +56,7 @@ class WhisperMlxProvider(STTProvider):
             condition_on_previous_text=engine_cfg["condition_on_previous_text"],
             initial_prompt=resolve_initial_prompt(
                 engine_cfg["initial_prompt"],
-                system_config_store.get().stt_local.stt_glossary_path,
+                settings.stt_glossary_path,
             ),
         )
         return (result.get("text") or "").strip()

@@ -77,10 +77,10 @@ def test_engine_defaults_have_expected_defaults(tmp_path):
 def test_stt_local_config_has_expected_defaults(tmp_path):
     s = SystemConfigStore(str(tmp_path / "system_config.json"))
     c = s.get().stt_local
-    assert c.stt_model_dir == "models/stt"
-    assert c.vosk_model_base_url == "https://alphacephei.com/vosk/models"
-    assert c.stt_stream_sample_rate == 16000
-    assert c.stt_glossary_path == ""
+    assert not hasattr(c, "stt_model_dir")
+    assert not hasattr(c, "vosk_model_base_url")
+    assert not hasattr(c, "stt_stream_sample_rate")
+    assert not hasattr(c, "stt_glossary_path")
     assert not hasattr(c, "stt_profile")  # preset layer removed
     assert c.stt_segment_long_enabled is False
     assert c.stt_segment_min_seconds == 30.0

@@ -14,6 +14,7 @@ from app.core.audio import (
 from app.core.auth_guard import resolve_ws_identity, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
+from app.core.settings import settings
 from app.schemas.common import StreamEvent
 from app.schemas.stt import STTRequest, STTResult
 from app.services.stt.base import STTStream
@@ -166,7 +167,7 @@ async def stt_stream(websocket: WebSocket) -> None:
     language = websocket.query_params.get("language")
     sample_rate = int(
         websocket.query_params.get(
-            "sample_rate", system_config_store.get().stt_local.stt_stream_sample_rate
+            "sample_rate", settings.stt_stream_sample_rate
         )
     )
     preprocessing = system_config_store.get().preprocessing

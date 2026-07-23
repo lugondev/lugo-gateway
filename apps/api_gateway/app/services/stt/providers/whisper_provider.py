@@ -3,6 +3,7 @@ import os
 import tempfile
 import threading
 
+from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.model_registry.resolve import (
     resolve_stt_engine_config,
@@ -10,7 +11,6 @@ from app.services.model_registry.resolve import (
 )
 from app.services.stt.base import STTProvider
 from app.services.stt.glossary import resolve_initial_prompt
-from app.services.system_config import system_config_store
 
 _MODEL_CACHE: dict[str, object] = {}
 # Guards the check-then-set on _MODEL_CACHE: the background warm() task and the
@@ -96,7 +96,7 @@ class WhisperProvider(STTProvider):
                 condition_on_previous_text=engine_cfg["condition_on_previous_text"],
                 initial_prompt=resolve_initial_prompt(
                     engine_cfg["initial_prompt"],
-                    system_config_store.get().stt_local.stt_glossary_path,
+                    settings.stt_glossary_path,
                 ),
             )
             return " ".join(s.text.strip() for s in segments if s.text.strip())

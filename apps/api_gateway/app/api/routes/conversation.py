@@ -245,7 +245,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
         voice = q.get("voice") or None
         ref_audio_path = ref_text = tts_instruct = None
         tts_speed = tts_language = None
-    sample_rate = int(q.get("sample_rate", system_config_store.get().stt_local.stt_stream_sample_rate))
+    sample_rate = int(q.get("sample_rate", settings.stt_stream_sample_rate))
     # Audio transport: pcm16 (default) or opus (embedded ESP32/RPi + browser WebCodecs;
     # ~10x less bandwidth). Server decodes Opus packets -> PCM16 for the endpointer.
     audio_codec = (q.get("audio_codec") or "pcm16").lower()
