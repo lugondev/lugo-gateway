@@ -89,6 +89,19 @@ class Settings(BaseSettings):
     # connection that died without a clean disconnect signal).
     livehost_watchdog_idle_seconds: float = 300.0
 
+    # STT/TTS deployment-time config: read once at process startup/init, never
+    # meaningfully "tuned" live -- kept out of the admin-editable SystemConfig
+    # on purpose (see docs/superpowers/specs/2026-07-23-system-settings-restructure-design.md).
+    ollama_bin: str = ""
+    warmup_on_startup: bool = True
+    warmup_startup_timeout_s: int = 180
+    stt_model_dir: str = "models/stt"
+    vosk_model_base_url: str = "https://alphacephei.com/vosk/models"
+    stt_stream_sample_rate: int = 16000
+    stt_glossary_path: str = ""
+    pyannote_vad_model: str = "pyannote/segmentation-3.0"
+    pyannote_auth_token: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
