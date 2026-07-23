@@ -409,8 +409,6 @@ Response `data`:
     "default_stt_engine": "vosk",
     "default_tts_engine": "omnivoice",
     "default_tts_engine_voice": "",
-    "extra_warmup_stt_engines": "",
-    "extra_warmup_tts_engines": "",
     "warmup_on_startup": true,
     "warmup_startup_timeout_s": 180,
     "ollama_bin": ""
