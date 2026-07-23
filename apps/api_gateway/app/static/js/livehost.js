@@ -13,9 +13,6 @@ const lhDetails = { stt: {}, sttAvailable: true };
 // not silently keep beating the newly-selected profile's own config, so drop
 // back to "follow the profile" and forget the sticky localStorage value.
 export function resetLhManualOverrides() {
-  const sttSel = el("lh-stt-engine");
-  if (sttSel) sttSel.value = "";
-  savePref("lh-stt-engine", "");
   const ttsSel = el("lh-tts-profile");
   if (ttsSel) ttsSel.value = "";
   savePref("lh-tts-profile", "");
@@ -203,26 +200,6 @@ export async function loadLivehostEngines() {
     const stt = await (await fetch("/v1/stt/engines")).json();
     stt.data.forEach((e) => (lhDetails.stt[e.engine] = e.detail));
     lhDetails.sttAvailable = stt.data.some((e) => e.available);
-    const sel = el("lh-stt-engine");
-    if (sel) {
-      sel.innerHTML = "";
-      stt.data
-        .filter((e) => e.available)
-        .forEach((e) => {
-          const opt = document.createElement("option");
-          opt.value = e.engine;
-          opt.textContent = e.engine;
-          sel.appendChild(opt);
-        });
-      // Default to "follow profile / server default" — a concrete choice here
-      // always overrides the selected profile's own STT config server-side.
-      const sentinel = document.createElement("option");
-      sentinel.value = "";
-      sentinel.textContent = "(profile / server default)";
-      sel.insertBefore(sentinel, sel.firstChild);
-      sel.value = "";
-      restoreAndBind("lh-stt-engine");
-    }
     restoreAndBind("lh-language");
     restoreAndBind("lh-opus");
   } catch (error) {
@@ -244,21 +221,14 @@ export async function startLhSession() {
     setLhSessionUI("idle");
     return;
   }
-  // Empty selection means "follow the selected profile / server default" —
-  // only a concrete choice here should override the profile's own STT config.
-  const sttEngine = el("lh-stt-engine").value;
   const profile = el("lh-profile")?.value;
 
   setLhStatus("⏳ starting STT engine…", "status-idle");
   try {
-    const warmParams = sttEngine
-      ? `engine=${encodeURIComponent(sttEngine)}`
-      : profile
-        ? `profile=${encodeURIComponent(profile)}`
-        : "";
+    const warmParams = profile ? `profile=${encodeURIComponent(profile)}` : "";
     const warmRes = await fetch(`/v1/stt/warm?${warmParams}`, { method: "POST" });
     if (!warmRes.ok) {
-      setLhStatus(`STT engine '${sttEngine || "(profile default)"}' not ready`, "status-error");
+      setLhStatus("STT engine (server default) not ready", "status-error");
       setLhSessionUI("idle");
       return;
     }
@@ -272,7 +242,6 @@ export async function startLhSession() {
 
   lh.sessionId = crypto.randomUUID();
   let params = `session_id=${encodeURIComponent(lh.sessionId)}`;
-  if (sttEngine) params += `&stt_engine=${encodeURIComponent(sttEngine)}`;
   params += `&sample_rate=${STREAM_SAMPLE_RATE}`;
   if (profile) params += `&profile=${encodeURIComponent(profile)}`;
   const ttsProfile = el("lh-tts-profile")?.value;
