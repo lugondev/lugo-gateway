@@ -20,6 +20,7 @@ import httpx
 from app.schemas.tts import TTSRequest
 from app.services.http_errors import translate_httpx_error
 from app.services.model_registry.store import model_registry_store
+from app.services.providers.resolve import resolve_credentials
 from app.services.tts.base import RenderingTTSProvider
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,11 @@ class HttpTtsProvider(RenderingTTSProvider):
         Cached briefly per base_url; degrades to "no voices, no clone" rather
         than raising, since this is a UI nicety, not part of synthesis itself."""
         entry = await self._resolve_entry()
-        base_url = (entry or {}).get("base_url", "").strip()
+        if entry:
+            base_url, api_key = await resolve_credentials(entry)
+        else:
+            base_url, api_key = "", ""
+        base_url = base_url.strip()
         empty = {"voices": [], "supports_clone": False}
         if not base_url:
             return empty
@@ -96,7 +101,7 @@ class HttpTtsProvider(RenderingTTSProvider):
         if cached is not None and (time.monotonic() - cached[0]) < _CAPABILITIES_TTL_SECONDS:
             return cached[1]
 
-        api_key = (entry or {}).get("api_key", "").strip()
+        api_key = api_key.strip()
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         timeout = (entry.get("config") or {}).get("timeout_seconds", self.timeout_seconds)
         try:
@@ -123,14 +128,18 @@ class HttpTtsProvider(RenderingTTSProvider):
 
     async def _render_wav(self, payload: TTSRequest) -> bytes:
         entry = await self._resolve_entry(payload.model_id)
-        base_url = (entry or {}).get("base_url", "").strip()
+        if entry:
+            base_url, api_key = await resolve_credentials(entry)
+        else:
+            base_url, api_key = "", ""
+        base_url = base_url.strip()
         if not base_url:
             raise RuntimeError(
                 f"{self.name} is not configured. Add a Model Registry entry with the "
                 f"service's base URL (e.g. http://tts-service:8100/v1)."
             )
 
-        api_key = (entry or {}).get("api_key", "").strip()
+        api_key = api_key.strip()
         configured_timeout = (entry.get("config") or {}).get("timeout_seconds")
         timeout = configured_timeout if configured_timeout is not None else self.timeout_seconds
 

@@ -5,6 +5,7 @@ import httpx
 from app.schemas.stt import STTResult
 from app.services.http_errors import translate_httpx_error
 from app.services.model_registry.store import model_registry_store
+from app.services.providers.resolve import resolve_credentials
 from app.services.stt.base import STTProvider
 
 _BASE_URL = "https://openrouter.ai/api/v1"
@@ -39,7 +40,7 @@ class OpenRouterSttProvider(STTProvider):
         if self._api_key_override is not None:
             return self._api_key_override
         entry = await model_registry_store.find(kind="stt", engine=self.name, model_id=model)
-        return entry["api_key"] if entry else ""
+        return (await resolve_credentials(entry))[1] if entry else ""
 
     async def transcribe_bytes(
         self, audio_bytes: bytes, language: str | None = None, model: str | None = None
