@@ -46,13 +46,23 @@ async def get_active_llm_model() -> str:
 
 
 async def get_active_llm_base_url() -> str:
+    from app.services.providers.resolve import resolve_credentials
+
     entry = await _active_llm_entry()
-    return entry["base_url"] if entry else ""
+    if not entry:
+        return ""
+    base_url, _api_key = await resolve_credentials(entry)
+    return base_url
 
 
 async def get_active_llm_api_key() -> str:
+    from app.services.providers.resolve import resolve_credentials
+
     entry = await _active_llm_entry()
-    return entry["api_key"] if entry else ""
+    if not entry:
+        return ""
+    _base_url, api_key = await resolve_credentials(entry)
+    return api_key
 
 
 async def set_active_llm_config(base_url: str, api_key: str, model: str, engine: str = "custom") -> None:
@@ -98,19 +108,24 @@ async def reset_active_llm_config() -> None:
 
 async def resolve_llm_override_from_registry(engine: str, model: str) -> tuple[str, str] | None:
     """Look up a Model Registry entry (kind="llm") for (engine, model). If it
-    exists and carries its own api_key, its (base_url, api_key) take priority
-    over a profile's inline llm.base_url/api_key -- this is what lets an admin
-    set the key once, per model, in Model Registry instead of duplicating it
-    into every profile. Returns None (no override) when engine/model are blank
-    or no matching, keyed entry exists -- callers should fall back to their
-    prior behavior."""
+    exists and resolves to non-blank credentials -- either its own api_key, or
+    (when config.provider_id is set) a linked provider's key -- those
+    (base_url, api_key) take priority over a profile's inline
+    llm.base_url/api_key -- this is what lets an admin set the key once, per
+    model or per provider, in Model Registry instead of duplicating it into
+    every profile. Returns None (no override) when engine/model are blank, no
+    matching entry exists, or the resolved credentials are still blank --
+    callers should fall back to their prior behavior."""
     if not engine or not model:
         return None
     from app.services.model_registry.store import model_registry_store
+    from app.services.providers.resolve import resolve_credentials
 
     entry = await model_registry_store.find(kind="llm", engine=engine, model_id=model)
-    if entry and entry["api_key"]:
-        return (entry["base_url"], entry["api_key"])
+    if entry:
+        base_url, api_key = await resolve_credentials(entry)
+        if api_key:
+            return (base_url, api_key)
     return None
 
 
