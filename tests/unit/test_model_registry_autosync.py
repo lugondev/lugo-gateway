@@ -51,3 +51,18 @@ async def test_delete_removes_local_row_without_credentials():
 async def test_delete_missing_row_is_noop():
     await disable_registry_entry("stt", "whisper", "does-not-exist")
     assert await model_registry_store.find("stt", "whisper", "does-not-exist") is None
+
+
+async def test_delete_keeps_row_with_provider_linkage(): # M5
+    # A provider-linked row has BLANK own api_key/base_url by design (creds
+    # live on the linked provider) -- it must still be preserved (disabled,
+    # not deleted) so a reinstall doesn't lose the provider link.
+    await model_registry_store.create(
+        "stt", "whisper_service", "big", "Remote", enabled=True,
+        api_key="", base_url="", config={"provider_id": "some-provider-id"},
+    )
+    await disable_registry_entry("stt", "whisper_service", "big")
+    entry = await model_registry_store.find("stt", "whisper_service", "big")
+    assert entry is not None
+    assert entry["enabled"] is False
+    assert entry["config"] == {"provider_id": "some-provider-id"}

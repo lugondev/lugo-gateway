@@ -92,12 +92,16 @@ async def _augment_config_flags(caps: Capabilities) -> None:
     """Remote/online entries are 'available' when their endpoint is configured."""
     from app.services.model_registry.resolve import resolve_remote_stt_config
     from app.services.model_registry.store import model_registry_store
+    from app.services.providers.resolve import resolve_credentials
 
     remote_stt = resolve_remote_stt_config()
     caps.modules["whisper_service"] = bool(remote_stt.whisper_service_base_url)
     caps.modules["eventlab"] = bool(remote_stt.eventlab_base_url)
     llm_entry = await model_registry_store.find_default(kind="llm")
-    caps.modules["online_llm"] = bool(llm_entry and llm_entry["base_url"])
+    llm_base_url = ""
+    if llm_entry:
+        llm_base_url, _llm_api_key = await resolve_credentials(llm_entry)
+    caps.modules["online_llm"] = bool(llm_base_url)
     # No system-wide OpenRouter key anymore -- each Model Registry entry has its
     # own (see model_registry_store.has_key_for_engine, async/DB-backed, not
     # reachable from this sync capability-detection path). Missing "openrouter"

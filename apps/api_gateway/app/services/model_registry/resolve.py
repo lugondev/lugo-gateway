@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 
 from app.services.model_registry.store import model_registry_store
+from app.services.providers.resolve import resolve_credentials_sync
 from app.services.system_config import OmnivoiceConfig, RemoteSttConfig
 
 # Recognized spellings for a bool-typed env override. Anything else is a
@@ -149,19 +150,26 @@ def resolve_omnivoice_config() -> OmnivoiceConfig:
 
 
 def resolve_remote_stt_config() -> RemoteSttConfig:
+    """Whisper/eventlab entries may have blank own base_url/api_key and carry
+    a linked provider (config.provider_id) instead -- route both through the
+    sync credential resolver (cache-only, matches this function's sync/
+    cache-only contract) so a provider-linked entry still resolves to real
+    creds instead of reporting blank."""
     whisper = model_registry_store.find_enabled_sync("stt", "whisper_service")
     eventlab = model_registry_store.find_enabled_sync("stt", "eventlab")
     cfg = RemoteSttConfig()
     if whisper:
+        whisper_base_url, whisper_api_key = resolve_credentials_sync(whisper)
         cfg = cfg.model_copy(update={
-            "whisper_service_base_url": whisper.get("base_url", ""),
-            "whisper_service_api_key": whisper.get("api_key", ""),
+            "whisper_service_base_url": whisper_base_url,
+            "whisper_service_api_key": whisper_api_key,
             "whisper_service_model": whisper.get("model_id") or "whisper-1",
         })
     if eventlab:
+        eventlab_base_url, eventlab_api_key = resolve_credentials_sync(eventlab)
         cfg = cfg.model_copy(update={
-            "eventlab_base_url": eventlab.get("base_url", ""),
-            "eventlab_api_key": eventlab.get("api_key", ""),
+            "eventlab_base_url": eventlab_base_url,
+            "eventlab_api_key": eventlab_api_key,
             "eventlab_model": eventlab.get("model_id") or "whisper-1",
         })
     whisper_timeout = (whisper or {}).get("config", {}).get("timeout_seconds")

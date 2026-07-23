@@ -23,12 +23,15 @@ async def disable_registry_entry(kind: str, engine: str, model_id: str) -> None:
     """Called when a Models-page artifact is deleted. Removes the registry row
     so a deleted model doesn't linger as a dangling disabled entry -- but only
     when the row has nothing worth preserving. A row with an admin-entered
-    api_key or base_url (service engines) is kept and merely disabled, so a
-    later reinstall doesn't force re-entering the credential."""
+    api_key or base_url (service engines), or one linked to a provider (its
+    own api_key/base_url are blank by design -- creds live on the provider),
+    is kept and merely disabled, so a later reinstall doesn't force
+    re-entering the credential or re-linking the provider."""
     entry = await model_registry_store.find(kind, engine, model_id)
     if entry is None:
         return
-    if entry["api_key"] or entry["base_url"]:
+    provider_linked = bool((entry.get("config") or {}).get("provider_id"))
+    if entry["api_key"] or entry["base_url"] or provider_linked:
         await model_registry_store.set_fields(entry["id"], enabled=False)
     else:
         await model_registry_store.delete(entry["id"])

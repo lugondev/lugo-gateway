@@ -50,8 +50,13 @@ LLM_SUGGESTIONS = [
 
 
 async def _active_llm_base_url() -> str:
+    from app.services.providers.resolve import resolve_credentials
+
     entry = await _active_llm_entry()
-    return entry["base_url"] if entry else ""
+    if not entry:
+        return ""
+    base_url, _api_key = await resolve_credentials(entry)
+    return base_url
 
 
 async def _ollama_base() -> str:
@@ -77,8 +82,13 @@ class LlmManager:
 
     async def available(self) -> bool:
         if await _is_remote_endpoint():
+            from app.services.providers.resolve import resolve_credentials
+
             entry = await _active_llm_entry()
-            return bool(entry and entry["base_url"] and entry["api_key"])
+            if not entry:
+                return False
+            base_url, api_key = await resolve_credentials(entry)
+            return bool(base_url and api_key)
         base = await _ollama_base()
         if not base:
             return False

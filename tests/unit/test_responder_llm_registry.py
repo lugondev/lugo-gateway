@@ -6,7 +6,9 @@ from app.services.conversation.responder import (
     get_active_llm_model,
     resolve_llm_override_from_registry,
 )
+from app.services.db.engine import init_db
 from app.services.model_registry.store import model_registry_store
+from app.services.providers.store import provider_store
 
 
 @pytest.mark.asyncio
@@ -83,3 +85,30 @@ async def test_active_llm_falls_back_to_nothing_when_the_default_is_disabled():
     assert await get_active_llm_model() == ""
     assert await get_active_llm_base_url() == ""
     assert await get_active_llm_api_key() == ""
+
+
+# ---------------------------------------------------------------------------
+# I1: llm_manager.available()/get_active_llm_base_url() must resolve
+# provider-linked default llm entries (blank own creds), not read raw fields.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_available_and_base_url_resolve_provider_linked_default_llm():
+    """A default llm entry with blank own base_url/api_key but a linked
+    provider must report available() True and the resolved (provider's)
+    base_url -- network-free: available()'s remote branch only checks
+    base_url+api_key truthiness, it never makes a request."""
+    from app.services.llm_models import llm_manager
+
+    await init_db()
+    provider = await provider_store.create(
+        name="openai", base_url="https://provider.example.com/v1", api_key="sk-provider-llm"
+    )
+    await model_registry_store.create(
+        "llm", "openai", "gpt-4o-mini", "GPT-4o mini",
+        base_url="", api_key="", config={"provider_id": provider["id"]}, is_default=True,
+    )
+
+    assert await get_active_llm_base_url() == "https://provider.example.com/v1"
+    assert await llm_manager.available() is True

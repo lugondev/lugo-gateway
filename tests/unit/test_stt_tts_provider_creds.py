@@ -9,11 +9,40 @@ from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
 
 @pytest.mark.asyncio
 async def test_sync_resolver_used_by_providers():
+    """resolve_credentials_sync is used both by OpenRouterSttProvider (per-call
+    key resolution) and by resolve_remote_stt_config (whisper_service/eventlab
+    base_url+api_key resolution, see test below) -- both are cache-only sync
+    call sites that must see a provider-linked entry's real creds."""
     await init_db()
     # warm the sync cache
     p = await provider_store.create(name="openai", base_url="https://api.openai.com/v1", api_key="sk-S")
     entry = {"base_url": "", "api_key": "", "config": {"provider_id": p["id"]}}
     assert resolve_credentials_sync(entry) == ("https://api.openai.com/v1", "sk-S")
+
+
+@pytest.mark.asyncio
+async def test_resolve_remote_stt_config_resolves_provider_linked_whisper_service():
+    """A whisper_service stt registry entry with BLANK own base_url/api_key but
+    a linked provider_id must resolve to the provider's creds (I2 fix) --
+    network-free, exercises resolve_remote_stt_config() directly."""
+    from app.services.model_registry.resolve import resolve_remote_stt_config
+
+    await init_db()
+    provider = await provider_store.create(
+        name="openai", base_url="https://provider.example.com/v1", api_key="sk-provider-linked"
+    )
+    await model_registry_store.create(
+        "stt", "whisper_service", "whisper-1", "Whisper Service",
+        base_url="", api_key="", enabled=True,
+        config={"provider_id": provider["id"]},
+    )
+    # Warm the sync caches both resolvers read from.
+    await provider_store.list_all()
+    await model_registry_store.list_all()
+
+    cfg = resolve_remote_stt_config()
+    assert cfg.whisper_service_base_url == "https://provider.example.com/v1"
+    assert cfg.whisper_service_api_key == "sk-provider-linked"
 
 
 @pytest.mark.asyncio
