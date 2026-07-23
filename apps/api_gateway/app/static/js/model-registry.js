@@ -34,6 +34,45 @@ async function _loadProviderOptions() {
   }
 }
 
+// Engine is a dispatch key for stt/tts (picks the adapter); for llm it's a
+// cosmetic label, so we derive it from the provider and hide the field.
+async function _loadEngineOptions() {
+  const kind = el("registry-add-kind")?.value;
+  const sel = el("registry-add-engine");
+  const wrap = el("registry-add-engine-wrap");
+  if (!sel) return;
+  if (kind === "llm") {
+    if (wrap) wrap.classList.add("hidden"); // engine derived from provider on submit
+    return;
+  }
+  if (wrap) wrap.classList.remove("hidden");
+  const prev = sel.value;
+  sel.innerHTML = "";
+  try {
+    const body = await (await fetch(`/v1/${kind}/engines`)).json();
+    const engines = (body.data || []);
+    for (const item of engines) {
+      const opt = document.createElement("option");
+      opt.value = item.engine;
+      opt.textContent = item.available ? item.engine : `${item.engine} (unavailable)`;
+      sel.appendChild(opt);
+    }
+    if (engines.some((e) => e.engine === prev)) sel.value = prev; // keep selection across kind re-renders
+  } catch {
+    /* leave empty; submit will surface a clear error */
+  }
+}
+
+// llm engine is cosmetic; use the linked provider's name as the label (or "custom").
+function _effectiveEngine() {
+  const kind = el("registry-add-kind")?.value;
+  if (kind !== "llm") return (el("registry-add-engine")?.value || "").trim();
+  const sel = el("registry-add-provider");
+  const name = sel?.selectedOptions?.[0]?.textContent || "";
+  // provider option text is `name — label`; take the name part; fallback "custom"
+  return (name.split(" — ")[0] || "custom").trim() || "custom";
+}
+
 async function _loadProviderModelSuggestions() {
   const dl = el("registry-model-suggestions");
   const providerId = (el("registry-add-provider")?.value || "").trim();
@@ -461,7 +500,7 @@ function _updateKindFields() {
 export async function createModelRegistryEntry() {
   const status = el("model-registry-status");
   const kind = el("registry-add-kind").value;
-  const engine = el("registry-add-engine").value.trim();
+  const engine = _effectiveEngine();
   const modelId = el("registry-add-model-id").value.trim();
   const label = el("registry-add-label").value.trim();
   const stage = el("registry-add-stage").value;
@@ -502,24 +541,29 @@ export async function createModelRegistryEntry() {
       return;
     }
     status.textContent = `Added "${label}"`;
-    el("registry-add-engine").value = "";
     el("registry-add-model-id").value = "";
     el("registry-add-label").value = "";
     if (el("registry-add-key-api-key")) el("registry-add-key-api-key").value = "";
     if (el("registry-add-provider")) el("registry-add-provider").value = "";
     await loadModelRegistry();
+    void _loadEngineOptions();
   } catch (error) {
     print(status, String(error), true);
   }
 }
 
 if (el("registry-add-kind")) {
-  el("registry-add-kind").addEventListener("change", _updateKindFields);
+  el("registry-add-kind").addEventListener("change", () => {
+    _updateKindFields();
+    void _loadEngineOptions();
+  });
   _updateKindFields();
+  void _loadEngineOptions();
 }
 if (el("registry-add-provider")) {
   el("registry-add-provider").addEventListener("change", () => {
     _updateKindFields();
+    void _loadEngineOptions();
     void _loadProviderModelSuggestions();
   });
 }
