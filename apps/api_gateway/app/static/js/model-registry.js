@@ -146,10 +146,26 @@ function _renderRegistryTable(host, rows, emptyMessage) {
             // that can never actually be clicked.
             return `<span class="hint" title="${escapeHtml(e.engine)} isn't installed -- nothing to edit, enable, or delete until it is">not installed</span>`;
           }
+          // Local rows never get Delete -- deleting the registry row doesn't
+          // remove the downloaded model/binary, which would be confusing, and
+          // these are built-in engine slots, not admin-created service
+          // credentials. MODEL rows (a specific downloaded artifact, e.g. a
+          // Whisper size) get no Edit either, since there's nothing
+          // meaningful to edit on them: just enable/disable, gated on whether
+          // the artifact is actually present. Engine-config sentinel rows
+          // (model_id == "") keep Edit -- it's the only way to change
+          // device/compute settings -- but still lose Delete.
+          const loc = e.location || (e.requires_base_url ? "service" : "local");
+          if (loc === "local" && !_isEngineConfig(e)) {
+            if (e.artifact_installed === false) {
+              return `<span class="hint" title="${escapeHtml(e.engine)}/${escapeHtml(e.model_id)} isn't installed -- download it via the Models page, then enable it here">not installed</span>`;
+            }
+            return `<button class="mini" data-registry-toggle="${escapeHtml(e.id)}">${e.enabled ? "Disable" : "Enable"}</button>`;
+          }
           return `
             <button class="mini" data-registry-edit="${escapeHtml(e.id)}">Edit</button>
             <button class="mini" data-registry-toggle="${escapeHtml(e.id)}">${e.enabled ? "Disable" : "Enable"}</button>
-            <button class="mini danger" data-registry-delete="${escapeHtml(e.id)}" ${e.enabled ? `disabled title="Disable this entry first"` : ""}>Delete</button>
+            ${loc === "local" ? "" : `<button class="mini danger" data-registry-delete="${escapeHtml(e.id)}" ${e.enabled ? `disabled title="Disable this entry first"` : ""}>Delete</button>`}
           `;
         },
       },
