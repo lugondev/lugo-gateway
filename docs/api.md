@@ -121,12 +121,12 @@ frames (VAD-endpointed) or a text message; output is text events and/or synthesi
 audio. Supports the full matrix: audio→audio, text→audio, audio→text, text→text.
 
 ```
-ws://localhost:8000/v1/conversation/stream?stt_engine=whisper_mlx&tts_engine=vieneu&sample_rate=16000&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=24000
+ws://localhost:8000/v1/conversation/stream?profile=vi&sample_rate=16000&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=24000
 ```
 
 | query param | default | meaning |
 |-------------|---------|---------|
-| `stt_engine` / `tts_engine` / `voice` / `language` | settings | per-session engines |
+| `voice` / `language` | settings | per-session voice/language (engine selection is profile-or-server-default only, see below) |
 | `profile` | — | named **chatllm profile** (see below) — sets LLM model/system prompt/TTS/MCP tools/memory in one shot |
 | `sample_rate` | 16000 | input audio rate (Hz) |
 | `audio_codec` | `pcm16` | **input** codec: `pcm16` or `opus` |
@@ -136,13 +136,14 @@ ws://localhost:8000/v1/conversation/stream?stt_engine=whisper_mlx&tts_engine=vie
 
 **`profile`** does double duty:
 1. If it names a saved profile (`POST /v1/profiles`), the session uses that profile's
-   `llm` (base_url/api_key/model), `system_prompt`, `tts.engine`/`tts.voice`, `mcp_servers`,
-   and `memory` settings — overriding `.env` defaults. An explicit `stt_engine`/`tts_engine`/
-   `voice` query param still wins over the profile's STT choice (TTS engine from the
-   profile wins over `tts_engine` if the profile sets one).
+   `stt.engine`/`language`, `llm` (base_url/api_key/model), `system_prompt`,
+   `tts.engine`/`tts.voice`, `mcp_servers`, and `memory` settings — overriding server
+   defaults. There is no per-request engine override query param — STT/TTS engine
+   selection is always profile config, else the server-wide `default_stt_engine`/
+   `default_tts_engine` (see `GET /v1/system/config`'s `engines` group).
 2. If it matches a built-in **language preset** (`vi` / `en` / `multi` / `en_vi`), it also
-   selects the STT engine + language for that language, unless `stt_engine`/`language` are
-   passed explicitly. A profile can be named e.g. `vi` to get both behaviors at once.
+   selects the STT engine + language for that language, unless `language` is passed
+   explicitly. A profile can be named e.g. `vi` to get both behaviors at once.
 
 If `profile` is set but unknown, the server replies with a `warning` event and falls back
 to defaults (the connection still proceeds).
@@ -225,7 +226,7 @@ curl -X POST http://localhost:8000/v1/profiles \
         "tts": {"engine": "vieneu"}
       }'
 ```
-Then point the device at `?profile=kitchen` instead of setting `tts_engine`/LLM config
+Then point the device at `?profile=kitchen` instead of setting TTS engine/LLM config
 per-request.
 
 ### `WS /v1/lugo/stream`
@@ -409,16 +410,6 @@ Response `data`:
     "default_stt_engine": "vosk",
     "default_tts_engine": "omnivoice",
     "default_tts_engine_voice": "",
-    "warmup_on_startup": true,
-    "warmup_startup_timeout_s": 180,
-    "ollama_bin": ""
-  },
-  "stt_local": {
-    "stt_model_dir": "models/stt",
-    "vosk_model_base_url": "https://alphacephei.com/vosk/models",
-    "stt_stream_sample_rate": 16000,
-    "stt_glossary_path": "",
-    "stt_profile": "",
     "stt_segment_long_enabled": false,
     "stt_segment_min_seconds": 30.0,
     "stt_segment_concurrency": 4
@@ -445,9 +436,18 @@ Key changes from earlier API versions:
   "condition_on_previous_text": false, "initial_prompt": "", "device": "cpu",
   "compute_type": "int8"}` for `whisper_local`, `{"model_path": "..."}` for
   `vosk`/`whisper_mlx`.
-
-`stt_local` now holds only engine-agnostic settings (model dir, sample rate, glossary,
-profile preset, long-audio segmentation).
+- **The `stt_local` group is gone entirely.** Its 3 engine-agnostic long-audio
+  segmentation fields (`stt_segment_long_enabled`, `stt_segment_min_seconds`,
+  `stt_segment_concurrency`) moved into `engines`, above. Its 4 remaining fields
+  (`stt_model_dir`, `vosk_model_base_url`, `stt_stream_sample_rate`,
+  `stt_glossary_path`) are deployment-time constants now — set via env vars
+  (`STT_MODEL_DIR`, `VOSK_MODEL_BASE_URL`, `STT_STREAM_SAMPLE_RATE`,
+  `STT_GLOSSARY_PATH`), not exposed via this endpoint.
+- **`preprocessing.pyannote_vad_model`/`pyannote_auth_token` are gone too** — same
+  reasoning, now `PYANNOTE_VAD_MODEL`/`PYANNOTE_AUTH_TOKEN` env vars.
+- **No per-request `?stt_engine=`/`?tts_engine=` query param** on `/v1/conversation/stream`,
+  `/v1/livehost/stream`, or the Lugo protocol — engine selection is profile config, else
+  `engines.default_stt_engine`/`default_tts_engine`.
 
 ### `PUT /v1/system/config`
 Update the system configuration. Send a partial or full body; absent fields retain their current

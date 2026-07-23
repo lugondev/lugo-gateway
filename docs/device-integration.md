@@ -21,22 +21,20 @@ Recommended params for a duplex voice device:
 
 | param | value | meaning |
 |-------|-------|---------|
-| `stt_engine` | `whisper_mlx` | server-side STT (Vietnamese) |
-| `tts_engine` | `vieneu` | server-side Vietnamese TTS |
 | `language` | `vi` | STT language hint |
 | `sample_rate` | `16000` | **uplink** audio rate (Hz) |
 | `audio_codec` | `opus` | uplink codec — raw Opus packets |
 | `output` | `audio,text` | what to receive: `audio` (+ `text` for subtitles/debug) |
 | `audio_out` | `opus` | reply audio delivered as **pushed Opus frames** (not a URL) |
 | `output_sample_rate` | `24000` | **downlink** Opus rate (Hz) |
-| `profile` | *(optional)* | named **chatllm profile** — see §1a below |
+| `profile` | *(recommended)* | named **chatllm profile** — see §1a below. Engine selection has no per-request override any more; without a profile the device gets the server-wide `default_stt_engine`/`default_tts_engine`. |
 
-Full example:
+Full example (server defaults for STT/TTS engine):
 ```
-ws://192.168.1.50:8000/v1/conversation/stream?stt_engine=whisper_mlx&tts_engine=vieneu&language=vi&sample_rate=16000&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=24000
+ws://192.168.1.50:8000/v1/conversation/stream?language=vi&sample_rate=16000&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=24000
 ```
 
-Full example with a profile (replaces `tts_engine`/LLM config, `stt_engine`/`language` still apply as fallback):
+Full example with a profile (recommended — pins STT/TTS engine explicitly instead of relying on the server default):
 ```
 ws://192.168.1.50:8000/v1/conversation/stream?profile=kitchen&sample_rate=16000&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=24000
 ```
@@ -67,11 +65,12 @@ curl -X POST http://<server-host>:8000/v1/profiles \
 Then point the device's WS URL at `?profile=kitchen`. Precedence:
 - **LLM (model/base_url/api_key/system_prompt) and MCP tool servers**: always come from
   the profile when set — there's no device-side query param for these.
-- **TTS**: the profile's `tts.engine`/`tts.voice` win over `?tts_engine=`/`?voice=` if
-  the profile sets them.
-- **STT engine/language**: an explicit `?stt_engine=`/`?language=` on the device URL still
-  wins. If neither is given and the profile's *name* matches a built-in language preset
-  (`vi`, `en`, `multi`, `en_vi`), that preset's engine/language is used.
+- **TTS**: the profile's `tts.engine`/`tts.voice` are used if set; otherwise the server-wide
+  `default_tts_engine` applies. No per-request `?tts_engine=` override exists.
+- **STT engine**: the profile's `stt.engine` is used if set; otherwise the server-wide
+  `default_stt_engine` applies. No per-request `?stt_engine=` override exists — `?language=`
+  still works, and if the profile's *name* matches a built-in language preset (`vi`, `en`,
+  `multi`, `en_vi`) with no explicit `stt.engine`, that preset's engine/language is used.
 - **Memory**: if `memory.enabled` is true on the profile, the server auto-extracts and
   later injects relevant memories into the system prompt for that profile — no device
   change needed.
