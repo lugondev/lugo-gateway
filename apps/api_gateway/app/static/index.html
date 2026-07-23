@@ -84,6 +84,12 @@
                 <span class="nav-label">TTS</span>
               </button>
             </li>
+            <li>
+              <button class="nav-item" data-section="my-usage">
+                <span class="nav-icon">&#128200;</span>
+                <span class="nav-label">My Usage</span>
+              </button>
+            </li>
             <li class="admin-only">
               <button class="nav-item" data-section="models">
                 <span class="nav-icon">⊞</span>
@@ -1058,6 +1064,27 @@
                 <button id="quota-add-btn">Add Quota</button>
               </div>
               <p id="quotas-status" class="meta"></p>
+            </section>
+          </div>
+
+          <!-- ============================== MY USAGE ============================== -->
+          <div class="section" id="section-my-usage">
+            <section class="card">
+              <div class="card-head">
+                <h2>My Usage</h2>
+                <button id="my-usage-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <p class="hint">Your own recorded usage (LLM tokens, STT seconds, TTS characters) and cost. Cost is $0 for models without a configured price.</p>
+              <div class="row tight">
+                <label>
+                  Month (optional)
+                  <input id="my-usage-period" type="text" placeholder="YYYY-MM (blank = all time)" />
+                </label>
+              </div>
+              <div id="my-usage-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <p id="my-usage-status" class="meta"></p>
             </section>
           </div>
 
