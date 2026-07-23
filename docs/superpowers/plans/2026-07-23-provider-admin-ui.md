@@ -29,15 +29,16 @@
 **Interfaces:**
 - Produces: `export async function loadProviders()` — fetch `/v1/providers`, render into `#providers-list`. Also exports nothing else consumed elsewhere (add-form handlers attach at module load, like `model-registry.js`).
 
-- [ ] **Step 1: Add the nav-item** in `index.html`, immediately AFTER the model-registry nav-item block (the `</li>`-wrapped `<button ... data-section="model-registry">`, ~line 106-111). Match its exact structure (it's an `admin-only` item). Insert:
+- [ ] **Step 1: Add the nav-item** in `index.html`, immediately AFTER the model-registry item's closing `</li>` (line 110, before the `<li class="admin-only">` that holds `system`). The `admin-only` class sits on the WRAPPING `<li>`, not the button. Insert exactly:
 
 ```html
-              <button class="nav-item admin-only" data-section="providers">
-                <span class="nav-icon">🔌</span>
+            <li class="admin-only">
+              <button class="nav-item" data-section="providers">
+                <span class="nav-icon">&#128268;</span>
                 <span class="nav-label">Providers</span>
               </button>
+            </li>
 ```
-(If the sibling nav-items are wrapped in `<li>` or use a different icon/label markup, mirror THAT exact structure — copy the model-registry nav-item and change only `data-section`, icon, and label. Read lines 106-112 first.)
 
 - [ ] **Step 2: Add the section markup** in `index.html`, immediately AFTER `#section-model-registry`'s closing `</div>` (~line 916, before the `<!-- SYSTEM -->` comment):
 
