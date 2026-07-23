@@ -121,6 +121,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
         tts_language=tts["language"], sample_rate=in_sr, output_sample_rate=out_sr,
         audio_codec="opus", want_audio=True, want_text=True, audio_out="opus",
         denoise=False, resume_sid=requested_sid, stt_model=stt_model, tts_model=tts["model_id"],
+        identity_user_id=identity.user_id,
     )
 
     speaking = False  # one tts{start} on first response/audio, one tts{stop} at turn end/abort

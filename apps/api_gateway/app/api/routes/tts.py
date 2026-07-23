@@ -3,13 +3,15 @@ import logging
 import time
 import uuid
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Request, UploadFile
 
+from app.core.actor import current_user_id
 from app.schemas.common import StreamEvent
 from app.schemas.tts import TTSRequest
 from app.services.artifacts import artifact_store
 from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
+from app.services.usage.recorder import record_usage
 from app.streaming.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
@@ -45,11 +47,22 @@ async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
 
 
 @router.post("/synthesize")
-async def synthesize(payload: TTSRequest) -> dict:
+async def synthesize(payload: TTSRequest, request: Request) -> dict:
     provider = tts_service.get_provider(payload.engine)
     started = time.perf_counter()
     result = await provider.synthesize(payload)
     result.process_seconds = round(time.perf_counter() - started, 3)
+    try:
+        # model_id may be "" when the caller omits it: cost resolution then finds
+        # no pricing row and resolves to $0, but the usage event is still
+        # recorded/attributed -- $0 here is expected, not a bug.
+        await record_usage(
+            user_id=current_user_id(request) or "", profile_id="",
+            kind="tts", engine=payload.engine, model_id=payload.model_id or "",
+            unit="chars", native_amount=len(payload.text or ""),
+        )
+    except Exception as exc:  # noqa: BLE001 - metering must never break the response
+        logger.warning("tts usage metering failed: %s", exc)
     return {"success": True, "data": result.model_dump()}
 
 

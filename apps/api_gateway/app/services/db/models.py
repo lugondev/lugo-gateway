@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -131,3 +131,25 @@ class Provider(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # Extra per-provider knobs (default timeout, org id, extra headers). Free-form.
     config: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class UsageEvent(Base):
+    __tablename__ = "usage_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    # "" = shared-device / anonymous bucket (matches memory user-scoping convention).
+    user_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    profile_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    # "" when the model isn't linked to a Provider (local engine / own creds).
+    provider_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    kind: Mapped[str] = mapped_column(String(8), index=True)      # stt|tts|llm
+    engine: Mapped[str] = mapped_column(String(64))
+    model_id: Mapped[str] = mapped_column(String(128))
+    unit: Mapped[str] = mapped_column(String(16))                 # tokens|seconds|chars
+    native_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="ok")  # ok|error

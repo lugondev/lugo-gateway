@@ -2,8 +2,9 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 
+from app.core.actor import current_user_id
 from app.core.audio import (
     pcm16_to_float_array,
     preprocess_pcm16,
@@ -21,6 +22,7 @@ from app.services.stt.base import STTStream
 from app.services.stt.segmented import transcribe_long
 from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
+from app.services.usage.recorder import record_usage
 from app.services.vad import apply_vad
 from app.streaming.event_bus import event_bus
 
@@ -44,6 +46,7 @@ def _parse_bool(value: str | None) -> bool | None:
 
 @router.post("/transcribe")
 async def transcribe(
+    request: Request,
     audio: UploadFile = File(...),
     engine: str | None = Form(default=None),
     language: str | None = Form(default=None),
@@ -94,6 +97,17 @@ async def transcribe(
         raise HTTPException(status_code=500, detail=f"STT failed ({payload.engine}): {exc}") from exc
     data = result.model_dump()
     data["duration"] = wav_duration_seconds(audio_bytes)
+    try:
+        # model_id is intentionally "" here (STT usage isn't tracked per model yet):
+        # cost resolution will find no pricing row and resolve to $0, but the
+        # usage event is still recorded/attributed -- $0 here is expected, not a bug.
+        await record_usage(
+            user_id=current_user_id(request) or "", profile_id="",
+            kind="stt", engine=payload.engine, model_id="",
+            unit="seconds", native_amount=data["duration"],
+        )
+    except Exception as exc:  # noqa: BLE001 - metering must never break the response
+        logger.warning("stt usage metering failed: %s", exc)
     return {"success": True, "data": data}
 
 

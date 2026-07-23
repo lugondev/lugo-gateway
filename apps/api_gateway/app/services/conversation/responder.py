@@ -185,6 +185,7 @@ class OpenAICompatResponder(Responder):
         self.model = model
         self.system_prompt = system_prompt
         self.timeout = timeout
+        self.last_usage: dict | None = None
         # One client for the responder's whole lifetime (a session usually runs
         # many turns, each with 1-2+ LLM calls) instead of a fresh
         # httpx.AsyncClient per call -- httpx keeps the underlying TCP+TLS
@@ -197,6 +198,7 @@ class OpenAICompatResponder(Responder):
         await self._client.aclose()
 
     async def reply(self, history: list[dict]) -> str:
+        self.last_usage = None
         messages = [{"role": "system", "content": self.system_prompt}, *history]
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         try:
@@ -207,6 +209,14 @@ class OpenAICompatResponder(Responder):
             )
             resp.raise_for_status()
             data = resp.json()
+            usage = data.get("usage")
+            if isinstance(usage, dict):
+                self.last_usage = {
+                    "prompt_tokens": usage.get("prompt_tokens"),
+                    "completion_tokens": usage.get("completion_tokens"),
+                }
+            else:
+                self.last_usage = None
             return str(data["choices"][0]["message"]["content"]).strip()
         except Exception as exc:  # noqa: BLE001 - surface a clear offline error
             logger.warning("LLM responder failed: %s", exc)
@@ -283,6 +293,7 @@ class OpenAICompatResponder(Responder):
             yield chunk
 
     async def _stream_history(self, history: list[dict]) -> AsyncIterator[str]:
+        self.last_usage = None
         messages = [{"role": "system", "content": self.system_prompt}, *history]
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         agg = SentenceAggregator()
@@ -292,7 +303,12 @@ class OpenAICompatResponder(Responder):
                 "POST",
                 f"{self.base_url}/chat/completions",
                 headers=headers,
-                json={"model": self.model, "messages": messages, "stream": True},
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                },
             ) as resp:
                 logger.info("DEBUG_HANG _stream_history: got response headers, status=%s", resp.status_code)
                 resp.raise_for_status()
@@ -305,7 +321,17 @@ class OpenAICompatResponder(Responder):
                     if data == "[DONE]":
                         logger.info("DEBUG_HANG _stream_history: saw [DONE] after %d lines", line_count)
                         break
-                    delta = json.loads(data)["choices"][0].get("delta", {}).get("content", "")
+                    parsed = json.loads(data)
+                    usage = parsed.get("usage")
+                    if isinstance(usage, dict):
+                        self.last_usage = {
+                            "prompt_tokens": usage.get("prompt_tokens"),
+                            "completion_tokens": usage.get("completion_tokens"),
+                        }
+                    choices = parsed.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {}).get("content", "")
                     if delta:
                         for sentence in agg.push(delta):
                             logger.info("DEBUG_HANG _stream_history: yielding sentence %r", sentence)
