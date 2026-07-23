@@ -21,6 +21,7 @@ from app.services.db.models import UsageEvent
 from app.services.profiles.models import LlmConfig, Profile
 from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
+from app.services.system_config import system_config_store
 from app.services.tts.base import TTSProvider
 from app.services.stt.service import stt_service
 from app.services.tts.service import tts_service
@@ -161,4 +162,91 @@ async def test_metering_failure_never_breaks_the_turn(monkeypatch, tmp_path):
         assert "error" not in names
     finally:
         stt_service.providers.pop("stub-meter-stt", None)
+        tts_service.providers.pop("stub-meter-tts", None)
+
+
+class _StubFastSTT(STTProvider):
+    """A second STT engine, distinct from the session's pinned engine, used
+    to exercise the fast-path engine switch in `_handle_turn`."""
+
+    name = "stub-meter-stt-fast"
+
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
+        return STTResult(engine=self.name, text="di", is_final=True)
+
+
+async def test_fast_path_stt_switch_never_pairs_new_engine_with_old_pinned_model(monkeypatch, tmp_path):
+    """Regression for the review finding: when `conversation_fast_stt_engine`
+    routes a short utterance to a different engine than the session's
+    configured `stt_engine`, the session's pinned `stt_model_id` (resolved for
+    the ORIGINAL engine) must not be attributed to the NEW engine in the
+    recorded usage event -- that (engine, model) pair was never actually used
+    together, and `record_usage` looks it up as a single registry key. The
+    recorded model_id must come from the same source as the engine actually
+    used (turn_model), never fall back to self.stt_model_id when the engine
+    was switched.
+    """
+    stt_service.providers["stub-meter-stt"] = _StubSTT()
+    stt_service.providers["stub-meter-stt-fast"] = _StubFastSTT()
+    tts_service.providers["stub-meter-tts"] = _StubTTS()
+
+    # Force the fast path: any speech_ms <= max_ms routes to the fast engine.
+    real_get = system_config_store.get
+
+    def _get_with_fast_stt():
+        cfg = real_get()
+        return cfg.model_copy(update={
+            "conversation": cfg.conversation.model_copy(update={
+                "conversation_fast_stt_engine": "stub-meter-stt-fast",
+                "conversation_fast_stt_max_ms": 1000,
+            })
+        })
+
+    monkeypatch.setattr(
+        "app.services.conversation.session.system_config_store.get", _get_with_fast_stt
+    )
+
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    fresh_profiles.upsert(Profile(
+        name="metered-profile",
+        llm=LlmConfig(base_url="", api_key="", model="echo-model", engine="echo-engine"),
+    ))
+
+    try:
+        events: list = []
+
+        async def emit(name, **p):
+            events.append((name, p))
+
+        async def emit_audio(pkt):
+            pass
+
+        # Pin an explicit model on the session's (original) STT engine, so a
+        # wrong fallback to it would be visibly wrong once the engine switches.
+        cfg = _cfg(stt_model="pinned-for-original-engine")
+        sess = ConversationSession(cfg, emit, emit_audio)
+        await sess.start()
+        assert sess.stt_model_id == "pinned-for-original-engine"
+
+        pcm = b"\x00\x00" * 1600  # 100ms of 16kHz silence -> under the 1000ms fast-path cap
+        await sess._handle_turn(audio_pcm=pcm, speech_ms=100.0)
+        await sess.close()
+
+        rows = await _rows()
+        stt = next(r for r in rows if r.kind == "stt")
+
+        # The turn must actually have gone through the fast engine, or this
+        # test isn't exercising the switch it claims to.
+        assert stt.engine == "stub-meter-stt-fast"
+        assert stt.engine != cfg.stt_engine
+
+        # The bug: pairing the switched-to engine with the OLD engine's pinned
+        # model. That pair was never used together and misses the registry
+        # lookup. Recorded model_id must not be the stale pin.
+        assert stt.model_id != "pinned-for-original-engine"
+        assert stt.model_id == ""
+    finally:
+        stt_service.providers.pop("stub-meter-stt", None)
+        stt_service.providers.pop("stub-meter-stt-fast", None)
         tts_service.providers.pop("stub-meter-tts", None)

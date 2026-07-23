@@ -605,7 +605,7 @@ class ConversationSession:
             audio_seconds = wav_duration_seconds(wav)
             await record_usage(
                 user_id=self.cfg.identity_user_id or "", profile_id=cfg.profile_name or "",
-                kind="stt", engine=turn_engine, model_id=(turn_model or self.stt_model_id) or "",
+                kind="stt", engine=turn_engine, model_id=turn_model or "",
                 unit="seconds", native_amount=audio_seconds,
             )
         except Exception as exc:  # noqa: BLE001 - metering must never break a turn
