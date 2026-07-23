@@ -8,9 +8,10 @@ from app.core.audio import pcm16_to_wav_bytes
 from app.main import app
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSRequest
+from app.services.profiles.models import Profile, SttConfig
+from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
-from app.services.system_config import system_config_store
 from app.services.tts.base import RenderingTTSProvider
 from app.services.tts.service import tts_service
 
@@ -39,13 +40,30 @@ class _StubTTS(RenderingTTSProvider):
 
 
 @pytest.fixture(autouse=True)
-def _stub(monkeypatch):
-    # conversation_llm_base_url now lives on system_config_store (Task 3), not
-    # Settings; the module-level conftest._hermetic fixture already zeroes it
-    # (echo responder).
+def _stub(monkeypatch, tmp_path):
+    # conversation_llm_base_url now lives on system_config_store; the
+    # module-level conftest._hermetic fixture already zeroes it (echo
+    # responder).
     stt_service.providers["stub-gw"] = _StubSTT()
     tts_service.providers["stub-gw-tts"] = _StubTTS()
-    yield
+
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    fresh_profiles.upsert(Profile(name="p-gw", stt=SttConfig(engine="stub-gw")))
+    monkeypatch.setattr("app.api.routes.conversation.profile_store", fresh_profiles)
+
+    from app.services import system_config as sc_mod
+
+    fresh_config = sc_mod.SystemConfigStore(str(tmp_path / "system_config.json"))
+    fresh_config.set(
+        fresh_config.get().model_copy(
+            update={"engines": fresh_config.get().engines.model_copy(update={"default_tts_engine": "stub-gw-tts"})}
+        )
+    )
+    monkeypatch.setattr("app.api.routes.conversation.system_config_store", fresh_config)
+    monkeypatch.setattr(sc_mod, "system_config_store", fresh_config)
+
+    yield fresh_profiles, fresh_config
+
     stt_service.providers.pop("stub-gw", None)
     tts_service.providers.pop("stub-gw-tts", None)
 
@@ -67,7 +85,7 @@ def _drain(ws, stop="turn_done", n=40):
 
 def test_text_to_text():
     c = TestClient(app)
-    with c.websocket_connect("/v1/conversation/stream?stt_engine=stub-gw&tts_engine=stub-gw-tts&output=text") as ws:
+    with c.websocket_connect("/v1/conversation/stream?profile=p-gw&output=text") as ws:
         started = ws.receive_json()
         assert started["event"] == "session_started" and started["output"] == ["text"]
         ws.send_json({"type": "text", "text": "xin chào"})
@@ -80,7 +98,7 @@ def test_text_to_text():
 
 def test_text_to_audio_url():
     c = TestClient(app)
-    with c.websocket_connect("/v1/conversation/stream?stt_engine=stub-gw&tts_engine=stub-gw-tts&output=audio") as ws:
+    with c.websocket_connect("/v1/conversation/stream?profile=p-gw&output=audio") as ws:
         assert ws.receive_json()["event"] == "session_started"
         ws.send_json({"type": "text", "text": "xin chào"})
         evs = _drain(ws)
@@ -113,22 +131,24 @@ def _opus_ok():
 
 
 @pytest.mark.skipif(not _opus_ok(), reason="libopus not loadable")
-def test_text_to_opus_frames(monkeypatch):
+def test_text_to_opus_frames(_stub):
     # Verify Opus framing only; disable real-time pacing so the test doesn't sleep
     # through the reply audio. Pacing schedule is unit-tested.
-    # conversation_opus_pace now lives on system_config_store's `conversation`
-    # group (Task 3), not Settings.
-    _real_get = system_config_store.get
-
-    def _get_with_pace_off():
-        cfg = _real_get()
-        return cfg.model_copy(
-            update={"conversation": cfg.conversation.model_copy(update={"conversation_opus_pace": False})}
+    # conversation_opus_pace lives on system_config_store's `conversation`
+    # group, not Settings. Write through the same fresh store the `_stub`
+    # fixture already pointed app.api.routes.conversation at (rather than
+    # monkeypatching the original module-level singleton's .get -- that
+    # singleton is no longer what the route reads once `_stub` has rebound
+    # it to a fresh, isolated store; see test_conversation_tts_profile.py's
+    # `_local_hermetic` for the same dual-binding gotcha).
+    _profiles, fresh_config = _stub
+    fresh_config.set(
+        fresh_config.get().model_copy(
+            update={"conversation": fresh_config.get().conversation.model_copy(update={"conversation_opus_pace": False})}
         )
-
-    monkeypatch.setattr(system_config_store, "get", _get_with_pace_off)
+    )
     c = TestClient(app)
-    url = "/v1/conversation/stream?stt_engine=stub-gw&tts_engine=stub-gw-tts&output=audio&audio_out=opus&output_sample_rate=24000"
+    url = "/v1/conversation/stream?profile=p-gw&output=audio&audio_out=opus&output_sample_rate=24000"
     with c.websocket_connect(url) as ws:
         started = ws.receive_json()
         assert started["audio_out"] == "opus" and started["output_sample_rate"] == 24000
@@ -154,7 +174,7 @@ def test_text_to_opus_frames(monkeypatch):
 
 def test_audio_to_text():
     c = TestClient(app)
-    url = "/v1/conversation/stream?stt_engine=stub-gw&tts_engine=stub-gw-tts&output=text&sample_rate=16000"
+    url = "/v1/conversation/stream?profile=p-gw&output=text&sample_rate=16000"
     with c.websocket_connect(url) as ws:
         assert ws.receive_json()["event"] == "session_started"
         ws.send_bytes(_loud(500))

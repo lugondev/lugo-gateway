@@ -8,19 +8,18 @@ from app.services.warmup import is_ready, warm_providers
 
 
 def _set_conversation_engines(monkeypatch, tmp_path, *, stt_engine="whisper", tts_engine="omnivoice"):
-    """conversation_stt_engine/conversation_tts_engine live on
-    system_config_store's `conversation` group -- not Settings. Build a
-    fresh, isolated store and patch it in at the point of use
-    (app.services.system_config, where the module-level
-    warmup_stt_engines()/warmup_tts_engines() look it up), following the
-    pattern in tests/unit/test_stt_service_openrouter.py.
+    """default_stt_engine/default_tts_engine live on system_config_store's
+    `engines` group -- not Settings. Build a fresh, isolated store and patch
+    it in at the point of use (app.services.system_config, where the
+    module-level warmup_stt_engines()/warmup_tts_engines() look it up),
+    following the pattern in tests/unit/test_stt_service_openrouter.py.
     """
     fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
     fresh.set(
         fresh.get().model_copy(
             update={
-                "conversation": fresh.get().conversation.model_copy(
-                    update={"conversation_stt_engine": stt_engine, "conversation_tts_engine": tts_engine}
+                "engines": fresh.get().engines.model_copy(
+                    update={"default_stt_engine": stt_engine, "default_tts_engine": tts_engine}
                 ),
             }
         )

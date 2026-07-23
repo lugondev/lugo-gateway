@@ -24,8 +24,8 @@ async def _validate_profile_models(profile: Profile, acting_user) -> None:
     if profile.stt.model:
         # Validation scope is intentionally narrowed to explicit stt.engine:
         # profiles must be self-contained and not depend on mutable system-config
-        # conversation_stt_engine/default_stt_engine, so a profile's validity is
-        # independent of deploy-time config.
+        # default_stt_engine, so a profile's validity is independent of
+        # deploy-time config.
         engine = profile.stt.engine
         if not engine:
             raise AppError("stt.model requires stt.engine")

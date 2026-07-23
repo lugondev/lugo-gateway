@@ -38,8 +38,8 @@ def test_lugo_resolve_no_profile_falls_back_to_settings(monkeypatch, tmp_path):
     fresh_config.set(
         fresh_config.get().model_copy(
             update={
-                "conversation": fresh_config.get().conversation.model_copy(
-                    update={"conversation_stt_engine": "stub-fallback-stt"}
+                "engines": fresh_config.get().engines.model_copy(
+                    update={"default_stt_engine": "stub-fallback-stt"}
                 ),
             }
         )

@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
+from app.services.profiles.models import Profile, SttConfig
+from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
 from app.services.tts.base import TTSProvider
@@ -56,12 +58,28 @@ class _StubTTS(TTSProvider):
 
 
 @pytest.fixture(autouse=True)
-def _stub(monkeypatch):
-    # conversation_llm_base_url now lives on system_config_store (Task 3), not
-    # Settings; the module-level conftest._hermetic fixture already zeroes it.
+def _stub(monkeypatch, tmp_path):
+    # conversation_llm_base_url now lives on system_config_store; the
+    # module-level conftest._hermetic fixture already zeroes it.
     stt_service.providers["stub-opus"] = _StubSTT()
     tts_service.providers["stub-opus-tts"] = _StubTTS()
-    yield
+
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.api.routes.conversation.profile_store", fresh_profiles)
+
+    from app.services import system_config as sc_mod
+
+    fresh_config = sc_mod.SystemConfigStore(str(tmp_path / "system_config.json"))
+    fresh_config.set(
+        fresh_config.get().model_copy(
+            update={"engines": fresh_config.get().engines.model_copy(update={"default_tts_engine": "stub-opus-tts"})}
+        )
+    )
+    monkeypatch.setattr("app.api.routes.conversation.system_config_store", fresh_config)
+    monkeypatch.setattr(sc_mod, "system_config_store", fresh_config)
+
+    yield fresh_profiles
+
     stt_service.providers.pop("stub-opus", None)
     tts_service.providers.pop("stub-opus-tts", None)
 
@@ -84,9 +102,10 @@ def test_opus_roundtrip_decodes_to_pcm():
     assert len(pcm) == FRAME * 2  # 16-bit mono, same sample count
 
 
-def test_conversation_opus_transport_turn():
+def test_conversation_opus_transport_turn(_stub):
+    _stub.upsert(Profile(name="p-opus", stt=SttConfig(engine="stub-opus")))
     client = TestClient(app)
-    url = "/v1/conversation/stream?stt_engine=stub-opus&tts_engine=stub-opus-tts&audio_codec=opus&sample_rate=16000"
+    url = "/v1/conversation/stream?profile=p-opus&audio_codec=opus&sample_rate=16000"
     with client.websocket_connect(url) as ws:
         started = ws.receive_json()
         assert started["event"] == "session_started"
