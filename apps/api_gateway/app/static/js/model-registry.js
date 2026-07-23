@@ -9,8 +9,28 @@ export async function loadModelRegistry() {
     const body = await (await fetch("/v1/model_registry")).json();
     registryData = body.data || [];
     renderModelRegistry();
+    await _loadProviderOptions();
   } catch {
     /* ignore */
+  }
+}
+
+async function _loadProviderOptions() {
+  const sel = el("registry-add-provider");
+  if (!sel) return;
+  try {
+    const body = await (await fetch("/v1/providers")).json();
+    const providers = (body.data || []).filter((p) => p.enabled);
+    // rebuild, keeping the leading "none" option
+    sel.length = 1;
+    for (const p of providers) {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.label ? `${p.name} — ${p.label}` : p.name;
+      sel.appendChild(opt);
+    }
+  } catch {
+    /* ignore — dropdown just stays at "none" */
   }
 }
 
@@ -402,16 +422,17 @@ async function bulkPatchEntries(ids, fields, verb) {
 
 function _updateKindFields() {
   const kind = el("registry-add-kind").value;
+  const hasProvider = !!(el("registry-add-provider")?.value || "").trim();
   const isLlmOrStt = kind === "llm" || kind === "stt";
   // Base URL matters for every kind now: llm/stt point at an OpenAI-compatible
   // endpoint, and tts (e.g. http_tts) needs one too -- apps/model_service is
   // wired in as a remote engine the same way for all three.
-  el("registry-add-llm-fields").classList.toggle("hidden", !(isLlmOrStt || kind === "tts"));
+  el("registry-add-llm-fields").classList.toggle("hidden", hasProvider || !(isLlmOrStt || kind === "tts"));
   // tts still uses the plain "API Key" field below rather than the one paired
   // with Base URL above -- hide that paired input for tts so it doesn't show
   // two "API Key" inputs at once.
   el("registry-add-llm-apikey-wrap").classList.toggle("hidden", kind === "tts");
-  el("registry-add-key-fields").classList.toggle("hidden", isLlmOrStt);
+  el("registry-add-key-fields").classList.toggle("hidden", hasProvider || isLlmOrStt);
 }
 
 export async function createModelRegistryEntry() {
@@ -425,8 +446,13 @@ export async function createModelRegistryEntry() {
     print(status, "Enter engine, model id, and label", true);
     return;
   }
+  const providerId = (el("registry-add-provider")?.value || "").trim();
   const payload = { kind, engine, model_id: modelId, label, stage };
-  if (kind === "llm" || kind === "stt") {
+  if (providerId) {
+    // Linked to a provider: creds come from the provider row; leave base_url/
+    // api_key blank and stash the link in config so the backend resolves them.
+    payload.config = { provider_id: providerId };
+  } else if (kind === "llm" || kind === "stt") {
     // stt: base_url is only meaningful for remote engines (whisper_service,
     // eventlab); api_key only for OpenRouter-backed engines (qwen3_asr_or/
     // whisper_or) -- other stt engines just ignore either being empty.
@@ -457,6 +483,7 @@ export async function createModelRegistryEntry() {
     el("registry-add-model-id").value = "";
     el("registry-add-label").value = "";
     if (el("registry-add-key-api-key")) el("registry-add-key-api-key").value = "";
+    if (el("registry-add-provider")) el("registry-add-provider").value = "";
     await loadModelRegistry();
   } catch (error) {
     print(status, String(error), true);
@@ -467,6 +494,7 @@ if (el("registry-add-kind")) {
   el("registry-add-kind").addEventListener("change", _updateKindFields);
   _updateKindFields();
 }
+if (el("registry-add-provider")) el("registry-add-provider").addEventListener("change", _updateKindFields);
 if (el("registry-add-btn")) el("registry-add-btn").addEventListener("click", createModelRegistryEntry);
 if (el("model-registry-refresh")) el("model-registry-refresh").addEventListener("click", loadModelRegistry);
 if (el("registry-filter-kind")) el("registry-filter-kind").addEventListener("change", renderModelRegistry);

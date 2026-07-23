@@ -109,6 +109,12 @@
               </button>
             </li>
             <li class="admin-only">
+              <button class="nav-item" data-section="providers">
+                <span class="nav-icon">&#128268;</span>
+                <span class="nav-label">Providers</span>
+              </button>
+            </li>
+            <li class="admin-only">
               <button class="nav-item" data-section="system">
                 <span class="nav-icon">⊙</span>
                 <span class="nav-label">System</span>
@@ -865,6 +871,12 @@
               <h3 class="sub">Add Entry</h3>
               <div class="row tight">
                 <label>
+                  Provider
+                  <select id="registry-add-provider">
+                    <option value="">— none (use fields below) —</option>
+                  </select>
+                </label>
+                <label>
                   Kind
                   <select id="registry-add-kind">
                     <option value="stt">stt</option>
@@ -912,6 +924,51 @@
                 <button id="registry-add-btn">Add (runs a live test first)</button>
               </div>
               <p id="model-registry-status" class="meta"></p>
+            </section>
+          </div>
+
+          <!-- ============================== PROVIDERS ============================== -->
+          <div class="section" id="section-providers">
+            <section class="card">
+              <div class="card-head">
+                <h2>Providers</h2>
+                <button id="providers-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <p class="hint">Configure an OpenAI-compatible provider (endpoint + API key) once, then link models to it in Model Registry instead of repeating the key per model.</p>
+              <div id="providers-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <h3 class="sub">Add Provider</h3>
+              <div class="row tight">
+                <label>
+                  Preset
+                  <select id="provider-add-preset">
+                    <option value="">— custom —</option>
+                  </select>
+                </label>
+                <label>
+                  Name
+                  <input id="provider-add-name" type="text" placeholder="openai · openrouter · qwencloud" />
+                </label>
+                <label>
+                  Label
+                  <input id="provider-add-label" type="text" placeholder="OpenAI" />
+                </label>
+              </div>
+              <div class="row tight">
+                <label>
+                  Base URL
+                  <input id="provider-add-base-url" type="text" placeholder="https://api.openai.com/v1" />
+                </label>
+                <label>
+                  API Key
+                  <input id="provider-add-api-key" type="password" placeholder="sk-…" autocomplete="off" />
+                </label>
+              </div>
+              <div class="actions end">
+                <button id="provider-add-btn">Add Provider</button>
+              </div>
+              <p id="providers-status" class="meta"></p>
             </section>
           </div>
 
