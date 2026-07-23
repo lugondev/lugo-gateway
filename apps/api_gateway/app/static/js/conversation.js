@@ -184,10 +184,8 @@ export function updateConvEnginesInfo() {
     return;
   }
   // No profile — the user's own manual selections (or server defaults) apply.
-  const sttEng = el("conv-stt-engine")?.value || "";
   const ttsProfileName = el("conv-tts-profile")?.value || "";
-  const sttLabel = catalogLabel("stt", sttEng, "") || "server default";
-  const sttPart = `STT: ${sttEng ? sttLabel : "server default"}`;
+  const sttPart = "STT: server default";
   const llmPart = convDetails.llm ? `LLM: ${convDetails.llm}` : "LLM: server default";
   const ttsPart = `TTS: ${ttsProfileName || "server default"}`;
   info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
@@ -199,10 +197,9 @@ export function updateConvEnginesInfo() {
 // LLM has no chat control, so it already follows the profile/server unconditionally.
 export function applyConvProfileLock() {
   const profileActive = !!(el("profile-select")?.value || "");
-  const sttSel = el("conv-stt-engine");
   const ttsSel = el("conv-tts-profile");
   const langInput = el("conv-language");
-  [sttSel, ttsSel, langInput].forEach((sel) => {
+  [ttsSel, langInput].forEach((sel) => {
     if (!sel) return;
     sel.disabled = profileActive;
     sel.title = profileActive
@@ -218,9 +215,6 @@ export function applyConvProfileLock() {
 // to "follow the profile" (empty selection) and forget the sticky localStorage
 // value that caused it to persist across profile switches.
 export function resetConvManualOverrides() {
-  const sttSel = el("conv-stt-engine");
-  if (sttSel) sttSel.value = "";
-  savePref("conv-stt-engine", "");
   const ttsSel = el("conv-tts-profile");
   if (ttsSel) ttsSel.value = "";
   savePref("conv-tts-profile", "");
@@ -238,34 +232,9 @@ export async function loadConversationEngines() {
     stt.data.forEach((e) => (convDetails.stt[e.engine] = e.detail));
     convDetails.llm = models?.data?.llm?.active || "";
     convDetails.sttAvailable = stt.data.some((e) => e.available);
-    const fill = (id, items, label) => {
-      const sel = el(id);
-      if (!sel) return;
-      sel.innerHTML = "";
-      items.forEach((e) => {
-        const opt = document.createElement("option");
-        opt.value = e.engine;
-        opt.textContent = label(e);
-        sel.appendChild(opt);
-      });
-    };
-    fill("conv-stt-engine", stt.data.filter((e) => e.available), (e) => `${e.engine}`);
-    // Default to "follow profile / server default" rather than guessing an
-    // engine — an explicit choice here always overrides the selected profile's
-    // own STT config server-side, so it must stay empty unless the user opts in.
-    const sttSel = el("conv-stt-engine");
-    if (sttSel) {
-      const sentinel = document.createElement("option");
-      sentinel.value = "";
-      sentinel.textContent = "(profile / server default)";
-      sttSel.insertBefore(sentinel, sttSel.firstChild);
-      sttSel.value = "";
-    }
-    restoreAndBind("conv-stt-engine");
     restoreAndBind("conv-language");
     restoreAndBind("conv-opus");
     restoreAndBind("conv-tts-profile");
-    el("conv-stt-engine").addEventListener("change", updateConvEnginesInfo);
     el("conv-tts-profile")?.addEventListener("change", updateConvEnginesInfo);
     applyConvProfileLock();
     updateConvEnginesInfo();
@@ -292,23 +261,16 @@ export async function startConversation() {
     setConvUI("idle");
     return;
   }
-  // Empty selection means "follow the selected profile / server default" —
-  // only a concrete choice here should override the profile's own STT config.
-  const sttEngine = el("conv-stt-engine").value;
   const activeProfile = el("profile-select")?.value;
 
   // Warm up the STT engine so the first turn doesn't stall loading the model.
   // The /warm endpoint is a fast no-op for engines with no warm() method.
   setConvStatus("⏳ starting STT engine…", "status-idle");
   try {
-    const warmParams = sttEngine
-      ? `engine=${encodeURIComponent(sttEngine)}`
-      : activeProfile
-        ? `profile=${encodeURIComponent(activeProfile)}`
-        : "";
+    const warmParams = activeProfile ? `profile=${encodeURIComponent(activeProfile)}` : "";
     const warmRes = await fetch(`/v1/stt/warm?${warmParams}`, { method: "POST" });
     if (!warmRes.ok) {
-      setConvStatus(`STT engine '${sttEngine || "(profile default)"}' not ready`, "status-error");
+      setConvStatus("STT engine (server default) not ready", "status-error");
       setConvUI("idle");
       return;
     }
@@ -319,7 +281,6 @@ export async function startConversation() {
   }
 
   let params = `sample_rate=${STREAM_SAMPLE_RATE}`;
-  if (sttEngine) params += `&stt_engine=${encodeURIComponent(sttEngine)}`;
   if (activeProfile) params += `&profile=${encodeURIComponent(activeProfile)}`;
   const ttsProfile = el("conv-tts-profile")?.value;
   if (ttsProfile) params += `&tts_profile=${encodeURIComponent(ttsProfile)}`;

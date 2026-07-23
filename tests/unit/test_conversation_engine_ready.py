@@ -15,7 +15,7 @@ def client():
 @pytest.fixture(autouse=True)
 def _pin_conversation_engines(monkeypatch):
     """Pin the session's engines to the ones these tests stub. The readiness
-    check consults the CONFIGURED conversation engines (system config), so
+    check consults the CONFIGURED default engines (system config), so
     when the default tts engine changed (vieneu -> omnivoice) these tests
     silently started probing the real omnivoice provider's warm state instead
     of the fakes -- failing on any machine where it isn't warm."""
@@ -24,9 +24,9 @@ def _pin_conversation_engines(monkeypatch):
     def _get_pinned():
         cfg = _real_get()
         return cfg.model_copy(update={
-            "conversation": cfg.conversation.model_copy(update={
-                "conversation_stt_engine": "whisper",
-                "conversation_tts_engine": "vieneu",
+            "engines": cfg.engines.model_copy(update={
+                "default_stt_engine": "whisper",
+                "default_tts_engine": "vieneu",
             })
         })
 

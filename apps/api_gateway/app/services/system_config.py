@@ -4,7 +4,7 @@ import logging
 import os
 import threading
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.settings import settings
 from app.services.db.config_models import SystemRow
@@ -16,32 +16,48 @@ _ROW_ID = 1
 
 
 class EngineDefaults(BaseModel):
-    default_stt_engine: str = "vosk"
-    default_tts_engine: str = "omnivoice"
-    default_tts_engine_voice: str = ""  # optional VieNeu preset voice
-    extra_warmup_stt_engines: str = ""
-    extra_warmup_tts_engines: str = ""
-    warmup_on_startup: bool = True
-    warmup_startup_timeout_s: int = 180
-    # Path to the local `ollama` CLI, used for capability detection and to
-    # spawn `ollama serve` -- not per-LLM config (it's an environment fact
-    # checked before any Model Registry LLM entry may even exist yet).
-    ollama_bin: str = ""
-
-
-class SttLocalConfig(BaseModel):
-    """Engine-agnostic STT settings only. Per-engine settings (default model,
-    model path, whisper decode tuning, device/compute_type) live in the Model
-    Registry model_id="" sentinel rows -- see
-    app/services/model_registry/resolve.py."""
-
-    stt_model_dir: str = "models/stt"
-    vosk_model_base_url: str = "https://alphacephei.com/vosk/models"
-    stt_stream_sample_rate: int = 16000
-    stt_glossary_path: str = ""
-    stt_segment_long_enabled: bool = False
-    stt_segment_min_seconds: float = 30.0
-    stt_segment_concurrency: int = 4
+    default_stt_engine: str = Field(
+        default="vosk",
+        title="Default STT engine",
+        description="Used for standalone transcription (/v1/stt/transcribe, /v1/stt/stream) and for live voice conversations (unless overridden per-profile).",
+        json_schema_extra={"subgroup": "Engine selection"},
+    )
+    default_tts_engine: str = Field(
+        default="omnivoice",
+        title="Default TTS engine",
+        description="Used for live voice conversations and Livehost replies (unless overridden per-profile/TTS profile).",
+        json_schema_extra={"subgroup": "Engine selection"},
+    )
+    default_tts_engine_voice: str = Field(
+        default="",
+        title="Default TTS voice",
+        description="Optional preset voice for the default TTS engine. Leave empty to use the engine's own default voice.",
+        json_schema_extra={"subgroup": "Engine selection"},
+    )
+    # Long-audio segmentation: split a clip into chunks and transcribe them in
+    # parallel. Batch /v1/stt/transcribe only -- the live conversation flow
+    # never uses this (utterances are already short). Previously its own
+    # top-level "STT (Shared Settings)" group; folded in here once the
+    # group's other 4 fields moved to env (see Settings) -- 3 fields didn't
+    # warrant a standalone accordion.
+    stt_segment_long_enabled: bool = Field(
+        default=False,
+        title="Enable long-audio segmentation",
+        description="Split long recordings into chunks and transcribe them in parallel (batch /v1/stt/transcribe endpoint only; live conversation is unaffected).",
+        json_schema_extra={"subgroup": "Long-audio segmentation (batch STT)"},
+    )
+    stt_segment_min_seconds: float = Field(
+        default=30.0,
+        title="Segmentation threshold (s)",
+        description="Minimum clip duration before segmentation kicks in.",
+        json_schema_extra={"subgroup": "Long-audio segmentation (batch STT)", "unit": "s"},
+    )
+    stt_segment_concurrency: int = Field(
+        default=4,
+        title="Segmentation concurrency",
+        description="Max number of audio chunks transcribed in parallel per request.",
+        json_schema_extra={"subgroup": "Long-audio segmentation (batch STT)"},
+    )
 
 
 class OmnivoiceConfig(BaseModel):
@@ -82,60 +98,162 @@ class RemoteSttConfig(BaseModel):
 
 
 class ConversationTuningConfig(BaseModel):
-    conversation_silence_ms: int = 700
-    conversation_min_silence_ms: int = 450
-    conversation_adaptive_full_ms: int = 3000
-    conversation_min_speech_ms: int = 300
-    conversation_rms_threshold: float = 0.015
-    conversation_preroll_ms: int = 600
+    conversation_silence_ms: int = Field(
+        default=700,
+        title="Silence to end turn (ms)",
+        description="How long the user must stay silent before their turn is considered finished.",
+        json_schema_extra={"subgroup": "Timing & VAD", "unit": "ms"},
+    )
+    conversation_min_silence_ms: int = Field(
+        default=450,
+        title="Minimum silence gap (ms)",
+        description="Shortest silence gap the endpointer will treat as a pause (below this, it's ignored as noise).",
+        json_schema_extra={"subgroup": "Timing & VAD", "unit": "ms"},
+    )
+    conversation_adaptive_full_ms: int = Field(
+        default=3000,
+        title="Adaptive full-silence window (ms)",
+        description="Speech duration after which the required trailing silence grows toward its full value (longer utterances get more hang time).",
+        json_schema_extra={"subgroup": "Timing & VAD", "unit": "ms"},
+    )
+    conversation_min_speech_ms: int = Field(
+        default=300,
+        title="Minimum speech duration (ms)",
+        description="Shortest detected speech burst treated as an actual utterance (below this is ignored as noise).",
+        json_schema_extra={"subgroup": "Timing & VAD", "unit": "ms"},
+    )
+    conversation_rms_threshold: float = Field(
+        default=0.015,
+        title="Speech volume threshold (RMS)",
+        description="Minimum audio RMS level classified as speech vs. background noise. Tune per microphone/environment.",
+        json_schema_extra={"subgroup": "Timing & VAD"},
+    )
+    conversation_preroll_ms: int = Field(
+        default=600,
+        title="Pre-roll buffer (ms)",
+        description="Audio kept before speech onset is detected, so the very start of an utterance isn't clipped.",
+        json_schema_extra={"subgroup": "Timing & VAD", "unit": "ms"},
+    )
     # Ignore a barge-in for this long after the assistant STARTS speaking. The
     # first frames the mic hears when the assistant begins are usually the
     # assistant's own audio echoed back (no/imperfect echo cancellation), which
     # would otherwise abort the turn instantly. 0 disables the grace (barge-in
     # from the first frame). Clients that half-duplex their mic never hit this.
-    conversation_barge_in_grace_ms: int = 500
-    conversation_max_utterance_ms: int = 30000
-    conversation_goodbye_text: str = "Hẹn gặp lại nha!"
-    conversation_stt_engine: str = "whisper"
-    conversation_fast_stt_engine: str = ""
-    conversation_fast_stt_max_ms: int = 1500
-    conversation_streaming_stt: bool = False
-    conversation_streaming_chunk_ms: int = 1000
-    conversation_tts_engine: str = "omnivoice"
-    conversation_tts_lookahead: int = 3
-    conversation_opus_pace: bool = False
-    conversation_opus_prebuffer_frames: int = 5
-    conversation_language: str = "vi"
+    conversation_barge_in_grace_ms: int = Field(
+        default=500,
+        title="Barge-in grace period (ms)",
+        description="Ignore user speech for this long after the assistant starts talking, since the first frames the mic hears are usually the assistant's own audio echoing back. 0 disables the grace.",
+        json_schema_extra={"subgroup": "Timing & VAD", "unit": "ms"},
+    )
+    conversation_max_utterance_ms: int = Field(
+        default=30000,
+        title="Max utterance length (ms)",
+        description="Hard cap on a single user turn's length; forces an end-of-turn even if the user keeps talking.",
+        json_schema_extra={"subgroup": "Timing & VAD", "unit": "ms"},
+    )
+    conversation_fast_stt_engine: str = Field(
+        default="",
+        title="Fast STT engine",
+        description="Optional low-latency engine used only for short utterances (≤ Fast STT max ms). Independent of Default STT engine — no fallback relationship, just an opt-in fast path.",
+        json_schema_extra={"subgroup": "STT"},
+    )
+    conversation_fast_stt_max_ms: int = Field(
+        default=1500,
+        title="Fast STT max utterance (ms)",
+        description="Utterances at or under this length use the Fast STT engine above instead of the resolved default.",
+        json_schema_extra={"subgroup": "STT", "unit": "ms"},
+    )
+    conversation_streaming_stt: bool = Field(
+        default=False,
+        title="Enable streaming STT",
+        description="Transcribe audio incrementally as it arrives instead of waiting for the full utterance.",
+        json_schema_extra={"subgroup": "STT"},
+    )
+    conversation_streaming_chunk_ms: int = Field(
+        default=1000,
+        title="Streaming chunk size (ms)",
+        description="Audio chunk size fed to the STT engine when streaming STT is enabled.",
+        json_schema_extra={"subgroup": "STT", "unit": "ms"},
+    )
+    conversation_tts_lookahead: int = Field(
+        default=3,
+        title="TTS sentence lookahead",
+        description="Number of upcoming sentences synthesized ahead of playback, to hide TTS latency.",
+        json_schema_extra={"subgroup": "TTS & Audio"},
+    )
+    conversation_opus_pace: bool = Field(
+        default=False,
+        title="Pace Opus playback",
+        description="Rate-limit outgoing Opus frames to real playback speed instead of sending as fast as generated (smoother client-side buffering).",
+        json_schema_extra={"subgroup": "TTS & Audio"},
+    )
+    conversation_opus_prebuffer_frames: int = Field(
+        default=5,
+        title="Opus prebuffer frames",
+        description="Number of Opus frames buffered client-side before playback starts.",
+        json_schema_extra={"subgroup": "TTS & Audio"},
+    )
+    conversation_goodbye_text: str = Field(
+        default="Hẹn gặp lại nha!",
+        title="Goodbye phrase",
+        description="Spoken when a conversation ends gracefully (e.g. user says goodbye).",
+        json_schema_extra={"subgroup": "Language & Prompt"},
+    )
+    conversation_language: str = Field(
+        default="vi",
+        title="Conversation language",
+        description="Default language for STT/TTS when a profile doesn't specify one. Empty means auto-detect where supported.",
+        json_schema_extra={"subgroup": "Language & Prompt"},
+    )
     # Shared HTTP timeout for every OpenAI-compatible LLM call (chat responder,
     # memory extraction/compaction, embeddings) -- not tied to one Model
     # Registry entry since some of these calls target a per-profile LLM, not
     # "the" conversation LLM.
-    llm_timeout_seconds: float = 60.0
-    conversation_system_prompt: str = (
-        "You are a helpful, concise voice assistant. Reply in the user's language, "
-        "in 2-4 short sentences suitable for being spoken aloud. "
-        "Your reply is read aloud by text-to-speech, so write plain speakable prose only: "
-        "do NOT use emojis, emoticons, kaomoji, or decorative/pictographic symbols, "
-        "and avoid markdown, bullet points, or code blocks. "
-        "Write in complete, flowing sentences ending with a normal period. "
-        "Do NOT use ellipses (…) or trailing dots for dramatic pauses, and do NOT put "
-        "line breaks inside a thought or split dialogue across multiple lines."
+    llm_timeout_seconds: float = Field(
+        default=60.0,
+        title="LLM request timeout (s)",
+        description="Shared HTTP timeout for every LLM call (chat responses, memory extraction/compaction, embeddings).",
+        json_schema_extra={"subgroup": "Language & Prompt", "unit": "s"},
+    )
+    conversation_system_prompt: str = Field(
+        default=(
+            "You are a helpful, concise voice assistant. Reply in the user's language, "
+            "in 2-4 short sentences suitable for being spoken aloud. "
+            "Your reply is read aloud by text-to-speech, so write plain speakable prose only: "
+            "do NOT use emojis, emoticons, kaomoji, or decorative/pictographic symbols, "
+            "and avoid markdown, bullet points, or code blocks. "
+            "Write in complete, flowing sentences ending with a normal period. "
+            "Do NOT use ellipses (…) or trailing dots for dramatic pauses, and do NOT put "
+            "line breaks inside a thought or split dialogue across multiple lines."
+        ),
+        title="System prompt",
+        description="Base instructions given to the LLM for every conversation turn (prepended to any profile-specific prompt).",
+        json_schema_extra={"subgroup": "Language & Prompt", "multiline": True},
     )
 
 
 class PreprocessingConfig(BaseModel):
-    stt_vad_enabled: bool = False
-    stt_vad_backend: str = "energy"
-    stt_noise_reduce_enabled: bool = False
-    stt_noise_reduce_amount: float = 0.85
-    pyannote_vad_model: str = "pyannote/segmentation-3.0"
-    pyannote_auth_token: str = ""
+    stt_vad_enabled: bool = Field(
+        default=False, title="Enable VAD",
+        description="Gate non-speech regions out of audio before transcription.",
+    )
+    stt_vad_backend: str = Field(
+        default="energy", title="VAD backend",
+        description="Which voice-activity-detection algorithm to use: energy (always available), silero, or pyannote (both need extra dependencies/model download).",
+    )
+    stt_noise_reduce_enabled: bool = Field(
+        default=False, title="Enable noise reduction",
+        description="Apply noise reduction to audio before transcription.",
+    )
+    stt_noise_reduce_amount: float = Field(
+        default=0.85, title="Noise reduction amount",
+        description="Strength of noise reduction, from 0 (none) to 1 (maximum).",
+    )
 
 
 class SystemConfig(BaseModel):
     base_context: str = ""
     engines: EngineDefaults = EngineDefaults()
-    stt_local: SttLocalConfig = SttLocalConfig()
     conversation: ConversationTuningConfig = ConversationTuningConfig()
     preprocessing: PreprocessingConfig = PreprocessingConfig()
 
@@ -249,20 +367,10 @@ system_config_store = SystemConfigStore(settings_attr="system_config_path")
 
 
 def warmup_stt_engines() -> list[str]:
-    config = system_config_store.get()
-    extra = [e.strip() for e in config.engines.extra_warmup_stt_engines.split(",") if e.strip()]
-    seen: list[str] = []
-    for engine in [config.conversation.conversation_stt_engine, *extra]:
-        if engine and engine not in seen:
-            seen.append(engine)
-    return seen
+    engine = system_config_store.get().engines.default_stt_engine
+    return [engine] if engine else []
 
 
 def warmup_tts_engines() -> list[str]:
-    config = system_config_store.get()
-    extra = [e.strip() for e in config.engines.extra_warmup_tts_engines.split(",") if e.strip()]
-    seen: list[str] = []
-    for engine in [config.conversation.conversation_tts_engine, *extra]:
-        if engine and engine not in seen:
-            seen.append(engine)
-    return seen
+    engine = system_config_store.get().engines.default_tts_engine
+    return [engine] if engine else []

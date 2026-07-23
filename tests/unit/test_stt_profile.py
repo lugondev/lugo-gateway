@@ -14,9 +14,9 @@ def _server_default(monkeypatch, tmp_path):
     fresh.set(
         fresh.get().model_copy(
             update={
-                "engines": fresh.get().engines.model_copy(update={"default_stt_engine": "vosk"}),
+                "engines": fresh.get().engines.model_copy(update={"default_stt_engine": "whisper"}),
                 "conversation": fresh.get().conversation.model_copy(
-                    update={"conversation_stt_engine": "whisper", "conversation_language": "vi"}
+                    update={"conversation_language": "vi"}
                 ),
             }
         )
@@ -38,26 +38,25 @@ def test_resolve_stt_profile_engine_only_keeps_server_language(_server_default):
     assert resolve_stt(p) == ("qwen3_asr", "vi", "")
 
 
-def test_resolve_stt_query_param_wins_over_profile(_server_default):
+def test_resolve_stt_query_language_wins_over_profile(_server_default):
     p = Profile(name="p", stt=SttConfig(engine="qwen3_asr", language="vi"))
-    assert resolve_stt(p, q_engine="vosk", q_language="fr") == ("vosk", "fr", "")
+    assert resolve_stt(p, q_language="fr") == ("qwen3_asr", "fr", "")
 
 
-def test_resolve_stt_engines_default_when_conversation_engine_empty(monkeypatch, tmp_path):
+def test_resolve_stt_engines_default_when_no_profile(monkeypatch, tmp_path):
     fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
     fresh.set(
         fresh.get().model_copy(
             update={
                 "engines": fresh.get().engines.model_copy(update={"default_stt_engine": "vosk"}),
                 "conversation": fresh.get().conversation.model_copy(
-                    update={"conversation_stt_engine": "", "conversation_language": ""}
+                    update={"conversation_language": ""}
                 ),
             }
         )
     )
     monkeypatch.setattr("app.services.system_config.system_config_store", fresh)
-    # No profile, no conversation engine -> engines.default_stt_engine; empty
-    # conversation_language -> None (auto-detect).
+    # No profile -> engines.default_stt_engine; empty conversation_language -> None (auto-detect).
     assert resolve_stt(None) == ("vosk", None, "")
 
 

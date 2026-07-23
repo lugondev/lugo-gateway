@@ -43,8 +43,6 @@ def _local_hermetic(monkeypatch, tmp_path):
     # Named distinctly from conftest.py's `_hermetic` so both autouse fixtures
     # run (a same-named fixture here would shadow, not compose with, the
     # global one).
-    # conversation_llm_base_url now lives on system_config_store (Task 3), not
-    # Settings; the module-level conftest._hermetic fixture already zeroes it.
     stt_service.providers["stub-conv-ttsp"] = _StubSTT()
     stub_tts = _RecordingTTS()
     tts_service.providers["stub-conv-ttsp-tts"] = stub_tts
@@ -53,6 +51,21 @@ def _local_hermetic(monkeypatch, tmp_path):
     fresh_tts_profiles = TtsProfileStore(str(tmp_path / "tts_profiles.json"))
     monkeypatch.setattr("app.api.routes.conversation.profile_store", fresh_profiles)
     monkeypatch.setattr("app.api.routes.conversation.tts_profile_store", fresh_tts_profiles)
+
+    from app.services import system_config as sc_mod
+
+    fresh_config = sc_mod.SystemConfigStore(str(tmp_path / "system_config.json"))
+    fresh_config.set(
+        fresh_config.get().model_copy(
+            update={
+                "engines": fresh_config.get().engines.model_copy(
+                    update={"default_stt_engine": "stub-conv-ttsp", "default_tts_engine": "stub-conv-ttsp-tts"}
+                ),
+            }
+        )
+    )
+    monkeypatch.setattr("app.api.routes.conversation.system_config_store", fresh_config)
+    monkeypatch.setattr(sc_mod, "system_config_store", fresh_config)
 
     yield stub_tts, fresh_profiles, fresh_tts_profiles
 
@@ -93,7 +106,7 @@ def test_tts_profile_linked_from_llm_profile_resolves_clone_fields(client, _loca
     ))
     profiles.upsert(Profile(name="host", tts=TtsConfig(profile_name="cloned-host")))
 
-    url = "/v1/conversation/stream?stt_engine=stub-conv-ttsp&profile=host&sample_rate=16000"
+    url = "/v1/conversation/stream?profile=host&sample_rate=16000"
     with client.websocket_connect(url) as ws:
         assert ws.receive_json()["event"] == "session_started"
         _run_one_turn(ws)
@@ -117,7 +130,7 @@ def test_query_param_tts_profile_overrides_llm_profile(client, _local_hermetic):
     profiles.upsert(Profile(name="host", tts=TtsConfig(profile_name="from-llm-profile")))
 
     url = (
-        "/v1/conversation/stream?stt_engine=stub-conv-ttsp&profile=host"
+        "/v1/conversation/stream?profile=host"
         "&tts_profile=pinned&sample_rate=16000"
     )
     with client.websocket_connect(url) as ws:
@@ -153,12 +166,9 @@ def test_profile_only_connection_resolves_stt_from_profile(client, _local_hermet
     assert stub_tts.calls, "TTS provider was never invoked"
 
 
-def test_no_tts_profile_falls_back_to_legacy_query_params(client, _local_hermetic):
+def test_no_tts_profile_falls_back_to_default_tts_engine(client, _local_hermetic):
     stub_tts, _profiles, _tts_profiles = _local_hermetic
-    url = (
-        "/v1/conversation/stream?stt_engine=stub-conv-ttsp"
-        "&tts_engine=stub-conv-ttsp-tts&voice=manual-voice&sample_rate=16000"
-    )
+    url = "/v1/conversation/stream?voice=manual-voice&sample_rate=16000"
     with client.websocket_connect(url) as ws:
         assert ws.receive_json()["event"] == "session_started"
         _run_one_turn(ws)

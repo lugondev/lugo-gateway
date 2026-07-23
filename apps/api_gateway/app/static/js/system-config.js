@@ -36,16 +36,9 @@ if (el("sys-base-context-save")) {
 
 const GROUPS = [
   { key: "engines", label: "Engine Defaults", open: true },
-  // Per-engine model/tuning/device settings live in Model Registry entries;
-  // this group only holds engine-agnostic STT settings.
-  { key: "stt_local", label: "STT (Shared Settings)", open: false },
   { key: "conversation", label: "Conversation Tuning", open: false },
   { key: "preprocessing", label: "Preprocessing (VAD/Noise)", open: false },
 ];
-
-const SECRET_FIELDS = new Set([
-  "preprocessing.pyannote_auth_token",
-]);
 
 // Engine-name fields must be picked from the live engine lists, not typed
 // free-text (a typo'd engine only fails at request time). kind selects which
@@ -53,9 +46,7 @@ const SECRET_FIELDS = new Set([
 const ENGINE_SELECT_FIELDS = {
   "engines.default_stt_engine": { kind: "stt" },
   "engines.default_tts_engine": { kind: "tts" },
-  "conversation.conversation_stt_engine": { kind: "stt" },
   "conversation.conversation_fast_stt_engine": { kind: "stt", optional: true },
-  "conversation.conversation_tts_engine": { kind: "tts" },
 };
 
 // Voice list depends on the engine chosen in the sibling select, so it is
@@ -128,32 +119,83 @@ async function populateVoiceOptions() {
   voiceSel.value = current;
 }
 
-function renderGroupFields(groupKey, groupValue, engineLists) {
-  return Object.entries(groupValue)
-    .map(([field, value]) => {
-      const id = `sys-${groupKey}-${field}`;
-      const key = `${groupKey}.${field}`;
-      const spec = ENGINE_SELECT_FIELDS[key];
-      if (spec && engineLists[spec.kind] && engineLists[spec.kind].length) {
-        return `<label class="field">${field}
-        ${renderEngineSelect(id, String(value), engineLists[spec.kind], spec.optional)}
-      </label>`;
-      }
-      if (key === VOICE_FIELD) {
-        return `<label class="field">${field}
-        <select id="${id}"><option value="${value}" selected>${value || "(auto)"}</option></select>
-      </label>`;
-      }
-      const isSecret = SECRET_FIELDS.has(key);
-      const type = isSecret ? "password" : fieldInputType(value);
-      const checked = type === "checkbox" && value ? "checked" : "";
-      const val = type === "checkbox" ? "" : `value="${isSecret ? "" : String(value)}"`;
-      const placeholder = isSecret && value ? `placeholder="${value ? "***" : ""}"` : "";
-      return `<label class="field">${field}
-        <input type="${type}" id="${id}" ${val} ${checked} ${placeholder} />
-      </label>`;
-    })
-    .join("\n");
+function fieldLabel(meta, field, unit) {
+  const label = meta?.label || field;
+  return unit ? `${label} (${unit})` : label;
+}
+
+// renderField() interpolates user-editable config values into innerHTML'd
+// markup (textarea body, input value attribute) -- escape them so a value
+// containing markup-relevant characters (e.g. a system prompt with
+// "</textarea><script>...") can't break out of the element or inject script.
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function renderField(groupKey, field, value, meta, engineLists) {
+  const id = `sys-${groupKey}-${field}`;
+  const key = `${groupKey}.${field}`;
+  const spec = ENGINE_SELECT_FIELDS[key];
+  const desc = meta?.description ? `<p class="field-desc">${meta.description}</p>` : "";
+  const isFull = meta?.multiline;
+  const wrapClass = isFull ? "field field-full" : "field";
+
+  if (spec && engineLists[spec.kind] && engineLists[spec.kind].length) {
+    return `<label class="${wrapClass}">${fieldLabel(meta, field)}${desc}
+      ${renderEngineSelect(id, String(value), engineLists[spec.kind], spec.optional)}
+    </label>`;
+  }
+  if (key === VOICE_FIELD) {
+    return `<label class="${wrapClass}">${fieldLabel(meta, field)}${desc}
+      <select id="${id}"><option value="${value}" selected>${value || "(auto)"}</option></select>
+    </label>`;
+  }
+  if (meta?.multiline) {
+    return `<label class="${wrapClass}">${fieldLabel(meta, field)}${desc}
+      <textarea id="${id}" rows="4">${escapeHtml(value)}</textarea>
+    </label>`;
+  }
+  const type = fieldInputType(value);
+  const checked = type === "checkbox" && value ? "checked" : "";
+  const val = type === "checkbox" ? "" : `value="${escapeHtml(value)}"`;
+  return `<label class="${wrapClass}">${fieldLabel(meta, field, meta?.unit)}${desc}
+    <input type="${type}" id="${id}" ${val} ${checked} />
+  </label>`;
+}
+
+// extraBySubgroup lets a caller splice extra, non-schema-driven markup (e.g.
+// the Default LLM select) into a named subgroup's fields-grid, alongside the
+// schema fields that already carry that subgroup label -- so widgets that
+// logically belong together (e.g. "Engine selection") render as a single
+// heading/grid instead of two separately-headed blocks.
+function renderGroupFields(groupKey, groupValue, groupMeta, engineLists, extraBySubgroup = {}) {
+  const entries = Object.entries(groupValue);
+  const subgroups = new Map(); // subgroup label (or null) -> field entries, insertion order preserved
+  for (const [field, value] of entries) {
+    const meta = groupMeta?.[field];
+    const sub = meta?.subgroup || null;
+    if (!subgroups.has(sub)) subgroups.set(sub, []);
+    subgroups.get(sub).push([field, value, meta]);
+  }
+  // Subgroups referenced only by extraBySubgroup (no schema field carries that
+  // label) still need a block created for them.
+  for (const sub of Object.keys(extraBySubgroup)) {
+    if (!subgroups.has(sub)) subgroups.set(sub, []);
+  }
+  const blocks = [];
+  for (const [sub, fields] of subgroups) {
+    const heading = sub ? `<h3 class="sub">${sub}</h3>` : "";
+    const rendered = fields
+      .map(([field, value, meta]) => renderField(groupKey, field, value, meta, engineLists))
+      .join("\n");
+    const extra = (sub && extraBySubgroup[sub]) || "";
+    blocks.push(`<div class="field-subgroup">${heading}<div class="fields-grid">${rendered}${extra}</div></div>`);
+  }
+  return blocks.join("\n");
 }
 
 async function fetchEngineList(url) {
@@ -168,19 +210,32 @@ async function fetchEngineList(url) {
 export async function loadSystemConfigGroups() {
   const root = el("sys-config-groups");
   if (!root) return;
-  const [body, stt, tts] = await Promise.all([
+  const [body, meta, stt, tts] = await Promise.all([
     fetch("/v1/system/config").then((r) => r.json()),
+    fetch("/v1/system/config/meta").then((r) => r.json()),
     fetchEngineList("/v1/stt/engines"),
     fetchEngineList("/v1/tts/engines"),
   ]);
   const engineLists = { stt: stt || [], tts: tts || [] };
+  const defaultLlmField = `<label class="field">Default LLM
+      <select id="${DEFAULT_LLM_FIELD_ID}" disabled><option>loading…</option></select>
+    </label>`;
   root.innerHTML = GROUPS.map(
-    (g) => `<details ${g.open ? "open" : ""}>
+    (g) => `<details class="settings-group" ${g.open ? "open" : ""}>
       <summary>${g.label}</summary>
-      <div class="fields">${renderGroupFields(g.key, body.data[g.key], engineLists)}
-      ${g.key === "engines" ? `<label class="field">DEFAULT_LLM
-        <select id="${DEFAULT_LLM_FIELD_ID}" disabled><option>loading…</option></select>
-      </label>` : ""}</div>
+      <div class="settings-group-body">
+        ${renderGroupFields(
+          g.key,
+          body.data[g.key],
+          meta.data[g.key],
+          engineLists,
+          g.key === "engines" ? { "Engine selection": defaultLlmField } : {}
+        )}
+        <div class="actions end">
+          <button data-save-group="${g.key}">Save</button>
+        </div>
+        <p class="meta" data-status-group="${g.key}"></p>
+      </div>
     </details>`
   ).join("\n");
   populateVoiceOptions();
@@ -188,6 +243,9 @@ export async function loadSystemConfigGroups() {
   const engineSel = el(TTS_ENGINE_SELECT_ID);
   // innerHTML above recreated the element, so a fresh listener each load.
   if (engineSel) engineSel.addEventListener("change", populateVoiceOptions);
+  root.querySelectorAll("[data-save-group]").forEach((btn) => {
+    btn.addEventListener("click", () => saveSystemConfigGroup(btn.dataset.saveGroup));
+  });
 }
 
 // Selecting a different row PATCHes it is_default=true (and enabled=true)
@@ -234,39 +292,36 @@ async function populateDefaultLlmField() {
   };
 }
 
-export async function saveSystemConfigGroups() {
-  const status = el("sys-config-groups-status");
+export async function saveSystemConfigGroup(groupKey) {
+  const status = document.querySelector(`[data-status-group="${groupKey}"]`);
   try {
     const current = await (await fetch("/v1/system/config")).json();
-    const payload = current.data;
-    for (const g of GROUPS) {
-      for (const field of Object.keys(payload[g.key])) {
-        const input = el(`sys-${g.key}-${field}`);
-        if (!input) continue;
-        payload[g.key][field] =
-          input.type === "checkbox"
-            ? input.checked
-            : input.type === "number"
-              ? Number(input.value)
-              : input.value;
-      }
+    const groupPayload = current.data[groupKey];
+    for (const field of Object.keys(groupPayload)) {
+      const input = el(`sys-${groupKey}-${field}`);
+      if (!input) continue;
+      groupPayload[field] =
+        input.type === "checkbox"
+          ? input.checked
+          : input.type === "number"
+            ? Number(input.value)
+            : input.value;
     }
     const resp = await fetch("/v1/system/config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ [groupKey]: groupPayload }),
     });
     const body = await resp.json();
     if (!resp.ok) { print(status, body.detail || JSON.stringify(body), true); return; }
     status.classList.remove("error");
-    status.textContent = "Saved ✓ (VAD changes apply automatically, no restart needed)";
+    status.textContent = "Saved ✓ (applies immediately, no restart needed)";
     await loadSystemConfigGroups();
   } catch (error) {
     print(status, String(error), true);
   }
 }
-if (el("sys-config-groups-save")) {
-  el("sys-config-groups-save").addEventListener("click", saveSystemConfigGroups);
+
+if (el("sys-config-groups")) {
   loadSystemConfigGroups();
 }
-

@@ -34,7 +34,8 @@ def _hermetic(monkeypatch):
     call a real LLM.
     """
     # Don't load real STT/TTS models when TestClient(app) runs the app lifespan.
-    # warmup_on_startup lives on system_config_store (Task 2), not Settings.
+    # warmup_on_startup lives on Settings (env), not system_config_store (Task 2
+    # moved it off the admin-editable SystemConfig -- see main.py's lifespan).
     # omnivoice_use_server and the conversation LLM's base_url now live in
     # Model Registry entries (`kind="tts"`/`kind="llm"`), not SystemConfig
     # (Task 7 removed the `omnivoice` group entirely) -- no override needed
@@ -59,6 +60,7 @@ def _hermetic(monkeypatch):
     monkeypatch.setattr(settings, "admin_password", "")
     monkeypatch.setattr(settings, "admin_bootstrap_password", "")
     monkeypatch.setattr(settings, "device_auth_token", "")
+    monkeypatch.setattr(settings, "warmup_on_startup", False)
 
     # Every WS session spawns an untracked `asyncio.create_task(_warm_and_notify())`
     # (ConversationSession.__init__, livehost's connect handler) that calls
@@ -80,18 +82,6 @@ def _hermetic(monkeypatch):
 
     monkeypatch.setattr("app.services.conversation.session.warm_providers", _no_op_warm)
     monkeypatch.setattr("app.api.routes.livehost.warm_providers", _no_op_warm)
-
-    from app.services.system_config import system_config_store
-
-    _real_get = system_config_store.get
-
-    def _get_with_warmup_off():
-        cfg = _real_get()
-        return cfg.model_copy(update={
-            "engines": cfg.engines.model_copy(update={"warmup_on_startup": False}),
-        })
-
-    monkeypatch.setattr(system_config_store, "get", _get_with_warmup_off)
 
     # warmup._ready_ids tracks readiness by id(provider), which is safe in
     # production (providers are long-lived process-wide singletons) but not

@@ -19,19 +19,19 @@ import subprocess
 import httpx
 
 from app.core.errors import AppError
+from app.core.settings import settings
 from app.services.conversation.responder import (
     _active_llm_entry,
     get_active_llm_model,
     set_active_llm_config,
 )
-from app.services.system_config import system_config_store
 
 logger = logging.getLogger(__name__)
 
 
 def _ollama_bin() -> str | None:
     candidates = [
-        system_config_store.get().engines.ollama_bin,
+        settings.ollama_bin,
         shutil.which("ollama"),
         "/opt/homebrew/opt/ollama/bin/ollama",
     ]

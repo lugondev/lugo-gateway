@@ -13,7 +13,7 @@ import sys
 from dataclasses import asdict, dataclass
 
 from app.core.deps import module_available
-from app.services.system_config import system_config_store
+from app.core.settings import settings
 
 # Optional Python modules probed for the recommender's `requires` flags.
 _PROBE_MODULES = [
@@ -119,7 +119,9 @@ def _libopus() -> bool:
 
 def _ollama() -> bool:
     try:
-        ollama_bin = system_config_store.get().engines.ollama_bin
+        from app.core.settings import settings
+
+        ollama_bin = settings.ollama_bin
         if ollama_bin and os.path.exists(ollama_bin):
             return True
         return shutil.which("ollama") is not None or os.path.exists(
@@ -169,7 +171,7 @@ def detect_capabilities() -> Capabilities:
         apple_silicon=apple_silicon,
         cpu_count=os.cpu_count(),
         ram_total_gb=_ram_total_gb(),
-        disk_free_gb=_disk_free_gb(system_config_store.get().stt_local.stt_model_dir),
+        disk_free_gb=_disk_free_gb(settings.stt_model_dir),
         mlx=mlx,
         cuda=_cuda(),
         libopus=_libopus(),

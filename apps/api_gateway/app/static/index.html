@@ -273,10 +273,6 @@
               <div id="mode-voice-voice" class="mode-pane hidden">
                 <div class="row">
                   <label>
-                    STT engine
-                    <select id="conv-stt-engine"></select>
-                  </label>
-                  <label>
                     TTS Profile
                     <select id="conv-tts-profile">
                       <option value="">(server default)</option>
@@ -380,10 +376,6 @@
                   <select id="lh-profile">
                     <option value="">(none — server defaults)</option>
                   </select>
-                </label>
-                <label>
-                  STT engine
-                  <select id="lh-stt-engine"></select>
                 </label>
                 <label>
                   TTS Profile
@@ -957,12 +949,8 @@
             <div class="subtab-pane" id="subtab-system-settings">
               <section class="card">
                 <h2>System settings</h2>
-                <p class="hint">Engine choices, model paths, and conversation tuning. Changes take effect immediately — no restart needed.</p>
+                <p class="hint">Engine choices and conversation tuning. Changes take effect immediately — no restart needed. Deployment-time settings (model paths, secrets) are configured via environment variables — see docs/api.md.</p>
                 <div id="sys-config-groups"></div>
-                <div class="actions end">
-                  <button id="sys-config-groups-save">Save</button>
-                </div>
-                <p id="sys-config-groups-status" class="meta"></p>
               </section>
             </div>
           </div>

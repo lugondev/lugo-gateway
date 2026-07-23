@@ -42,13 +42,12 @@ logger = logging.getLogger(__name__)
 
 async def _warm_default_engines() -> None:
     """Load the STT/TTS engines conversations actually use, at process boot instead
-    of waiting for the first WebSocket connect. Covers conversation_stt_engine /
-    conversation_tts_engine PLUS any extra_warmup_stt_engines/extra_warmup_tts_engines
-    — a device that always pins a different engine via ?stt_engine=... (e.g. an RPi
-    client configured for qwen3_asr) never touches the settings default, so it must
-    be listed explicitly or this warm-up silently loads the wrong model and the
-    device still pays a full cold-load on its first-ever turn each boot (see
-    app.services.warmup)."""
+    of waiting for the first WebSocket connect. Covers default_stt_engine /
+    default_tts_engine, plus every engine any chatllm/TTS profile can select (see
+    app.services.warmup.engines_for_boot_warmup) -- so a device connecting with
+    any profile never pays a cold model load on its first turn. Engine selection
+    is profile-or-default only (no per-request override), so boot warm-up can see
+    every engine a device might ever request."""
     from app.core.errors import AppError
     from app.services.stt.model_catalog import apply_stt_model
     from app.services.stt.service import stt_service
@@ -153,14 +152,13 @@ async def lifespan(app: FastAPI):
     # instant instead of paying a cold model load (worse with connect-on-wake,
     # where the session starts the moment the user wakes). Capped so a stuck/slow
     # warm can't block startup forever (health checks); on timeout we serve cold.
-    engine_defaults = system_config_store.get().engines
-    if engine_defaults.warmup_on_startup:
+    if settings.warmup_on_startup:
         try:
-            await asyncio.wait_for(_warm_default_engines(), timeout=engine_defaults.warmup_startup_timeout_s)
+            await asyncio.wait_for(_warm_default_engines(), timeout=settings.warmup_startup_timeout_s)
         except TimeoutError:
             logger.warning(
                 "boot warm-up exceeded %ss — serving anyway; the first turn may be cold",
-                engine_defaults.warmup_startup_timeout_s,
+                settings.warmup_startup_timeout_s,
             )
 
     # Hourly artifact janitor: each TTS sentence writes a wav into artifacts/

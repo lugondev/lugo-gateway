@@ -103,10 +103,10 @@ async def livehost_stream(websocket: WebSocket) -> None:
 
     # STT resolves from the profile (else server default), same as TTS/LLM above.
     stt_engine, language, stt_model = resolve_stt(
-        profile, q.get("stt_engine"), q.get("language"), q.get("stt_model")
+        profile, q.get("language"), q.get("stt_model")
     )
     # TTS profile resolution: ?tts_profile= (explicit pin) > the active LLM
-    # profile's linked TTS profile > legacy tts_engine/voice query params.
+    # profile's linked TTS profile > server default.
     tts_profile_name = q.get("tts_profile") or (profile.tts.profile_name if profile else "") or None
     tts_profile = tts_profile_store.get(tts_profile_name) if tts_profile_name else None
     if tts_profile and tts_profile.engine:
@@ -119,17 +119,12 @@ async def livehost_stream(websocket: WebSocket) -> None:
         tts_speed = tts_profile.speed
         tts_language = tts_profile.language
     else:
-        conv_cfg = system_config_store.get().conversation
-        tts_engine = (
-            q.get("tts_engine")
-            or conv_cfg.conversation_tts_engine
-            or system_config_store.get().engines.default_tts_engine
-        )
+        tts_engine = system_config_store.get().engines.default_tts_engine
         tts_model = q.get("tts_model") or ""
         voice = q.get("voice") or None
         ref_audio_path = ref_text = tts_instruct = None
         tts_speed = tts_language = None
-    sample_rate = int(q.get("sample_rate", system_config_store.get().stt_local.stt_stream_sample_rate))
+    sample_rate = int(q.get("sample_rate", settings.stt_stream_sample_rate))
     audio_codec = (q.get("audio_codec") or "pcm16").lower()
     out_modalities = {m.strip() for m in (q.get("output") or "audio,text").lower().split(",") if m.strip()}
     want_audio = "audio" in out_modalities

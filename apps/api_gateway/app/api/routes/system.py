@@ -11,7 +11,13 @@ from app.services.model_registry.engine_map import registry_ref
 from app.services.models import model_manager
 from app.services.stt.service import stt_service
 from app.services.llm_models import llm_manager
-from app.services.system_config import SystemConfig, system_config_store
+from app.services.system_config import (
+    ConversationTuningConfig,
+    EngineDefaults,
+    PreprocessingConfig,
+    SystemConfig,
+    system_config_store,
+)
 from app.services.tts.service import tts_service
 from app.services.tts_models import tts_model_manager
 from app.services.vad import available_backends
@@ -54,7 +60,6 @@ async def system_status() -> dict:
 
     active_vosk_path = get_active_vosk_path()
     active_whisper = whisper_manager.snapshot()["active"]
-    stt_local = system_config_store.get().stt_local
     preprocessing = system_config_store.get().preprocessing
     omnivoice = resolve_omnivoice_config()
     whisper_device_cfg = resolve_stt_local_device("whisper_local")
@@ -77,7 +82,7 @@ async def system_status() -> dict:
             "installed": model_manager.list_installed(),
         },
         "artifacts": _artifacts_stats(),
-        "stream_sample_rate": stt_local.stt_stream_sample_rate,
+        "stream_sample_rate": settings.stt_stream_sample_rate,
         "stt_preprocess": {
             "vad": preprocessing.stt_vad_enabled,
             "vad_backend": preprocessing.stt_vad_backend,
@@ -87,13 +92,6 @@ async def system_status() -> dict:
         },
     }
     return {"success": True, "data": data}
-
-
-def _mask_system_config(config: SystemConfig) -> dict:
-    data = config.model_dump()
-    if data["preprocessing"].get("pyannote_auth_token"):
-        data["preprocessing"]["pyannote_auth_token"] = "***"
-    return data
 
 
 def _deep_merge(base: dict, overrides: dict) -> dict:
@@ -110,24 +108,35 @@ def _deep_merge(base: dict, overrides: dict) -> dict:
     return merged
 
 
-def _merge_system_config(current: SystemConfig, payload: SystemConfig) -> SystemConfig:
-    """Blank or '***' in an incoming secret field means "keep the existing value" --
-    the UI never re-sends a real secret it fetched, only a fresh one the user typed."""
-    update = payload.model_dump()
+def _field_meta(model: type[BaseModel]) -> dict[str, dict]:
+    meta = {}
+    for name, info in model.model_fields.items():
+        extra = info.json_schema_extra if isinstance(info.json_schema_extra, dict) else {}
+        meta[name] = {
+            "label": info.title or name,
+            "description": info.description or "",
+            "subgroup": extra.get("subgroup"),
+            "unit": extra.get("unit"),
+            "multiline": extra.get("multiline", False),
+        }
+    return meta
 
-    def _keep_if_blank_or_masked(new_value: str, old_value: str) -> str:
-        return old_value if (not new_value or new_value == "***") else new_value
 
-    update["preprocessing"]["pyannote_auth_token"] = _keep_if_blank_or_masked(
-        update["preprocessing"]["pyannote_auth_token"],
-        current.preprocessing.pyannote_auth_token,
-    )
-    return SystemConfig.model_validate(update)
+@router.get("/system/config/meta")
+async def get_system_config_meta() -> dict:
+    return {
+        "success": True,
+        "data": {
+            "engines": _field_meta(EngineDefaults),
+            "conversation": _field_meta(ConversationTuningConfig),
+            "preprocessing": _field_meta(PreprocessingConfig),
+        },
+    }
 
 
 @router.get("/system/config")
 async def get_system_config() -> dict:
-    return {"success": True, "data": _mask_system_config(system_config_store.get())}
+    return {"success": True, "data": system_config_store.get().model_dump()}
 
 
 @router.put("/system/config")
@@ -135,9 +144,9 @@ async def set_system_config(request: Request) -> dict:
     current = system_config_store.get()
     # Accept the raw JSON body (rather than a typed SystemConfig) so we can tell
     # "field absent from the PUT body" apart from "field present with its
-    # Pydantic default value" -- a partial body (e.g. the base-context/openrouter
-    # save buttons, which only ever send those 2 fields) must never reset the
-    # other groups back to their hard-coded defaults.
+    # Pydantic default value" -- a partial body (e.g. the base-context save
+    # button, which only ever sends that 1 field) must never reset the other
+    # groups back to their hard-coded defaults.
     try:
         raw = await request.json()
         if not isinstance(raw, dict):
@@ -150,16 +159,8 @@ async def set_system_config(request: Request) -> dict:
         # don't get that for free, so surface the same status/shape ourselves
         # instead of letting a malformed body fall through as a bare 500.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    merged = _merge_system_config(current, payload)
-    new_config = system_config_store.set(merged)
-    if (
-        current.preprocessing.pyannote_vad_model != new_config.preprocessing.pyannote_vad_model
-        or current.preprocessing.pyannote_auth_token != new_config.preprocessing.pyannote_auth_token
-    ):
-        from app.services.vad import clear_pyannote_cache
-
-        clear_pyannote_cache()
-    return {"success": True, "data": _mask_system_config(new_config)}
+    new_config = system_config_store.set(payload)
+    return {"success": True, "data": new_config.model_dump()}
 
 
 @router.get("/models")

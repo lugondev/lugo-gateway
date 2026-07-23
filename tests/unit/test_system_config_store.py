@@ -67,53 +67,17 @@ def test_engine_defaults_have_expected_defaults(tmp_path):
     assert e.default_stt_engine == "vosk"
     assert e.default_tts_engine == "omnivoice"
     assert e.default_tts_engine_voice == ""
-    assert e.extra_warmup_stt_engines == ""
-    assert e.extra_warmup_tts_engines == ""
-    assert e.warmup_on_startup is True
-    assert e.warmup_startup_timeout_s == 180
-    assert e.ollama_bin == ""
+    assert not hasattr(e, "extra_warmup_stt_engines")
+    assert not hasattr(e, "extra_warmup_tts_engines")
+    assert e.stt_segment_long_enabled is False
+    assert e.stt_segment_min_seconds == 30.0
+    assert e.stt_segment_concurrency == 4
 
 
-def test_stt_local_config_has_expected_defaults(tmp_path):
-    s = SystemConfigStore(str(tmp_path / "system_config.json"))
-    c = s.get().stt_local
-    assert c.stt_model_dir == "models/stt"
-    assert c.vosk_model_base_url == "https://alphacephei.com/vosk/models"
-    assert c.stt_stream_sample_rate == 16000
-    assert c.stt_glossary_path == ""
-    assert not hasattr(c, "stt_profile")  # preset layer removed
-    assert c.stt_segment_long_enabled is False
-    assert c.stt_segment_min_seconds == 30.0
-    assert c.stt_segment_concurrency == 4
-
-
-def test_system_config_has_no_stt_local_device_fields():
+def test_system_config_has_no_stt_local_group():
     from app.services.system_config import SystemConfig
 
-    dumped = SystemConfig().model_dump()
-    assert "whisper_local_device" not in dumped["stt_local"]
-    assert "whisper_local_compute_type" not in dumped["stt_local"]
-    assert "qwen3_asr_device" not in dumped["stt_local"]
-
-
-def test_stt_local_has_no_per_engine_model_or_tuning_fields():
-    """Every model is a Model Registry entry now -- no engine gets its own
-    SystemConfig fields for default model / model path / decode tuning (all
-    moved to the model_id="" sentinel rows' config)."""
-    from app.services.system_config import SystemConfig
-
-    dumped = SystemConfig().model_dump()
-    for field in (
-        "vosk_model_path",
-        "whisper_local_model",
-        "whisper_vad_filter",
-        "whisper_beam_size",
-        "whisper_condition_on_previous_text",
-        "whisper_initial_prompt",
-        "whisper_mlx_model_path",
-        "qwen3_asr_model",
-    ):
-        assert field not in dumped["stt_local"], field
+    assert not hasattr(SystemConfig(), "stt_local")
 
 
 def test_system_config_has_no_omnivoice_or_remote_stt_groups():
@@ -135,12 +99,12 @@ def test_conversation_tuning_config_has_expected_defaults(tmp_path):
     assert c.conversation_preroll_ms == 600
     assert c.conversation_max_utterance_ms == 30000
     assert c.conversation_goodbye_text == "Hẹn gặp lại nha!"
-    assert c.conversation_stt_engine == "whisper"
+    assert not hasattr(c, "conversation_stt_engine")
+    assert not hasattr(c, "conversation_tts_engine")
     assert c.conversation_fast_stt_engine == ""
     assert c.conversation_fast_stt_max_ms == 1500
     assert c.conversation_streaming_stt is False
     assert c.conversation_streaming_chunk_ms == 1000
-    assert c.conversation_tts_engine == "omnivoice"
     assert c.conversation_tts_lookahead == 3
     assert c.conversation_opus_pace is False
     assert c.conversation_opus_prebuffer_frames == 5
@@ -156,8 +120,8 @@ def test_preprocessing_config_has_expected_defaults(tmp_path):
     assert c.stt_vad_backend == "energy"
     assert c.stt_noise_reduce_enabled is False
     assert c.stt_noise_reduce_amount == 0.85
-    assert c.pyannote_vad_model == "pyannote/segmentation-3.0"
-    assert c.pyannote_auth_token == ""
+    assert not hasattr(c, "pyannote_vad_model")
+    assert not hasattr(c, "pyannote_auth_token")
 
 
 def test_set_replaces_full_config_and_persists(tmp_path):
@@ -173,17 +137,3 @@ def test_set_replaces_full_config_and_persists(tmp_path):
 
     s2 = SystemConfigStore(p)
     assert s2.get().engines.default_stt_engine == "qwen3_asr"
-
-
-def test_warmup_stt_engines_combines_conversation_default_and_extras(tmp_path, monkeypatch):
-    from app.services import system_config as sc_mod
-
-    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
-    fresh.set(
-        fresh.get().model_copy(
-            update={"engines": fresh.get().engines.model_copy(update={"extra_warmup_stt_engines": "qwen3_asr, whisper_mlx"})}
-        )
-    )
-    monkeypatch.setattr(sc_mod, "system_config_store", fresh)
-    result = sc_mod.warmup_stt_engines()
-    assert result == [fresh.get().conversation.conversation_stt_engine, "qwen3_asr", "whisper_mlx"]

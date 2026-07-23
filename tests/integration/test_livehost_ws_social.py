@@ -9,6 +9,8 @@ from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
 from app.services.livehost.registry import livehost_registry
 from app.services.livehost.schemas import SocialEvent
+from app.services.profiles.models import Profile, SttConfig
+from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
 from app.services.tts.base import TTSProvider
@@ -25,7 +27,11 @@ class _StubSTT(STTProvider):
 class _StubTTS(TTSProvider):
     name = "stub-livehost-social-tts"
 
+    def __init__(self) -> None:
+        self.calls: list = []
+
     async def synthesize(self, payload) -> TTSResult:
+        self.calls.append(payload)
         return TTSResult(
             engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
             duration_seconds=0.05, text=payload.text,
@@ -33,20 +39,51 @@ class _StubTTS(TTSProvider):
 
 
 @pytest.fixture(autouse=True)
-def _register_stub(monkeypatch):
-    # conversation_llm_base_url now lives on system_config_store (Task 3), not
-    # Settings; the module-level conftest._hermetic fixture already zeroes it.
+def _register_stub(monkeypatch, tmp_path):
+    # conversation_llm_base_url now lives on system_config_store; the
+    # module-level conftest._hermetic fixture already zeroes it.
     monkeypatch.setattr(settings, "livehost_individual_threshold", 5)
     stt_service.providers["stub-livehost-social"] = _StubSTT()
-    tts_service.providers["stub-livehost-social-tts"] = _StubTTS()
-    yield
+    stub_tts = _StubTTS()
+    tts_service.providers["stub-livehost-social-tts"] = stub_tts
+
+    # livehost.py resolves stt_engine from the profile (else server default)
+    # and tts_engine from engines.default_tts_engine -- neither reads a
+    # query-param engine override any more (Task 7). Pin both here, dual-
+    # patching app.api.routes.livehost.system_config_store (the module's own
+    # import-time binding) and app.services.system_config.system_config_store
+    # (what resolve_stt() re-imports at call time), same pattern already used
+    # in test_livehost_ws_voice.py/test_livehost_tts_profile.py -- otherwise
+    # this test silently falls through to the real ambient default_tts_engine
+    # (omnivoice) instead of the registered stub.
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    fresh_profiles.upsert(Profile(name="p-social", stt=SttConfig(engine="stub-livehost-social")))
+    monkeypatch.setattr("app.api.routes.livehost.profile_store", fresh_profiles)
+
+    from app.services import system_config as sc_mod
+
+    fresh_config = sc_mod.SystemConfigStore(str(tmp_path / "system_config.json"))
+    fresh_config.set(
+        fresh_config.get().model_copy(
+            update={
+                "engines": fresh_config.get().engines.model_copy(
+                    update={"default_tts_engine": "stub-livehost-social-tts"}
+                ),
+            }
+        )
+    )
+    monkeypatch.setattr("app.api.routes.livehost.system_config_store", fresh_config)
+    monkeypatch.setattr(sc_mod, "system_config_store", fresh_config)
+
+    yield stub_tts
+
     stt_service.providers.pop("stub-livehost-social", None)
     tts_service.providers.pop("stub-livehost-social-tts", None)
 
 
-def test_social_event_triggers_reply_when_streamer_silent():
+def test_social_event_triggers_reply_when_streamer_silent(_register_stub):
     client = TestClient(app)
-    url = "/v1/livehost/stream?stt_engine=stub-livehost-social&tts_engine=stub-livehost-social-tts"
+    url = "/v1/livehost/stream?profile=p-social"
     with client.websocket_connect(url) as ws:
         started = ws.receive_json()
         session_id = started["session_id"]
@@ -67,6 +104,12 @@ def test_social_event_triggers_reply_when_streamer_silent():
         kinds = [e["event"] for e in events]
         assert "social_reply" in kinds
         assert "audio_chunk" in kinds
+
+    # Prove this actually exercised the registered stub, not the real
+    # ambient default_tts_engine (omnivoice) -- the exact regression this
+    # fix addresses.
+    assert _register_stub.calls, "TTS provider was never invoked"
+    assert _register_stub.calls[0].engine == "stub-livehost-social-tts"
 
 
 class _FakeTikTokClient:

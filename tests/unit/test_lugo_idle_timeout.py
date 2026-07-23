@@ -15,19 +15,34 @@ class _StubSTT(STTProvider):
         return STTResult(engine=self.name, text="", is_final=True)
 
 
-def _patch_conversation(monkeypatch, **overrides):
-    """conversation_stt_engine/conversation_tts_engine/conversation_goodbye_text
-    now live on system_config_store's `conversation` group (Task 3), not
-    Settings. Patch the shared singleton's .get() (not .set()) so this never
-    writes through to the shared config_system DB row (see conftest.py's
-    _hermetic for why). Wraps whatever .get() currently resolves to, so
-    per-test overrides compose with the autouse fixture below.
+def _patch_conversation(monkeypatch, *, stt_engine=None, tts_engine=None, **overrides):
+    """default_stt_engine/default_tts_engine live on system_config_store's
+    `engines` group; everything else here (e.g. conversation_goodbye_text)
+    lives on its `conversation` group -- neither is on Settings. Patch the
+    shared singleton's .get() (not .set()) so this never writes through to the
+    shared config_system DB row (see conftest.py's _hermetic for why). Wraps
+    whatever .get() currently resolves to, so per-test overrides compose with
+    the autouse fixture below.
     """
     _real_get = system_config_store.get
 
     def _get_with_overrides():
         cfg = _real_get()
-        return cfg.model_copy(update={"conversation": cfg.conversation.model_copy(update=overrides)})
+        engine_overrides = {}
+        if stt_engine is not None:
+            engine_overrides["default_stt_engine"] = stt_engine
+        if tts_engine is not None:
+            engine_overrides["default_tts_engine"] = tts_engine
+        updated = cfg
+        if engine_overrides:
+            updated = updated.model_copy(
+                update={"engines": updated.engines.model_copy(update=engine_overrides)}
+            )
+        if overrides:
+            updated = updated.model_copy(
+                update={"conversation": updated.conversation.model_copy(update=overrides)}
+            )
+        return updated
 
     monkeypatch.setattr(system_config_store, "get", _get_with_overrides)
 
@@ -39,7 +54,7 @@ def _local_hermetic(monkeypatch, tmp_path):
     # global one -- see conftest.py's _hermetic for what that one handles).
     # Default: no spoken farewell (tests that want it opt in). Keeps the plain
     # idle tests from depending on a TTS provider.
-    _patch_conversation(monkeypatch, conversation_stt_engine="stub-idle-stt", conversation_goodbye_text="")
+    _patch_conversation(monkeypatch, stt_engine="stub-idle-stt", conversation_goodbye_text="")
     stt_service.providers["stub-idle-stt"] = _StubSTT()
     fresh = ProfileStore(str(tmp_path / "profiles.json"))
     fresh.upsert(Profile(name="fast", session=SessionConfig(idle_timeout_s=1)))
@@ -100,7 +115,7 @@ def test_idle_countdown_starts_after_the_bot_finishes(monkeypatch):
             return TTSResult(engine=self.name, sample_rate=24000, audio_url=url,
                              duration_seconds=0.1, text=payload.text)
 
-    _patch_conversation(monkeypatch, conversation_tts_engine="stub-slow-tts")
+    _patch_conversation(monkeypatch, tts_engine="stub-slow-tts")
     tts_service.providers["stub-slow-tts"] = _SlowTTS()
     try:
         with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
@@ -151,7 +166,7 @@ def test_idle_speaks_farewell_before_goodbye(monkeypatch):
             return TTSResult(engine=self.name, sample_rate=24000, audio_url=url,
                              duration_seconds=0.1, text=payload.text)
 
-    _patch_conversation(monkeypatch, conversation_tts_engine="stub-fw-tts", conversation_goodbye_text="Tạm biệt nha")
+    _patch_conversation(monkeypatch, tts_engine="stub-fw-tts", conversation_goodbye_text="Tạm biệt nha")
     tts_service.providers["stub-fw-tts"] = _FarewellTTS()
     try:
         with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:

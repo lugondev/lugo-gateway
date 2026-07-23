@@ -39,7 +39,7 @@ def test_set_config_clears_base_context(client):
 def test_get_config_includes_nested_groups_with_defaults(client):
     data = client.get("/v1/system/config").json()["data"]
     assert data["engines"]["default_stt_engine"] == "vosk"
-    assert data["stt_local"]["stt_model_dir"] == "models/stt"
+    assert data["engines"]["stt_segment_min_seconds"] == 30.0
     assert data["conversation"]["conversation_silence_ms"] == 700
     assert data["preprocessing"]["stt_vad_backend"] == "energy"
 
@@ -50,28 +50,7 @@ def test_put_updates_a_nested_field_and_preserves_others(client):
     resp = client.put("/v1/system/config", json=full)
     data = resp.json()["data"]
     assert data["engines"]["default_stt_engine"] == "qwen3_asr"
-    assert data["stt_local"]["stt_model_dir"] == "models/stt"  # unrelated group untouched
-
-
-@pytest.mark.parametrize(
-    "group,field",
-    [
-        ("preprocessing", "pyannote_auth_token"),
-    ],
-)
-def test_secret_field_is_masked_and_blank_put_preserves_it(client, group, field):
-    full = client.get("/v1/system/config").json()["data"]
-    target = full if group is None else full[group]
-    target[field] = "super-secret-value"
-    masked = client.put("/v1/system/config", json=full).json()["data"]
-    masked_target = masked if group is None else masked[group]
-    assert masked_target[field] == "***"
-
-    # Re-submit the whole form with the mask placeholder still in place (as the UI would).
-    resubmit = client.get("/v1/system/config").json()["data"]
-    still_masked = client.put("/v1/system/config", json=resubmit).json()["data"]
-    still_masked_target = still_masked if group is None else still_masked[group]
-    assert still_masked_target[field] == "***"  # still configured, not wiped
+    assert data["conversation"]["conversation_silence_ms"] == 700  # unrelated group untouched
 
 
 def test_partial_put_does_not_reset_unrelated_group_to_defaults(client):
@@ -102,7 +81,7 @@ def test_malformed_field_type_returns_422_not_500(client):
     not a bare 500 text/plain response."""
     resp = client.put(
         "/v1/system/config",
-        json={"engines": {"warmup_startup_timeout_s": "not-a-number"}},
+        json={"engines": {"default_stt_engine": 123}},
     )
     assert resp.status_code == 422
     assert resp.headers["content-type"].startswith("application/json")
@@ -120,37 +99,6 @@ def test_non_dict_json_body_returns_422_not_500(client):
     assert resp.status_code == 422
     assert resp.headers["content-type"].startswith("application/json")
     assert resp.json()["detail"]
-
-
-def test_changing_pyannote_vad_model_clears_the_pyannote_cache(client):
-    from app.services import vad as mod
-
-    mod._pyannote_cache["pipeline"] = object()
-    full = client.get("/v1/system/config").json()["data"]
-    full["preprocessing"]["pyannote_vad_model"] = "pyannote/segmentation-3.1"
-    client.put("/v1/system/config", json=full)
-    assert mod._pyannote_cache == {}
-
-
-def test_changing_pyannote_auth_token_clears_the_pyannote_cache(client):
-    from app.services import vad as mod
-
-    mod._pyannote_cache["pipeline"] = object()
-    full = client.get("/v1/system/config").json()["data"]
-    full["preprocessing"]["pyannote_auth_token"] = "hf_new_token"
-    client.put("/v1/system/config", json=full)
-    assert mod._pyannote_cache == {}
-
-
-def test_unrelated_field_change_does_not_clear_pyannote_cache(client):
-    from app.services import vad as mod
-
-    sentinel = object()
-    mod._pyannote_cache["pipeline"] = sentinel
-    full = client.get("/v1/system/config").json()["data"]
-    full["base_context"] = "unrelated change"
-    client.put("/v1/system/config", json=full)
-    assert mod._pyannote_cache.get("pipeline") is sentinel
 
 
 ## NOTE: the qwen3_asr_device/remote_stt/omnivoice reinit-trigger tests that used to

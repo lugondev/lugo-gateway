@@ -76,18 +76,17 @@ def _local_hermetic(monkeypatch, tmp_path):
     # Named distinctly from conftest.py's `_hermetic` so both autouse fixtures
     # run (a same-named fixture here would shadow, not compose with, the
     # global one -- see conftest.py's _hermetic for what that one handles).
-    # conversation_stt_engine/conversation_tts_engine now live on
-    # system_config_store's `conversation` group (Task 3), not Settings. Patch
-    # the shared singleton's .get() (not .set()) so this never writes through
-    # to the shared config_system DB row.
+    # default_stt_engine/default_tts_engine live on system_config_store's
+    # `engines` group, not Settings. Patch the shared singleton's .get() (not
+    # .set()) so this never writes through to the shared config_system DB row.
     _real_get = system_config_store.get
 
     def _get_with_stub_engines():
         cfg = _real_get()
         return cfg.model_copy(update={
-            "conversation": cfg.conversation.model_copy(update={
-                "conversation_stt_engine": "stub-lugo-stt",
-                "conversation_tts_engine": "stub-lugo-tts",
+            "engines": cfg.engines.model_copy(update={
+                "default_stt_engine": "stub-lugo-stt",
+                "default_tts_engine": "stub-lugo-tts",
             })
         })
 
