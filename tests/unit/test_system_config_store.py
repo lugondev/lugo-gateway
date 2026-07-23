@@ -69,9 +69,9 @@ def test_engine_defaults_have_expected_defaults(tmp_path):
     assert e.default_tts_engine_voice == ""
     assert e.extra_warmup_stt_engines == ""
     assert e.extra_warmup_tts_engines == ""
-    assert e.warmup_on_startup is True
-    assert e.warmup_startup_timeout_s == 180
-    assert e.ollama_bin == ""
+    assert not hasattr(e, "warmup_on_startup")
+    assert not hasattr(e, "warmup_startup_timeout_s")
+    assert not hasattr(e, "ollama_bin")
 
 
 def test_stt_local_config_has_expected_defaults(tmp_path):

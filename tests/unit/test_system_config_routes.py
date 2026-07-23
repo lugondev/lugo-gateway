@@ -102,7 +102,7 @@ def test_malformed_field_type_returns_422_not_500(client):
     not a bare 500 text/plain response."""
     resp = client.put(
         "/v1/system/config",
-        json={"engines": {"warmup_startup_timeout_s": "not-a-number"}},
+        json={"engines": {"default_stt_engine": 123}},
     )
     assert resp.status_code == 422
     assert resp.headers["content-type"].startswith("application/json")

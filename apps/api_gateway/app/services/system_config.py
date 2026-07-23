@@ -21,12 +21,6 @@ class EngineDefaults(BaseModel):
     default_tts_engine_voice: str = ""  # optional VieNeu preset voice
     extra_warmup_stt_engines: str = ""
     extra_warmup_tts_engines: str = ""
-    warmup_on_startup: bool = True
-    warmup_startup_timeout_s: int = 180
-    # Path to the local `ollama` CLI, used for capability detection and to
-    # spawn `ollama serve` -- not per-LLM config (it's an environment fact
-    # checked before any Model Registry LLM entry may even exist yet).
-    ollama_bin: str = ""
 
 
 class SttLocalConfig(BaseModel):
