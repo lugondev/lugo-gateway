@@ -20,7 +20,13 @@ from collections.abc import Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
 
-from app.core.audio import pcm16_to_wav_bytes, preprocess_pcm16, wav_bytes_to_pcm16, wav_file_to_pcm16
+from app.core.audio import (
+    pcm16_to_wav_bytes,
+    preprocess_pcm16,
+    wav_bytes_to_pcm16,
+    wav_duration_seconds,
+    wav_file_to_pcm16,
+)
 from app.core.errors import AppError
 from app.core.settings import settings
 from app.schemas.tts import TTSRequest
@@ -47,6 +53,7 @@ from app.services.system_config import system_config_store
 from app.services.tts.base import RenderingTTSProvider
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
+from app.services.usage.recorder import record_usage
 from app.services.warmup import is_ready, warm_providers
 
 logger = logging.getLogger(__name__)
@@ -367,6 +374,30 @@ class ConversationSession:
         except Exception as exc:  # noqa: BLE001
             logger.warning("memory retrieval failed: %s", exc)
 
+    async def _record_llm_usage(self) -> None:
+        """Best-effort usage row for the LLM call(s) in the turn just completed.
+
+        Called AFTER the responder's reply_stream has been fully consumed (only
+        then is `.last_usage` -- set as the stream reads its final SSE chunk --
+        populated). Must never raise into the turn: record_usage itself already
+        swallows its own errors, but building the args (profile may be None,
+        last_usage may be None or missing keys) must not raise either.
+        """
+        try:
+            last_usage = getattr(self.responder, "last_usage", None) or {}
+            prompt_tokens = last_usage.get("prompt_tokens")
+            completion_tokens = last_usage.get("completion_tokens")
+            native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
+            engine = (self.profile.llm.engine if self.profile else "") or ""
+            model_id = (self.profile.llm.model if self.profile else "") or ""
+            await record_usage(
+                user_id=self.cfg.identity_user_id or "", profile_id=self.cfg.profile_name or "",
+                kind="llm", engine=engine, model_id=model_id, unit="tokens",
+                native_amount=native_amount, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001 - metering must never break a turn
+            logger.warning("llm usage metering failed: %s", exc)
+
     async def _handle_turn(
         self, audio_pcm: bytes | None = None, text_input: str | None = None, speech_ms: float = 0.0
     ) -> None:
@@ -407,6 +438,16 @@ class ConversationSession:
         # `conversation_tts_lookahead` sentences AHEAD of sending (prefetch_synthesis),
         # so the next sentence's audio is usually ready before the current finishes ->
         # gapless playback. Text-only just emits sentences as the LLM streams them.
+        async def _record_tts_usage(text: str) -> None:
+            try:
+                await record_usage(
+                    user_id=self.cfg.identity_user_id or "", profile_id=cfg.profile_name or "",
+                    kind="tts", engine=cfg.tts_engine, model_id=cfg.tts_model or "",
+                    unit="chars", native_amount=len(text or ""),
+                )
+            except Exception as exc:  # noqa: BLE001 - metering must never break a turn
+                logger.warning("tts usage metering failed: %s", exc)
+
         async def _stream_to_tts(sentence_aiter, responder_name: str) -> list[str]:
             parts: list[str] = []
 
@@ -435,11 +476,13 @@ class ConversationSession:
                     # same real synthesis with no artifact side effect.
                     wav = await self.tts_provider.render_wav(request)
                     logger.info("DEBUG_HANG _synth: got result for sentence=%r", sentence)
+                    await _record_tts_usage(sentence)
                     pcm = await asyncio.to_thread(wav_bytes_to_pcm16, wav, cfg.output_sample_rate)
                     packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
                     return None, packets
                 result = await self.tts_provider.synthesize(request)
                 logger.info("DEBUG_HANG _synth: got result for sentence=%r", sentence)
+                await _record_tts_usage(sentence)
                 if self.opus_encoder is not None:
                     # Fallback for engines that aren't a RenderingTTSProvider (e.g.
                     # edge_tts, which is test-UI/batch only and produces MP3) -- keep
@@ -516,6 +559,7 @@ class ConversationSession:
                 ),
                 self.responder.name,
             )
+            await self._record_llm_usage()
             self.history.append({"role": "assistant", "content": " ".join(parts)})
             await self._persist("assistant", " ".join(parts))
             logger.info("turn %d: done at +%.0fms (text input)", turn, _elapsed_ms())
@@ -557,6 +601,15 @@ class ConversationSession:
             await self.emit("error", message=f"STT failed: {exc}")
             return
         logger.info("turn %d: stt (%s) done at +%.0fms", turn, turn_engine, _elapsed_ms())
+        try:
+            audio_seconds = wav_duration_seconds(wav)
+            await record_usage(
+                user_id=self.cfg.identity_user_id or "", profile_id=cfg.profile_name or "",
+                kind="stt", engine=turn_engine, model_id=(turn_model or self.stt_model_id) or "",
+                unit="seconds", native_amount=audio_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 - metering must never break a turn
+            logger.warning("stt usage metering failed: %s", exc)
         user_text = (stt_result.text or "").strip()
         await self.emit("user_transcript", turn=turn, text=user_text, engine=turn_engine)
         if not user_text:
@@ -575,6 +628,7 @@ class ConversationSession:
             ),
             self.responder.name,
         )
+        await self._record_llm_usage()
         self.history.append({"role": "assistant", "content": " ".join(parts)})
         await self._persist("assistant", " ".join(parts))
         logger.info("turn %d: done at +%.0fms", turn, _elapsed_ms())
