@@ -115,6 +115,12 @@
               </button>
             </li>
             <li class="admin-only">
+              <button class="nav-item" data-section="usage">
+                <span class="nav-icon">&#128202;</span>
+                <span class="nav-label">Usage</span>
+              </button>
+            </li>
+            <li class="admin-only">
               <button class="nav-item" data-section="system">
                 <span class="nav-icon">⊙</span>
                 <span class="nav-label">System</span>
@@ -969,6 +975,37 @@
                 <button id="provider-add-btn">Add Provider</button>
               </div>
               <p id="providers-status" class="meta"></p>
+            </section>
+          </div>
+
+          <!-- ============================== USAGE ============================== -->
+          <div class="section" id="section-usage">
+            <section class="card">
+              <div class="card-head">
+                <h2>Usage</h2>
+                <button id="usage-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <p class="hint">Recorded usage (LLM tokens, STT seconds, TTS characters) and cost, aggregated. Cost is $0 for models without a configured price.</p>
+              <div class="row tight">
+                <label>
+                  Group by
+                  <select id="usage-group-by">
+                    <option value="provider">Provider</option>
+                    <option value="model">Model</option>
+                    <option value="kind">Kind</option>
+                    <option value="engine">Engine</option>
+                    <option value="user">User</option>
+                  </select>
+                </label>
+                <label>
+                  Month (optional)
+                  <input id="usage-period" type="text" placeholder="YYYY-MM (blank = all time)" />
+                </label>
+              </div>
+              <div id="usage-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <p id="usage-status" class="meta"></p>
             </section>
           </div>
 

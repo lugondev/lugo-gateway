@@ -25,6 +25,7 @@ import "./users.js";
 import "./devices.js";
 import "./model-registry.js";
 import "./providers.js";
+import "./usage.js";
 
 initSidebar();
 initSystemSubtabs();

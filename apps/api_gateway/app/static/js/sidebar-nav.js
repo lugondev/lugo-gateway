@@ -5,6 +5,7 @@ import { loadUsers } from "./users.js";
 import { loadMyDevices } from "./devices.js";
 import { loadModelRegistry } from "./model-registry.js";
 import { loadProviders } from "./providers.js";
+import { loadUsage } from "./usage.js";
 import { fetchAuthStatus } from "./session.js";
 
 function activateSection(section) {
@@ -20,6 +21,7 @@ function activateSection(section) {
   if (section === "devices") loadMyDevices();
   if (section === "model-registry") loadModelRegistry();
   if (section === "providers") loadProviders();
+  if (section === "usage") loadUsage();
 }
 
 export async function initSidebar() {
