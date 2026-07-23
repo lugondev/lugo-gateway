@@ -34,27 +34,96 @@ async function _loadProviderOptions() {
   }
 }
 
-async function _loadProviderModelSuggestions() {
-  const dl = el("registry-model-suggestions");
+// Engine is a dispatch key for stt/tts (picks the adapter); for llm it's a
+// cosmetic label, so we derive it from the provider and hide the field.
+async function _loadEngineOptions() {
+  const kind = el("registry-add-kind")?.value;
+  const sel = el("registry-add-engine");
+  const wrap = el("registry-add-engine-wrap");
+  if (!sel) return;
+  if (kind === "llm") {
+    if (wrap) wrap.classList.add("hidden"); // engine derived from provider on submit
+    return;
+  }
+  if (wrap) wrap.classList.remove("hidden");
+  const prev = sel.value;
+  sel.innerHTML = "";
+  try {
+    const body = await (await fetch(`/v1/${kind}/engines`)).json();
+    const engines = (body.data || []);
+    for (const item of engines) {
+      const opt = document.createElement("option");
+      opt.value = item.engine;
+      opt.textContent = item.available ? item.engine : `${item.engine} (unavailable)`;
+      sel.appendChild(opt);
+    }
+    if (engines.some((e) => e.engine === prev)) sel.value = prev; // keep selection across kind re-renders
+  } catch {
+    /* leave empty; submit will surface a clear error */
+  }
+}
+
+// llm engine is cosmetic; use the linked provider's name as the label (or "custom").
+function _effectiveEngine() {
+  const kind = el("registry-add-kind")?.value;
+  if (kind !== "llm") return (el("registry-add-engine")?.value || "").trim();
+  const sel = el("registry-add-provider");
+  const name = sel?.selectedOptions?.[0]?.textContent || "";
+  // provider option text is `name — label`; take the name part; fallback "custom"
+  return (name.split(" — ")[0] || "custom").trim() || "custom";
+}
+
+let _modelChoices = []; // model ids fetched from the selected provider
+
+async function _loadProviderModels() {
+  _modelChoices = [];
   const providerId = (el("registry-add-provider")?.value || "").trim();
-  if (!dl) return;
-  dl.innerHTML = "";
-  if (!providerId) return; // no provider -> plain free-text input
   const status = el("model-registry-status");
+  if (!providerId) { _renderModelPanel(); return; }
   try {
     const resp = await fetch(`/v1/providers/${encodeURIComponent(providerId)}/models`);
     const body = await resp.json();
-    const models = (body.data && body.data.models) || [];
-    dl.innerHTML = models.map((m) => `<option value="${escapeHtml(String(m))}"></option>`).join("");
+    _modelChoices = (body.data && body.data.models) || [];
     if (body.data && body.data.error) {
       print(status, `Couldn't load models (${body.data.error}) — type the model id manually.`, true);
-    } else if (models.length && status) {
-      status.textContent = `Loaded ${models.length} model(s) from provider — pick or type.`;
+    } else if (_modelChoices.length && status) {
+      status.textContent = `Loaded ${_modelChoices.length} model(s) — pick or type.`;
     }
   } catch (e) {
-    // network error -> leave datalist empty; manual entry still works
-    print(el("model-registry-status"), `Couldn't load models (${e}) — type the model id manually.`, true);
+    print(status, `Couldn't load models (${e}) — type the model id manually.`, true);
   }
+  _renderModelPanel();
+}
+
+function _renderModelPanel() {
+  const panel = el("registry-model-options");
+  const input = el("registry-add-model-id");
+  if (!panel || !input) return;
+  const q = input.value.trim().toLowerCase();
+  const matches = _modelChoices.filter((m) => !q || m.toLowerCase().includes(q)).slice(0, 100);
+  if (!matches.length) {
+    panel.innerHTML = _modelChoices.length
+      ? `<li class="combobox-empty">No match — press Enter to use "${escapeHtml(input.value.trim())}"</li>`
+      : `<li class="combobox-empty">No models listed — type the model id.</li>`;
+  } else {
+    panel.innerHTML = matches.map((m) => `<li data-model="${escapeHtml(m)}">${escapeHtml(m)}</li>`).join("");
+  }
+}
+
+function _openModelPanel() {
+  const panel = el("registry-model-options");
+  const input = el("registry-add-model-id");
+  if (!panel || !input) return;
+  _renderModelPanel();
+  panel.hidden = false;
+  input.setAttribute("aria-expanded", "true");
+}
+
+function _closeModelPanel() {
+  const panel = el("registry-model-options");
+  const input = el("registry-add-model-id");
+  if (panel) panel.hidden = true;
+  if (input) input.setAttribute("aria-expanded", "false");
 }
 
 // location comes from the backend (_location): "local" runs in-process,
@@ -461,7 +530,7 @@ function _updateKindFields() {
 export async function createModelRegistryEntry() {
   const status = el("model-registry-status");
   const kind = el("registry-add-kind").value;
-  const engine = el("registry-add-engine").value.trim();
+  const engine = _effectiveEngine();
   const modelId = el("registry-add-model-id").value.trim();
   const label = el("registry-add-label").value.trim();
   const stage = el("registry-add-stage").value;
@@ -502,25 +571,30 @@ export async function createModelRegistryEntry() {
       return;
     }
     status.textContent = `Added "${label}"`;
-    el("registry-add-engine").value = "";
     el("registry-add-model-id").value = "";
     el("registry-add-label").value = "";
     if (el("registry-add-key-api-key")) el("registry-add-key-api-key").value = "";
     if (el("registry-add-provider")) el("registry-add-provider").value = "";
     await loadModelRegistry();
+    void _loadEngineOptions();
   } catch (error) {
     print(status, String(error), true);
   }
 }
 
 if (el("registry-add-kind")) {
-  el("registry-add-kind").addEventListener("change", _updateKindFields);
+  el("registry-add-kind").addEventListener("change", () => {
+    _updateKindFields();
+    void _loadEngineOptions();
+  });
   _updateKindFields();
+  void _loadEngineOptions();
 }
 if (el("registry-add-provider")) {
   el("registry-add-provider").addEventListener("change", () => {
     _updateKindFields();
-    void _loadProviderModelSuggestions();
+    void _loadEngineOptions();
+    void _loadProviderModels();
   });
 }
 if (el("registry-add-btn")) el("registry-add-btn").addEventListener("click", createModelRegistryEntry);
@@ -528,3 +602,25 @@ if (el("model-registry-refresh")) el("model-registry-refresh").addEventListener(
 if (el("registry-filter-kind")) el("registry-filter-kind").addEventListener("change", renderModelRegistry);
 if (el("registry-filter-stage")) el("registry-filter-stage").addEventListener("change", renderModelRegistry);
 if (el("registry-filter-search")) el("registry-filter-search").addEventListener("input", renderModelRegistry);
+
+if (el("registry-add-model-id")) {
+  const input = el("registry-add-model-id");
+  input.addEventListener("focus", _openModelPanel);
+  input.addEventListener("input", () => { _openModelPanel(); }); // re-filter as they type
+  input.addEventListener("keydown", (e) => { if (e.key === "Escape") _closeModelPanel(); });
+}
+if (el("registry-model-options")) {
+  el("registry-model-options").addEventListener("mousedown", (e) => {
+    // mousedown (not click) so it fires before the input's blur
+    const li = e.target.closest("li[data-model]");
+    if (!li) return;
+    e.preventDefault();
+    el("registry-add-model-id").value = li.getAttribute("data-model");
+    _closeModelPanel();
+  });
+}
+// click outside closes the panel
+document.addEventListener("click", (e) => {
+  const combo = el("registry-model-combo");
+  if (combo && !combo.contains(e.target)) _closeModelPanel();
+});
