@@ -57,6 +57,25 @@ async def transcribe(
 ) -> dict:
     engine = engine or system_config_store.get().engines.default_stt_engine
     payload = STTRequest(engine=engine, language=language)
+
+    # Quota pre-flight: block BEFORE the provider does any work. model_id is
+    # not resolved per-request for STT (see the record_usage comment below),
+    # so provider_id lookup uses "" as model_id -- user/global-scope quotas
+    # still enforce regardless.
+    from app.services.model_registry.store import model_registry_store
+    from app.services.quota.gate import quota_gate, QuotaExceededError
+
+    provider_id = ""
+    try:
+        entry = await model_registry_store.find("stt", payload.engine, "")
+        provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
+    except Exception:
+        provider_id = ""
+    try:
+        await quota_gate(user_id=current_user_id(request) or "", provider_id=provider_id)
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
     provider = stt_service.get_provider(payload.engine)
     audio_bytes = await audio.read()
 
