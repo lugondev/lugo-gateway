@@ -697,6 +697,32 @@ async def test_list_entries_surfaces_artifact_installed(client, _with_password, 
     assert by_id[not_applicable["id"]]["artifact_installed"] is None
 
 
+@pytest.mark.asyncio
+async def test_list_entries_surfaces_engine_config_available(client, _with_password, monkeypatch):
+    """engine_config_available reflects list_engines()'s already-correct
+    availability for a model_id="" sentinel row -- None for a real model row,
+    where the concept doesn't apply (that's what artifact_installed is for).
+    Uses qwen3_asr_gguf (calls provider.available() directly in list_engines())
+    rather than vosk/whisper, whose availability is computed inline from
+    module/path checks instead of a provider method."""
+    await _signup_login_async(client, "root", role="admin")
+    from app.services.model_registry.store import model_registry_store
+
+    sentinel = await model_registry_store.create("stt", "qwen3_asr_gguf", "", "Qwen3-ASR GGUF (engine config)")
+    real_model = await model_registry_store.create("stt", "qwen3_asr_gguf", "some-model", "Qwen3-ASR GGUF model")
+
+    monkeypatch.setattr(stt_service.providers["qwen3_asr_gguf"], "available", lambda: True)
+    listed = client.get("/v1/model_registry").json()["data"]
+    by_id = {e["id"]: e for e in listed}
+    assert by_id[sentinel["id"]]["engine_config_available"] is True
+    assert by_id[real_model["id"]]["engine_config_available"] is None
+
+    monkeypatch.setattr(stt_service.providers["qwen3_asr_gguf"], "available", lambda: False)
+    listed = client.get("/v1/model_registry").json()["data"]
+    by_id = {e["id"]: e for e in listed}
+    assert by_id[sentinel["id"]]["engine_config_available"] is False
+
+
 # ---------- Feature: hard DELETE ----------
 
 
