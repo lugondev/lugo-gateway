@@ -40,7 +40,7 @@ _USER_PREFIXES = (
     "/v1/model_registry/options",
 )
 # role == "admin" required.
-_ADMIN_PREFIXES = ("/v1/system", "/v1/models", "/v1/users", "/v1/devices", "/v1/model_registry")
+_ADMIN_PREFIXES = ("/v1/system", "/v1/models", "/v1/users", "/v1/devices", "/v1/model_registry", "/v1/providers")
 
 
 def _matches(path: str, prefixes: tuple[str, ...]) -> bool:
