@@ -48,12 +48,13 @@ function _artifactBadge(e) {
 // engine_config_available comes from the backend (_engine_config_available()):
 // true/false for a model_id="" engine-config sentinel row, based on whether
 // the engine's own package/binary/model is actually present -- null for real
-// model rows (they use artifact_installed instead). The Enable/Disable toggle
-// is greyed out below whenever this is explicitly false, since the row can't
-// do anything useful until the engine itself is installed.
-function _engineConfigDisabledAttrs(e) {
-  if (e.engine_config_available !== false) return "";
-  return `disabled title="${escapeHtml(e.engine)} isn't installed yet -- enabling this config row has no effect until it is"`;
+// model rows (they use artifact_installed instead) and for a handful of local
+// engines with no direct availability check (see the backend docstring).
+// Edit/Enable-Disable are hidden entirely below whenever this is explicitly
+// false: there's nothing to edit or toggle on a config row for an engine
+// that isn't even installed.
+function _engineConfigUnavailable(e) {
+  return e.engine_config_available === false;
 }
 
 function _filteredRegistryData() {
@@ -137,11 +138,19 @@ function _renderRegistryTable(host, rows, emptyMessage) {
         label: "",
         headerClass: "dt-actions-cell",
         cellClass: "dt-actions-cell",
-        render: (e) => `
-          <button class="mini" data-registry-edit="${escapeHtml(e.id)}">Edit</button>
-          <button class="mini" data-registry-toggle="${escapeHtml(e.id)}" ${_engineConfigDisabledAttrs(e)}>${e.enabled ? "Disable" : "Enable"}</button>
-          <button class="mini danger" data-registry-delete="${escapeHtml(e.id)}" ${e.enabled ? `disabled title="Disable this entry first"` : ""}>Delete</button>
-        `,
+        render: (e) => {
+          if (_engineConfigUnavailable(e)) {
+            return `
+              <span class="hint" title="${escapeHtml(e.engine)} isn't installed -- nothing to edit or enable until it is">not installed</span>
+              <button class="mini danger" data-registry-delete="${escapeHtml(e.id)}" ${e.enabled ? `disabled title="Disable this entry first"` : ""}>Delete</button>
+            `;
+          }
+          return `
+            <button class="mini" data-registry-edit="${escapeHtml(e.id)}">Edit</button>
+            <button class="mini" data-registry-toggle="${escapeHtml(e.id)}">${e.enabled ? "Disable" : "Enable"}</button>
+            <button class="mini danger" data-registry-delete="${escapeHtml(e.id)}" ${e.enabled ? `disabled title="Disable this entry first"` : ""}>Delete</button>
+          `;
+        },
       },
     ],
     rowDetail: (e) => _detailHtml(e),

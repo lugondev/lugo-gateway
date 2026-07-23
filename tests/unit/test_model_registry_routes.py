@@ -699,12 +699,13 @@ async def test_list_entries_surfaces_artifact_installed(client, _with_password, 
 
 @pytest.mark.asyncio
 async def test_list_entries_surfaces_engine_config_available(client, _with_password, monkeypatch):
-    """engine_config_available reflects list_engines()'s already-correct
-    availability for a model_id="" sentinel row -- None for a real model row,
-    where the concept doesn't apply (that's what artifact_installed is for).
-    Uses qwen3_asr_gguf (calls provider.available() directly in list_engines())
-    rather than vosk/whisper, whose availability is computed inline from
-    module/path checks instead of a provider method."""
+    """engine_config_available reflects the engine's own availability for a
+    model_id="" sentinel row -- None for a real model row, where the concept
+    doesn't apply (that's what artifact_installed is for). Uses
+    qwen3_asr_gguf (calls provider.available() directly) -- vosk/whisper have
+    their own special-cased test below since neither provider exposes
+    available() at all (their availability is computed inline in
+    list_engines() from module/path checks instead)."""
     await _signup_login_async(client, "root", role="admin")
     from app.services.model_registry.store import model_registry_store
 
@@ -721,6 +722,33 @@ async def test_list_entries_surfaces_engine_config_available(client, _with_passw
     listed = client.get("/v1/model_registry").json()["data"]
     by_id = {e["id"]: e for e in listed}
     assert by_id[sentinel["id"]]["engine_config_available"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_entries_surfaces_engine_config_available_for_vosk_and_whisper(
+    client, _with_password, monkeypatch
+):
+    """vosk and whisper/whisper_local have no provider.available() at all --
+    engine_config_available special-cases them with the same module/path
+    checks list_engines() uses, instead of leaving their sentinel row's
+    toggle looking enabled/clickable no matter what (the gap this whole
+    feature exists to close)."""
+    await _signup_login_async(client, "root", role="admin")
+    from app.services.model_registry.store import model_registry_store
+
+    vosk_sentinel = await model_registry_store.create("stt", "vosk", "", "Vosk (engine config)")
+    whisper_sentinel = await model_registry_store.create("stt", "whisper_local", "", "Whisper Local (engine config)")
+
+    import app.core.deps as deps
+
+    monkeypatch.setattr(deps, "module_available", lambda name: False)
+    monkeypatch.setattr(
+        "app.services.stt.providers.vosk_provider.get_active_vosk_path", lambda: "/nonexistent/path"
+    )
+    listed = client.get("/v1/model_registry").json()["data"]
+    by_id = {e["id"]: e for e in listed}
+    assert by_id[vosk_sentinel["id"]]["engine_config_available"] is False
+    assert by_id[whisper_sentinel["id"]]["engine_config_available"] is False
 
 
 # ---------- Feature: hard DELETE ----------
