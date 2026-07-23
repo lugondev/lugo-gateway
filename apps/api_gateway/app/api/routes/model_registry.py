@@ -113,6 +113,27 @@ class UpdateEntryRequest(BaseModel):
     is_default: bool | None = None
 
 
+def _engine_config_available(kind: str, engine: str, model_id: str) -> bool | None:
+    """Whether the underlying package/binary/model is actually present, for a
+    model_id="" engine-config sentinel row -- None for everything else (real
+    model rows use artifact_installed instead) and also None for a local
+    engine whose provider doesn't expose `available()` directly (vosk/whisper
+    compute it inline in list_engines() from module/path checks instead of a
+    provider method -- not worth duplicating that logic out here just for a
+    UI grey-out hint)."""
+    if model_id:
+        return None
+    providers = {"stt": stt_service.providers, "tts": tts_service.providers}.get(kind)
+    provider = providers.get(engine) if providers else None
+    available_fn = getattr(provider, "available", None)
+    if available_fn is None:
+        return None
+    try:
+        return bool(available_fn())
+    except Exception:  # noqa: BLE001 -- one bad engine must not 500 the whole list
+        return False
+
+
 @router.get("")
 async def list_entries() -> dict:
     entries = await model_registry_store.list_all()
@@ -121,6 +142,7 @@ async def list_entries() -> dict:
         e["location"] = _location(e["kind"], e["engine"])
         e["requires_base_url"] = _requires_base_url(e["kind"], e["engine"])
         e["artifact_installed"] = is_artifact_installed(e["kind"], e["engine"], e["model_id"])
+        e["engine_config_available"] = _engine_config_available(e["kind"], e["engine"], e["model_id"])
     return {"success": True, "data": entries}
 
 

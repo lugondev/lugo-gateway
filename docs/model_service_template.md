@@ -163,6 +163,49 @@ Gotchas hit standing these up (in case they resurface):
   domain as unreliable for these apps for now; call the service from another
   Coolify app on the same server over the internal `coolify` Docker network
   instead of through the public URL.
+- **A `dockercompose` app's Traefik domain (`docker_compose_domains`) needs both
+  a domain assignment AND a redeploy to route** — PATCHing the domain alone
+  doesn't regenerate the running container's labels. `docker_compose_domains`
+  itself is only PATCH-able as an *array*, and any PATCH to a dockercompose app
+  requires resending the full base64 `docker_compose_raw` in the same request
+  or the API rejects it — annoying enough that redeploying via the UI/API
+  `POST /deploy` after setting the domain is simpler than fighting the PATCH
+  shape.
+- **`custom_docker_run_options` volumes (`-v name:path`) do not reliably
+  survive a `dockerfile`-buildpack app's redeploy**, even though the field is
+  API-accepted and looks identical to a normal `docker run -v` flag. Confirmed
+  by symptom: every redeploy of the `api` app re-triggered
+  `_bootstrap_admin_if_needed()`'s "no users yet" path (see `app/main.py`) and
+  the Model Registry lost every admin-added row (config-sentinel rows survived
+  since those get re-seeded, not stored per-admin-action) — i.e. the SQLite
+  file at the declared mount path was empty on every boot, not actually
+  persisted. Coolify's own `persistent_storages` field is API-blocked (`PATCH
+  .../applications/{uuid} {"persistent_storages": [...]}` → 422 "This field is
+  not allowed", same shape as the `dockerfile_location` UI-only quirk above) —
+  no API path exists to configure this correctly. Fix that actually worked:
+  Coolify UI → app → **Storages** tab → **+ Add → Volume Mount** (name +
+  destination path only, leave Source Path blank), one entry per volume,
+  **and remove the matching `-v` lines from Custom Docker Options** first (both
+  declaring the same destination path caused container start issues). Verified
+  by redeploying twice after switching: admin-added registry rows and the
+  bootstrap-admin user both survived, and the "no users yet" log line stopped
+  appearing.
+- **Static JS/CSS served through a Cloudflare-proxied domain (orange-cloud
+  DNS, not DNS-only) gets edge-cached independent of app redeploys** — a
+  `system-status.js` fix stayed invisible for hours after a successful deploy
+  (`cf-cache-status: HIT`, `cache-control: max-age=14400`) purely because nothing
+  purged the CDN cache; the origin was already serving the new file the whole
+  time. `wrangler` (Workers CLI) has no zone/cache-purge command and is a
+  separate Cloudflare account/permission scope from the DNS zone anyway.
+  Confirm proxy status is the actual cause via response headers (`server:
+  cloudflare`, `cf-cache-status`) before assuming it's a deploy problem; fix is
+  a manual Cache Purge in the Cloudflare dashboard for that zone (no API path
+  available without a zone-scoped token). Also: no bundler/build step serves
+  these files, and the ES modules import each other by fixed relative URL
+  (`main.js` → `./system-status.js` → ...), so cache-busting only the
+  top-level `<script src>` tag would NOT invalidate the individually-cached
+  submodule URLs underneath it — real cache-busting here would need every
+  import site versioned, not just the entry point.
 
 ## Why not move every engine into model_service?
 

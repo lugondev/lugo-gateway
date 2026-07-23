@@ -45,6 +45,17 @@ function _artifactBadge(e) {
   return `<span class="hint" style="color:#c0392b" title="Enabling this will be rejected until it's downloaded">not installed!</span>`;
 }
 
+// engine_config_available comes from the backend (_engine_config_available()):
+// true/false for a model_id="" engine-config sentinel row, based on whether
+// the engine's own package/binary/model is actually present -- null for real
+// model rows (they use artifact_installed instead). The Enable/Disable toggle
+// is greyed out below whenever this is explicitly false, since the row can't
+// do anything useful until the engine itself is installed.
+function _engineConfigDisabledAttrs(e) {
+  if (e.engine_config_available !== false) return "";
+  return `disabled title="${escapeHtml(e.engine)} isn't installed yet -- enabling this config row has no effect until it is"`;
+}
+
 function _filteredRegistryData() {
   const kind = el("registry-filter-kind")?.value || "";
   const stage = el("registry-filter-stage")?.value || "";
@@ -128,7 +139,7 @@ function _renderRegistryTable(host, rows, emptyMessage) {
         cellClass: "dt-actions-cell",
         render: (e) => `
           <button class="mini" data-registry-edit="${escapeHtml(e.id)}">Edit</button>
-          <button class="mini" data-registry-toggle="${escapeHtml(e.id)}">${e.enabled ? "Disable" : "Enable"}</button>
+          <button class="mini" data-registry-toggle="${escapeHtml(e.id)}" ${_engineConfigDisabledAttrs(e)}>${e.enabled ? "Disable" : "Enable"}</button>
           <button class="mini danger" data-registry-delete="${escapeHtml(e.id)}" ${e.enabled ? `disabled title="Disable this entry first"` : ""}>Delete</button>
         `,
       },
