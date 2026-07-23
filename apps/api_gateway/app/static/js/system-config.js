@@ -155,7 +155,12 @@ function renderField(groupKey, field, value, meta, engineLists) {
   </label>`;
 }
 
-function renderGroupFields(groupKey, groupValue, groupMeta, engineLists) {
+// extraBySubgroup lets a caller splice extra, non-schema-driven markup (e.g.
+// the Default LLM select) into a named subgroup's fields-grid, alongside the
+// schema fields that already carry that subgroup label -- so widgets that
+// logically belong together (e.g. "Engine selection") render as a single
+// heading/grid instead of two separately-headed blocks.
+function renderGroupFields(groupKey, groupValue, groupMeta, engineLists, extraBySubgroup = {}) {
   const entries = Object.entries(groupValue);
   const subgroups = new Map(); // subgroup label (or null) -> field entries, insertion order preserved
   for (const [field, value] of entries) {
@@ -164,13 +169,19 @@ function renderGroupFields(groupKey, groupValue, groupMeta, engineLists) {
     if (!subgroups.has(sub)) subgroups.set(sub, []);
     subgroups.get(sub).push([field, value, meta]);
   }
+  // Subgroups referenced only by extraBySubgroup (no schema field carries that
+  // label) still need a block created for them.
+  for (const sub of Object.keys(extraBySubgroup)) {
+    if (!subgroups.has(sub)) subgroups.set(sub, []);
+  }
   const blocks = [];
   for (const [sub, fields] of subgroups) {
     const heading = sub ? `<h3 class="sub">${sub}</h3>` : "";
     const rendered = fields
       .map(([field, value, meta]) => renderField(groupKey, field, value, meta, engineLists))
       .join("\n");
-    blocks.push(`<div class="field-subgroup">${heading}<div class="fields-grid">${rendered}</div></div>`);
+    const extra = (sub && extraBySubgroup[sub]) || "";
+    blocks.push(`<div class="field-subgroup">${heading}<div class="fields-grid">${rendered}${extra}</div></div>`);
   }
   return blocks.join("\n");
 }
@@ -194,14 +205,20 @@ export async function loadSystemConfigGroups() {
     fetchEngineList("/v1/tts/engines"),
   ]);
   const engineLists = { stt: stt || [], tts: tts || [] };
+  const defaultLlmField = `<label class="field">Default LLM
+      <select id="${DEFAULT_LLM_FIELD_ID}" disabled><option>loading…</option></select>
+    </label>`;
   root.innerHTML = GROUPS.map(
     (g) => `<details class="settings-group" ${g.open ? "open" : ""}>
       <summary>${g.label}</summary>
       <div class="settings-group-body">
-        ${renderGroupFields(g.key, body.data[g.key], meta.data[g.key], engineLists)}
-        ${g.key === "engines" ? `<div class="field-subgroup"><h3 class="sub">Engine selection</h3><div class="fields-grid"><label class="field">Default LLM
-          <select id="${DEFAULT_LLM_FIELD_ID}" disabled><option>loading…</option></select>
-        </label></div></div>` : ""}
+        ${renderGroupFields(
+          g.key,
+          body.data[g.key],
+          meta.data[g.key],
+          engineLists,
+          g.key === "engines" ? { "Engine selection": defaultLlmField } : {}
+        )}
         <div class="actions end">
           <button data-save-group="${g.key}">Save</button>
         </div>
