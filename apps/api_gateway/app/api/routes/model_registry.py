@@ -116,13 +116,26 @@ class UpdateEntryRequest(BaseModel):
 def _engine_config_available(kind: str, engine: str, model_id: str) -> bool | None:
     """Whether the underlying package/binary/model is actually present, for a
     model_id="" engine-config sentinel row -- None for everything else (real
-    model rows use artifact_installed instead) and also None for a local
-    engine whose provider doesn't expose `available()` directly (vosk/whisper
-    compute it inline in list_engines() from module/path checks instead of a
-    provider method -- not worth duplicating that logic out here just for a
-    UI grey-out hint)."""
+    model rows use artifact_installed instead).
+
+    vosk/whisper have no `available()` on their provider -- list_engines()
+    computes their availability inline from module/path checks instead, so
+    those two are special-cased here with the exact same checks rather than
+    left as None (which used to leave their toggle looking enabled/clickable
+    even when genuinely not installed, same as every other local engine)."""
     if model_id:
         return None
+    if kind == "stt" and engine == "vosk":
+        import os
+
+        from app.core.deps import module_available
+        from app.services.stt.providers.vosk_provider import get_active_vosk_path
+
+        return module_available("vosk") and os.path.isdir(get_active_vosk_path())
+    if kind == "stt" and engine in ("whisper", "whisper_local"):
+        from app.core.deps import module_available
+
+        return module_available("faster_whisper")
     providers = {"stt": stt_service.providers, "tts": tts_service.providers}.get(kind)
     provider = providers.get(engine) if providers else None
     available_fn = getattr(provider, "available", None)
