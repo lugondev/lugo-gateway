@@ -39,6 +39,7 @@ def test_set_config_clears_base_context(client):
 def test_get_config_includes_nested_groups_with_defaults(client):
     data = client.get("/v1/system/config").json()["data"]
     assert data["engines"]["default_stt_engine"] == "vosk"
+    assert data["engines"]["stt_segment_min_seconds"] == 30.0
     assert data["conversation"]["conversation_silence_ms"] == 700
     assert data["preprocessing"]["stt_vad_backend"] == "energy"
 

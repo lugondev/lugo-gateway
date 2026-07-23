@@ -69,17 +69,17 @@ async def transcribe(
 
     # Long clips: split on silence and transcribe segments in parallel (higher
     # throughput). Only when enabled and the clip is at/over the length threshold.
-    stt_local = system_config_store.get().stt_local
-    use_segment = _resolve_flag(segment, stt_local.stt_segment_long_enabled)
+    engines = system_config_store.get().engines
+    use_segment = _resolve_flag(segment, engines.stt_segment_long_enabled)
     try:
-        if use_segment and wav_duration_seconds(audio_bytes) >= stt_local.stt_segment_min_seconds:
+        if use_segment and wav_duration_seconds(audio_bytes) >= engines.stt_segment_min_seconds:
             pcm, sample_rate, _, _ = read_wav(audio_bytes)
             result = await transcribe_long(
                 provider,
                 pcm16_to_float_array(pcm),
                 sample_rate,
                 language=payload.language,
-                concurrency=stt_local.stt_segment_concurrency,
+                concurrency=engines.stt_segment_concurrency,
             )
         else:
             # no per-session model here -- falls back to this engine's process-global

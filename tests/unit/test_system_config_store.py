@@ -69,51 +69,15 @@ def test_engine_defaults_have_expected_defaults(tmp_path):
     assert e.default_tts_engine_voice == ""
     assert not hasattr(e, "extra_warmup_stt_engines")
     assert not hasattr(e, "extra_warmup_tts_engines")
-    assert not hasattr(e, "warmup_on_startup")
-    assert not hasattr(e, "warmup_startup_timeout_s")
-    assert not hasattr(e, "ollama_bin")
+    assert e.stt_segment_long_enabled is False
+    assert e.stt_segment_min_seconds == 30.0
+    assert e.stt_segment_concurrency == 4
 
 
-def test_stt_local_config_has_expected_defaults(tmp_path):
-    s = SystemConfigStore(str(tmp_path / "system_config.json"))
-    c = s.get().stt_local
-    assert not hasattr(c, "stt_model_dir")
-    assert not hasattr(c, "vosk_model_base_url")
-    assert not hasattr(c, "stt_stream_sample_rate")
-    assert not hasattr(c, "stt_glossary_path")
-    assert not hasattr(c, "stt_profile")  # preset layer removed
-    assert c.stt_segment_long_enabled is False
-    assert c.stt_segment_min_seconds == 30.0
-    assert c.stt_segment_concurrency == 4
-
-
-def test_system_config_has_no_stt_local_device_fields():
+def test_system_config_has_no_stt_local_group():
     from app.services.system_config import SystemConfig
 
-    dumped = SystemConfig().model_dump()
-    assert "whisper_local_device" not in dumped["stt_local"]
-    assert "whisper_local_compute_type" not in dumped["stt_local"]
-    assert "qwen3_asr_device" not in dumped["stt_local"]
-
-
-def test_stt_local_has_no_per_engine_model_or_tuning_fields():
-    """Every model is a Model Registry entry now -- no engine gets its own
-    SystemConfig fields for default model / model path / decode tuning (all
-    moved to the model_id="" sentinel rows' config)."""
-    from app.services.system_config import SystemConfig
-
-    dumped = SystemConfig().model_dump()
-    for field in (
-        "vosk_model_path",
-        "whisper_local_model",
-        "whisper_vad_filter",
-        "whisper_beam_size",
-        "whisper_condition_on_previous_text",
-        "whisper_initial_prompt",
-        "whisper_mlx_model_path",
-        "qwen3_asr_model",
-    ):
-        assert field not in dumped["stt_local"], field
+    assert not hasattr(SystemConfig(), "stt_local")
 
 
 def test_system_config_has_no_omnivoice_or_remote_stt_groups():

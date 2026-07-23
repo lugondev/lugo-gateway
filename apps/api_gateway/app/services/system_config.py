@@ -19,16 +19,12 @@ class EngineDefaults(BaseModel):
     default_stt_engine: str = "vosk"
     default_tts_engine: str = "omnivoice"
     default_tts_engine_voice: str = ""  # optional VieNeu preset voice
-
-
-class SttLocalConfig(BaseModel):
-    """Engine-agnostic STT settings only. Per-engine settings (default model,
-    model path, whisper decode tuning, device/compute_type) live in the Model
-    Registry model_id="" sentinel rows -- see
-    app/services/model_registry/resolve.py. Model dir / download URL / stream
-    sample rate / glossary path are deployment-time constants read once at
-    startup -- see app.core.settings.Settings instead."""
-
+    # Long-audio segmentation: split a clip into chunks and transcribe them in
+    # parallel. Batch /v1/stt/transcribe only -- the live conversation flow
+    # never uses this (utterances are already short). Previously its own
+    # top-level "STT (Shared Settings)" group; folded in here once the
+    # group's other 4 fields moved to env (see Settings) -- 3 fields didn't
+    # warrant a standalone accordion.
     stt_segment_long_enabled: bool = False
     stt_segment_min_seconds: float = 30.0
     stt_segment_concurrency: int = 4
@@ -123,7 +119,6 @@ class PreprocessingConfig(BaseModel):
 class SystemConfig(BaseModel):
     base_context: str = ""
     engines: EngineDefaults = EngineDefaults()
-    stt_local: SttLocalConfig = SttLocalConfig()
     conversation: ConversationTuningConfig = ConversationTuningConfig()
     preprocessing: PreprocessingConfig = PreprocessingConfig()
 
