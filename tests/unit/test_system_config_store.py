@@ -156,8 +156,8 @@ def test_preprocessing_config_has_expected_defaults(tmp_path):
     assert c.stt_vad_backend == "energy"
     assert c.stt_noise_reduce_enabled is False
     assert c.stt_noise_reduce_amount == 0.85
-    assert c.pyannote_vad_model == "pyannote/segmentation-3.0"
-    assert c.pyannote_auth_token == ""
+    assert not hasattr(c, "pyannote_vad_model")
+    assert not hasattr(c, "pyannote_auth_token")
 
 
 def test_set_replaces_full_config_and_persists(tmp_path):

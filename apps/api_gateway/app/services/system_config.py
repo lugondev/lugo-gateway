@@ -120,8 +120,6 @@ class PreprocessingConfig(BaseModel):
     stt_vad_backend: str = "energy"
     stt_noise_reduce_enabled: bool = False
     stt_noise_reduce_amount: float = 0.85
-    pyannote_vad_model: str = "pyannote/segmentation-3.0"
-    pyannote_auth_token: str = ""
 
 
 class SystemConfig(BaseModel):
