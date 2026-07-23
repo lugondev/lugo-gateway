@@ -67,8 +67,8 @@ def test_engine_defaults_have_expected_defaults(tmp_path):
     assert e.default_stt_engine == "vosk"
     assert e.default_tts_engine == "omnivoice"
     assert e.default_tts_engine_voice == ""
-    assert e.extra_warmup_stt_engines == ""
-    assert e.extra_warmup_tts_engines == ""
+    assert not hasattr(e, "extra_warmup_stt_engines")
+    assert not hasattr(e, "extra_warmup_tts_engines")
     assert not hasattr(e, "warmup_on_startup")
     assert not hasattr(e, "warmup_startup_timeout_s")
     assert not hasattr(e, "ollama_bin")
@@ -173,17 +173,3 @@ def test_set_replaces_full_config_and_persists(tmp_path):
 
     s2 = SystemConfigStore(p)
     assert s2.get().engines.default_stt_engine == "qwen3_asr"
-
-
-def test_warmup_stt_engines_combines_conversation_default_and_extras(tmp_path, monkeypatch):
-    from app.services import system_config as sc_mod
-
-    fresh = SystemConfigStore(str(tmp_path / "system_config.json"))
-    fresh.set(
-        fresh.get().model_copy(
-            update={"engines": fresh.get().engines.model_copy(update={"extra_warmup_stt_engines": "qwen3_asr, whisper_mlx"})}
-        )
-    )
-    monkeypatch.setattr(sc_mod, "system_config_store", fresh)
-    result = sc_mod.warmup_stt_engines()
-    assert result == [fresh.get().conversation.conversation_stt_engine, "qwen3_asr", "whisper_mlx"]

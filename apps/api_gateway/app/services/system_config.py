@@ -19,8 +19,6 @@ class EngineDefaults(BaseModel):
     default_stt_engine: str = "vosk"
     default_tts_engine: str = "omnivoice"
     default_tts_engine_voice: str = ""  # optional VieNeu preset voice
-    extra_warmup_stt_engines: str = ""
-    extra_warmup_tts_engines: str = ""
 
 
 class SttLocalConfig(BaseModel):
@@ -239,20 +237,10 @@ system_config_store = SystemConfigStore(settings_attr="system_config_path")
 
 
 def warmup_stt_engines() -> list[str]:
-    config = system_config_store.get()
-    extra = [e.strip() for e in config.engines.extra_warmup_stt_engines.split(",") if e.strip()]
-    seen: list[str] = []
-    for engine in [config.conversation.conversation_stt_engine, *extra]:
-        if engine and engine not in seen:
-            seen.append(engine)
-    return seen
+    engine = system_config_store.get().conversation.conversation_stt_engine
+    return [engine] if engine else []
 
 
 def warmup_tts_engines() -> list[str]:
-    config = system_config_store.get()
-    extra = [e.strip() for e in config.engines.extra_warmup_tts_engines.split(",") if e.strip()]
-    seen: list[str] = []
-    for engine in [config.conversation.conversation_tts_engine, *extra]:
-        if engine and engine not in seen:
-            seen.append(engine)
-    return seen
+    engine = system_config_store.get().conversation.conversation_tts_engine
+    return [engine] if engine else []
