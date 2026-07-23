@@ -11,6 +11,7 @@ from app.services.conversation.responder import OpenAICompatResponder
 from app.services.model_registry.availability import is_artifact_installed
 from app.services.model_registry.config_schema import config_schema_for
 from app.services.model_registry.store import model_registry_store
+from app.services.providers.resolve import resolve_credentials
 from app.services.stt.providers.http_stt_provider import HttpSttProvider
 from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
 from app.services.stt.service import stt_service
@@ -224,26 +225,37 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
             detail=f"{payload.engine}/{payload.model_id} is not installed -- download it via the Models page first",
         )
 
+    # If the entry links a provider (config.provider_id), the add-time test-call
+    # and the persisted lookup path both use the provider's shared base_url/api_key
+    # so the admin need not retype credentials per model.
+    eff_base_url, eff_api_key = await resolve_credentials(payload.model_dump())
+
     try:
         if payload.kind == "stt":
             if payload.engine in _OPENROUTER_STT_ENGINES:
                 provider = OpenRouterSttProvider(
-                    name=payload.engine, model=payload.model_id, api_key=payload.api_key
+                    name=payload.engine, model=payload.model_id, api_key=eff_api_key
                 )
             elif payload.engine in _SERVICE_STT_ENGINES:
-                provider = HttpSttProvider(name=payload.engine, entry=payload.model_dump())
+                provider = HttpSttProvider(
+                    name=payload.engine,
+                    entry={**payload.model_dump(), "base_url": eff_base_url, "api_key": eff_api_key},
+                )
             else:
                 provider = stt_service.get_provider(payload.engine)
             await provider.transcribe_bytes(_SAMPLE_WAV)
         elif payload.kind == "tts":
             if payload.engine in _SERVICE_TTS_ENGINES:
-                provider = HttpTtsProvider(name=payload.engine, entry=payload.model_dump())
+                provider = HttpTtsProvider(
+                    name=payload.engine,
+                    entry={**payload.model_dump(), "base_url": eff_base_url, "api_key": eff_api_key},
+                )
             else:
                 provider = tts_service.get_provider(payload.engine)
             await provider.synthesize(TTSRequest(text=payload.sample_text, engine=payload.engine))
         elif payload.kind == "llm":
             responder = OpenAICompatResponder(
-                base_url=payload.base_url, api_key=payload.api_key, model=payload.model_id,
+                base_url=eff_base_url, api_key=eff_api_key, model=payload.model_id,
                 system_prompt="", timeout=30.0,
             )
             try:
