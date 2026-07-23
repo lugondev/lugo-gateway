@@ -115,3 +115,19 @@ class ModelRegistryEntry(Base):
     # app/services/model_registry/config_schemas.py. Shape varies by engine, so
     # this stays a free-form JSON blob rather than dedicated columns.
     config: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class Provider(Base):
+    __tablename__ = "providers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    # Provider family: "openai" | "openrouter" | "qwencloud" | custom string.
+    name: Mapped[str] = mapped_column(String(64), index=True)
+    label: Mapped[str] = mapped_column(String(128), default="")
+    # OpenAI-compatible base URL (ends with /v1). Shared by every registry entry
+    # whose config.provider_id points here.
+    base_url: Mapped[str] = mapped_column(String(256), default="")
+    api_key: Mapped[str] = mapped_column(String(256), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Extra per-provider knobs (default timeout, org id, extra headers). Free-form.
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
