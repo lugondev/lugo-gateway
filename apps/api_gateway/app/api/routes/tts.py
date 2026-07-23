@@ -3,7 +3,7 @@ import logging
 import time
 import uuid
 
-from fastapi import APIRouter, File, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from app.core.actor import current_user_id
 from app.schemas.common import StreamEvent
@@ -48,6 +48,21 @@ async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
 
 @router.post("/synthesize")
 async def synthesize(payload: TTSRequest, request: Request) -> dict:
+    # Quota pre-flight: block BEFORE the provider does any work.
+    from app.services.model_registry.store import model_registry_store
+    from app.services.quota.gate import quota_gate, QuotaExceededError
+
+    provider_id = ""
+    try:
+        entry = await model_registry_store.find("tts", payload.engine, payload.model_id or "")
+        provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
+    except Exception:
+        provider_id = ""
+    try:
+        await quota_gate(user_id=current_user_id(request) or "", provider_id=provider_id)
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
     provider = tts_service.get_provider(payload.engine)
     started = time.perf_counter()
     result = await provider.synthesize(payload)

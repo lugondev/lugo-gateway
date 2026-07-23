@@ -121,6 +121,12 @@
               </button>
             </li>
             <li class="admin-only">
+              <button class="nav-item" data-section="quotas">
+                <span class="nav-icon">&#128683;</span>
+                <span class="nav-label">Quotas</span>
+              </button>
+            </li>
+            <li class="admin-only">
               <button class="nav-item" data-section="system">
                 <span class="nav-icon">⊙</span>
                 <span class="nav-label">System</span>
@@ -1006,6 +1012,52 @@
                 <p class="hint">Loading&#8230;</p>
               </div>
               <p id="usage-status" class="meta"></p>
+            </section>
+          </div>
+
+          <!-- ============================== QUOTAS ============================== -->
+          <div class="section" id="section-quotas">
+            <section class="card">
+              <div class="card-head">
+                <h2>Quotas</h2>
+                <button id="quotas-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <p class="hint">Set spend limits by user, provider, or globally. When a limit is reached, requests in that scope are rejected until the period resets (or forever, for total limits).</p>
+              <div id="quotas-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <h3 class="sub">Add Quota</h3>
+              <div class="row tight">
+                <label>
+                  Scope
+                  <select id="quota-add-scope">
+                    <option value="user">user</option>
+                    <option value="provider">provider</option>
+                    <option value="global">global</option>
+                  </select>
+                </label>
+                <label>
+                  Scope ID
+                  <input id="quota-add-scope-id" type="text" placeholder="user_id / provider_id / blank for global" />
+                </label>
+              </div>
+              <div class="row tight">
+                <label>
+                  Limit (USD)
+                  <input id="quota-add-limit" type="number" step="0.01" min="0" placeholder="100.00" />
+                </label>
+                <label>
+                  Period
+                  <select id="quota-add-period">
+                    <option value="monthly">monthly</option>
+                    <option value="total">total</option>
+                  </select>
+                </label>
+              </div>
+              <div class="actions end">
+                <button id="quota-add-btn">Add Quota</button>
+              </div>
+              <p id="quotas-status" class="meta"></p>
             </section>
           </div>
 

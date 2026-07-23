@@ -153,3 +153,15 @@ class UsageEvent(Base):
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="ok")  # ok|error
+
+
+class Quota(Base):
+    __tablename__ = "quotas"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(16), index=True)   # user|provider|global
+    # user_id | provider_id | "" (global)
+    scope_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    limit_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    period: Mapped[str] = mapped_column(String(16), default="monthly")  # monthly|total
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)

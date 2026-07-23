@@ -116,6 +116,7 @@ def _tmp_db(tmp_path, monkeypatch):
     from app.core.settings import settings
     from app.services.model_registry.store import model_registry_store
     from app.services.providers.store import provider_store
+    from app.services.quota.store import quota_store
 
     monkeypatch.setattr(settings, "profiles_path", str(tmp_path / "profiles.json"))
     monkeypatch.setattr(settings, "tts_profiles_path", str(tmp_path / "tts_profiles.json"))
@@ -128,8 +129,10 @@ def _tmp_db(tmp_path, monkeypatch):
     # DB) would leak into this test even though the DB underneath just changed.
     model_registry_store.invalidate()
     provider_store.invalidate()
+    quota_store.invalidate()
     yield
     db_engine.configure()
     cfg_engine.configure()
     model_registry_store.invalidate()
     provider_store.invalidate()
+    quota_store.invalidate()

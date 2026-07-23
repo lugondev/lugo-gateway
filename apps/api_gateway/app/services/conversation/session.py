@@ -414,6 +414,31 @@ class ConversationSession:
         cfg = self.cfg
         want_audio = cfg.want_audio
         want_text = cfg.want_text
+
+        # Best-effort quota gate: ONCE per turn, before anything else (STT/LLM/TTS).
+        # quota_gate() itself is fail-open (internal errors log + allow), so only a
+        # genuine over-limit quota raises here. Resolving the LLM provider_id is
+        # wrapped separately so a registry lookup issue can never block the turn --
+        # it just falls back to "" (user/global scope quotas still apply).
+        provider_id = ""
+        try:
+            llm_engine = (self.profile.llm.engine if self.profile else "") or ""
+            llm_model = (self.profile.llm.model if self.profile else "") or ""
+            if llm_engine:
+                entry = await model_registry_store.find("llm", llm_engine, llm_model)
+                provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
+        except Exception:  # noqa: BLE001 - provider_id resolution must never block the turn
+            provider_id = ""
+        try:
+            from app.services.quota.gate import QuotaExceededError, quota_gate
+
+            await quota_gate(user_id=cfg.identity_user_id or "", provider_id=provider_id)
+        except QuotaExceededError as exc:
+            # Mirror the existing STT-failure pattern (session.py ~line 601): a
+            # plain "error" notice, then return without running the turn at all.
+            await self.emit("error", message=str(exc))
+            return
+
         self.turn += 1
         turn = self.turn
         turn_start = time.monotonic()

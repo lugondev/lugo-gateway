@@ -2,7 +2,7 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from app.core.actor import current_user_id
@@ -118,6 +118,24 @@ async def chat(
             llm_base_url, llm_api_key = registry_override
             llm_model = active_profile.llm.model
     system_prompt = (active_profile.system_prompt or None) if (active_profile and active_profile.system_prompt) else None
+
+    # Quota pre-flight: block BEFORE the responder does any work. Same
+    # engine/model resolution as the record_usage calls below.
+    from app.services.model_registry.store import model_registry_store
+    from app.services.quota.gate import quota_gate, QuotaExceededError
+
+    quota_engine = (active_profile.llm.engine if active_profile else "") or ""
+    quota_model_id = llm_model or (active_profile.llm.model if active_profile else "") or ""
+    provider_id = ""
+    try:
+        entry = await model_registry_store.find("llm", quota_engine, quota_model_id)
+        provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
+    except Exception:
+        provider_id = ""
+    try:
+        await quota_gate(user_id=caller_id or "", provider_id=provider_id)
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
 
     # Session: resume when session_id given (stored messages prefix the context).
     sid = session_id or str(uuid.uuid4())

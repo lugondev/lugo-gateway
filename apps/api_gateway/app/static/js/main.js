@@ -26,6 +26,7 @@ import "./devices.js";
 import "./model-registry.js";
 import "./providers.js";
 import "./usage.js";
+import "./quotas.js";
 
 initSidebar();
 initSystemSubtabs();

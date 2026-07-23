@@ -22,6 +22,7 @@ from app.api.routes.memories import router as memories_router
 from app.api.routes.model_registry import router as model_registry_router
 from app.api.routes.profiles import router as profiles_router
 from app.api.routes.providers import router as providers_router
+from app.api.routes.quotas import router as quotas_router
 from app.api.routes.recommend import router as recommend_router
 from app.api.routes.sessions import router as sessions_router
 from app.api.routes.stt import router as stt_router
@@ -261,6 +262,7 @@ app.include_router(sessions_router)
 app.include_router(memories_router)
 app.include_router(model_registry_router)
 app.include_router(providers_router)
+app.include_router(quotas_router)
 app.include_router(usage_router)
 
 app.mount("/static", StaticFiles(directory="apps/api_gateway/app/static"), name="static")
