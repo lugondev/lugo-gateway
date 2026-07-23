@@ -105,6 +105,58 @@ async def test_synthesize_records_tts_usage_event():
         tts_service.providers.pop(_StubTTS.name, None)
 
 
+async def test_chat_tool_path_records_llm_usage_event(monkeypatch):
+    """Review finding I1: the tool-enabled `/chat` branch (`reply_stream`) must
+    record usage same as the non-tool `reply()` branch.
+
+    Approach: force `_build_tool_registry` to return a non-empty registry (flip
+    the shared `settings.conversation_tools_enabled` singleton, which adds the
+    built-in `LocalToolSource` with no other setup needed) so `/chat` takes the
+    `if tool_registry:` branch, and stub `build_responder_ex` (patched on the
+    route module, where it's called) with a fake responder whose
+    `reply_stream` yields a chunk and populates `last_usage` -- mirroring what
+    `OpenAICompatResponder._stream_history` does for real. This avoids standing
+    up a fake LLM HTTP backend for the full 2-phase tool-calling loop while
+    still exercising the exact route code path added for I1.
+    """
+    from app.api.routes import conversation as conversation_routes
+    from app.core.settings import settings as shared_settings
+    from app.services.conversation.responder import Responder
+
+    class _StubToolResponder(Responder):
+        name = "llm"
+
+        def __init__(self) -> None:
+            self.last_usage: dict | None = None
+
+        async def reply(self, history: list[dict]) -> str:  # pragma: no cover - unused here
+            return "unused"
+
+        async def reply_stream(self, history, registry=None, ctx=None, max_iters=3):
+            self.last_usage = {"prompt_tokens": 11, "completion_tokens": 7}
+            yield "tool reply."
+
+    async def _fake_build_responder_ex(**kwargs):
+        return _StubToolResponder()
+
+    monkeypatch.setattr(conversation_routes, "build_responder_ex", _fake_build_responder_ex)
+    monkeypatch.setattr(shared_settings, "conversation_tools_enabled", True)
+
+    client = TestClient(app)
+    resp = client.post("/v1/conversation/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["reply"] == "tool reply."  # sanity: tool branch (reply_stream) was taken
+
+    rows = await _rows()
+    llm_rows = [r for r in rows if r.kind == "llm"]
+    assert len(llm_rows) == 1
+    row = llm_rows[0]
+    assert row.unit == "tokens"
+    assert row.prompt_tokens == 11
+    assert row.completion_tokens == 7
+    assert row.native_amount == 18
+
+
 async def test_chat_non_tool_path_records_llm_usage_event():
     client = TestClient(app)
     resp = client.post("/v1/conversation/chat", json={"messages": [{"role": "user", "content": "hi"}]})

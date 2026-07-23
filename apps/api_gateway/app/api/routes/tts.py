@@ -53,6 +53,9 @@ async def synthesize(payload: TTSRequest, request: Request) -> dict:
     result = await provider.synthesize(payload)
     result.process_seconds = round(time.perf_counter() - started, 3)
     try:
+        # model_id may be "" when the caller omits it: cost resolution then finds
+        # no pricing row and resolves to $0, but the usage event is still
+        # recorded/attributed -- $0 here is expected, not a bug.
         await record_usage(
             user_id=current_user_id(request) or "", profile_id="",
             kind="tts", engine=payload.engine, model_id=payload.model_id or "",
