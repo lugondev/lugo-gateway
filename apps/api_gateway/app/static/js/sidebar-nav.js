@@ -4,6 +4,7 @@ import { loadMcpServers } from "./mcp-servers.js";
 import { loadUsers } from "./users.js";
 import { loadMyDevices } from "./devices.js";
 import { loadModelRegistry } from "./model-registry.js";
+import { loadProviders } from "./providers.js";
 import { fetchAuthStatus } from "./session.js";
 
 function activateSection(section) {
@@ -18,6 +19,7 @@ function activateSection(section) {
   if (section === "users") loadUsers();
   if (section === "devices") loadMyDevices();
   if (section === "model-registry") loadModelRegistry();
+  if (section === "providers") loadProviders();
 }
 
 export async function initSidebar() {
