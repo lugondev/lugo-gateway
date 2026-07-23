@@ -124,6 +124,18 @@ function fieldLabel(meta, field, unit) {
   return unit ? `${label} (${unit})` : label;
 }
 
+// renderField() interpolates user-editable config values into innerHTML'd
+// markup (textarea body, input value attribute) -- escape them so a value
+// containing markup-relevant characters (e.g. a system prompt with
+// "</textarea><script>...") can't break out of the element or inject script.
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function renderField(groupKey, field, value, meta, engineLists) {
   const id = `sys-${groupKey}-${field}`;
   const key = `${groupKey}.${field}`;
@@ -144,12 +156,12 @@ function renderField(groupKey, field, value, meta, engineLists) {
   }
   if (meta?.multiline) {
     return `<label class="${wrapClass}">${fieldLabel(meta, field)}${desc}
-      <textarea id="${id}" rows="4">${value}</textarea>
+      <textarea id="${id}" rows="4">${escapeHtml(value)}</textarea>
     </label>`;
   }
   const type = fieldInputType(value);
   const checked = type === "checkbox" && value ? "checked" : "";
-  const val = type === "checkbox" ? "" : `value="${String(value)}"`;
+  const val = type === "checkbox" ? "" : `value="${escapeHtml(value)}"`;
   return `<label class="${wrapClass}">${fieldLabel(meta, field, meta?.unit)}${desc}
     <input type="${type}" id="${id}" ${val} ${checked} />
   </label>`;

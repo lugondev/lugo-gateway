@@ -151,12 +151,6 @@ class ConversationTuningConfig(BaseModel):
         description="Hard cap on a single user turn's length; forces an end-of-turn even if the user keeps talking.",
         json_schema_extra={"subgroup": "Timing & VAD", "unit": "ms"},
     )
-    conversation_goodbye_text: str = Field(
-        default="Hẹn gặp lại nha!",
-        title="Goodbye phrase",
-        description="Spoken when a conversation ends gracefully (e.g. user says goodbye).",
-        json_schema_extra={"subgroup": "Language & Prompt"},
-    )
     conversation_fast_stt_engine: str = Field(
         default="",
         title="Fast STT engine",
@@ -198,6 +192,12 @@ class ConversationTuningConfig(BaseModel):
         title="Opus prebuffer frames",
         description="Number of Opus frames buffered client-side before playback starts.",
         json_schema_extra={"subgroup": "TTS & Audio"},
+    )
+    conversation_goodbye_text: str = Field(
+        default="Hẹn gặp lại nha!",
+        title="Goodbye phrase",
+        description="Spoken when a conversation ends gracefully (e.g. user says goodbye).",
+        json_schema_extra={"subgroup": "Language & Prompt"},
     )
     conversation_language: str = Field(
         default="vi",
