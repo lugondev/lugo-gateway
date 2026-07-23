@@ -34,6 +34,29 @@ async function _loadProviderOptions() {
   }
 }
 
+async function _loadProviderModelSuggestions() {
+  const dl = el("registry-model-suggestions");
+  const providerId = (el("registry-add-provider")?.value || "").trim();
+  if (!dl) return;
+  dl.innerHTML = "";
+  if (!providerId) return; // no provider -> plain free-text input
+  const status = el("model-registry-status");
+  try {
+    const resp = await fetch(`/v1/providers/${encodeURIComponent(providerId)}/models`);
+    const body = await resp.json();
+    const models = (body.data && body.data.models) || [];
+    dl.innerHTML = models.map((m) => `<option value="${escapeHtml(String(m))}"></option>`).join("");
+    if (body.data && body.data.error) {
+      print(status, `Couldn't load models (${body.data.error}) — type the model id manually.`, true);
+    } else if (models.length && status) {
+      status.textContent = `Loaded ${models.length} model(s) from provider — pick or type.`;
+    }
+  } catch (e) {
+    // network error -> leave datalist empty; manual entry still works
+    print(el("model-registry-status"), `Couldn't load models (${e}) — type the model id manually.`, true);
+  }
+}
+
 // location comes from the backend (_location): "local" runs in-process,
 // "service" calls out to an external HTTP API (http_stt/http_tts,
 // whisper_service/eventlab, OpenRouter STT, every llm -- OpenRouter/OpenAI/
@@ -494,7 +517,12 @@ if (el("registry-add-kind")) {
   el("registry-add-kind").addEventListener("change", _updateKindFields);
   _updateKindFields();
 }
-if (el("registry-add-provider")) el("registry-add-provider").addEventListener("change", _updateKindFields);
+if (el("registry-add-provider")) {
+  el("registry-add-provider").addEventListener("change", () => {
+    _updateKindFields();
+    void _loadProviderModelSuggestions();
+  });
+}
 if (el("registry-add-btn")) el("registry-add-btn").addEventListener("click", createModelRegistryEntry);
 if (el("model-registry-refresh")) el("model-registry-refresh").addEventListener("click", loadModelRegistry);
 if (el("registry-filter-kind")) el("registry-filter-kind").addEventListener("change", renderModelRegistry);
