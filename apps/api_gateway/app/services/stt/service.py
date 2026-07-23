@@ -153,7 +153,20 @@ class STTService:
                 # Per-model key (Model Registry entry), not a system-wide toggle --
                 # "configured" here means at least one enabled entry for this engine
                 # has a key set, so it's actually usable for some model.
-                configured = await model_registry_store.has_key_for_engine("stt", engine)
+                # has_key_for_engine only looks at the entry's own api_key column,
+                # so a provider-linked entry (blank own key, creds on the linked
+                # provider) would wrongly report unconfigured -- resolve each
+                # enabled entry for this engine instead.
+                from app.services.providers.resolve import resolve_credentials
+
+                configured = False
+                for candidate in await model_registry_store.list_all():
+                    if candidate["kind"] != "stt" or candidate["engine"] != engine or not candidate["enabled"]:
+                        continue
+                    _base_url, api_key = await resolve_credentials(candidate)
+                    if api_key:
+                        configured = True
+                        break
                 entry = {"mode": "remote", "available": configured, "detail": provider.model if configured else None}
             elif engine == "http_stt":
                 # Configured = some enabled entry carries a base_url pointing at a

@@ -16,6 +16,7 @@ import httpx
 from app.schemas.stt import STTResult
 from app.services.http_errors import translate_httpx_error
 from app.services.model_registry.store import model_registry_store
+from app.services.providers.resolve import resolve_credentials
 from app.services.stt.base import STTProvider
 
 _DEFAULT_TIMEOUT = 60.0
@@ -45,14 +46,18 @@ class HttpSttProvider(STTProvider):
         self, audio_bytes: bytes, language: str | None = None, model: str | None = None
     ) -> STTResult:
         entry = await self._resolve_entry(model)
-        base_url = (entry or {}).get("base_url", "").strip()
+        if entry:
+            base_url, api_key = await resolve_credentials(entry)
+        else:
+            base_url, api_key = "", ""
+        base_url = base_url.strip()
         if not base_url:
             raise RuntimeError(
                 f"{self.name} is not configured. Add a Model Registry entry with the "
                 f"service's base URL (e.g. http://stt-service:8100/v1)."
             )
 
-        api_key = (entry or {}).get("api_key", "").strip()
+        api_key = api_key.strip()
         configured_timeout = (entry.get("config") or {}).get("timeout_seconds")
         timeout = configured_timeout if configured_timeout is not None else self.timeout_seconds
 
