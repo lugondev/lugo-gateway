@@ -43,9 +43,11 @@ const GROUPS = [
   { key: "preprocessing", label: "Preprocessing (VAD/Noise)", open: false },
 ];
 
-const SECRET_FIELDS = new Set([
-  "preprocessing.pyannote_auth_token",
-]);
+// pyannote_auth_token (the only secret field SystemConfig ever had) moved to
+// an env var (PYANNOTE_AUTH_TOKEN) -- no admin-editable field is a secret
+// right now, but the password-input/placeholder-masking machinery below stays
+// in place for the next one.
+const SECRET_FIELDS = new Set([]);
 
 // Engine-name fields must be picked from the live engine lists, not typed
 // free-text (a typo'd engine only fails at request time). kind selects which

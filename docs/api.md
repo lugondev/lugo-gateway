@@ -453,7 +453,8 @@ profile preset, long-audio segmentation).
 
 ### `PUT /v1/system/config`
 Update the system configuration. Send a partial or full body; absent fields retain their current
-values. Secret fields (`pyannote_auth_token`) that are blank or `"***"` are not updated.
+values. `SystemConfig` currently has no secret fields (`pyannote_auth_token`, the last one, moved to
+the `PYANNOTE_AUTH_TOKEN` env var).
 
 ---
 
