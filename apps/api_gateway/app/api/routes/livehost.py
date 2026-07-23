@@ -7,7 +7,7 @@ from contextlib import aclosing
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
-from app.core.audio import pcm16_to_wav_bytes, wav_file_to_pcm16
+from app.core.audio import pcm16_to_wav_bytes, wav_duration_seconds, wav_file_to_pcm16
 from app.core.auth_guard import resolve_ws_identity, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
@@ -28,6 +28,7 @@ from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
+from app.services.usage.recorder import record_usage
 from app.services.warmup import is_ready, warm_providers
 
 logger = logging.getLogger(__name__)
@@ -254,6 +255,22 @@ async def livehost_stream(websocket: WebSocket) -> None:
             except Exception as exc:  # noqa: BLE001 - persistence must not kill the turn
                 logger.warning("livehost history persist failed: %s", exc)
 
+        async def _record_llm_usage(responder_obj) -> None:
+            try:
+                last_usage = getattr(responder_obj, "last_usage", None) or {}
+                prompt_tokens = last_usage.get("prompt_tokens")
+                completion_tokens = last_usage.get("completion_tokens")
+                native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
+                usage_engine = (profile.llm.engine if profile else "") or ""
+                usage_model_id = llm_model or (profile.llm.model if profile else "") or ""
+                await record_usage(
+                    user_id=identity.user_id or "", profile_id=profile_name or "",
+                    kind="llm", engine=usage_engine, model_id=usage_model_id, unit="tokens",
+                    native_amount=native_amount, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                )
+            except Exception as exc:  # noqa: BLE001 - metering must never break the turn
+                logger.warning("livehost llm usage metering failed: %s", exc)
+
         async def _stream_to_tts(sentence_aiter, responder_name: str) -> list[str]:
             parts: list[str] = []
             if not want_audio:
@@ -263,6 +280,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
                     if want_text:
                         await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
                     index += 1
+                await _record_llm_usage(responder)
                 return parts
 
             async def _synth(sentence: str):
@@ -273,6 +291,14 @@ async def livehost_stream(websocket: WebSocket) -> None:
                         instruct=tts_instruct, speed=tts_speed, language=tts_language,
                     )
                 )
+                try:
+                    await record_usage(
+                        user_id=identity.user_id or "", profile_id=profile_name or "",
+                        kind="tts", engine=tts_engine, model_id=tts_model or "",
+                        unit="chars", native_amount=len(sentence or ""),
+                    )
+                except Exception as exc:  # noqa: BLE001 - metering must never break the turn
+                    logger.warning("livehost tts usage metering failed: %s", exc)
                 if opus_encoder is not None:
                     path = result.audio_url.lstrip("/")
                     pcm = await asyncio.to_thread(wav_file_to_pcm16, path, output_sample_rate)
@@ -314,6 +340,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
                             "audio_chunk", turn=turn, chunk_index=index, text=sentence,
                             audio_url=result.audio_url, sample_rate=result.sample_rate,
                         )
+            await _record_llm_usage(responder)
             return parts
 
         async def _run_voice_turn(audio_pcm: bytes) -> None:
@@ -327,6 +354,14 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 await send("error", message=f"STT failed: {exc}")
                 await send("turn_done", turn=turn)
                 return
+            try:
+                await record_usage(
+                    user_id=identity.user_id or "", profile_id=profile_name or "",
+                    kind="stt", engine=stt_engine, model_id=resolved_stt_model or "",
+                    unit="seconds", native_amount=wav_duration_seconds(wav),
+                )
+            except Exception as exc:  # noqa: BLE001 - metering must never break the turn
+                logger.warning("livehost stt usage metering failed: %s", exc)
             user_text = (stt_result.text or "").strip()
             await send("user_transcript", turn=turn, text=user_text, engine=stt_engine)
             if not user_text:

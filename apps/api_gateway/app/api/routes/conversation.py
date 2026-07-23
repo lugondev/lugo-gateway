@@ -35,6 +35,7 @@ from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
+from app.services.usage.recorder import record_usage
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/conversation", tags=["conversation"])
@@ -169,6 +170,20 @@ async def chat(
             reply = " ".join(parts).strip()
         else:
             reply = await responder.reply(history)
+            try:
+                last_usage = getattr(responder, "last_usage", None) or {}
+                prompt_tokens = last_usage.get("prompt_tokens")
+                completion_tokens = last_usage.get("completion_tokens")
+                native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
+                usage_engine = (active_profile.llm.engine if active_profile else "") or ""
+                usage_model_id = llm_model or (active_profile.llm.model if active_profile else "") or ""
+                await record_usage(
+                    user_id=caller_id or "", profile_id=profile or "",
+                    kind="llm", engine=usage_engine, model_id=usage_model_id, unit="tokens",
+                    native_amount=native_amount, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                )
+            except Exception as exc:  # noqa: BLE001 - metering must never break the reply
+                logger.warning("chat usage metering failed: %s", exc)
     finally:
         await responder.aclose()
 

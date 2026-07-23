@@ -9,12 +9,20 @@ Exception`), or the untracked task being GC'd -- the channel's replay history
 import asyncio
 
 import pytest
+from starlette.requests import Request
 
 from app.api.routes import tts as tts_routes
 from app.schemas.tts import TTSRequest, TTSResult
 from app.services.tts.base import TTSProvider
 from app.services.tts.service import tts_service
 from app.streaming.event_bus import event_bus
+
+
+def _fake_request() -> Request:
+    # Task 6 added a `request` param to synthesize() (for usage-metering
+    # attribution) -- direct calls that bypass the ASGI app need a minimal
+    # stand-in, same shape as tests/unit/test_actor.py's helper.
+    return Request({"type": "http", "method": "POST", "path": "/", "headers": [], "state": {}, "session": {}})
 
 
 class _InstantStub(TTSProvider):
@@ -115,7 +123,7 @@ async def test_synthesize_reports_wall_clock_process_seconds(stubs):
     # The response must carry how long synthesis actually took, distinct from
     # duration_seconds (the length of the produced audio).
     resp = await tts_routes.synthesize(
-        TTSRequest(text="xin chào", engine="stub-tts-stream-ok")
+        TTSRequest(text="xin chào", engine="stub-tts-stream-ok"), _fake_request()
     )
     data = resp["data"]
     assert "process_seconds" in data
