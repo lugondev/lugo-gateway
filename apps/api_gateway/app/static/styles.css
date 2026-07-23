@@ -1590,3 +1590,43 @@ tr.dt-detail[hidden] { display: none; }
 .login-form.active {
   display: flex;
 }
+
+.combobox {
+  position: relative;
+}
+.combobox-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  z-index: 40;
+  margin: 2px 0 0;
+  padding: 4px 0;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  box-shadow: var(--sh-card);
+}
+.combobox-panel[hidden] {
+  display: none;
+}
+.combobox-panel li {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.9em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.combobox-panel li:hover,
+.combobox-panel li.active {
+  background: var(--surface-hover);
+}
+.combobox-empty {
+  padding: 6px 12px;
+  opacity: 0.6;
+  font-size: 0.85em;
+}

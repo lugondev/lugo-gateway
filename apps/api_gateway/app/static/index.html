@@ -908,8 +908,10 @@
                 </label>
                 <label>
                   Model ID
-                  <input id="registry-add-model-id" type="text" placeholder="qwen3-asr-flash" list="registry-model-suggestions" autocomplete="off" />
-                  <datalist id="registry-model-suggestions"></datalist>
+                  <div class="combobox" id="registry-model-combo">
+                    <input id="registry-add-model-id" type="text" placeholder="pick or type a model id" autocomplete="off" role="combobox" aria-expanded="false" aria-autocomplete="list" />
+                    <ul id="registry-model-options" class="combobox-panel" hidden></ul>
+                  </div>
                 </label>
                 <label>
                   Label
