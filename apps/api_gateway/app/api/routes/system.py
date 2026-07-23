@@ -11,7 +11,13 @@ from app.services.model_registry.engine_map import registry_ref
 from app.services.models import model_manager
 from app.services.stt.service import stt_service
 from app.services.llm_models import llm_manager
-from app.services.system_config import SystemConfig, system_config_store
+from app.services.system_config import (
+    ConversationTuningConfig,
+    EngineDefaults,
+    PreprocessingConfig,
+    SystemConfig,
+    system_config_store,
+)
 from app.services.tts.service import tts_service
 from app.services.tts_models import tts_model_manager
 from app.services.vad import available_backends
@@ -100,6 +106,32 @@ def _deep_merge(base: dict, overrides: dict) -> dict:
         else:
             merged[key] = value
     return merged
+
+
+def _field_meta(model: type[BaseModel]) -> dict[str, dict]:
+    meta = {}
+    for name, info in model.model_fields.items():
+        extra = info.json_schema_extra if isinstance(info.json_schema_extra, dict) else {}
+        meta[name] = {
+            "label": info.title or name,
+            "description": info.description or "",
+            "subgroup": extra.get("subgroup"),
+            "unit": extra.get("unit"),
+            "multiline": extra.get("multiline", False),
+        }
+    return meta
+
+
+@router.get("/system/config/meta")
+async def get_system_config_meta() -> dict:
+    return {
+        "success": True,
+        "data": {
+            "engines": _field_meta(EngineDefaults),
+            "conversation": _field_meta(ConversationTuningConfig),
+            "preprocessing": _field_meta(PreprocessingConfig),
+        },
+    }
 
 
 @router.get("/system/config")
