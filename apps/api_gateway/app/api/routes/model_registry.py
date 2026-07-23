@@ -1,3 +1,5 @@
+import difflib
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -89,6 +91,32 @@ def _requires_base_url(kind: str, engine: str) -> bool:
     response so the admin UI can tell "blank because it's genuinely not needed"
     from "blank because it's misconfigured"."""
     return _location(kind, engine) == "service" and engine not in _OPENROUTER_STT_ENGINES
+
+
+def _validate_known_engine(kind: str, engine: str) -> None:
+    """Reject an unknown stt/tts engine before the network test-call, with a
+    "did you mean" hint. The Engine field is free text (kind="llm" genuinely
+    needs that -- any label is valid there), so nothing upstream stops an
+    admin from typing e.g. "OR" meaning "OpenRouter" when the real engine
+    strings are the full compound names qwen3_asr_or / whisper_or. Without
+    this, that typo used to surface only as a raw provider-dict KeyError from
+    deep inside get_provider(), which named the bad value but not the fix."""
+    valid = {"stt": stt_service.providers, "tts": tts_service.providers}.get(kind)
+    if valid is None or engine in valid:
+        return
+    engine_lower = engine.strip().lower()
+    substr_matches = sorted(name for name in valid if engine_lower and engine_lower in name.lower())
+    if substr_matches:
+        suggestions = substr_matches
+    else:
+        lower_to_name = {name.lower(): name for name in valid}
+        close = difflib.get_close_matches(engine_lower, lower_to_name.keys(), n=3, cutoff=0.5)
+        suggestions = [lower_to_name[c] for c in close]
+    hint = f" -- did you mean {', '.join(repr(s) for s in suggestions)}?" if suggestions else ""
+    raise HTTPException(
+        status_code=400,
+        detail=f"Unsupported {kind} engine '{engine}'{hint} (valid: {', '.join(sorted(valid))})",
+    )
 
 
 class CreateEntryRequest(BaseModel):
@@ -185,6 +213,8 @@ async def list_options(kind: str, request: Request) -> dict:
 
 @router.post("")
 async def create_entry(payload: CreateEntryRequest) -> dict:
+    _validate_known_engine(payload.kind, payload.engine)
+
     # A create() always defaults to enabled=True (no explicit `enabled` field
     # on this request), so the same not-installed guard as the PATCH path
     # applies here too -- reject before the network/provider test-call runs.

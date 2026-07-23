@@ -189,6 +189,55 @@ def test_create_openrouter_stt_entry_uses_submitted_key_for_the_test_call(client
     assert resp.json()["data"]["api_key"] == "***"  # short key -> full mask, not partial
 
 
+def test_create_stt_entry_with_unknown_engine_gets_a_helpful_suggestion(client, _with_password):
+    """Regression: the admin's Engine field is free text (kind='llm' genuinely
+    needs that), so a typo like 'OR' -- shorthand for the real OpenRouter-backed
+    engine names qwen3_asr_or/whisper_or -- used to fall all the way through to
+    stt_service.get_provider() and surface only as a bare "Unsupported STT
+    engine: OR", naming the bad value but giving no hint how to fix it. Must be
+    rejected up front, before the test-call/artifact-installed checks run, with
+    a suggestion pointing at the actual valid engine names."""
+    _signup_login(client, "root", role="admin")
+    resp = client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "OR", "model_id": "some-model", "label": "Typo'd OpenRouter",
+    })
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert "qwen3_asr_or" in detail
+    assert "whisper_or" in detail
+
+    listed = client.get("/v1/model_registry").json()["data"]
+    assert not any(e["engine"] == "OR" for e in listed)
+
+
+def test_create_tts_entry_with_unknown_engine_gets_a_helpful_suggestion(client, _with_password):
+    _signup_login(client, "root", role="admin")
+    resp = client.post("/v1/model_registry", json={
+        "kind": "tts", "engine": "vieneu-typo", "model_id": "x", "label": "Typo",
+    })
+    assert resp.status_code == 400
+    assert "vieneu" in resp.json()["detail"]
+
+
+def test_create_llm_entry_with_arbitrary_engine_label_is_unaffected(client, _with_password, monkeypatch):
+    """kind='llm' intentionally allows any engine string as a free-form label --
+    the unknown-engine guard must only apply to stt/tts, which are backed by a
+    fixed provider dict."""
+    _signup_login(client, "root", role="admin")
+
+    async def fake_reply(self, messages):
+        return "ok"
+
+    from app.services.conversation.responder import OpenAICompatResponder
+    monkeypatch.setattr(OpenAICompatResponder, "reply", fake_reply)
+
+    resp = client.post("/v1/model_registry", json={
+        "kind": "llm", "engine": "some-arbitrary-label", "model_id": "model-x", "label": "X",
+        "base_url": "https://example.com/v1", "api_key": "sk-test",
+    })
+    assert resp.status_code == 200
+
+
 def test_create_openrouter_stt_entry_without_key_fails_test_call(client, _with_password):
     _signup_login(client, "root", role="admin")
     resp = client.post("/v1/model_registry", json={
