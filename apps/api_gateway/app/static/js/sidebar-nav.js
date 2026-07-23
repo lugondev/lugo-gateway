@@ -6,6 +6,7 @@ import { loadMyDevices } from "./devices.js";
 import { loadModelRegistry } from "./model-registry.js";
 import { loadProviders } from "./providers.js";
 import { loadUsage } from "./usage.js";
+import { loadMyUsage } from "./usage-me.js";
 import { loadQuotas } from "./quotas.js";
 import { fetchAuthStatus } from "./session.js";
 
@@ -23,6 +24,7 @@ function activateSection(section) {
   if (section === "model-registry") loadModelRegistry();
   if (section === "providers") loadProviders();
   if (section === "usage") loadUsage();
+  if (section === "my-usage") loadMyUsage();
   if (section === "quotas") loadQuotas();
 }
 
