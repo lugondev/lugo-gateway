@@ -115,3 +115,6 @@ system_config.json
 .deployment/
 *.deb
 *.rpm
+
+# subagent-driven-development scratch (progress ledger, task briefs, review packages)
+.superpowers/
