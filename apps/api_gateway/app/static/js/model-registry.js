@@ -140,10 +140,11 @@ function _renderRegistryTable(host, rows, emptyMessage) {
         cellClass: "dt-actions-cell",
         render: (e) => {
           if (_engineConfigUnavailable(e)) {
-            return `
-              <span class="hint" title="${escapeHtml(e.engine)} isn't installed -- nothing to edit or enable until it is">not installed</span>
-              <button class="mini danger" data-registry-delete="${escapeHtml(e.id)}" ${e.enabled ? `disabled title="Disable this entry first"` : ""}>Delete</button>
-            `;
+            // No Delete either: this row is disabled-first-gated (below), but
+            // Enable/Disable is hidden right above for the same "not
+            // installed" reason -- leaving Delete active would be a dead end
+            // that can never actually be clicked.
+            return `<span class="hint" title="${escapeHtml(e.engine)} isn't installed -- nothing to edit, enable, or delete until it is">not installed</span>`;
           }
           return `
             <button class="mini" data-registry-edit="${escapeHtml(e.id)}">Edit</button>
