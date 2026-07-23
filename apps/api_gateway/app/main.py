@@ -42,10 +42,12 @@ logger = logging.getLogger(__name__)
 
 async def _warm_default_engines() -> None:
     """Load the STT/TTS engines conversations actually use, at process boot instead
-    of waiting for the first WebSocket connect. Covers conversation_stt_engine /
-    conversation_tts_engine, plus every engine any chatllm/TTS profile can select
-    (see app.services.warmup.engines_for_boot_warmup) -- so a device connecting
-    with any profile never pays a cold model load on its first turn."""
+    of waiting for the first WebSocket connect. Covers default_stt_engine /
+    default_tts_engine, plus every engine any chatllm/TTS profile can select (see
+    app.services.warmup.engines_for_boot_warmup) -- so a device connecting with
+    any profile never pays a cold model load on its first turn. Engine selection
+    is profile-or-default only (no per-request override), so boot warm-up can see
+    every engine a device might ever request."""
     from app.core.errors import AppError
     from app.services.stt.model_catalog import apply_stt_model
     from app.services.stt.service import stt_service

@@ -82,12 +82,10 @@ class ConversationTuningConfig(BaseModel):
     conversation_barge_in_grace_ms: int = 500
     conversation_max_utterance_ms: int = 30000
     conversation_goodbye_text: str = "Hẹn gặp lại nha!"
-    conversation_stt_engine: str = "whisper"
     conversation_fast_stt_engine: str = ""
     conversation_fast_stt_max_ms: int = 1500
     conversation_streaming_stt: bool = False
     conversation_streaming_chunk_ms: int = 1000
-    conversation_tts_engine: str = "omnivoice"
     conversation_tts_lookahead: int = 3
     conversation_opus_pace: bool = False
     conversation_opus_prebuffer_frames: int = 5
@@ -232,10 +230,10 @@ system_config_store = SystemConfigStore(settings_attr="system_config_path")
 
 
 def warmup_stt_engines() -> list[str]:
-    engine = system_config_store.get().conversation.conversation_stt_engine
+    engine = system_config_store.get().engines.default_stt_engine
     return [engine] if engine else []
 
 
 def warmup_tts_engines() -> list[str]:
-    engine = system_config_store.get().conversation.conversation_tts_engine
+    engine = system_config_store.get().engines.default_tts_engine
     return [engine] if engine else []

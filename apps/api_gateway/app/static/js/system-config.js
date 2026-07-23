@@ -55,9 +55,7 @@ const SECRET_FIELDS = new Set([]);
 const ENGINE_SELECT_FIELDS = {
   "engines.default_stt_engine": { kind: "stt" },
   "engines.default_tts_engine": { kind: "tts" },
-  "conversation.conversation_stt_engine": { kind: "stt" },
   "conversation.conversation_fast_stt_engine": { kind: "stt", optional: true },
-  "conversation.conversation_tts_engine": { kind: "tts" },
 };
 
 // Voice list depends on the engine chosen in the sibling select, so it is

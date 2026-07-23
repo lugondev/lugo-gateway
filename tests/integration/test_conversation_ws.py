@@ -7,6 +7,8 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
+from app.services.profiles.models import Profile, SttConfig
+from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
 from app.services.tts.base import TTSProvider
@@ -44,14 +46,19 @@ class _SlowTTS(TTSProvider):
 
 
 @pytest.fixture(autouse=True)
-def _register_stub(monkeypatch):
+def _register_stub(monkeypatch, tmp_path):
     # Keep the test hermetic regardless of .env: stub TTS + built-in echo responder
     # (no external Ollama / real model calls). conversation_llm_base_url now
-    # lives on system_config_store (Task 3); conftest._hermetic already zeroes it.
+    # lives on system_config_store; conftest._hermetic already zeroes it.
     stt_service.providers["stub-conv"] = _StubSTT()
     tts_service.providers["stub-conv-tts"] = _StubTTS()
     tts_service.providers["slow-conv-tts"] = _SlowTTS()
-    yield
+
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.api.routes.conversation.profile_store", fresh_profiles)
+
+    yield fresh_profiles
+
     stt_service.providers.pop("stub-conv", None)
     tts_service.providers.pop("stub-conv-tts", None)
     tts_service.providers.pop("slow-conv-tts", None)
@@ -77,9 +84,24 @@ def _next_event(ws) -> dict:
             return ev
 
 
-def test_conversation_turn_end_to_end():
+def _set_default_tts(monkeypatch, tmp_path, tts_engine):
+    from app.services import system_config as sc_mod
+
+    fresh = sc_mod.SystemConfigStore(str(tmp_path / "system_config.json"))
+    fresh.set(
+        fresh.get().model_copy(
+            update={"engines": fresh.get().engines.model_copy(update={"default_tts_engine": tts_engine})}
+        )
+    )
+    monkeypatch.setattr("app.api.routes.conversation.system_config_store", fresh)
+    monkeypatch.setattr(sc_mod, "system_config_store", fresh)
+
+
+def test_conversation_turn_end_to_end(_register_stub, monkeypatch, tmp_path):
+    _register_stub.upsert(Profile(name="p1", stt=SttConfig(engine="stub-conv")))
+    _set_default_tts(monkeypatch, tmp_path, "stub-conv-tts")
     client = TestClient(app)
-    url = "/v1/conversation/stream?stt_engine=stub-conv&tts_engine=stub-conv-tts&sample_rate=16000"
+    url = "/v1/conversation/stream?profile=p1&sample_rate=16000"
     with client.websocket_connect(url) as ws:
         assert ws.receive_json()["event"] == "session_started"
 
@@ -111,9 +133,11 @@ def test_conversation_turn_end_to_end():
         assert chunk["audio_url"].startswith("/artifacts/")
 
 
-def test_conversation_barge_in_aborts_turn():
+def test_conversation_barge_in_aborts_turn(_register_stub, monkeypatch, tmp_path):
+    _register_stub.upsert(Profile(name="p2", stt=SttConfig(engine="stub-conv")))
+    _set_default_tts(monkeypatch, tmp_path, "slow-conv-tts")
     client = TestClient(app)
-    url = "/v1/conversation/stream?stt_engine=stub-conv&tts_engine=slow-conv-tts&sample_rate=16000"
+    url = "/v1/conversation/stream?profile=p2&sample_rate=16000"
     with client.websocket_connect(url) as ws:
         assert ws.receive_json()["event"] == "session_started"
         ws.send_bytes(_loud(500))
@@ -134,9 +158,10 @@ def test_conversation_barge_in_aborts_turn():
         assert "aborted" in seen  # the in-progress turn was cancelled
 
 
-def test_conversation_unknown_engine_errors():
+def test_conversation_unknown_engine_errors(_register_stub):
+    _register_stub.upsert(Profile(name="p3", stt=SttConfig(engine="nope")))
     client = TestClient(app)
-    with client.websocket_connect("/v1/conversation/stream?stt_engine=nope") as ws:
+    with client.websocket_connect("/v1/conversation/stream?profile=p3") as ws:
         assert ws.receive_json()["event"] == "error"
 
 

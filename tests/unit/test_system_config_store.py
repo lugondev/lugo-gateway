@@ -99,12 +99,12 @@ def test_conversation_tuning_config_has_expected_defaults(tmp_path):
     assert c.conversation_preroll_ms == 600
     assert c.conversation_max_utterance_ms == 30000
     assert c.conversation_goodbye_text == "Hẹn gặp lại nha!"
-    assert c.conversation_stt_engine == "whisper"
+    assert not hasattr(c, "conversation_stt_engine")
+    assert not hasattr(c, "conversation_tts_engine")
     assert c.conversation_fast_stt_engine == ""
     assert c.conversation_fast_stt_max_ms == 1500
     assert c.conversation_streaming_stt is False
     assert c.conversation_streaming_chunk_ms == 1000
-    assert c.conversation_tts_engine == "omnivoice"
     assert c.conversation_tts_lookahead == 3
     assert c.conversation_opus_pace is False
     assert c.conversation_opus_prebuffer_frames == 5

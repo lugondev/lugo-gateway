@@ -56,9 +56,8 @@ def _resolve(profile_name: str | None):
                    ref_audio_path=tts_profile.ref_audio_path or None, ref_text=tts_profile.ref_text or None,
                    instruct=tts_profile.instruct or None, speed=tts_profile.speed, language=tts_profile.language)
     else:
-        conv_cfg = system_config_store.get().conversation
         tts = dict(
-            engine=conv_cfg.conversation_tts_engine or system_config_store.get().engines.default_tts_engine,
+            engine=system_config_store.get().engines.default_tts_engine,
             model_id="", voice=None, ref_audio_path=None, ref_text=None, instruct=None, speed=None, language=None)
     idle = profile.session.idle_timeout_s if profile else 30
     return profile, stt_engine, language, stt_model, tts, idle
