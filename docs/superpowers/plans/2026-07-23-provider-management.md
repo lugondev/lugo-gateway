@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Python 3.12 venv (`.venv`); 3.14 thiếu wheels ML — không dùng.
-- Chạy test **chỉ trong repo `apps/api_gateway`** (root repo): `python -m pytest tests/unit/<file> -v`. KHÔNG chạy submodule.
+- **Test layout (repo-specific — briefs MUST honor this over any boilerplate below):** tests sống ở repo-root `tests/unit/`; chạy từ repo root bằng `.venv/bin/python -m pytest tests/unit/<file> -v`. `pyproject.toml` đặt `asyncio_mode="auto"` (KHÔNG cần `@pytest.mark.asyncio`) và `_tmp_db` là fixture **`autouse=True`** — **KHÔNG bao giờ nhận `_tmp_db` làm tham số** của hàm test (nó tự chạy, cấp DB tmp per-test). `TestClient` dùng bản đồng bộ. KHÔNG chạy test trong submodule.
 - **Không ALTER** bảng cũ. Bảng mới `providers` do `Base.metadata.create_all` tự tạo (`db/engine.py::init_db`).
 - `api_key` phải **mask** trong mọi response API (dùng `_mask_api_key` sẵn có ở `routes/model_registry.py`).
 - Provider linkage lưu ở `entry["config"]["provider_id"]`; rỗng/absent = fallback về `entry.base_url`/`entry.api_key`.
@@ -45,7 +45,7 @@ from app.services.db.models import Provider
 
 
 @pytest.mark.asyncio
-async def test_provider_row_roundtrips(_tmp_db):
+async def test_provider_row_roundtrips():
     await init_db()
     async with db_session() as s:
         s.add(Provider(id="p1", name="openai", label="OpenAI",
@@ -62,7 +62,7 @@ async def test_provider_row_roundtrips(_tmp_db):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python -m pytest tests/unit/test_provider_model.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_provider_model.py -v`
 Expected: FAIL — `ImportError: cannot import name 'Provider'`.
 
 - [ ] **Step 3: Add the model**
@@ -87,7 +87,7 @@ class Provider(Base):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python -m pytest tests/unit/test_provider_model.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_provider_model.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -130,7 +130,7 @@ from app.services.providers.store import provider_store
 
 
 @pytest.mark.asyncio
-async def test_create_get_and_sync_readback(_tmp_db):
+async def test_create_get_and_sync_readback():
     await init_db()
     created = await provider_store.create(
         name="openrouter", label="OpenRouter",
@@ -147,7 +147,7 @@ async def test_create_get_and_sync_readback(_tmp_db):
 
 
 @pytest.mark.asyncio
-async def test_set_fields_and_delete(_tmp_db):
+async def test_set_fields_and_delete():
     await init_db()
     created = await provider_store.create(name="openai", base_url="x", api_key="k")
     pid = created["id"]
@@ -162,14 +162,14 @@ async def test_set_fields_and_delete(_tmp_db):
 
 
 @pytest.mark.asyncio
-async def test_get_sync_returns_none_when_cache_cold(_tmp_db):
+async def test_get_sync_returns_none_when_cache_cold():
     provider_store.invalidate()
     assert provider_store.get_sync("anything") is None
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python -m pytest tests/unit/test_provider_store.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_provider_store.py -v`
 Expected: FAIL — `ModuleNotFoundError: app.services.providers.store`.
 
 - [ ] **Step 3: Implement the store** (mirror `ModelRegistryStore`, `services/model_registry/store.py`)
@@ -298,7 +298,7 @@ Add `provider_store.invalidate()` in BOTH places `model_registry_store.invalidat
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `python -m pytest tests/unit/test_provider_store.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_provider_store.py -v`
 Expected: PASS (3 tests).
 
 - [ ] **Step 6: Commit**
@@ -338,7 +338,7 @@ from app.services.providers.store import provider_store
 
 
 @pytest.mark.asyncio
-async def test_uses_provider_when_linked(_tmp_db):
+async def test_uses_provider_when_linked():
     await init_db()
     p = await provider_store.create(name="openai", base_url="https://api.openai.com/v1", api_key="sk-P")
     entry = {"base_url": "", "api_key": "", "config": {"provider_id": p["id"]}}
@@ -347,7 +347,7 @@ async def test_uses_provider_when_linked(_tmp_db):
 
 
 @pytest.mark.asyncio
-async def test_falls_back_to_entry_when_no_provider(_tmp_db):
+async def test_falls_back_to_entry_when_no_provider():
     await init_db()
     entry = {"base_url": "http://localhost:11434/v1", "api_key": "", "config": {}}
     assert await resolve_credentials(entry) == ("http://localhost:11434/v1", "")
@@ -355,7 +355,7 @@ async def test_falls_back_to_entry_when_no_provider(_tmp_db):
 
 
 @pytest.mark.asyncio
-async def test_falls_back_when_provider_id_dangling(_tmp_db):
+async def test_falls_back_when_provider_id_dangling():
     await init_db()
     entry = {"base_url": "http://x/v1", "api_key": "k", "config": {"provider_id": "missing"}}
     assert await resolve_credentials(entry) == ("http://x/v1", "k")
@@ -368,7 +368,7 @@ def test_presets_cover_three_providers():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python -m pytest tests/unit/test_provider_resolve.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_provider_resolve.py -v`
 Expected: FAIL — module missing.
 
 - [ ] **Step 3: Implement the resolver**
@@ -417,7 +417,7 @@ async def resolve_credentials(entry: dict) -> tuple[str, str]:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python -m pytest tests/unit/test_provider_resolve.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_provider_resolve.py -v`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Commit**
@@ -473,13 +473,13 @@ def _login_admin(client, username="adm"):
     client.post("/api/auth/login", json={"username": username, "password": "pw"})
 
 
-def test_regular_user_cannot_reach_providers(client, _with_password, _tmp_db):
+def test_regular_user_cannot_reach_providers(client, _with_password):
     client.post("/api/auth/signup", json={"username": "bob", "password": "pw"})
     client.post("/api/auth/login", json={"username": "bob", "password": "pw"})
     assert client.get("/v1/providers").status_code == 403
 
 
-def test_admin_crud_and_key_masking(client, _with_password, _tmp_db):
+def test_admin_crud_and_key_masking(client, _with_password):
     _login_admin(client)
     # create
     resp = client.post("/v1/providers", json={
@@ -504,7 +504,7 @@ def test_admin_crud_and_key_masking(client, _with_password, _tmp_db):
     assert client.delete(f"/v1/providers/{created['id']}").json()["data"]["deleted"] is True
 
 
-def test_presets_endpoint(client, _with_password, _tmp_db):
+def test_presets_endpoint(client, _with_password):
     _login_admin(client)
     data = client.get("/v1/providers/presets").json()["data"]
     assert {p["name"] for p in data} >= {"openai", "openrouter", "qwencloud"}
@@ -512,7 +512,7 @@ def test_presets_endpoint(client, _with_password, _tmp_db):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python -m pytest tests/unit/test_providers_routes.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_providers_routes.py -v`
 Expected: FAIL — 404 (router not registered) / import error.
 
 - [ ] **Step 3: Implement the router**
@@ -617,7 +617,7 @@ _ADMIN_PREFIXES = ("/v1/system", "/v1/models", "/v1/users", "/v1/devices", "/v1/
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `python -m pytest tests/unit/test_providers_routes.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_providers_routes.py -v`
 Expected: PASS (3 tests).
 
 - [ ] **Step 6: Commit**
@@ -672,7 +672,7 @@ def _login_admin(client, username="adm"):
     client.post("/api/auth/login", json={"username": username, "password": "pw"})
 
 
-def test_llm_entry_test_call_uses_provider_creds(client, _with_password, _tmp_db, monkeypatch):
+def test_llm_entry_test_call_uses_provider_creds(client, _with_password, monkeypatch):
     _login_admin(client)
     # a provider with the real endpoint + key
     prov = client.post("/v1/providers", json={
@@ -704,7 +704,7 @@ def test_llm_entry_test_call_uses_provider_creds(client, _with_password, _tmp_db
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `python -m pytest tests/unit/test_model_registry_provider_link.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_model_registry_provider_link.py -v`
 Expected: FAIL — `captured["api_key"] == ""` (currently uses `payload.api_key`, which is blank).
 
 - [ ] **Step 3: Resolve creds in create_entry**
@@ -730,12 +730,12 @@ Leave the final `model_registry_store.create(...)` unchanged — it persists `pa
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `python -m pytest tests/unit/test_model_registry_provider_link.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_model_registry_provider_link.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Run the existing registry-route suite (no regression)**
 
-Run: `python -m pytest tests/unit/test_model_registry_routes.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_model_registry_routes.py -v`
 Expected: PASS (unchanged — entries without `provider_id` resolve to their own blank/own creds exactly as before).
 
 - [ ] **Step 6: Commit**
@@ -775,7 +775,7 @@ from app.services.conversation.responder import resolve_llm_override_from_regist
 
 
 @pytest.mark.asyncio
-async def test_llm_override_uses_provider(_tmp_db):
+async def test_llm_override_uses_provider():
     await init_db()
     prov = await provider_store.create(
         name="qwencloud",
@@ -795,7 +795,7 @@ async def test_llm_override_uses_provider(_tmp_db):
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `python -m pytest tests/unit/test_responder_provider_creds.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_responder_provider_creds.py -v`
 Expected: FAIL — returns entry's blank `("", "")` (or None) instead of provider creds.
 
 - [ ] **Step 4: Route the resolution through `resolve_credentials`**
@@ -809,12 +809,12 @@ Keep all other behavior (model id, engine) unchanged.
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `python -m pytest tests/unit/test_responder_provider_creds.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_responder_provider_creds.py -v`
 Expected: PASS.
 
 - [ ] **Step 6: Regression — existing responder/registry tests**
 
-Run: `python -m pytest tests/unit/test_responder_llm_registry.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_responder_llm_registry.py -v`
 Expected: PASS (entries without provider_id resolve to their own creds).
 
 - [ ] **Step 7: Commit**
@@ -854,7 +854,7 @@ from app.services.providers.resolve import resolve_credentials_sync
 
 
 @pytest.mark.asyncio
-async def test_sync_resolver_used_by_providers(_tmp_db):
+async def test_sync_resolver_used_by_providers():
     await init_db()
     # warm the sync cache
     p = await provider_store.create(name="openai", base_url="https://api.openai.com/v1", api_key="sk-S")
@@ -866,7 +866,7 @@ async def test_sync_resolver_used_by_providers(_tmp_db):
 
 - [ ] **Step 3: Run test to verify it fails/passes as expected**
 
-Run: `python -m pytest tests/unit/test_stt_tts_provider_creds.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_stt_tts_provider_creds.py -v`
 Expected: PASS immediately (resolver already exists) — this test guards the contract the wiring depends on. The behavioral change is verified by Step 5 regression.
 
 - [ ] **Step 4: Wire each provider**
@@ -884,7 +884,7 @@ Do not change constructors that already receive an explicit `api_key` from the a
 
 - [ ] **Step 5: Regression — existing provider tests**
 
-Run: `python -m pytest tests/unit/test_openrouter_provider.py tests/unit/test_http_stt_provider.py tests/unit/test_http_tts_provider.py -v`
+Run: `.venv/bin/python -m pytest tests/unit/test_openrouter_provider.py tests/unit/test_http_stt_provider.py tests/unit/test_http_tts_provider.py -v`
 Expected: PASS (entries without provider_id behave exactly as before).
 
 - [ ] **Step 6: Commit**
@@ -904,7 +904,7 @@ git -c user.name=lugondev -c user.email=lugondev@gmail.com commit -m "feat(provi
 
 Run:
 ```bash
-python -m pytest tests/unit/test_provider_model.py tests/unit/test_provider_store.py \
+.venv/bin/python -m pytest tests/unit/test_provider_model.py tests/unit/test_provider_store.py \
   tests/unit/test_provider_resolve.py tests/unit/test_providers_routes.py \
   tests/unit/test_model_registry_provider_link.py tests/unit/test_responder_provider_creds.py \
   tests/unit/test_stt_tts_provider_creds.py tests/unit/test_model_registry_routes.py \
@@ -914,7 +914,7 @@ Expected: ALL PASS.
 
 - [ ] **Step 2: Pre-push gate — full api_gateway unit suite**
 
-Run: `python -m pytest tests/unit -q`
+Run: `.venv/bin/python -m pytest tests/unit -q`
 Expected: PASS (no regressions). Per repo convention this is the pre-commit/push gate; do not push to main (auto-deploys prod) without the user's go-ahead.
 
 - [ ] **Step 3: Local endpoint smoke (optional, per test-before-deploy memory)**
