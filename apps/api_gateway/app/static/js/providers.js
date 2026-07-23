@@ -1,4 +1,4 @@
-import { el, print, escapeHtml } from "./helpers.js";
+import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
 import { renderDataTable } from "./data-table.js";
 import { confirmDialog } from "./modal.js";
 
@@ -77,6 +77,10 @@ function renderProviders() {
         </label>
         <button class="mini" data-provider-save="${escapeHtml(p.id)}">Save</button>
       </div>`,
+    bulkActions: [
+      { label: "Enable selected", run: (ids) => bulkPatchProviders(ids, { enabled: true }, "Enabled") },
+      { label: "Disable selected", run: (ids) => bulkPatchProviders(ids, { enabled: false }, "Disabled") },
+    ],
   });
   if (!table) return;
 
@@ -108,7 +112,7 @@ function renderProviders() {
   );
 }
 
-async function patchProvider(id, fields) {
+async function _patchProviderRaw(id, fields) {
   try {
     const resp = await fetch(`/v1/providers/${encodeURIComponent(id)}`, {
       method: "PATCH",
@@ -117,13 +121,31 @@ async function patchProvider(id, fields) {
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
-      print(el("providers-status"), body.detail || "Update failed", true);
-      return;
+      return { ok: false, error: body.detail || "Update failed" };
     }
-    await loadProviders();
+    return { ok: true };
   } catch (error) {
-    print(el("providers-status"), String(error), true);
+    return { ok: false, error: String(error) };
   }
+}
+
+async function bulkPatchProviders(ids, fields, verb) {
+  const errors = await runBulk(
+    ids,
+    (id) => _patchProviderRaw(id, fields),
+    (id) => providerData.find((p) => p.id === id)?.name || id
+  );
+  await loadProviders();
+  printBulkSummary(el("providers-status"), ids.length, errors, verb);
+}
+
+async function patchProvider(id, fields) {
+  const result = await _patchProviderRaw(id, fields);
+  if (!result.ok) {
+    print(el("providers-status"), result.error, true);
+    return;
+  }
+  await loadProviders();
 }
 
 async function deleteProvider(id) {
