@@ -38,6 +38,10 @@ class TTSService:
                 detail = provider.detail()
             except Exception as exc:  # noqa: BLE001 -- one bad engine must not 500 the whole list
                 detail = f"detail() failed: {exc}"
+            # "remote" = calls out to an OpenAI-compatible HTTP service (http_tts);
+            # everything else runs in-process ("local"). Mirrors _SERVICE_TTS_ENGINES
+            # in routes/model_registry.py and the `mode` field STT's list_engines emits.
+            mode = "remote" if name == "http_tts" else "local"
             result.append(
                 {
                     "engine": name,
@@ -47,6 +51,7 @@ class TTSService:
                     "install_package": provider.install_package,
                     "install_enabled": settings.allow_runtime_install,
                     "default": name == default_engine,
+                    "mode": mode,
                 }
             )
         return result
