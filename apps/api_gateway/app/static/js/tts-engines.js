@@ -27,7 +27,7 @@ export async function loadTtsEngines() {
 
     renderTtsEnginesStatus(enginesBody.data);
 
-    [["tts-engine", "tts-engine-detail"], ["tts-stream-engine", "tts-stream-engine-detail"], ["t2v-tts-engine", "t2v-engine-detail"]].forEach(
+    [["tts-engine", "tts-engine-detail"], ["tts-stream-engine", "tts-stream-engine-detail"]].forEach(
       ([selId, detId]) => {
         const select = el(selId);
         if (!select) return;
@@ -85,7 +85,6 @@ export function updateTtsEngine(selId, detId) {
   if (det) det.textContent = ttsEngineDetails[engine] ? `model: ${ttsEngineDetails[engine]}` : "";
   // Voice selector applies to any engine that exposes a voice list (vieneu, edge_tts, kokoro_vi, ...).
   if (selId === "tts-engine") loadTtsVoices(engine);
-  if (selId === "t2v-tts-engine") loadTtsVoices(engine, { wrapId: "t2v-voice-wrap", selectId: "t2v-tts-voice", restore: false });
 }
 
 export async function loadTtsVoices(engine, { wrapId = "tts-voice-wrap", selectId = "tts-voice", restore = true } = {}) {

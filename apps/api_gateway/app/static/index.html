@@ -311,17 +311,7 @@
 
               <!-- === VOICE→TEXT === -->
               <div id="mode-voice-text" class="mode-pane hidden">
-                <p class="hint">Live microphone transcription &mdash; no LLM, no TTS.</p>
-                <div class="row">
-                  <label>
-                    STT engine
-                    <select id="v2t-stt-engine"></select>
-                  </label>
-                  <label>
-                    Language
-                    <input id="v2t-language" type="text" value="vi" placeholder="vi, en, ja&#8230;" />
-                  </label>
-                </div>
+                <p class="hint">Live microphone transcription &mdash; no LLM, no TTS. Uses the server's default STT engine.</p>
                 <div class="actions">
                   <button id="v2t-start">Start Mic</button>
                   <button id="v2t-stop" class="ghost" disabled>Stop &amp; Finalize</button>
@@ -336,20 +326,7 @@
 
               <!-- === TEXT→VOICE === -->
               <div id="mode-text-voice" class="mode-pane hidden">
-                <p class="hint">Type text to synthesize and play back.</p>
-                <div class="row">
-                  <label>
-                    TTS engine
-                    <select id="t2v-tts-engine"></select>
-                    <small class="engine-detail" id="t2v-engine-detail"></small>
-                  </label>
-                  <label id="t2v-voice-wrap" class="hidden">
-                    Voice
-                    <select id="t2v-tts-voice">
-                      <option value="">(auto)</option>
-                    </select>
-                  </label>
-                </div>
+                <p class="hint">Type text to synthesize and play back. Uses the server's default TTS engine.</p>
                 <label>
                   Text
                   <textarea id="t2v-text" rows="4" placeholder="Type text to speak&#8230;"></textarea>
