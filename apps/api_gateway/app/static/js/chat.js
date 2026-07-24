@@ -131,13 +131,12 @@ export function setV2tStatus(text, cls) {
 }
 
 export async function startV2t() {
-  const engine = el("v2t-stt-engine")?.value || "vosk";
-  const language = el("v2t-language")?.value.trim() || "";
   if (el("v2t-partial")) el("v2t-partial").textContent = "—";
   if (el("v2t-log")) el("v2t-log").textContent = "";
 
-  let params = `engine=${encodeURIComponent(engine)}&sample_rate=${STREAM_SAMPLE_RATE}`;
-  if (language) params += `&language=${encodeURIComponent(language)}`;
+  // No manual engine/language picker here — omitting them lets the backend use
+  // its configured default STT engine (and auto language detection).
+  const params = `sample_rate=${STREAM_SAMPLE_RATE}`;
 
   let capture;
   try {
@@ -215,16 +214,19 @@ if (el("t2v-submit")) {
     if (meta) meta.textContent = "Synthesizing…";
     if (audio) audio.classList.add("hidden");
     try {
-      const [t2vEngine = "", t2vModel = ""] = (el("t2v-tts-engine")?.value || "").split("|");
+      // No manual engine/voice picker here — resolve the server's default TTS
+      // engine (TTSRequest otherwise defaults to a hardcoded "omnivoice").
+      let engine;
+      try {
+        const d = await (await fetch("/v1/model_registry/defaults")).json();
+        engine = d?.data?.tts?.engine || undefined;
+      } catch {
+        engine = undefined;
+      }
       const resp = await fetch("/v1/tts/synthesize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          engine: t2vEngine || undefined,
-          model_id: t2vModel,
-          voice: el("t2v-tts-voice")?.value || null,
-        }),
+        body: JSON.stringify({ text, engine }),
       });
       const body = await resp.json();
       if (!resp.ok) { if (meta) meta.textContent = body.error || "TTS error"; return; }

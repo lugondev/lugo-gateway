@@ -15,7 +15,6 @@ export async function loadSttEngines() {
   const pairs = [
     ["stt-engine", "stt-engine-detail"],
     ["stt-stream-engine", "stt-stream-engine-detail"],
-    ["v2t-stt-engine", null],
   ];
   try {
     const body = await (await fetch("/v1/stt/engines")).json();
