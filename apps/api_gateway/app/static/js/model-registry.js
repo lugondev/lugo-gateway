@@ -41,26 +41,35 @@ async function _loadEngineOptions() {
   const sel = el("registry-add-engine");
   const wrap = el("registry-add-engine-wrap");
   if (!sel) return;
-  if (kind === "llm") {
-    if (wrap) wrap.classList.add("hidden"); // engine derived from provider on submit
-    return;
-  }
-  if (wrap) wrap.classList.remove("hidden");
+  if (kind === "llm") { if (wrap) wrap.classList.add("hidden"); return; } // engine derived from provider
+  const hasProvider = !!(el("registry-add-provider")?.value || "").trim();
   const prev = sel.value;
   sel.innerHTML = "";
+  let engines = [];
   try {
     const body = await (await fetch(`/v1/${kind}/engines`)).json();
-    const engines = (body.data || []);
-    for (const item of engines) {
-      const opt = document.createElement("option");
-      opt.value = item.engine;
-      opt.textContent = item.available ? item.engine : `${item.engine} (unavailable)`;
-      sel.appendChild(opt);
-    }
-    if (engines.some((e) => e.engine === prev)) sel.value = prev; // keep selection across kind re-renders
-  } catch {
-    /* leave empty; submit will surface a clear error */
+    engines = body.data || [];
+  } catch { /* leave empty; submit's required-guard will surface it */ }
+  // With a provider (remote OpenAI-compat), only remote adapters use its creds;
+  // without a provider, only local runtimes make sense. `mode` comes from the backend.
+  const relevant = engines.filter((e) => (hasProvider ? e.mode === "remote" : e.mode === "local"));
+  for (const e of relevant) {
+    const opt = document.createElement("option");
+    opt.value = e.engine;
+    // The "(unavailable)" tag is a LOCAL package check — meaningless for a remote engine.
+    opt.textContent = (!hasProvider && !e.available) ? `${e.engine} (unavailable)` : e.engine;
+    sel.appendChild(opt);
   }
+  // Default: with a provider, prefer the generic OpenAI-compatible adapter.
+  const preferred = kind === "stt" ? "http_stt" : "http_tts";
+  if (hasProvider && relevant.some((e) => e.engine === preferred)) {
+    sel.value = preferred;
+  } else if (relevant.some((e) => e.engine === prev)) {
+    sel.value = prev; // keep the prior selection when still valid
+  }
+  // Nothing meaningful to choose (0 or 1 option) -> hide; the single value is
+  // already selected and _effectiveEngine() reads sel.value regardless.
+  if (wrap) wrap.classList.toggle("hidden", relevant.length <= 1);
 }
 
 // llm engine is cosmetic; use the linked provider's name as the label (or "custom").
