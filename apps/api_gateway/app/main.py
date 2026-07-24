@@ -133,11 +133,15 @@ async def lifespan(app: FastAPI):
         migrate_llm_default_flag,
         migrate_omnivoice_to_registry,
         migrate_remote_stt_to_registry,
+        migrate_renamed_engine_names,
         migrate_stt_local_device_to_registry,
         migrate_stt_local_models_to_registry,
         seed_installed_models_to_registry,
     )
 
+    # Runs before the seed/back-fill migrations below and before warm-up so both
+    # see corrected engine names, never the dead openai_stt/openai_tts.
+    await migrate_renamed_engine_names()
     await migrate_conversation_llm_to_registry()
     await migrate_llm_default_flag()
     await migrate_remote_stt_to_registry()
