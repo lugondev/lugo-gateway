@@ -45,7 +45,7 @@ async function _loadEngineOptions() {
   const wrap = el("registry-add-engine-wrap");
   if (!sel) return;
   const hasProvider = !!(el("registry-add-provider")?.value || "").trim();
-  if (kind === "llm" || hasProvider) { if (wrap) wrap.classList.add("hidden"); return; }
+  if (kind === "llm" || hasProvider) { if (wrap) wrap.classList.add("hidden"); void _loadModelChoices(); return; }
   if (wrap) wrap.classList.remove("hidden");
   const prev = sel.value;
   sel.innerHTML = "";
@@ -61,6 +61,7 @@ async function _loadEngineOptions() {
     sel.appendChild(opt);
   }
   if (engines.some((e) => e.engine === prev && e.mode === "local")) sel.value = prev;
+  void _loadModelChoices();
 }
 
 // The engine actually submitted. For a LOCAL (no-provider) stt/tts model it's
@@ -86,24 +87,50 @@ function _effectiveEngine() {
   return (el("registry-add-engine")?.value || "").trim(); // local runtime choice
 }
 
-let _modelChoices = []; // model ids fetched from the selected provider
+let _modelChoices = []; // model ids fetched from the selected provider (or the local engine's default)
+let _lastAutoFilled = null;
 
-async function _loadProviderModels() {
+async function _loadModelChoices() {
   _modelChoices = [];
-  const providerId = (el("registry-add-provider")?.value || "").trim();
+  const input = el("registry-add-model-id");
   const status = el("model-registry-status");
-  if (!providerId) { _renderModelPanel(); return; }
+  const providerId = (el("registry-add-provider")?.value || "").trim();
+  const kind = el("registry-add-kind")?.value;
   try {
-    const resp = await fetch(`/v1/providers/${encodeURIComponent(providerId)}/models`);
-    const body = await resp.json();
-    _modelChoices = (body.data && body.data.models) || [];
-    if (body.data && body.data.error) {
-      print(status, `Couldn't load models (${body.data.error}) — type the model id manually.`, true);
-    } else if (_modelChoices.length && status) {
-      status.textContent = `Loaded ${_modelChoices.length} model(s) — pick or type.`;
+    if (providerId) {
+      // Remote: the provider's advertised models (self-hosted service returns 1;
+      // a cloud provider returns many).
+      const body = await (await fetch(`/v1/providers/${encodeURIComponent(providerId)}/models`)).json();
+      _modelChoices = (body.data && body.data.models) || [];
+      if (body.data && body.data.error) {
+        print(status, `Couldn't load models (${body.data.error}) — type the model id manually.`, true);
+      }
+    } else if (kind === "stt" || kind === "tts") {
+      // Local: the selected engine's single configured model (default_model / model_path).
+      const engine = (el("registry-add-engine")?.value || "").trim();
+      if (engine) {
+        const body = await (await fetch(`/v1/model_registry/config_schema?kind=${encodeURIComponent(kind)}&engine=${encodeURIComponent(engine)}`)).json();
+        const f = (body.fields || []).find((x) => x.key === "default_model" || x.key === "model_path");
+        if (f && f.default) _modelChoices = [String(f.default)];
+      }
     }
   } catch (e) {
     print(status, `Couldn't load models (${e}) — type the model id manually.`, true);
+  }
+  // Auto-fill when there's exactly ONE model (self-hosted 1-model service, or a
+  // single-model local engine). Don't clobber a value the admin typed themselves.
+  if (input) {
+    const canAuto = input.value === "" || input.value === _lastAutoFilled;
+    if (_modelChoices.length === 1 && canAuto) {
+      input.value = _modelChoices[0];
+      _lastAutoFilled = _modelChoices[0];
+      if (status) status.textContent = `Model set to "${_modelChoices[0]}".`;
+    } else if (input.value === "" || input.value === _lastAutoFilled) {
+      // context is no longer single-choice: clear a stale auto-filled value
+      // (but never a value the admin typed themselves).
+      input.value = "";
+      _lastAutoFilled = null;
+    }
   }
   _renderModelPanel();
 }
@@ -607,8 +634,10 @@ if (el("registry-add-provider")) {
   el("registry-add-provider").addEventListener("change", () => {
     _updateKindFields();
     void _loadEngineOptions();
-    void _loadProviderModels();
   });
+}
+if (el("registry-add-engine")) {
+  el("registry-add-engine").addEventListener("change", () => { void _loadModelChoices(); });
 }
 if (el("registry-add-btn")) el("registry-add-btn").addEventListener("click", createModelRegistryEntry);
 if (el("model-registry-refresh")) el("model-registry-refresh").addEventListener("click", loadModelRegistry);
@@ -619,7 +648,7 @@ if (el("registry-filter-search")) el("registry-filter-search").addEventListener(
 if (el("registry-add-model-id")) {
   const input = el("registry-add-model-id");
   input.addEventListener("focus", _openModelPanel);
-  input.addEventListener("input", () => { _openModelPanel(); }); // re-filter as they type
+  input.addEventListener("input", () => { _lastAutoFilled = null; _openModelPanel(); }); // re-filter as they type; user took over
   input.addEventListener("keydown", (e) => { if (e.key === "Escape") _closeModelPanel(); });
 }
 if (el("registry-model-options")) {
