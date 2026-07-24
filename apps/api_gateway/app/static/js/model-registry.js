@@ -3,6 +3,7 @@ import { renderDataTable } from "./data-table.js";
 import { confirmDialog } from "./modal.js";
 
 export let registryData = [];
+let _providersCache = []; // enabled providers [{id, name, label, base_url, enabled}], for engine inference
 
 export async function loadModelRegistry() {
   try {
@@ -21,6 +22,7 @@ async function _loadProviderOptions() {
   try {
     const body = await (await fetch("/v1/providers")).json();
     const providers = (body.data || []).filter((p) => p.enabled);
+    _providersCache = providers;
     // rebuild, keeping the leading "none" option
     sel.length = 1;
     for (const p of providers) {
@@ -34,15 +36,17 @@ async function _loadProviderOptions() {
   }
 }
 
-// Engine is a dispatch key for stt/tts (picks the adapter); for llm it's a
-// cosmetic label, so we derive it from the provider and hide the field.
+// Engine is a real choice only for a LOCAL (no-provider) stt/tts model — the
+// runtime. For a provider (remote) the wire-format adapter is inferred from
+// the provider host in _effectiveEngine(); for llm it's cosmetic. Hide those.
 async function _loadEngineOptions() {
   const kind = el("registry-add-kind")?.value;
   const sel = el("registry-add-engine");
   const wrap = el("registry-add-engine-wrap");
   if (!sel) return;
-  if (kind === "llm") { if (wrap) wrap.classList.add("hidden"); return; } // engine derived from provider
   const hasProvider = !!(el("registry-add-provider")?.value || "").trim();
+  if (kind === "llm" || hasProvider) { if (wrap) wrap.classList.add("hidden"); return; }
+  if (wrap) wrap.classList.remove("hidden");
   const prev = sel.value;
   sel.innerHTML = "";
   let engines = [];
@@ -50,36 +54,36 @@ async function _loadEngineOptions() {
     const body = await (await fetch(`/v1/${kind}/engines`)).json();
     engines = body.data || [];
   } catch { /* leave empty; submit's required-guard will surface it */ }
-  // With a provider (remote OpenAI-compat), only remote adapters use its creds;
-  // without a provider, only local runtimes make sense. `mode` comes from the backend.
-  const relevant = engines.filter((e) => (hasProvider ? e.mode === "remote" : e.mode === "local"));
-  for (const e of relevant) {
+  for (const e of engines.filter((x) => x.mode === "local")) {
     const opt = document.createElement("option");
     opt.value = e.engine;
-    // The "(unavailable)" tag is a LOCAL package check — meaningless for a remote engine.
-    opt.textContent = (!hasProvider && !e.available) ? `${e.engine} (unavailable)` : e.engine;
+    opt.textContent = e.available ? e.engine : `${e.engine} (unavailable)`;
     sel.appendChild(opt);
   }
-  // Default: with a provider, prefer the generic OpenAI-compatible adapter.
-  const preferred = kind === "stt" ? "http_stt" : "http_tts";
-  if (hasProvider && relevant.some((e) => e.engine === preferred)) {
-    sel.value = preferred;
-  } else if (relevant.some((e) => e.engine === prev)) {
-    sel.value = prev; // keep the prior selection when still valid
-  }
-  // Nothing meaningful to choose (0 or 1 option) -> hide; the single value is
-  // already selected and _effectiveEngine() reads sel.value regardless.
-  if (wrap) wrap.classList.toggle("hidden", relevant.length <= 1);
+  if (engines.some((e) => e.engine === prev && e.mode === "local")) sel.value = prev;
 }
 
-// llm engine is cosmetic; use the linked provider's name as the label (or "custom").
+// The engine actually submitted. For a LOCAL (no-provider) stt/tts model it's
+// the runtime the admin picked. For a provider it's inferred from the provider's
+// base_url wire format; for llm it's the (cosmetic) provider name.
 function _effectiveEngine() {
   const kind = el("registry-add-kind")?.value;
-  if (kind !== "llm") return (el("registry-add-engine")?.value || "").trim();
-  const sel = el("registry-add-provider");
-  const name = sel?.selectedOptions?.[0]?.textContent || "";
-  // provider option text is `name — label`; take the name part; fallback "custom"
-  return (name.split(" — ")[0] || "custom").trim() || "custom";
+  const providerId = (el("registry-add-provider")?.value || "").trim();
+  if (kind === "llm") {
+    const name = el("registry-add-provider")?.selectedOptions?.[0]?.textContent || "";
+    // provider option text is `name — label`; take the name part; fallback "custom"
+    return (name.split(" — ")[0] || "custom").trim() || "custom";
+  }
+  if (providerId) {
+    if (kind === "tts") return "http_tts";
+    const prov = _providersCache.find((p) => p.id === providerId);
+    const base = (prov?.base_url || "").toLowerCase();
+    // OpenRouter STT uses /audio/transcriptions with a JSON base64 body
+    // (qwen3_asr_or); every other OpenAI-compatible host uses multipart upload
+    // (http_stt). model_id (from the form) selects the actual model either way.
+    return base.includes("openrouter.ai") ? "qwen3_asr_or" : "http_stt";
+  }
+  return (el("registry-add-engine")?.value || "").trim(); // local runtime choice
 }
 
 let _modelChoices = []; // model ids fetched from the selected provider
