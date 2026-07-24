@@ -6,6 +6,7 @@ from app.core.errors import AppError
 from app.services.auth.users import user_store
 from app.services.mcp.models import McpServer
 from app.services.model_registry.gate import check_model_allowed
+from app.services.model_registry.store import model_registry_store
 from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, SessionConfig, SttConfig, TtsConfig
 from app.services.profiles.store import profile_store
 from app.services.stt.model_catalog import STT_MODEL_CATALOGS
@@ -17,6 +18,47 @@ def _mask(profile: Profile) -> dict:
     data = profile.model_dump()
     if data.get("llm", {}).get("api_key"):
         data["llm"]["api_key"] = "***"
+    return data
+
+
+async def _label_for(kind: str, engine: str, model_id: str) -> str:
+    if not engine:
+        return ""
+    entry = await model_registry_store.find(kind, engine, model_id or "")
+    if entry and entry.get("label"):
+        return entry["label"]
+    return f"{engine}/{model_id}" if model_id else engine
+
+
+async def _with_labels(profile: Profile) -> dict:
+    """_mask() + resolved friendly labels (stt_label/llm_label/tts_label) for what
+    a session would actually use -- the profile's pin, or the server default marked
+    "(default)". Additive: raw stt/llm/tts stay (the profile editors read them)."""
+    from app.services.stt.model_catalog import resolve_default_stt_model
+    from app.services.system_config import system_config_store
+
+    data = _mask(profile)
+    eng = system_config_store.get().engines
+
+    stt_label = await _label_for("stt", profile.stt.engine, profile.stt.model)
+    if not stt_label:
+        base = await _label_for("stt", eng.default_stt_engine, resolve_default_stt_model(eng.default_stt_engine) or "")
+        stt_label = f"{base} (default)" if base else "server default"
+
+    llm_label = await _label_for("llm", profile.llm.engine, profile.llm.model)
+    if not llm_label:
+        d = await model_registry_store.find_default("llm")
+        if d:
+            base = d.get("label") or (f'{d["engine"]}/{d["model_id"]}' if d.get("model_id") else d["engine"])
+            llm_label = f"{base} (default)"
+        else:
+            llm_label = "server default"
+
+    tts_label = profile.tts.profile_name or (
+        f"{eng.default_tts_engine} (default)" if eng.default_tts_engine else "server default"
+    )
+
+    data["stt_label"], data["llm_label"], data["tts_label"] = stt_label, llm_label, tts_label
     return data
 
 
@@ -88,7 +130,10 @@ async def list_profiles(request: Request) -> dict:
     user_id = current_user_id(request)
     profiles = profile_store.list()
     visible = {k: v for k, v in profiles.items() if _visible(v, user_id)}
-    return {"success": True, "data": {k: _mask(v) for k, v in visible.items()}}
+    data = {}
+    for k, v in visible.items():
+        data[k] = await _with_labels(v)
+    return {"success": True, "data": data}
 
 
 @router.post("")
@@ -100,7 +145,7 @@ async def create_profile(payload: ProfileRequest, request: Request) -> dict:
     acting_user = await _resolve_acting_user(request)
     await _validate_profile_models(profile, acting_user)
     profile_store.upsert(profile)
-    return {"success": True, "data": _mask(profile)}
+    return {"success": True, "data": await _with_labels(profile)}
 
 
 @router.get("/{name}")
@@ -108,7 +153,7 @@ async def get_profile(name: str, request: Request) -> dict:
     profile = profile_store.get(name)
     if not profile or not _visible(profile, current_user_id(request)):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
-    return {"success": True, "data": _mask(profile)}
+    return {"success": True, "data": await _with_labels(profile)}
 
 
 @router.put("/{name}")
@@ -135,7 +180,7 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
     acting_user = await _resolve_acting_user(request)
     await _validate_profile_models(profile, acting_user)
     profile_store.upsert(profile)
-    return {"success": True, "data": _mask(profile)}
+    return {"success": True, "data": await _with_labels(profile)}
 
 
 @router.delete("/{name}")
@@ -160,4 +205,4 @@ async def clone_profile(name: str, payload: CloneRequest, request: Request) -> d
     data["owner_id"] = user_id
     clone = Profile(**data)
     profile_store.upsert(clone)
-    return {"success": True, "data": _mask(clone)}
+    return {"success": True, "data": await _with_labels(clone)}
