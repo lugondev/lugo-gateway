@@ -125,7 +125,10 @@ async function _loadModelChoices() {
       input.value = _modelChoices[0];
       _lastAutoFilled = _modelChoices[0];
       if (status) status.textContent = `Model set to "${_modelChoices[0]}".`;
-    } else if (input.value === "") {
+    } else if (input.value === "" || input.value === _lastAutoFilled) {
+      // context is no longer single-choice: clear a stale auto-filled value
+      // (but never a value the admin typed themselves).
+      input.value = "";
       _lastAutoFilled = null;
     }
   }
