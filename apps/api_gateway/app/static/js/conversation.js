@@ -139,6 +139,12 @@ export const convDetails = { stt: {}, llm: "", sttAvailable: true };
 // Keyed the same way the /options endpoint returns: [{engine, model_id, label}].
 export const convCatalog = { stt: [], llm: [] };
 
+// Server-resolved defaults (what the server would pick when nothing explicit
+// is set), keyed by kind: { engine, model_id, label } | null. Populated best-
+// effort alongside convCatalog; stays null (falls back to "server default"
+// text) if the endpoint is unavailable.
+export const convServerDefaults = { stt: null, tts: null, llm: null };
+
 export async function loadConvCatalog() {
   const fetchOpts = async (kind) => {
     try {
@@ -151,6 +157,14 @@ export async function loadConvCatalog() {
   const [stt, llm] = await Promise.all([fetchOpts("stt"), fetchOpts("llm")]);
   convCatalog.stt = stt;
   convCatalog.llm = llm;
+  try {
+    const body = await (await fetch("/v1/model_registry/defaults")).json();
+    if (body.success && body.data) {
+      convServerDefaults.stt = body.data.stt || null;
+      convServerDefaults.tts = body.data.tts || null;
+      convServerDefaults.llm = body.data.llm || null;
+    }
+  } catch { /* leave nulls -> falls back to "server default" text */ }
 }
 
 // Resolve (engine, model) to the registry label the SAME way the server does:
@@ -166,6 +180,14 @@ function catalogLabel(kind, engine, model) {
   return engine;
 }
 
+// The server default for a kind, shown with a "(default)" marker so the user
+// can tell it apart from an explicit per-profile/manual selection.
+function defaultLabel(kind) {
+  const d = convServerDefaults[kind];
+  const lbl = d && d.label;
+  return lbl ? `${lbl} (default)` : "server default";
+}
+
 export function updateConvEnginesInfo() {
   const info = el("conv-engines-info");
   if (!info) return;
@@ -175,19 +197,19 @@ export function updateConvEnginesInfo() {
     // registry labels (resolved client-side, same as the server would), so the
     // user sees exactly what's active without having to start the session.
     const p = profileData[profileName] || {};
-    const sttLabel = catalogLabel("stt", p.stt?.engine || "", p.stt?.model || "") || "server default";
+    const sttLabel = catalogLabel("stt", p.stt?.engine || "", p.stt?.model || "") || defaultLabel("stt");
     const llmLabel = catalogLabel("llm", p.llm?.engine || "", p.llm?.model || "")
-      || p.llm?.model || "server default";
+      || p.llm?.model || defaultLabel("llm");
     // TTS is a whole profile; its friendly name IS the linked TTS profile name.
-    const ttsLabel = p.tts?.profile_name || "server default";
+    const ttsLabel = p.tts?.profile_name || defaultLabel("tts");
     info.textContent = `STT: ${sttLabel} · LLM: ${llmLabel} · TTS: ${ttsLabel}`;
     return;
   }
   // No profile — the user's own manual selections (or server defaults) apply.
   const ttsProfileName = el("conv-tts-profile")?.value || "";
-  const sttPart = "STT: server default";
-  const llmPart = convDetails.llm ? `LLM: ${convDetails.llm}` : "LLM: server default";
-  const ttsPart = `TTS: ${ttsProfileName || "server default"}`;
+  const sttPart = `STT: ${defaultLabel("stt")}`;
+  const llmPart = convDetails.llm ? `LLM: ${convDetails.llm}` : `LLM: ${defaultLabel("llm")}`;
+  const ttsPart = `TTS: ${ttsProfileName || defaultLabel("tts")}`;
   info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
 }
 
