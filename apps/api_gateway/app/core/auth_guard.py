@@ -38,6 +38,11 @@ _USER_PREFIXES = (
     # "/v1/model_registry" admin rule below while the rest of the CRUD surface
     # stays admin-only.
     "/v1/model_registry/options",
+    # Same carve-out, for the resolved server defaults: /v1/model_registry/defaults
+    # is what the conversation UI reads to show the actual model behind "server
+    # default" (read-only, no CRUD surface). Checked before the admin
+    # "/v1/model_registry" rule below, same as /options.
+    "/v1/model_registry/defaults",
     # Same carve-out, for the caller's own usage totals: /v1/usage/me is
     # every logged-in user's "my usage" view, out of the otherwise
     # admin-only /v1/usage prefix (see _ADMIN_PREFIXES below). Checked

@@ -212,6 +212,41 @@ async def list_options(kind: str, request: Request) -> dict:
     return {"success": True, "data": options}
 
 
+@router.get("/defaults")
+async def get_defaults() -> dict:
+    """The server's resolved default STT/TTS/LLM -- what a session uses when a
+    profile/selection doesn't pin one. Read-only; lets the UI show the actual
+    model behind "server default"."""
+    from app.services.stt.model_catalog import resolve_default_stt_model
+    from app.services.system_config import system_config_store
+
+    async def _label(kind: str, engine: str, model_id: str) -> str:
+        if not engine:
+            return ""
+        entry = await model_registry_store.find(kind, engine, model_id or "")
+        if entry and entry.get("label"):
+            return entry["label"]
+        return f"{engine}/{model_id}" if model_id else engine
+
+    eng = system_config_store.get().engines
+    stt_engine = eng.default_stt_engine
+    stt_model = resolve_default_stt_model(stt_engine) or ""
+    tts_engine = eng.default_tts_engine
+    llm = await model_registry_store.find_default("llm")
+    return {
+        "success": True,
+        "data": {
+            "stt": {"engine": stt_engine, "model_id": stt_model, "label": await _label("stt", stt_engine, stt_model)},
+            "tts": {"engine": tts_engine, "label": await _label("tts", tts_engine, "")},
+            "llm": (
+                {"engine": llm["engine"], "model_id": llm["model_id"],
+                 "label": llm.get("label") or await _label("llm", llm["engine"], llm["model_id"])}
+                if llm else None
+            ),
+        },
+    }
+
+
 @router.post("")
 async def create_entry(payload: CreateEntryRequest) -> dict:
     _validate_known_engine(payload.kind, payload.engine)
