@@ -6,7 +6,7 @@ export const CHAT_MODES = {
   "text-text":   { title: "Text Chat",      hint: "Text chat with the configured LLM." },
   "voice-voice": { title: "Voice Chat",     hint: "Speak — VAD detects your pause, transcribes, LLM replies, TTS plays back." },
   "voice-text":  { title: "Voice → Text",   hint: "Live microphone transcription. No LLM, no TTS." },
-  "text-voice":  { title: "Text → Voice",   hint: "Type text to synthesize and play back." },
+  "text-voice":  { title: "Text → Voice",   hint: "Type a message — the LLM replies and the reply is spoken." },
 };
 export let chatMode = "text-text";
 export const v2t = { ws: null, capture: null };
@@ -87,6 +87,11 @@ el("chat-reset").addEventListener("click", () => {
   if (dialogue) dialogue.innerHTML = "";
   convStopAudio();
   conv.assistantBubble = null;
+  // Also clear the Text→Voice player/meta (shares this transcript + session).
+  const t2vAudio = el("t2v-audio");
+  if (t2vAudio) { t2vAudio.pause(); t2vAudio.classList.add("hidden"); }
+  const t2vMeta = el("t2v-meta");
+  if (t2vMeta) t2vMeta.textContent = "";
 });
 
 
@@ -205,39 +210,92 @@ if (el("v2t-stop")) el("v2t-stop").addEventListener("click", stopV2t);
 setV2tUI("idle");
 
 // ============================================================ text→voice (in chat section)
-if (el("t2v-submit")) {
-  el("t2v-submit").addEventListener("click", async () => {
-    const text = el("t2v-text")?.value.trim();
-    const audio = el("t2v-audio");
-    const meta = el("t2v-meta");
-    if (!text) return;
-    if (meta) meta.textContent = "Synthesizing…";
-    if (audio) audio.classList.add("hidden");
+// A chat turn with a spoken answer (NOT raw text-to-speech): type text -> LLM
+// replies -> the reply is synthesized and played. History/session/transcript
+// are handled IDENTICALLY to Text→Text -- same chat.history, same shared
+// #chat-dialogue bubbles, same currentSessionId (so New session / Sessions /
+// Reset and multi-turn context all work the same across modes). It just adds a
+// spoken reply on top via the server's default TTS engine. Pure STT/TTS
+// utilities live in Voice→Text.
+async function sendTextToVoice() {
+  const text = el("t2v-text")?.value.trim();
+  const audio = el("t2v-audio");
+  const meta = el("t2v-meta");
+  if (!text || chat.busy) return;
+  chat.busy = true;
+  el("t2v-submit").disabled = true;
+  if (el("t2v-text")) el("t2v-text").value = "";
+  if (audio) audio.classList.add("hidden");
+  if (meta) meta.textContent = "";
+
+  // Same transcript + history as sendChat().
+  chat.history.push({ role: "user", content: text });
+  chatBubble("user", text);
+  const pending = chatBubble("assistant", "…");
+
+  try {
+    // 1) text -> LLM (same endpoint/params as sendChat: profile + session apply).
+    const profileVal = el("profile-select")?.value;
+    const params = new URLSearchParams();
+    if (profileVal) params.set("profile", profileVal);
+    if (currentSessionId) params.set("session_id", currentSessionId);
+    const qs = params.toString();
+    const chatResp = await fetch(qs ? `/v1/conversation/chat?${qs}` : "/v1/conversation/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: [{ role: "user", content: text }] }),
+    });
+    const chatBody = await chatResp.json();
+    if (!chatResp.ok) {
+      pending.textContent = `error: ${chatBody.error || JSON.stringify(chatBody)}`;
+      pending.classList.add("error");
+      return;
+    }
+    const reply = (chatBody.data?.reply || "").trim();
+    pending.textContent = reply || "(no reply)";
+    chat.history.push({ role: "assistant", content: reply });
+    if (chatBody.data?.session_id) currentSessionId = chatBody.data.session_id;
+    if (!reply) return;
+
+    // 2) reply -> TTS (server's default engine; omit voice so vieneu uses the
+    //    system default voice).
+    if (meta) meta.textContent = "Synthesizing reply…";
+    let engine;
     try {
-      // No manual engine/voice picker here — resolve the server's default TTS
-      // engine (TTSRequest otherwise defaults to a hardcoded "omnivoice").
-      let engine;
-      try {
-        const d = await (await fetch("/v1/model_registry/defaults")).json();
-        engine = d?.data?.tts?.engine || undefined;
-      } catch {
-        engine = undefined;
-      }
-      const resp = await fetch("/v1/tts/synthesize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, engine }),
-      });
-      const body = await resp.json();
-      if (!resp.ok) { if (meta) meta.textContent = body.error || "TTS error"; return; }
-      if (body.data?.audio_url && audio) {
-        audio.src = body.data.audio_url;
-        audio.classList.remove("hidden");
-        audio.play().catch(() => {});
-        if (meta) meta.textContent = `${body.data.duration_seconds ?? "?"}s @ ${body.data.sample_rate}Hz${body.data.process_seconds != null ? ` · synthesized in ${body.data.process_seconds}s` : ""}`;
-      }
-    } catch (error) {
-      if (meta) meta.textContent = String(error);
+      const d = await (await fetch("/v1/model_registry/defaults")).json();
+      engine = d?.data?.tts?.engine || undefined;
+    } catch {
+      engine = undefined;
+    }
+    const ttsResp = await fetch("/v1/tts/synthesize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: reply, engine }),
+    });
+    const ttsBody = await ttsResp.json();
+    if (!ttsResp.ok) { if (meta) meta.textContent = ttsBody.error || "TTS error"; return; }
+    if (ttsBody.data?.audio_url && audio) {
+      audio.src = ttsBody.data.audio_url;
+      audio.classList.remove("hidden");
+      audio.play().catch(() => {});
+      if (meta) meta.textContent = `${ttsBody.data.duration_seconds ?? "?"}s @ ${ttsBody.data.sample_rate}Hz${ttsBody.data.process_seconds != null ? ` · synthesized in ${ttsBody.data.process_seconds}s` : ""}`;
+    }
+  } catch (error) {
+    pending.textContent = `error: ${error}`;
+    pending.classList.add("error");
+  } finally {
+    chat.busy = false;
+    el("t2v-submit").disabled = false;
+    if (el("t2v-text")) el("t2v-text").focus();
+  }
+}
+
+if (el("t2v-submit")) {
+  el("t2v-submit").addEventListener("click", sendTextToVoice);
+  el("t2v-text")?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendTextToVoice();
     }
   });
 }

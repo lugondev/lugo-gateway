@@ -311,7 +311,7 @@
 
               <!-- === VOICE→TEXT === -->
               <div id="mode-voice-text" class="mode-pane hidden">
-                <p class="hint">Live microphone transcription &mdash; no LLM, no TTS. Uses the server's default STT engine.</p>
+                <p class="hint">Uses the server's default STT engine.</p>
                 <div class="actions">
                   <button id="v2t-start">Start Mic</button>
                   <button id="v2t-stop" class="ghost" disabled>Stop &amp; Finalize</button>
@@ -326,13 +326,13 @@
 
               <!-- === TEXT→VOICE === -->
               <div id="mode-text-voice" class="mode-pane hidden">
-                <p class="hint">Type text to synthesize and play back. Uses the server's default TTS engine.</p>
+                <p class="hint">Your message goes to the LLM; its reply appears in the transcript above and is spoken via the server's default TTS engine. Shares history/session with the other chat modes.</p>
                 <label>
-                  Text
-                  <textarea id="t2v-text" rows="4" placeholder="Type text to speak&#8230;"></textarea>
+                  Message
+                  <textarea id="t2v-text" rows="2" placeholder="Type a message and press Enter (Shift+Enter for newline)&#8230;"></textarea>
                 </label>
                 <div class="actions">
-                  <button id="t2v-submit">Synthesize &amp; Play</button>
+                  <button id="t2v-submit">Send &amp; Play</button>
                 </div>
                 <audio id="t2v-audio" class="player hidden" controls></audio>
                 <p id="t2v-meta" class="meta"></p>
