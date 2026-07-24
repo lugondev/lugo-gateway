@@ -218,14 +218,14 @@ export function updateConvEnginesInfo() {
 // “follows the profile”. Only “(none — server defaults)” lets the user choose.
 // LLM has no chat control, so it already follows the profile/server unconditionally.
 export function applyConvProfileLock() {
-  const profileActive = !!(el(“profile-select”)?.value || “”);
+  const profileActive = !!(el("profile-select")?.value || "");
   // A selected profile is authoritative for STT/TTS + language, so hide those
-  // controls entirely (pick “(none — server defaults)” to reveal + choose manually).
-  [“conv-tts-profile-row”, “conv-language-row”].forEach((id) => {
+  // controls entirely (pick "(none — server defaults)" to reveal + choose manually).
+  ["conv-tts-profile-row", "conv-language-row"].forEach((id) => {
     const row = el(id);
-    if (row) row.classList.toggle(“hidden”, profileActive);
+    if (row) row.classList.toggle("hidden", profileActive);
   });
-  const hint = el(“conv-engines-locked-hint”);
+  const hint = el("conv-engines-locked-hint");
   if (hint) hint.hidden = !profileActive;
 }
 
