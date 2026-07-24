@@ -4,7 +4,7 @@ import { ttsProfileData } from "./tts-profiles.js";
 import { setCurrentSessionId } from "./chat.js";
 import { fetchAuthStatus } from "./session.js";
 import { confirmDialog, promptDialog } from "./modal.js";
-import { applyConvProfileLock, resetConvManualOverrides, updateConvEnginesInfo } from "./conversation.js";
+import { updateConvEnginesInfo } from "./conversation.js";
 import { resetLhManualOverrides } from "./livehost.js";
 
 export let profileData = {};
@@ -43,9 +43,7 @@ export function renderProfileSelect() {
     sel.appendChild(opt);
   });
   if (profileData[prev]) sel.value = prev;
-  // A restored/re-rendered profile value must re-lock the chat STT/TTS selects
-  // and refresh the header so it shows the active profile's models right away.
-  applyConvProfileLock();
+  // Refresh the conversation header so it shows the active profile's models right away.
   updateConvEnginesInfo();
 }
 
@@ -451,7 +449,7 @@ if (el("profile-select")) {
     setCurrentSessionId(null);
     const dialogue = el("chat-dialogue");
     if (dialogue) dialogue.innerHTML = "";
-    resetConvManualOverrides();
+    updateConvEnginesInfo();
   });
 }
 if (el("lh-profile")) {

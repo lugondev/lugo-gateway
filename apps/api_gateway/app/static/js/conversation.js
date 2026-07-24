@@ -1,4 +1,4 @@
-import { el, wsUrl, restoreAndBind, savePref } from "./helpers.js";
+import { el, wsUrl, restoreAndBind } from "./helpers.js";
 import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
 import { currentSessionId, setCurrentSessionId } from "./chat.js";
 import { profileData } from "./profiles.js";
@@ -205,40 +205,12 @@ export function updateConvEnginesInfo() {
     info.textContent = `STT: ${sttLabel} · LLM: ${llmLabel} · TTS: ${ttsLabel}`;
     return;
   }
-  // No profile — the user's own manual selections (or server defaults) apply.
-  const ttsProfileName = el("conv-tts-profile")?.value || "";
+  // No profile — the server defaults apply (STT/TTS/language are no longer
+  // hand-pickable here; a profile is the way to override them).
   const sttPart = `STT: ${defaultLabel("stt")}`;
   const llmPart = convDetails.llm ? `LLM: ${convDetails.llm}` : `LLM: ${defaultLabel("llm")}`;
-  const ttsPart = `TTS: ${ttsProfileName || defaultLabel("tts")}`;
+  const ttsPart = `TTS: ${defaultLabel("tts")}`;
   info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
-}
-
-// When a profile is selected, its STT/TTS/LLM are authoritative and the user
-// must NOT hand-pick engines that would override them — the chat then simply
-// “follows the profile”. Only “(none — server defaults)” lets the user choose.
-// LLM has no chat control, so it already follows the profile/server unconditionally.
-export function applyConvProfileLock() {
-  const profileActive = !!(el("profile-select")?.value || "");
-  // A selected profile is authoritative for STT/TTS + language, so hide those
-  // controls entirely (pick "(none — server defaults)" to reveal + choose manually).
-  ["conv-tts-profile-row", "conv-language-row"].forEach((id) => {
-    const row = el(id);
-    if (row) row.classList.toggle("hidden", profileActive);
-  });
-  const hint = el("conv-engines-locked-hint");
-  if (hint) hint.hidden = !profileActive;
-}
-
-// Called when the active profile changes: manual STT/TTS overrides must not
-// silently keep beating the newly-selected profile's own config, so drop back
-// to "follow the profile" (empty selection) and forget the sticky localStorage
-// value that caused it to persist across profile switches.
-export function resetConvManualOverrides() {
-  const ttsSel = el("conv-tts-profile");
-  if (ttsSel) ttsSel.value = "";
-  savePref("conv-tts-profile", "");
-  applyConvProfileLock();
-  updateConvEnginesInfo();
 }
 
 export async function loadConversationEngines() {
@@ -251,11 +223,7 @@ export async function loadConversationEngines() {
     stt.data.forEach((e) => (convDetails.stt[e.engine] = e.detail));
     convDetails.llm = models?.data?.llm?.active || "";
     convDetails.sttAvailable = stt.data.some((e) => e.available);
-    restoreAndBind("conv-language");
     restoreAndBind("conv-opus");
-    restoreAndBind("conv-tts-profile");
-    el("conv-tts-profile")?.addEventListener("change", updateConvEnginesInfo);
-    applyConvProfileLock();
     updateConvEnginesInfo();
   } catch (error) {
     convLog(`engines error: ${error}`);
@@ -301,15 +269,7 @@ export async function startConversation() {
 
   let params = `sample_rate=${STREAM_SAMPLE_RATE}`;
   if (activeProfile) params += `&profile=${encodeURIComponent(activeProfile)}`;
-  const ttsProfile = el("conv-tts-profile")?.value;
-  if (ttsProfile) params += `&tts_profile=${encodeURIComponent(ttsProfile)}`;
   if (currentSessionId) params += `&session_id=${encodeURIComponent(currentSessionId)}`;
-  // A locked language input (profile active) must not override the profile's
-  // own STT language — only send it when the user can actually edit it.
-  const langVal = el("conv-language");
-  if (langVal && !langVal.disabled && langVal.value.trim()) {
-    params += `&language=${encodeURIComponent(langVal.value.trim())}`;
-  }
 
   // Opus downlink: stream reply audio as Opus frames decoded in-browser (WebCodecs).
   // Falls back to the default URL/WAV path if unchecked or unsupported.

@@ -295,21 +295,6 @@
 
               <!-- === VOICE→VOICE === -->
               <div id="mode-voice-voice" class="mode-pane hidden">
-                <div class="row" id="conv-tts-profile-row">
-                  <label>
-                    TTS Profile
-                    <select id="conv-tts-profile">
-                      <option value="">(server default)</option>
-                    </select>
-                  </label>
-                </div>
-                <p class="hint" id="conv-engines-locked-hint" hidden>STT &amp; TTS follow the selected profile. Choose “(none — server defaults)” above to pick engines manually.</p>
-                <div class="row" id="conv-language-row">
-                  <label>
-                    Language (STT hint)
-                    <input id="conv-language" type="text" value="vi" placeholder="vi, en, ja&#8230; (vi recommended)" />
-                  </label>
-                </div>
                 <div class="row">
                   <label class="check" title="Receive reply audio as streamed Opus frames decoded in-browser instead of fetching WAV files.">
                     <input type="checkbox" id="conv-opus" /> Opus downlink (low bandwidth)
