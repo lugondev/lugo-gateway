@@ -241,3 +241,62 @@ async def seed_installed_models_to_registry() -> None:
                 await ensure_registry_entry(
                     "tts", tts_profile.engine, tts_profile.engine,
                     f"{tts_profile.engine} — {tts_profile.engine} (in use)")
+
+
+# Provider renames that shipped in code but not in stored data. Commit 949c3a7
+# renamed the OpenAI-compatible remote providers; every value below is a dead
+# engine name that no longer resolves in stt_service/tts_service. Extend this
+# map for any future provider rename.
+_ENGINE_RENAMES = {
+    "openai_stt": "http_stt",
+    "openai_tts": "http_tts",
+}
+
+
+async def migrate_renamed_engine_names() -> None:
+    """One-time, idempotent: rewrite dead engine names left in stored data by a
+    code-side provider rename (commit 949c3a7: openai_stt->http_stt,
+    openai_tts->http_tts).
+
+    The rename touched the provider registration keys only; rows persisted
+    before it -- Model Registry entries, chatllm profiles' SttConfig.engine, TTS
+    profiles' engine, and the server-wide default engines -- kept the old names,
+    so stt_service/tts_service.get_provider() raised EngineNotFoundError (the
+    /stt/warm endpoint surfaced this as "STT engine (server default) not ready";
+    device streams 500'd). Rewriting every stored occurrence to the current name
+    self-heals any DB on boot. No-op once no old name remains, so it's safe to
+    run on every startup.
+    """
+    from app.services.profiles.store import profile_store
+    from app.services.system_config import system_config_store
+    from app.services.tts.profile_store import tts_profile_store
+
+    for entry in await model_registry_store.list_all():
+        new = _ENGINE_RENAMES.get(entry["engine"])
+        if new:
+            await model_registry_store.set_fields(entry["id"], engine=new)
+
+    for profile in profile_store.list().values():
+        new = _ENGINE_RENAMES.get(profile.stt.engine)
+        if new:
+            profile_store.upsert(
+                profile.model_copy(update={"stt": profile.stt.model_copy(update={"engine": new})})
+            )
+
+    for tts_profile in tts_profile_store.list().values():
+        new = _ENGINE_RENAMES.get(tts_profile.engine)
+        if new:
+            tts_profile_store.upsert(tts_profile.model_copy(update={"engine": new}))
+
+    cfg = system_config_store.get()
+    engine_updates = {}
+    new_stt = _ENGINE_RENAMES.get(cfg.engines.default_stt_engine)
+    if new_stt:
+        engine_updates["default_stt_engine"] = new_stt
+    new_tts = _ENGINE_RENAMES.get(cfg.engines.default_tts_engine)
+    if new_tts:
+        engine_updates["default_tts_engine"] = new_tts
+    if engine_updates:
+        system_config_store.set(
+            cfg.model_copy(update={"engines": cfg.engines.model_copy(update=engine_updates)})
+        )
