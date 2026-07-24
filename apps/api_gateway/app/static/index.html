@@ -295,7 +295,7 @@
 
               <!-- === VOICE→VOICE === -->
               <div id="mode-voice-voice" class="mode-pane hidden">
-                <div class="row">
+                <div class="row" id="conv-tts-profile-row">
                   <label>
                     TTS Profile
                     <select id="conv-tts-profile">
@@ -303,11 +303,11 @@
                     </select>
                   </label>
                 </div>
-                <p class="hint" id="conv-engines-locked-hint" hidden>STT &amp; TTS follow the selected profile. Choose “(none — server defaults)” above to pick engines manually.</p>
-                <div class="row">
+                <p class=”hint” id=”conv-engines-locked-hint” hidden>STT &amp; TTS follow the selected profile. Choose “(none — server defaults)” above to pick engines manually.</p>
+                <div class=”row” id=”conv-language-row”>
                   <label>
                     Language (STT hint)
-                    <input id="conv-language" type="text" value="vi" placeholder="vi, en, ja&#8230; (vi recommended)" />
+                    <input id=”conv-language” type=”text” value=”vi” placeholder=”vi, en, ja&#8230; (vi recommended)” />
                   </label>
                 </div>
                 <div class="row">
