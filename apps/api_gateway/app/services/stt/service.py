@@ -182,6 +182,7 @@ class STTService:
                 from app.services.providers.resolve import resolve_credentials
 
                 configured = False
+                models: list[str] = []
                 for candidate in await model_registry_store.list_all():
                     if (candidate["kind"] != "stt" or candidate["engine"] != "qwencloud"
                             or not candidate["enabled"]):
@@ -189,8 +190,9 @@ class STTService:
                     _base_url, api_key = await resolve_credentials(candidate)
                     if api_key:
                         configured = True
-                        break
-                entry = {"mode": "remote", "available": configured, "detail": None}
+                        if candidate["model_id"]:
+                            models.append(candidate["model_id"])
+                entry = {"mode": "remote", "available": configured, "detail": ", ".join(models) or None}
             else:
                 base_url, model = remote[engine]
                 configured = bool(base_url)

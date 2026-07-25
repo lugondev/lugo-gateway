@@ -50,13 +50,14 @@ async def transcribe(
     audio: UploadFile = File(...),
     engine: str | None = Form(default=None),
     language: str | None = Form(default=None),
+    model: str | None = Form(default=None),
     denoise: bool | None = Form(default=None),
     vad: bool | None = Form(default=None),
     vad_backend: str | None = Form(default=None),
     segment: bool | None = Form(default=None),
 ) -> dict:
     engine = engine or system_config_store.get().engines.default_stt_engine
-    payload = STTRequest(engine=engine, language=language)
+    payload = STTRequest(engine=engine, language=language, model=model)
 
     # Quota pre-flight: block BEFORE the provider does any work. model_id is
     # not resolved per-request for STT (see the record_usage comment below),
@@ -104,9 +105,7 @@ async def transcribe(
                 concurrency=engines.stt_segment_concurrency,
             )
         else:
-            # no per-session model here -- falls back to this engine's process-global
-            # default by design (see app.services.stt.model_catalog)
-            result = await provider.transcribe_bytes(audio_bytes, payload.language)
+            result = await provider.transcribe_bytes(audio_bytes, payload.language, model=payload.model)
     except AppError:
         raise  # handled globally -> clean JSON
     except RuntimeError as exc:
