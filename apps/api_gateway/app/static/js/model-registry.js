@@ -487,6 +487,14 @@ function _renderConfigForm(id, schema, config) {
   }
   host.innerHTML = schema.map((f) => {
     const val = config[f.key];
+    if (Array.isArray(f.choices)) {
+      const cur = val === undefined ? f.default : val;
+      const opts = f.choices.map((c) =>
+        `<option value="${escapeHtml(String(c))}" ${String(c) === String(cur) ? "selected" : ""}>${escapeHtml(String(c))}</option>`
+      ).join("");
+      return `<label class="config-row"><span>${escapeHtml(f.key)}</span>
+        <select data-cfg="${escapeHtml(f.key)}" data-cfg-type="str">${opts}</select></label>`;
+    }
     if (f.type === "bool") {
       return `<label class="config-row"><input type="checkbox" data-cfg="${escapeHtml(f.key)}" ${val ? "checked" : ""}/> ${escapeHtml(f.key)}</label>`;
     }
