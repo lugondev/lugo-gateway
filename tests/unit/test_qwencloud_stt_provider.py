@@ -543,3 +543,70 @@ async def test_funasr_async_batch_raises_on_task_failed(monkeypatch):
     entry = {**_FUNASR_ENTRY, "model_id": "fun-asr-mtl", "config": {}}
     with pytest.raises(RuntimeError, match="failed"):
         await QwenCloudSttProvider(entry=entry).transcribe_bytes(_mono16k_wav(), None, "fun-asr-mtl")
+
+
+def _mtl_handler(poll_status="SUCCEEDED", with_url=True, policy_ok=True):
+    def handler(request):
+        url = str(request.url)
+        if "/api/v1/uploads" in url:
+            if not policy_ok:
+                return httpx.Response(200, json={"code": "Throttling.RateQuota", "message": "slow down"})
+            return httpx.Response(200, json={"data": {"policy": "P", "signature": "S",
+                "upload_dir": "d/x", "upload_host": "https://upload.example.com",
+                "oss_access_key_id": "AK"}})
+        if url.startswith("https://upload.example.com"):
+            return httpx.Response(200, text="")
+        if url.endswith("/asr/transcription"):
+            return httpx.Response(200, json={"output": {"task_id": "TID", "task_status": "PENDING"}})
+        if "/api/v1/tasks/TID" in url:
+            out = {"task_status": poll_status}
+            if poll_status == "SUCCEEDED":
+                out["results"] = [{"transcription_url": "https://transcript.example.com/o.json"}] if with_url else [{}]
+            return httpx.Response(200, json={"output": out})
+        if url.startswith("https://transcript.example.com"):
+            return httpx.Response(200, json={"transcripts": [{"text": "ok"}]})
+        return httpx.Response(404, text=url)
+    return httpx.MockTransport(handler)
+
+
+def _use_transport(monkeypatch, transport):
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient",
+                        lambda *a, **k: original(*a, **{**k, "transport": transport}))
+
+
+@pytest.mark.asyncio
+async def test_funasr_async_batch_malformed_200_envelope_raises(monkeypatch):
+    _use_transport(monkeypatch, _mtl_handler(policy_ok=False))
+    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr-mtl", "config": {}}
+    with pytest.raises(RuntimeError, match="unexpected response"):
+        await QwenCloudSttProvider(entry=entry).transcribe_bytes(_mono16k_wav(), None, "fun-asr-mtl")
+
+
+@pytest.mark.asyncio
+async def test_funasr_async_batch_missing_transcription_url_raises(monkeypatch):
+    _use_transport(monkeypatch, _mtl_handler(with_url=False))
+    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr-mtl", "config": {}}
+    with pytest.raises(RuntimeError, match="transcription_url"):
+        await QwenCloudSttProvider(entry=entry).transcribe_bytes(_mono16k_wav(), None, "fun-asr-mtl")
+
+
+@pytest.mark.asyncio
+async def test_funasr_async_batch_poll_timeout_raises(monkeypatch):
+    _use_transport(monkeypatch, _mtl_handler(poll_status="PENDING"))
+    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr-mtl", "config": {"timeout_seconds": 1}}
+    with pytest.raises(RuntimeError, match="timed out"):
+        await QwenCloudSttProvider(entry=entry).transcribe_bytes(_mono16k_wav(), None, "fun-asr-mtl")
+
+
+@pytest.mark.asyncio
+async def test_funasr_async_batch_oss_upload_carries_policy_fields(monkeypatch):
+    calls = []
+    transport = _funasr_async_mock_transport(calls)
+    _use_transport(monkeypatch, transport)
+    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr-mtl", "config": {}}
+    await QwenCloudSttProvider(entry=entry).transcribe_bytes(_mono16k_wav(), None, "fun-asr-mtl")
+    upload = next(c for c in calls if c[1].startswith("https://upload.example.com"))
+    body = upload[2]
+    for field in (b"OSSAccessKeyId", b"Signature", b"policy", b"d/xyz/audio.wav", b"success_action_status"):
+        assert field in body, field

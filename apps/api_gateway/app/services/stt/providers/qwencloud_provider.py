@@ -49,7 +49,7 @@ def _batch_model(model: str) -> str:
     non-realtime counterpart (qwen3-asr-flash-realtime -> qwen3-asr-flash,
     fun-asr-realtime -> fun-asr, fun-asr-mtl -> fun-asr-mtl)."""
     m = (model or "").strip()
-    return m[: -len("-realtime")] if m.endswith("-realtime") else m
+    return m[: -len("-realtime")] if m.lower().endswith("-realtime") else m
 
 
 def _transcription_url(out: dict) -> str | None:
@@ -409,7 +409,8 @@ class QwenCloudSttProvider(STTProvider):
                 up = await client.post(pol["upload_host"], data=form,
                                        files={"file": ("audio.wav", audio_bytes, "audio/wav")})
                 if up.status_code not in (200, 201, 203, 204):
-                    raise RuntimeError(f"{self.name} audio upload failed (HTTP {up.status_code})")
+                    raise RuntimeError(
+                        f"{self.name} audio upload failed (HTTP {up.status_code}): {up.text[:200]}")
                 oss_url = f"oss://{key}"
                 # 3. submit async task (OssResourceResolve lets it read the oss:// url)
                 resp = await client.post(
@@ -431,6 +432,11 @@ class QwenCloudSttProvider(STTProvider):
                 text = "".join(t.get("text", "") for t in doc.json().get("transcripts", [])).strip()
         except httpx.HTTPError as exc:
             raise translate_httpx_error(self.name, exc) from exc
+        except (KeyError, ValueError, TypeError) as exc:
+            # DashScope can return HTTP 200 with an error envelope (throttle/quota)
+            # or a shape we don't expect -- surface it as a clean STT error rather
+            # than a raw KeyError/JSON error bubbling to a 500.
+            raise RuntimeError(f"{self.name} async job: unexpected response ({exc})") from exc
         return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
 
     async def _poll_task(self, client, host, auth, task_id, max_wait):
