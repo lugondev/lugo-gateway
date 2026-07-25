@@ -199,12 +199,22 @@ async def test_qwen3_stream_maps_stash_and_transcript(fake_connect, monkeypatch)
     provider = QwenCloudSttProvider(entry=_QWEN_ENTRY)
     stream = provider.open_stream(sample_rate=16000, language="vi")
 
-    results = await stream.accept(b"\x00\x00" * 160)
-    # after connect+hello, drained partial(s)/final from the queue
-    partials = [r for r in results if not r.is_final]
-    finals = [r for r in results if r.is_final]
-    assert any(r.text == "xin" for r in partials)
-    assert any(r.text == "xin chào" for r in finals)
+    # Production accept() yields once per call and returns whatever the reader
+    # has already queued -- with the synchronous FakeWS double all frames are
+    # buffered up front, so it's the TEST's job to keep calling accept() (as a
+    # real caller feeding successive audio frames would) until the stream
+    # ends, then finalize() to drain the tail.
+    collected = []
+    for _ in range(20):  # bounded; the fake ends well before this
+        collected += await stream.accept(b"\x00\x00" * 160)
+        if stream._done.is_set():
+            break
+    final = await stream.finalize()
+    if final:
+        collected.append(final)
+    texts = [r.text for r in collected]
+    assert "xin" in texts       # partial (from `stash`)
+    assert "xin chào" in texts  # final (from `transcript`)
 
     # the hello (session.update) and a base64 append were sent
     assert any('"session.update"' in s for s in fake_connect["ws"].sent)
@@ -212,7 +222,6 @@ async def test_qwen3_stream_maps_stash_and_transcript(fake_connect, monkeypatch)
     assert fake_connect["headers"]["Authorization"] == "Bearer sk-ws-test"
     assert "/api-ws/v1/realtime?model=qwen3-asr-flash-realtime" in fake_connect["url"]
 
-    final = await stream.finalize()
     assert any('"session.finish"' in s for s in fake_connect["ws"].sent)
     assert fake_connect["ws"].closed is True
 

@@ -124,29 +124,13 @@ class _BaseWsStream(STTStream):
     async def accept(self, pcm: bytes) -> list[STTResult]:
         await self._ensure()
         if self._done.is_set():
-            # upstream ended / socket closed (drop, or finalize on a prior flush).
-            # Don't send into a dead socket; just surface whatever is queued.
+            # upstream ended / socket closed -- don't send into a dead socket
             return self._drain()
         try:
             await self._ws.send(self._encode_audio(pcm))
         except Exception as exc:  # ConnectionClosed etc. -> RuntimeError so the route emits an error event
             raise RuntimeError(f"qwencloud stream send failed: {exc}") from exc
-        # Drain what the reader has parsed. Yield until the queue stops growing
-        # for a few consecutive ticks (or the stream ends) -- no fixed drain-all
-        # tick count. NOTE: a couple of leading control frames (e.g.
-        # session.created/session.updated, which parse to nothing) plus the
-        # reader task's own startup hop can cost 3 stagnant ticks before the
-        # first real result lands, so the idle budget must clear that -- an
-        # idle<2 threshold was verified (empirically) to bail out before any
-        # frame is ever parsed. 6 gives headroom over the observed minimum of 4.
-        idle = 0
-        while idle < 6 and not self._done.is_set():
-            before = self._q.qsize()
-            await asyncio.sleep(0)
-            if self._q.qsize() == before:
-                idle += 1
-            else:
-                idle = 0
+        await asyncio.sleep(0)  # let the reader parse a frame that has already arrived
         return self._drain()
 
     async def finalize(self) -> STTResult | None:
