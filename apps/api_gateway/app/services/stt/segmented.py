@@ -99,6 +99,7 @@ async def transcribe_segments(
     regions: list[tuple[int, int]],
     language: str | None = None,
     concurrency: int = 4,
+    model: str | None = None,
 ) -> list[TranscribedSegment]:
     """Transcribe each region concurrently; return non-empty segments in time order."""
     samples = np.asarray(samples, dtype=np.float32).reshape(-1)
@@ -110,7 +111,7 @@ async def transcribe_segments(
     async def _one(start: int, end: int) -> str:
         wav = float_array_to_wav_bytes(samples[start:end], sample_rate)
         async with sem:
-            result = await provider.transcribe_bytes(wav, language)
+            result = await provider.transcribe_bytes(wav, language, model=model)
         return (result.text or "").strip()
 
     texts = await asyncio.gather(*(_one(s, e) for s, e in regions))
@@ -132,6 +133,7 @@ async def transcribe_long(
     min_speech_ms: int = 200,
     pad_ms: int = 200,
     concurrency: int = 4,
+    model: str | None = None,
 ) -> STTResult:
     """Split long audio on silence and transcribe the regions in parallel.
 
@@ -150,10 +152,10 @@ async def transcribe_long(
     )
     if not regions:
         wav = float_array_to_wav_bytes(samples, sample_rate)
-        return await provider.transcribe_bytes(wav, language)
+        return await provider.transcribe_bytes(wav, language, model=model)
 
     segments = await transcribe_segments(
-        provider, samples, sample_rate, regions, language=language, concurrency=concurrency
+        provider, samples, sample_rate, regions, language=language, concurrency=concurrency, model=model
     )
     text = " ".join(seg.text for seg in segments)
     return STTResult(engine=provider.name, text=text, is_final=True, confidence=None)

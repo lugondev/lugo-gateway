@@ -103,6 +103,7 @@ async def transcribe(
                 sample_rate,
                 language=payload.language,
                 concurrency=engines.stt_segment_concurrency,
+                model=payload.model,
             )
         else:
             result = await provider.transcribe_bytes(audio_bytes, payload.language, model=payload.model)

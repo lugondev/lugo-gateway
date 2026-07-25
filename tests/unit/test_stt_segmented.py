@@ -100,3 +100,30 @@ def test_transcribe_long_joins_segment_text():
     )
     assert result.text == "A B"
     assert result.is_final is True
+
+
+class ModelRecordingProvider(STTProvider):
+    """Records the `model` kwarg every transcribe_bytes call receives."""
+
+    name = "fake"
+
+    def __init__(self) -> None:
+        self.seen_models: list[str | None] = []
+
+    async def transcribe_bytes(self, audio_bytes: bytes, language: str | None = None, model: str | None = None) -> STTResult:
+        self.seen_models.append(model)
+        return STTResult(engine="fake", text="x", is_final=True, confidence=None)
+
+
+def test_transcribe_long_passes_model_to_provider():
+    import asyncio
+
+    provider = ModelRecordingProvider()
+    samples = np.concatenate([_tone(300, 0.1), _tone(480, 0.0), _tone(300, 0.4)])
+    asyncio.run(
+        transcribe_long(
+            provider, samples, SR, min_silence_ms=400, min_speech_ms=200, model="fun-asr"
+        )
+    )
+    assert provider.seen_models  # at least one segment was transcribed
+    assert all(m == "fun-asr" for m in provider.seen_models)
