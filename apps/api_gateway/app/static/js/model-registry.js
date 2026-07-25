@@ -39,13 +39,16 @@ async function _loadProviderOptions() {
 // Engine is a real choice only for a LOCAL (no-provider) stt/tts model — the
 // runtime. For a provider (remote) the wire-format adapter is inferred from
 // the provider host in _effectiveEngine(); for llm it's cosmetic. Hide those.
-async function _loadEngineOptions() {
+// `announce` false = don't report the model auto-fill in the shared status line
+// (see _loadModelChoices): true only when the admin just changed kind/provider/
+// engine themselves, so the message explains a value that moved under them.
+async function _loadEngineOptions(announce = true) {
   const kind = el("registry-add-kind")?.value;
   const sel = el("registry-add-engine");
   const wrap = el("registry-add-engine-wrap");
   if (!sel) return;
   const hasProvider = !!(el("registry-add-provider")?.value || "").trim();
-  if (kind === "llm" || hasProvider) { if (wrap) wrap.classList.add("hidden"); void _loadModelChoices(); return; }
+  if (kind === "llm" || hasProvider) { if (wrap) wrap.classList.add("hidden"); void _loadModelChoices(announce); return; }
   if (wrap) wrap.classList.remove("hidden");
   const prev = sel.value;
   sel.innerHTML = "";
@@ -62,7 +65,7 @@ async function _loadEngineOptions() {
   }
   if (engines.some((e) => e.engine === prev && (e.mode === "local" || e.engine === "qwencloud"))) sel.value = prev;
   _maybePrefillBaseUrl();
-  void _loadModelChoices();
+  void _loadModelChoices(announce);
 }
 
 // Prefill the base_url input with the DashScope default when qwencloud is the
@@ -107,7 +110,7 @@ function _effectiveEngine() {
 let _modelChoices = []; // model ids fetched from the selected provider (or the local engine's default)
 let _lastAutoFilled = null;
 
-async function _loadModelChoices() {
+async function _loadModelChoices(announce = true) {
   _modelChoices = [];
   const input = el("registry-add-model-id");
   const status = el("model-registry-status");
@@ -143,7 +146,13 @@ async function _loadModelChoices() {
     if (_modelChoices.length === 1 && canAuto) {
       input.value = _modelChoices[0];
       _lastAutoFilled = _modelChoices[0];
-      if (status) status.textContent = `Model set to "${_modelChoices[0]}".`;
+      // Only when the admin's own change triggered this. On first render the
+      // form auto-fills whatever the default engine's single model is (vosk's
+      // model_path, since vosk leads the STT provider dict), so announcing it
+      // left a permanent, confusing "Model set to models/stt/vosk-..." in the
+      // pane's status line -- and after a successful add it would overwrite the
+      // "Added ..." confirmation.
+      if (announce && status) status.textContent = `Model set to "${_modelChoices[0]}".`;
     } else if (input.value === "" || input.value === _lastAutoFilled) {
       // context is no longer single-choice: clear a stale auto-filled value
       // (but never a value the admin typed themselves).
@@ -643,7 +652,7 @@ export async function createModelRegistryEntry() {
     if (el("registry-add-key-api-key")) el("registry-add-key-api-key").value = "";
     if (el("registry-add-provider")) el("registry-add-provider").value = "";
     await loadModelRegistry();
-    void _loadEngineOptions();
+    void _loadEngineOptions(false); // keep the `Added "..."` confirmation visible
   } catch (error) {
     print(status, String(error), true);
   }
@@ -655,7 +664,7 @@ if (el("registry-add-kind")) {
     void _loadEngineOptions();
   });
   _updateKindFields();
-  void _loadEngineOptions();
+  void _loadEngineOptions(false); // first render: nothing to announce yet
 }
 if (el("registry-add-provider")) {
   el("registry-add-provider").addEventListener("change", () => {
