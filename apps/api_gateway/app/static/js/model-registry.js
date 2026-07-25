@@ -54,13 +54,17 @@ async function _loadEngineOptions() {
     const body = await (await fetch(`/v1/${kind}/engines`)).json();
     engines = body.data || [];
   } catch { /* leave empty; submit's required-guard will surface it */ }
-  for (const e of engines.filter((x) => x.mode === "local")) {
+  for (const e of engines.filter((x) => x.mode === "local" || x.engine === "qwencloud")) {
     const opt = document.createElement("option");
     opt.value = e.engine;
     opt.textContent = e.available ? e.engine : `${e.engine} (unavailable)`;
     sel.appendChild(opt);
   }
-  if (engines.some((e) => e.engine === prev && e.mode === "local")) sel.value = prev;
+  if (engines.some((e) => e.engine === prev && (e.mode === "local" || e.engine === "qwencloud"))) sel.value = prev;
+  const baseInput = el("registry-add-base-url");
+  if (baseInput && sel.value === "qwencloud" && !baseInput.value.trim()) {
+    baseInput.value = "https://dashscope-intl.aliyuncs.com";
+  }
   void _loadModelChoices();
 }
 
@@ -82,6 +86,7 @@ function _effectiveEngine() {
     // OpenRouter STT uses /audio/transcriptions with a JSON base64 body
     // (qwen3_asr_or); every other OpenAI-compatible host uses multipart upload
     // (http_stt). model_id (from the form) selects the actual model either way.
+    if (base.includes("dashscope")) return "qwencloud";
     return base.includes("openrouter.ai") ? "qwen3_asr_or" : "http_stt";
   }
   return (el("registry-add-engine")?.value || "").trim(); // local runtime choice
@@ -97,7 +102,9 @@ async function _loadModelChoices() {
   const providerId = (el("registry-add-provider")?.value || "").trim();
   const kind = el("registry-add-kind")?.value;
   try {
-    if (providerId) {
+    if (kind === "stt" && _effectiveEngine() === "qwencloud") {
+      _modelChoices = ["qwen3-asr-flash", "fun-asr"];
+    } else if (providerId) {
       // Remote: the provider's advertised models (self-hosted service returns 1;
       // a cloud provider returns many).
       const body = await (await fetch(`/v1/providers/${encodeURIComponent(providerId)}/models`)).json();
