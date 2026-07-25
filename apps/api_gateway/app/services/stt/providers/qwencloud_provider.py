@@ -30,7 +30,6 @@ from app.services.stt.base import STTProvider, STTStream
 _DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com"
 _DEFAULT_TIMEOUT = 60.0
 _MM_PATH = "/api/v1/services/aigc/multimodal-generation/generation"
-_ACCEPT_PUMP_TICKS = 32  # scheduler hops accept() yields to drain already-buffered frames
 
 
 def _family(model: str | None) -> str:
@@ -124,16 +123,30 @@ class _BaseWsStream(STTStream):
 
     async def accept(self, pcm: bytes) -> list[STTResult]:
         await self._ensure()
-        await self._ws.send(self._encode_audio(pcm))
-        # Let the reader run: each frame the background task consumes from the
-        # transport (and each queue.put) is its own scheduler hop, so a single
-        # sleep(0) only advances the reader one step. Yield a bounded number of
-        # times so any already-buffered server frames get parsed and queued
-        # before we drain -- without blocking on frames that haven't arrived.
-        for _ in range(_ACCEPT_PUMP_TICKS):
-            if self._done.is_set():
-                break
+        if self._done.is_set():
+            # upstream ended / socket closed (drop, or finalize on a prior flush).
+            # Don't send into a dead socket; just surface whatever is queued.
+            return self._drain()
+        try:
+            await self._ws.send(self._encode_audio(pcm))
+        except Exception as exc:  # ConnectionClosed etc. -> RuntimeError so the route emits an error event
+            raise RuntimeError(f"qwencloud stream send failed: {exc}") from exc
+        # Drain what the reader has parsed. Yield until the queue stops growing
+        # for a few consecutive ticks (or the stream ends) -- no fixed drain-all
+        # tick count. NOTE: a couple of leading control frames (e.g.
+        # session.created/session.updated, which parse to nothing) plus the
+        # reader task's own startup hop can cost 3 stagnant ticks before the
+        # first real result lands, so the idle budget must clear that -- an
+        # idle<2 threshold was verified (empirically) to bail out before any
+        # frame is ever parsed. 6 gives headroom over the observed minimum of 4.
+        idle = 0
+        while idle < 6 and not self._done.is_set():
+            before = self._q.qsize()
             await asyncio.sleep(0)
+            if self._q.qsize() == before:
+                idle += 1
+            else:
+                idle = 0
         return self._drain()
 
     async def finalize(self) -> STTResult | None:

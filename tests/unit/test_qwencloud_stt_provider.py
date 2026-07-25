@@ -217,6 +217,48 @@ async def test_qwen3_stream_maps_stash_and_transcript(fake_connect, monkeypatch)
     assert fake_connect["ws"].closed is True
 
 
+def _noop_msgs(n=1000):
+    # Frames that never trigger _is_done and never parse into a result --
+    # keeps the reader "still running" (stream._done unset) across a couple
+    # of accept() calls, without racing the reader's natural exhaustion.
+    return [json.dumps({"type": "noop"})] * n
+
+
+@pytest.mark.asyncio
+async def test_qwen3_stream_accept_after_done_does_not_resend(fake_connect):
+    fake_connect["incoming"] = []  # exhausts immediately -> reader sets _done fast
+    provider = QwenCloudSttProvider(entry=_QWEN_ENTRY)
+    stream = provider.open_stream(sample_rate=16000, language="vi")
+
+    await stream.accept(b"\x00\x00" * 160)  # connects, sends hello + first append
+    sent_before = len(fake_connect["ws"].sent)
+
+    stream._done.set()  # simulate upstream having ended / socket dropped
+    results = await stream.accept(b"\x00\x00" * 160)
+
+    assert isinstance(results, list)
+    # no new send was attempted against the dead socket
+    assert len(fake_connect["ws"].sent) == sent_before
+
+
+@pytest.mark.asyncio
+async def test_qwen3_stream_accept_send_failure_raises_runtime_error(fake_connect):
+    fake_connect["incoming"] = _noop_msgs()  # keeps the reader alive, _done unset
+    provider = QwenCloudSttProvider(entry=_QWEN_ENTRY)
+    stream = provider.open_stream(sample_rate=16000, language="vi")
+
+    await stream.accept(b"\x00\x00" * 160)  # connects successfully
+    assert not stream._done.is_set()
+
+    async def _boom(frame):
+        raise ConnectionError("socket closed")
+
+    fake_connect["ws"].send = _boom
+
+    with pytest.raises(RuntimeError, match="send failed"):
+        await stream.accept(b"\x00\x00" * 160)
+
+
 def _async(value):
     async def _c(*a, **k):
         return value
