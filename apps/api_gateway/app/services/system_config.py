@@ -182,7 +182,7 @@ class ConversationTuningConfig(BaseModel):
         json_schema_extra={"subgroup": "TTS & Audio"},
     )
     conversation_opus_pace: bool = Field(
-        default=False,
+        default=True,
         title="Pace Opus playback",
         description="Rate-limit outgoing Opus frames to real playback speed instead of sending as fast as generated (smoother client-side buffering).",
         json_schema_extra={"subgroup": "TTS & Audio"},

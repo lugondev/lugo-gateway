@@ -526,6 +526,18 @@ class ConversationSession:
                 )
             ) as pipeline:
                 logger.info("DEBUG_HANG _stream_to_tts: entering pipeline consume loop")
+                # Global real-time pacer for the WHOLE reply: prebuffer the first
+                # few frames, then release every frame on one monotonic clock.
+                # Per-sentence pacing used to prebuffer-burst at each sentence, so
+                # multi-sentence replies accumulated in the device jitter buffer
+                # and overflowed (dropped words on long replies). A single clock
+                # keeps the device buffer ~prebuffer-deep for the entire reply.
+                _conv_cfg = system_config_store.get().conversation
+                _do_pace = _conv_cfg.conversation_opus_pace
+                _prebuf = _conv_cfg.conversation_opus_prebuffer_frames
+                _frame_s = self.opus_encoder.frame / self.opus_encoder.sample_rate
+                _pace_t0 = None
+                _pace_n = 0
                 async for index, sentence, (result, packets) in pipeline:
                     logger.info("DEBUG_HANG _stream_to_tts: pipeline yielded index=%d", index)
                     _log_first_chunk()
@@ -543,19 +555,22 @@ class ConversationSession:
                             text=sentence if want_text else None,
                             codec="opus", sample_rate=cfg.output_sample_rate, frames=len(packets),
                         )
-                        # Pace packets at real-time after an initial burst so the
-                        # device buffer isn't flooded on long replies.
-                        conv_cfg = system_config_store.get().conversation
-                        if conv_cfg.conversation_opus_pace and packets:
-                            frame_s = self.opus_encoder.frame / self.opus_encoder.sample_rate
-                            delays = pacing_delays(
-                                len(packets), conv_cfg.conversation_opus_prebuffer_frames, frame_s
-                            )
-                        else:
-                            delays = [0.0] * len(packets)
-                        for delay, pkt in zip(delays, packets):
-                            if delay:
-                                await asyncio.sleep(delay)
+                        # Release on the single global clock (see _pace_* above).
+                        # First _prebuf frames of the reply go out immediately to
+                        # fill the device jitter buffer; every frame after that is
+                        # paced to real time, so a fast synth can't flood the
+                        # device and a slow one just catches up (no per-sentence
+                        # burst accumulation).
+                        for pkt in packets:
+                            if _do_pace:
+                                if _pace_t0 is None:
+                                    _pace_t0 = time.monotonic()
+                                if _pace_n >= _prebuf:
+                                    target = _pace_t0 + (_pace_n - _prebuf) * _frame_s
+                                    now = time.monotonic()
+                                    if target > now:
+                                        await asyncio.sleep(target - now)
+                                _pace_n += 1
                             await self.emit_audio(pkt)
                         await self.emit("audio_end", turn=turn, chunk_index=index)
                     else:
