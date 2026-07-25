@@ -882,3 +882,101 @@ def test_regular_user_cannot_delete_model_registry_entry(client, _with_password)
     _signup_login(client, "toan", role="user")
     resp = client.delete("/v1/model_registry/some-id")
     assert resp.status_code == 403
+
+
+# ---------- Feature: taking a row out of service clears the profiles pinning it ----------
+
+
+def test_disabling_a_pinned_row_clears_the_profile_binding(client, _with_password):
+    """Otherwise the profile keeps pointing at a row that's off: its next save is
+    rejected by check_model_allowed and the runtime lookup fails, with nothing
+    telling the admin which row went away. See
+    docs/superpowers/specs/2026-07-25-registry-delete-cascade-design.md."""
+    from app.services.profiles.models import Profile, SttConfig
+    from app.services.profiles.store import profile_store
+
+    _signup_login(client, "root", role="admin")
+    created = client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "stub-registry-ok", "model_id": "v1", "label": "Stub OK",
+    }).json()["data"]
+    profile_store.upsert(Profile(
+        name="p1", stt=SttConfig(engine="stub-registry-ok", model="v1", language="vi")))
+
+    resp = client.patch(f"/v1/model_registry/{created['id']}", json={"enabled": False})
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["cleared"] == ["p1 (stt)"]
+    after = profile_store.get("p1")
+    assert (after.stt.engine, after.stt.model) == ("", "")
+    assert after.stt.language == "vi"
+
+
+def test_enabling_a_row_clears_nothing(client, _with_password):
+    from app.services.profiles.models import Profile, SttConfig
+    from app.services.profiles.store import profile_store
+
+    _signup_login(client, "root", role="admin")
+    created = client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "stub-registry-ok", "model_id": "v1", "label": "Stub OK",
+    }).json()["data"]
+    client.patch(f"/v1/model_registry/{created['id']}", json={"enabled": False})
+    profile_store.upsert(Profile(name="p1", stt=SttConfig(engine="stub-registry-ok", model="v1")))
+
+    resp = client.patch(f"/v1/model_registry/{created['id']}", json={"enabled": True})
+
+    assert resp.json()["data"]["cleared"] == []
+    assert profile_store.get("p1").stt.engine == "stub-registry-ok"
+
+
+def test_re_disabling_an_already_disabled_row_clears_nothing(client, _with_password):
+    """Only the True -> False transition is the admin taking the row out of
+    service; a PATCH that re-sends enabled=False (e.g. saving an edit form) must
+    not wipe a binding the admin has re-pinned since."""
+    from app.services.profiles.models import Profile, SttConfig
+    from app.services.profiles.store import profile_store
+
+    _signup_login(client, "root", role="admin")
+    created = client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "stub-registry-ok", "model_id": "v1", "label": "Stub OK",
+    }).json()["data"]
+    client.patch(f"/v1/model_registry/{created['id']}", json={"enabled": False})
+    profile_store.upsert(Profile(name="p1", stt=SttConfig(engine="stub-registry-ok", model="v1")))
+
+    resp = client.patch(f"/v1/model_registry/{created['id']}", json={"enabled": False})
+
+    assert resp.json()["data"]["cleared"] == []
+    assert profile_store.get("p1").stt.engine == "stub-registry-ok"
+
+
+def test_deleting_an_unreferenced_row_reports_nothing_cleared(client, _with_password):
+    _signup_login(client, "root", role="admin")
+    created = client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "stub-registry-ok", "model_id": "v1", "label": "Stub OK",
+    }).json()["data"]
+    client.patch(f"/v1/model_registry/{created['id']}", json={"enabled": False})
+
+    resp = client.delete(f"/v1/model_registry/{created['id']}")
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["cleared"] == []
+
+
+def test_deleting_a_pinned_row_clears_the_binding(client, _with_password):
+    """The disable step normally does the clearing (delete requires disable
+    first), so this is the safety net: a row that reaches DELETE still pinned --
+    disabled before this feature shipped, or pinned again after being
+    disabled -- must not leave the binding dangling."""
+    from app.services.profiles.models import Profile, SttConfig
+    from app.services.profiles.store import profile_store
+
+    _signup_login(client, "root", role="admin")
+    created = client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "stub-registry-ok", "model_id": "v1", "label": "Stub OK",
+    }).json()["data"]
+    client.patch(f"/v1/model_registry/{created['id']}", json={"enabled": False})
+    profile_store.upsert(Profile(name="p1", stt=SttConfig(engine="stub-registry-ok", model="v1")))
+
+    resp = client.delete(f"/v1/model_registry/{created['id']}")
+
+    assert resp.json()["data"]["cleared"] == ["p1 (stt)"]
+    assert profile_store.get("p1").stt.engine == ""

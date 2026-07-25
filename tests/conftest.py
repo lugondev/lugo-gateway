@@ -114,9 +114,12 @@ def _tmp_db(tmp_path, monkeypatch):
     from app.services.db import engine as db_engine
     from app.services.db import sync_engine as cfg_engine
     from app.core.settings import settings
+    from app.services.mcp.server_store import mcp_server_store
     from app.services.model_registry.store import model_registry_store
+    from app.services.profiles.store import profile_store
     from app.services.providers.store import provider_store
     from app.services.quota.store import quota_store
+    from app.services.tts.profile_store import tts_profile_store
 
     monkeypatch.setattr(settings, "profiles_path", str(tmp_path / "profiles.json"))
     monkeypatch.setattr(settings, "tts_profiles_path", str(tmp_path / "tts_profiles.json"))
@@ -130,9 +133,23 @@ def _tmp_db(tmp_path, monkeypatch):
     model_registry_store.invalidate()
     provider_store.invalidate()
     quota_store.invalidate()
+    # Same reason for the config stores (profiles/tts profiles/mcp servers): their
+    # cache is process-global, so without this the FIRST test to touch one keeps
+    # serving its rows -- and, worse, later tests never re-run init_config_tables()
+    # against their own tmp DB ("no such table: config_profiles").
+    profile_store.invalidate()
+    tts_profile_store.invalidate()
+    mcp_server_store.invalidate()
     yield
     db_engine.configure()
     cfg_engine.configure()
     model_registry_store.invalidate()
     provider_store.invalidate()
     quota_store.invalidate()
+    # Same reason for the config stores (profiles/tts profiles/mcp servers): their
+    # cache is process-global, so without this the FIRST test to touch one keeps
+    # serving its rows -- and, worse, later tests never re-run init_config_tables()
+    # against their own tmp DB ("no such table: config_profiles").
+    profile_store.invalidate()
+    tts_profile_store.invalidate()
+    mcp_server_store.invalidate()

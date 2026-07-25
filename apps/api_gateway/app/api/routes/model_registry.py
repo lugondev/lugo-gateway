@@ -9,6 +9,7 @@ from app.services.auth.users import user_store
 from app.schemas.tts import TTSRequest
 from app.services.conversation.responder import OpenAICompatResponder
 from app.services.model_registry.availability import is_artifact_installed
+from app.services.model_registry.cascade import clear_bindings_for
 from app.services.model_registry.config_schema import config_schema_for
 from app.services.model_registry.store import model_registry_store
 from app.services.providers.resolve import resolve_credentials
@@ -334,6 +335,15 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
 @router.patch("/{entry_id}")
 async def update_entry(entry_id: str, payload: UpdateEntryRequest) -> dict:
     fields = {k: v for k, v in payload.model_dump().items() if v is not None}
+    was_enabled = None
+    if fields.get("enabled") is False:
+        # Snapshot before the write: only a True -> False transition is the admin
+        # taking the row out of service, and only that clears the profiles pinned
+        # to it (see clear_bindings_for). Re-sending enabled=False on an
+        # already-disabled row -- what saving an edit form does -- must not wipe a
+        # binding the admin has re-pinned since.
+        before = await model_registry_store.get(entry_id)
+        was_enabled = bool(before and before["enabled"])
     if "api_key" in fields and not fields["api_key"]:
         # Blank means "keep the existing key" -- same convention as every other
         # secret field in this app (the UI never pre-fills a real key, so a
@@ -370,8 +380,13 @@ async def update_entry(entry_id: str, payload: UpdateEntryRequest) -> dict:
 
         reset_voice_ref_and_respawn()
 
+    cleared: list[str] = []
+    if was_enabled:
+        cleared = await clear_bindings_for(
+            updated["kind"], updated["engine"], updated["model_id"])
+
     updated["api_key"] = _mask_api_key(updated["api_key"])
-    return {"success": True, "data": updated}
+    return {"success": True, "data": {**updated, "cleared": cleared}}
 
 
 @router.delete("/{entry_id}")
@@ -387,4 +402,8 @@ async def delete_entry(entry_id: str) -> dict:
     deleted = await model_registry_store.delete(entry_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"model registry entry '{entry_id}' not found")
-    return {"success": True, "data": {"id": entry_id, "deleted": True}}
+    # Normally a no-op: the disable this route insists on already cleared the
+    # profiles pinned to the row. Kept as the safety net for a row still pinned at
+    # delete time (disabled before this feature shipped, or re-pinned since).
+    cleared = await clear_bindings_for(existing["kind"], existing["engine"], existing["model_id"])
+    return {"success": True, "data": {"id": entry_id, "deleted": True, "cleared": cleared}}

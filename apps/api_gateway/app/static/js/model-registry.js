@@ -547,10 +547,22 @@ async function _patchEntryRaw(id, fields) {
       const body = await resp.json().catch(() => ({}));
       return { ok: false, error: body.detail || "Update failed" };
     }
-    return { ok: true };
+    const body = await resp.json().catch(() => ({}));
+    return { ok: true, cleared: (body.data && body.data.cleared) || [] };
   } catch (error) {
     return { ok: false, error: String(error) };
   }
+}
+
+// Disabling/deleting a row blanks the bindings of every profile that pinned it
+// (they fall back to the server default) -- say so, or the admin only finds out
+// the next time they open that profile.
+function _printCleared(cleared, verb) {
+  if (!cleared || !cleared.length) return;
+  print(
+    el("model-registry-status"),
+    `${verb} — reset to server default: ${cleared.join(", ")}`
+  );
 }
 
 async function patchEntry(id, fields) {
@@ -560,6 +572,7 @@ async function patchEntry(id, fields) {
     return;
   }
   await loadModelRegistry();
+  _printCleared(result.cleared, "Disabled");
 }
 
 async function deleteEntry(id) {
@@ -572,20 +585,33 @@ async function deleteEntry(id) {
       print(el("model-registry-status"), body.detail || "Delete failed", true);
       return;
     }
+    const body = await resp.json().catch(() => ({}));
     await loadModelRegistry();
+    _printCleared(body.data && body.data.cleared, "Deleted");
   } catch (error) {
     print(el("model-registry-status"), String(error), true);
   }
 }
 
 async function bulkPatchEntries(ids, fields, verb) {
+  const cleared = [];
   const errors = await runBulk(
     ids,
-    (id) => _patchEntryRaw(id, fields),
+    async (id) => {
+      const result = await _patchEntryRaw(id, fields);
+      if (result.ok) cleared.push(...result.cleared);
+      return result;
+    },
     (id) => registryData.find((e) => e.id === id)?.label || id
   );
   await loadModelRegistry();
   printBulkSummary(el("model-registry-status"), ids.length, errors, verb);
+  // Appends to the bulk summary rather than replacing it -- a bulk disable that
+  // reset profile bindings needs to report both.
+  if (cleared.length) {
+    const status = el("model-registry-status");
+    status.textContent = `${status.textContent} Reset to server default: ${cleared.join(", ")}`;
+  }
 }
 
 function _updateKindFields() {

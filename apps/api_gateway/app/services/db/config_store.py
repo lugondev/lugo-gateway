@@ -115,6 +115,15 @@ class SqliteBackedStore(Generic[M]):
                 row.data = model.model_dump_json()
         self._cache[name] = model
 
+    def invalidate(self) -> None:
+        """Drop the in-memory cache so the next access re-reads (and re-creates
+        the tables of) whatever DB is configured NOW. Same contract as
+        ModelRegistryStore.invalidate(): the module-level store singletons
+        outlive a DB switch, so tests that repoint the engine at a per-test tmp
+        file must invalidate or they keep serving the previous DB's rows."""
+        with self._lock:
+            self._cache = None
+
     def list(self) -> dict[str, M]:
         with self._lock:
             self._ensure()
