@@ -1,7 +1,11 @@
+import asyncio
+import json
+
 import httpx
 import pytest
 
 from app.schemas.stt import STTRequest
+from app.services.stt.providers import qwencloud_provider as qc
 from app.services.stt.providers.qwencloud_provider import (
     QwenCloudSttProvider,
     _family,
@@ -133,3 +137,87 @@ async def test_list_engines_reports_qwencloud_remote():
     row = next(e for e in engines if e["engine"] == "qwencloud")
     assert row["mode"] == "remote"
     assert "configured" in row
+
+
+class FakeWS:
+    """Async-iterable fake websocket. Yields seeded server messages, records sends."""
+    def __init__(self, incoming):
+        self._incoming = list(incoming)   # list[str] server frames
+        self.sent = []                    # list of frames the stream sent
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._incoming:
+            raise StopAsyncIteration
+        await asyncio.sleep(0)
+        return self._incoming.pop(0)
+
+    async def send(self, frame):
+        self.sent.append(frame)
+
+    async def close(self):
+        self.closed = True
+
+
+def _qwen_msgs():
+    return [
+        json.dumps({"type": "session.created"}),
+        json.dumps({"type": "session.updated"}),
+        json.dumps({"type": "conversation.item.input_audio_transcription.text",
+                    "text": "", "stash": "xin"}),
+        json.dumps({"type": "conversation.item.input_audio_transcription.completed",
+                    "transcript": "xin chào"}),
+        json.dumps({"type": "session.finished"}),
+    ]
+
+
+@pytest.fixture
+def fake_connect(monkeypatch):
+    holder = {}
+
+    async def _connect(url, headers):
+        ws = FakeWS(holder["incoming"])
+        holder["ws"] = ws
+        holder["url"] = url
+        holder["headers"] = headers
+        return ws
+
+    monkeypatch.setattr(qc, "_ws_connect", _connect)
+    return holder
+
+
+@pytest.mark.asyncio
+async def test_qwen3_stream_maps_stash_and_transcript(fake_connect, monkeypatch):
+    fake_connect["incoming"] = _qwen_msgs()
+    monkeypatch.setattr(
+        "app.services.stt.providers.qwencloud_provider.model_registry_store.find_enabled",
+        lambda kind, engine=None: _async(_QWEN_ENTRY),
+    )
+    provider = QwenCloudSttProvider(entry=_QWEN_ENTRY)
+    stream = provider.open_stream(sample_rate=16000, language="vi")
+
+    results = await stream.accept(b"\x00\x00" * 160)
+    # after connect+hello, drained partial(s)/final from the queue
+    partials = [r for r in results if not r.is_final]
+    finals = [r for r in results if r.is_final]
+    assert any(r.text == "xin" for r in partials)
+    assert any(r.text == "xin chào" for r in finals)
+
+    # the hello (session.update) and a base64 append were sent
+    assert any('"session.update"' in s for s in fake_connect["ws"].sent)
+    assert any('"input_audio_buffer.append"' in s for s in fake_connect["ws"].sent)
+    assert fake_connect["headers"]["Authorization"] == "Bearer sk-ws-test"
+    assert "/api-ws/v1/realtime?model=qwen3-asr-flash-realtime" in fake_connect["url"]
+
+    final = await stream.finalize()
+    assert any('"session.finish"' in s for s in fake_connect["ws"].sent)
+    assert fake_connect["ws"].closed is True
+
+
+def _async(value):
+    async def _c(*a, **k):
+        return value
+    return _c()

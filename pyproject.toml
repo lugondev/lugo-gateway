@@ -17,6 +17,7 @@ dependencies = [
   # silently vanish from an image the way scipy did.
   "soundfile>=0.12.1",
   "httpx>=0.27.0",
+  "websockets>=14.0",
   "vosk>=0.3.44",
   "sqlalchemy[asyncio]>=2.0.0",
   "aiosqlite>=0.20.0",
