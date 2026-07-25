@@ -228,19 +228,68 @@ async def seed_installed_models_to_registry() -> None:
                     "llm", profile.llm.engine, profile.llm.model,
                     f"{profile.llm.engine} — {profile.llm.model} (in use)")
 
-    # TTS profiles gate on the (engine, engine) shim -- see check_model_allowed()
-    # call in routes/tts_profiles.py, where profile.engine doubles as its own
-    # model_id since TTS profiles don't select a separate model id. Nothing else
-    # backfills this shape: migrate_omnivoice_to_registry() seeds a different,
-    # unrelated model_id="" sentinel row, and engine_map's auto-sync keys rows by
-    # real model ids, not by the engine name repeated as model_id. Without this,
-    # catalog-mode's flip (Task 4) locks every existing TTS profile out of saving.
+    # A TTS profile that pins no model_id gates on the (engine, engine) shim --
+    # see the check_model_allowed() call in routes/tts_profiles.py, where
+    # profile.engine doubles as its own model_id -- and that shim is also its only
+    # selectable row in the profile picker, since list_options() excludes
+    # model_id="" sentinels. Nothing else backfills this shape:
+    # migrate_omnivoice_to_registry() seeds a different, unrelated model_id=""
+    # sentinel row, and engine_map's auto-sync keys rows by real model ids, not by
+    # the engine name repeated as model_id. Without this, catalog-mode's flip
+    # (Task 4) locks those TTS profiles out of saving.
+    #
+    # A profile that DOES pin a model_id (http_tts/vieneu-cloudflare, ...) gates on
+    # that real row instead, so the shim satisfies nothing -- and for a service
+    # engine it can never work (no base_url), so seeding it just resurrects a
+    # broken "no base URL set!" row in the registry on every boot. Skip those; the
+    # rows already created for them are cleaned up by
+    # migrate_drop_stale_tts_engine_shims().
     for tts_profile in tts_profile_store.list().values():
-        if tts_profile.engine:
+        if tts_profile.engine and not tts_profile.model_id:
             if await model_registry_store.find("tts", tts_profile.engine, tts_profile.engine) is None:
                 await ensure_registry_entry(
                     "tts", tts_profile.engine, tts_profile.engine,
-                    f"{tts_profile.engine} — {tts_profile.engine} (in use)")
+                    _tts_shim_label(tts_profile.engine))
+
+
+def _tts_shim_label(engine: str) -> str:
+    """Label of a seeder-created (engine, engine) TTS shim row -- the fingerprint
+    migrate_drop_stale_tts_engine_shims() uses to tell "we created this" from "an
+    admin catalogued a row that happens to have this shape". Both writers must
+    stay in sync, so neither builds the string inline."""
+    return f"{engine} — {engine} (in use)"
+
+
+async def migrate_drop_stale_tts_engine_shims() -> None:
+    """One-time, idempotent: drop (engine, engine) TTS shim rows that no TTS
+    profile can gate on anymore.
+
+    seed_installed_models_to_registry() used to seed one per TTS profile engine,
+    model_id-pinning profiles included. Those profiles gate on their real
+    (engine, model_id) row instead, so their shim satisfies nothing -- and for a
+    service engine it carries no base_url, so it sits in the admin's registry
+    permanently broken ("http_tts/http_tts -- service -- no base URL set!") and
+    came back on the next boot every time the admin deleted it.
+
+    Only rows still labelled exactly as the seeder wrote them are dropped: same
+    shape with an admin's own label means the admin catalogued it deliberately.
+    Rows a model_id-less profile still needs are kept -- the shim is that
+    profile's only selectable row (list_options() excludes model_id="" sentinels),
+    so dropping it would strip the engine from the TTS-profile picker.
+    """
+    from app.services.tts.profile_store import tts_profile_store
+
+    still_needed = {
+        p.engine for p in tts_profile_store.list().values() if p.engine and not p.model_id
+    }
+    for entry in await model_registry_store.list_all():
+        if (
+            entry["kind"] == "tts"
+            and entry["model_id"] == entry["engine"]
+            and entry["engine"] not in still_needed
+            and entry["label"] == _tts_shim_label(entry["engine"])
+        ):
+            await model_registry_store.delete(entry["id"])
 
 
 # Provider renames that shipped in code but not in stored data. Commit 949c3a7

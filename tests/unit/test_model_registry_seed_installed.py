@@ -56,6 +56,30 @@ async def test_seeds_tts_profile_engine_shim_skips_blank_engine(monkeypatch):
     assert await model_registry_store.list_all() == []
 
 
+async def test_no_engine_shim_for_a_profile_that_pins_a_model_id(monkeypatch):
+    # A TTS profile that pins a model_id (http_tts/vieneu-cloudflare, ...) gates on
+    # THAT row -- check_model_allowed("tts", engine, profile.model_id) in
+    # routes/tts_profiles.py -- so the (engine, engine) shim satisfies nothing and
+    # is actively misleading: for a service engine it shows up in the registry as
+    # a permanently broken "no base URL set!" row that comes back on every boot.
+    from app.services.whisper_models import whisper_manager
+    from app.services.models import model_manager
+    from app.services.tts.profile_store import tts_profile_store
+    from app.services.tts.profile_models import TtsProfile
+    monkeypatch.setattr(whisper_manager, "snapshot", lambda: {"models": [], "active": None})
+    monkeypatch.setattr(model_manager, "snapshot", lambda: {"installed": [], "active": None})
+    monkeypatch.setattr(tts_profile_store, "list", lambda: {
+        "p1": TtsProfile(name="p1", engine="http_tts", model_id="vieneu-cloudflare"),
+    })
+
+    await seed_installed_models_to_registry()
+
+    assert await model_registry_store.find("tts", "http_tts", "http_tts") is None
+    # ...and it doesn't invent the real row either: only an admin (who knows the
+    # base_url) can catalogue a service entry.
+    assert await model_registry_store.find("tts", "http_tts", "vieneu-cloudflare") is None
+
+
 async def test_seeds_two_profiles_referencing_different_llms_both_stay_enabled(monkeypatch):
     # Regression guard for the finding that motivated is_default: before it,
     # kind="llm" `enabled` was exclusive DB-side, so seeding a second llm

@@ -130,6 +130,7 @@ async def lifespan(app: FastAPI):
 
     from app.services.model_registry.seed import (
         migrate_conversation_llm_to_registry,
+        migrate_drop_stale_tts_engine_shims,
         migrate_llm_default_flag,
         migrate_omnivoice_to_registry,
         migrate_remote_stt_to_registry,
@@ -149,6 +150,9 @@ async def lifespan(app: FastAPI):
     await migrate_stt_local_models_to_registry()
     await migrate_omnivoice_to_registry()
     await seed_installed_models_to_registry()
+    # After the seeder, so it can only ever remove shim rows the (now stricter)
+    # seeder no longer creates -- never race a row this boot just re-added.
+    await migrate_drop_stale_tts_engine_shims()
 
     if not settings.auth_enabled and settings.app_env != "dev":
         logger.warning(
