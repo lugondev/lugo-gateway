@@ -6,6 +6,7 @@ from app.services.stt.providers.qwencloud_provider import (
     QwenCloudSttProvider,
     _family,
 )
+from app.services.stt.service import stt_service
 
 _QWEN_ENTRY = {
     "id": "q1", "kind": "stt", "engine": "qwencloud", "model_id": "qwen3-asr-flash",
@@ -116,3 +117,19 @@ async def test_http_error_surfaces_status(monkeypatch):
                         lambda *a, **k: original(*a, **{**k, "transport": transport}))
     with pytest.raises(RuntimeError, match="HTTP 401"):
         await QwenCloudSttProvider(entry=_QWEN_ENTRY).transcribe_bytes(b"X")
+
+
+def test_engine_is_registered():
+    assert stt_service.get_provider("qwencloud").name == "qwencloud"
+
+
+def test_schema_accepts_the_engine():
+    assert STTRequest(engine="qwencloud").engine == "qwencloud"
+
+
+@pytest.mark.asyncio
+async def test_list_engines_reports_qwencloud_remote():
+    engines = await stt_service.list_engines()
+    row = next(e for e in engines if e["engine"] == "qwencloud")
+    assert row["mode"] == "remote"
+    assert "configured" in row

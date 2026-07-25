@@ -11,6 +11,7 @@ from app.services.stt.providers.remote_whisper_provider import RemoteWhisperProv
 from app.services.stt.providers.vosk_provider import VoskProvider
 from app.services.stt.providers.qwen3_asr_gguf_provider import Qwen3AsrGgufProvider
 from app.services.stt.providers.qwen3_asr_provider import Qwen3AsrProvider
+from app.services.stt.providers.qwencloud_provider import QwenCloudSttProvider
 from app.services.stt.providers.whisper_mlx_provider import WhisperMlxProvider
 from app.services.stt.providers.whisper_provider import WhisperProvider
 
@@ -51,6 +52,9 @@ class STTService:
                 timeout_seconds=remote_stt.remote_stt_timeout_seconds,
             ),
             "http_stt": HttpSttProvider(
+                timeout_seconds=remote_stt.remote_stt_timeout_seconds
+            ),
+            "qwencloud": QwenCloudSttProvider(
                 timeout_seconds=remote_stt.remote_stt_timeout_seconds
             ),
         }
@@ -174,6 +178,19 @@ class STTService:
                 row = await model_registry_store.find_enabled("stt", "http_stt")
                 base_url = (row or {}).get("base_url", "")
                 entry = {"mode": "remote", "available": bool(base_url), "detail": base_url or None}
+            elif engine == "qwencloud":
+                from app.services.providers.resolve import resolve_credentials
+
+                configured = False
+                for candidate in await model_registry_store.list_all():
+                    if (candidate["kind"] != "stt" or candidate["engine"] != "qwencloud"
+                            or not candidate["enabled"]):
+                        continue
+                    _base_url, api_key = await resolve_credentials(candidate)
+                    if api_key:
+                        configured = True
+                        break
+                entry = {"mode": "remote", "available": configured, "detail": None}
             else:
                 base_url, model = remote[engine]
                 configured = bool(base_url)
