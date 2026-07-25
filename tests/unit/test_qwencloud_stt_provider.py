@@ -370,3 +370,16 @@ async def test_funasr_batch_captures_multiple_sentences(fake_connect, monkeypatc
     result = await QwenCloudSttProvider().transcribe_bytes(buf.getvalue(), "vi", "fun-asr-realtime")
     assert result.text == "câu một câu hai"
     assert result.is_final is True
+
+
+@pytest.mark.asyncio
+async def test_finalize_returns_last_partial_on_disconnect(fake_connect):
+    # No terminal event: the reader ends on StopAsyncIteration (socket closed).
+    fake_connect["incoming"] = [
+        json.dumps({"type": "conversation.item.input_audio_transcription.text",
+                    "stash": "xin ch"}),
+    ]
+    stream = QwenCloudSttProvider(entry=_QWEN_ENTRY).open_stream(16000, "vi")
+    await stream.accept(b"\x00\x00" * 160)
+    final = await stream.finalize()          # must not raise
+    assert final is None or final.text == "xin ch"
