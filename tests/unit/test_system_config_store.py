@@ -106,7 +106,8 @@ def test_conversation_tuning_config_has_expected_defaults(tmp_path):
     assert c.conversation_streaming_stt is False
     assert c.conversation_streaming_chunk_ms == 1000
     assert c.conversation_tts_lookahead == 3
-    assert c.conversation_opus_pace is False
+    # default-on since 46ba015 (global real-time Opus pacing)
+    assert c.conversation_opus_pace is True
     assert c.conversation_opus_prebuffer_frames == 5
     assert c.conversation_language == "vi"
     assert c.llm_timeout_seconds == 60.0

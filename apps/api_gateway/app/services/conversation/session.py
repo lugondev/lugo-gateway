@@ -535,7 +535,6 @@ class ConversationSession:
                 _conv_cfg = system_config_store.get().conversation
                 _do_pace = _conv_cfg.conversation_opus_pace
                 _prebuf = _conv_cfg.conversation_opus_prebuffer_frames
-                _frame_s = self.opus_encoder.frame / self.opus_encoder.sample_rate
                 _pace_t0 = None
                 _pace_n = 0
                 async for index, sentence, (result, packets) in pipeline:
@@ -561,6 +560,14 @@ class ConversationSession:
                         # paced to real time, so a fast synth can't flood the
                         # device and a slow one just catches up (no per-sentence
                         # burst accumulation).
+                        #
+                        # Frame duration is read HERE, not before the loop: a
+                        # session that negotiated no Opus (browser PCM /
+                        # audio_url mode) has self.opus_encoder is None for the
+                        # whole turn, and touching it eagerly crashed every such
+                        # turn. Inside this branch the encoder is guaranteed --
+                        # packets only exist when it does -- same as speak().
+                        _frame_s = self.opus_encoder.frame / self.opus_encoder.sample_rate
                         for pkt in packets:
                             if _do_pace:
                                 if _pace_t0 is None:
