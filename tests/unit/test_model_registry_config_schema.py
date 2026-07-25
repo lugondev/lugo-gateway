@@ -59,3 +59,18 @@ def test_endpoint_empty_for_llm(client):
     r = client.get("/v1/model_registry/config_schema", params={"kind": "llm", "engine": "openrouter"})
     assert r.status_code == 200
     assert r.json() == {"fields": []}
+
+
+def test_qwencloud_schema_has_enum_choices_and_defaults():
+    fields = config_schema_for("stt", "qwencloud")
+    by = _by_key(fields)
+    assert set(by) == {"realtime_model", "language", "turn_detection",
+                       "semantic_punctuation", "timeout_seconds"}
+    assert by["realtime_model"]["default"] == "qwen3-asr-flash-realtime"
+    assert by["realtime_model"]["choices"] == ["qwen3-asr-flash-realtime", "fun-asr-realtime"]
+    assert by["turn_detection"]["choices"] == ["server_vad", "manual"]
+    assert by["turn_detection"]["default"] == "server_vad"
+    assert by["semantic_punctuation"]["type"] == "bool"
+    assert by["timeout_seconds"]["type"] == "float"
+    # non-enum fields carry no `choices` key
+    assert "choices" not in by["language"]

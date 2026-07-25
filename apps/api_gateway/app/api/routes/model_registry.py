@@ -33,6 +33,10 @@ _SAMPLE_WAV = pcm16_to_wav_bytes(b"\x00\x00" * 1600, sample_rate=16000)
 # provider (which looks its key up from an entry that doesn't exist yet).
 _OPENROUTER_STT_ENGINES = {"qwen3_asr_or", "whisper_or"}
 
+# STT engines that ARE services but hit a fixed vendor endpoint with a default
+# base_url -- api_key only, no admin-supplied base_url required (like OpenRouter).
+_FIXED_ENDPOINT_STT_ENGINES = _OPENROUTER_STT_ENGINES | {"qwencloud"}
+
 # Service engines whose config lives entirely on the entry being submitted
 # (base_url + api_key). Like the OpenRouter engines, the singleton provider
 # would look up a row that doesn't exist yet, so the add-time test call gets an
@@ -78,6 +82,7 @@ def _location(kind: str, engine: str) -> str:
         or engine in _SERVICE_TTS_ENGINES
         or engine in _BASE_URL_STT_ENGINES
         or engine in _OPENROUTER_STT_ENGINES
+        or engine == "qwencloud"
     ):
         return "service"
     return "local"
@@ -91,7 +96,7 @@ def _requires_base_url(kind: str, engine: str) -> bool:
     with api_key only -- and for every "local" engine. Surfaced in the list
     response so the admin UI can tell "blank because it's genuinely not needed"
     from "blank because it's misconfigured"."""
-    return _location(kind, engine) == "service" and engine not in _OPENROUTER_STT_ENGINES
+    return _location(kind, engine) == "service" and engine not in _FIXED_ENDPOINT_STT_ENGINES
 
 
 def _validate_known_engine(kind: str, engine: str) -> None:

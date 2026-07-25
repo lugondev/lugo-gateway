@@ -56,3 +56,9 @@ async def test_options_returns_enabled_entries_for_kind(client):
 async def test_options_rejects_unknown_kind(client):
     resp = client.get("/v1/model_registry/options?kind=bogus")
     assert resp.status_code == 400
+
+
+def test_qwencloud_is_a_fixed_endpoint_service_engine():
+    from app.api.routes.model_registry import _location, _requires_base_url
+    assert _location("stt", "qwencloud") == "service"
+    assert _requires_base_url("stt", "qwencloud") is False

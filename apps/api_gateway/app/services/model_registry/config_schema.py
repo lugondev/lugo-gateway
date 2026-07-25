@@ -32,6 +32,16 @@ def _fields_from_defaults(defaults: dict) -> list[dict]:
 
 
 def config_schema_for(kind: str, engine: str) -> list[dict]:
+    if kind == "stt" and engine == "qwencloud":
+        return [
+            {"key": "realtime_model", "type": "str", "default": "qwen3-asr-flash-realtime",
+             "choices": ["qwen3-asr-flash-realtime", "fun-asr-realtime"]},
+            {"key": "language", "type": "str", "default": ""},
+            {"key": "turn_detection", "type": "str", "default": "server_vad",
+             "choices": ["server_vad", "manual"]},
+            {"key": "semantic_punctuation", "type": "bool", "default": False},
+            {"key": "timeout_seconds", "type": "float", "default": 60.0},
+        ]
     if engine in STT_ENGINE_CONFIG_DEFAULTS:
         return _fields_from_defaults(STT_ENGINE_CONFIG_DEFAULTS[engine])
     if engine in _REMOTE_ENGINES:
