@@ -61,11 +61,23 @@ async function _loadEngineOptions() {
     sel.appendChild(opt);
   }
   if (engines.some((e) => e.engine === prev && (e.mode === "local" || e.engine === "qwencloud"))) sel.value = prev;
-  const baseInput = el("registry-add-base-url");
-  if (baseInput && sel.value === "qwencloud" && !baseInput.value.trim()) {
-    baseInput.value = "https://dashscope-intl.aliyuncs.com";
-  }
+  _maybePrefillBaseUrl();
   void _loadModelChoices();
+}
+
+// Prefill the base_url input with the DashScope default when qwencloud is the
+// selected engine and the field is empty; clear our own auto-fill again if the
+// admin switches away from qwencloud without having typed anything else.
+function _maybePrefillBaseUrl() {
+  const sel = el("registry-add-engine");
+  const baseInput = el("registry-add-base-url");
+  if (!sel || !baseInput) return;
+  const DEFAULT = "https://dashscope-intl.aliyuncs.com";
+  if (sel.value === "qwencloud") {
+    if (!baseInput.value.trim()) baseInput.value = DEFAULT;
+  } else if (baseInput.value.trim() === DEFAULT) {
+    baseInput.value = ""; // clear our auto-fill when leaving qwencloud
+  }
 }
 
 // The engine actually submitted. For a LOCAL (no-provider) stt/tts model it's
@@ -644,7 +656,7 @@ if (el("registry-add-provider")) {
   });
 }
 if (el("registry-add-engine")) {
-  el("registry-add-engine").addEventListener("change", () => { void _loadModelChoices(); });
+  el("registry-add-engine").addEventListener("change", () => { void _loadModelChoices(); _maybePrefillBaseUrl(); });
 }
 if (el("registry-add-btn")) el("registry-add-btn").addEventListener("click", createModelRegistryEntry);
 if (el("model-registry-refresh")) el("model-registry-refresh").addEventListener("click", loadModelRegistry);
