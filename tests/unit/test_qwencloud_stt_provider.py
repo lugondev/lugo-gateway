@@ -610,3 +610,38 @@ async def test_funasr_async_batch_oss_upload_carries_policy_fields(monkeypatch):
     body = upload[2]
     for field in (b"OSSAccessKeyId", b"Signature", b"policy", b"d/xyz/audio.wav", b"success_action_status"):
         assert field in body, field
+
+
+@pytest.mark.asyncio
+async def test_open_stream_buffers_for_async_only_model(monkeypatch):
+    # A non-realtime conversation model (fun-asr-mtl has no realtime WS) is served
+    # by buffering the turn and transcribing on finalize -- the same mechanism
+    # whisper / OpenRouter / http_stt use. It must NOT open a WS.
+    from app.services.stt.base import BufferingStream
+
+    seen = {}
+    async def fake_tb(self, audio_bytes, language=None, model=None):
+        seen["model"] = model
+        from app.schemas.stt import STTResult
+        return STTResult(engine="qwencloud", text="xin chao", is_final=True)
+    monkeypatch.setattr(QwenCloudSttProvider, "transcribe_bytes", fake_tb)
+
+    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr-mtl", "config": {"realtime_model": "fun-asr-mtl"}}
+    stream = QwenCloudSttProvider(entry=entry).open_stream(16000, "vi")
+    assert isinstance(stream, BufferingStream)
+    partials = await stream.accept(b"\x00\x00" * 160)
+    assert partials == []  # buffering -> no partials
+    final = await stream.finalize()
+    assert seen["model"] == "fun-asr-mtl"  # finalize transcribed via the async batch model
+    assert final.text == "xin chao"
+
+
+@pytest.mark.asyncio
+async def test_open_stream_funasr_default_is_buffering_mtl(monkeypatch):
+    # With no config.realtime_model, a fun-asr entry defaults the conversation
+    # to the multilingual fun-asr-mtl (buffering), not the Chinese fun-asr-realtime.
+    from app.services.stt.base import BufferingStream
+    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr", "config": {}}
+    stream = QwenCloudSttProvider(entry=entry).open_stream(16000, "vi")
+    assert isinstance(stream, BufferingStream)
+    assert stream._model == "fun-asr-mtl"

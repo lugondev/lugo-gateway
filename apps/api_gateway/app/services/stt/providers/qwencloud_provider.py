@@ -26,7 +26,7 @@ from app.schemas.stt import STTResult
 from app.services.http_errors import translate_httpx_error
 from app.services.model_registry.store import model_registry_store
 from app.services.providers.resolve import resolve_credentials
-from app.services.stt.base import STTProvider, STTStream
+from app.services.stt.base import BufferingStream, STTProvider, STTStream
 
 _DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com"
 _DEFAULT_TIMEOUT = 60.0
@@ -494,14 +494,26 @@ class QwenCloudSttProvider(STTProvider):
         base_url = (base_url or "").strip() or _DEFAULT_BASE_URL
         cfg = entry.get("config") or {}
         fam = _family(model or entry.get("model_id") or cfg.get("realtime_model"))
-        realtime_model = cfg.get("realtime_model") or (
-            "fun-asr-realtime" if fam == "funasr" else "qwen3-asr-flash-realtime"
-        )
         lang = language or cfg.get("language")
-        if fam == "funasr":
-            return FunAsrNativeStream(base_url, api_key, realtime_model, sample_rate, lang,
+        # The conversation model: explicit config.realtime_model, else a family
+        # default. qwen3 has a true realtime WS (qwen3-asr-flash-realtime);
+        # fun-asr's only multilingual model is fun-asr-mtl, which is async (no
+        # realtime WS), so it defaults to that. fun-asr-realtime (Chinese WS) is
+        # opt-in via config.realtime_model.
+        stream_model = cfg.get("realtime_model") or (
+            "fun-asr-mtl" if fam == "funasr" else "qwen3-asr-flash-realtime"
+        )
+        # A non-realtime model configured for conversation (e.g. multilingual
+        # fun-asr-mtl) can't stream incrementally -- buffer the turn and
+        # transcribe on finalize, exactly like whisper / OpenRouter / http_stt
+        # (every non-vosk engine streams this way). transcribe_bytes routes the
+        # buffered audio to the async/inline batch path for that model.
+        if not stream_model.endswith("-realtime"):
+            return BufferingStream(self, sample_rate, lang, stream_model)
+        if _family(stream_model) == "funasr":
+            return FunAsrNativeStream(base_url, api_key, stream_model, sample_rate, lang,
                                       cfg.get("semantic_punctuation"))
-        return QwenOaiRealtimeStream(base_url, api_key, realtime_model, sample_rate, lang,
+        return QwenOaiRealtimeStream(base_url, api_key, stream_model, sample_rate, lang,
                                      cfg.get("turn_detection"))
 
 
