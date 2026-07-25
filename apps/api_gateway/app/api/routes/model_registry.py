@@ -14,6 +14,7 @@ from app.services.model_registry.store import model_registry_store
 from app.services.providers.resolve import resolve_credentials
 from app.services.stt.providers.http_stt_provider import HttpSttProvider
 from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
+from app.services.stt.providers.qwencloud_provider import QwenCloudSttProvider
 from app.services.stt.service import stt_service
 from app.services.tts.providers.http_tts_provider import HttpTtsProvider
 from app.services.tts.service import tts_service
@@ -278,6 +279,11 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
                 )
             elif payload.engine in _SERVICE_STT_ENGINES:
                 provider = HttpSttProvider(
+                    name=payload.engine,
+                    entry={**payload.model_dump(), "base_url": eff_base_url, "api_key": eff_api_key},
+                )
+            elif payload.engine == "qwencloud":
+                provider = QwenCloudSttProvider(
                     name=payload.engine,
                     entry={**payload.model_dump(), "base_url": eff_base_url, "api_key": eff_api_key},
                 )

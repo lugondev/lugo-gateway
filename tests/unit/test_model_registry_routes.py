@@ -189,6 +189,38 @@ def test_create_openrouter_stt_entry_uses_submitted_key_for_the_test_call(client
     assert resp.json()["data"]["api_key"] == "***"  # short key -> full mask, not partial
 
 
+def test_create_qwencloud_stt_entry_uses_submitted_creds_for_the_test_call(client, _with_password, monkeypatch):
+    """qwencloud isn't backed by the stub providers -- the route must build a
+    temporary QwenCloudSttProvider carrying the SUBMITTED creds via entry= (the
+    process-singleton path has _entry_override=None and would look up a registry
+    row that doesn't exist yet, raising "qwencloud is not configured" -> 400)."""
+    seen = {}
+
+    async def fake_transcribe(self, audio_bytes, language=None, model=None):
+        # load-bearing: proves the route built a provider carrying the SUBMITTED
+        # creds via entry= (the buggy singleton path has _entry_override=None)
+        seen["override"] = self._entry_override
+        from app.schemas.stt import STTResult
+        return STTResult(engine="qwencloud", text="ok", is_final=True)
+
+    from app.services.stt.providers.qwencloud_provider import QwenCloudSttProvider
+    monkeypatch.setattr(QwenCloudSttProvider, "transcribe_bytes", fake_transcribe)
+
+    _signup_login(client, "root", role="admin")
+    resp = client.post("/v1/model_registry", json={
+        "kind": "stt", "engine": "qwencloud", "model_id": "qwen3-asr-flash",
+        "label": "QwenCloud", "api_key": "sk-ws-test", "base_url": "https://dashscope-intl.aliyuncs.com",
+        "config": {"realtime_model": "fun-asr-realtime", "turn_detection": "manual"},
+    })
+    assert resp.status_code == 200, resp.text
+    assert seen["override"] is not None
+    assert seen["override"].get("api_key") == "sk-ws-test"
+    # config persisted intact
+    listed = client.get("/v1/model_registry").json()["data"]
+    row = next(e for e in listed if e["engine"] == "qwencloud")
+    assert row["config"]["realtime_model"] == "fun-asr-realtime"
+
+
 def test_create_stt_entry_with_unknown_engine_gets_a_helpful_suggestion(client, _with_password):
     """Regression: the admin's Engine field is free text (kind='llm' genuinely
     needs that), so a typo like 'OR' -- shorthand for the real OpenRouter-backed
