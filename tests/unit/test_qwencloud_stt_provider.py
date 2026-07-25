@@ -326,56 +326,6 @@ async def test_funasr_stream_maps_sentence_end(fake_connect):
 
 
 @pytest.mark.asyncio
-async def test_funasr_batch_one_shot_concatenates_finals(fake_connect, monkeypatch):
-    fake_connect["incoming"] = _funasr_msgs()
-
-    async def fake_find(kind, engine, model_id):
-        return _FUNASR_ENTRY
-    monkeypatch.setattr(
-        "app.services.stt.providers.qwencloud_provider.model_registry_store.find", fake_find)
-
-    # minimal valid WAV (44-byte header + a few PCM samples)
-    import wave, io
-    buf = io.BytesIO()
-    w = wave.open(buf, "wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
-    w.writeframes(b"\x00\x00" * 320); w.close()
-
-    result = await QwenCloudSttProvider().transcribe_bytes(buf.getvalue(), "vi", "fun-asr-realtime")
-    assert result.engine == "qwencloud"
-    assert result.text == "xin chào"   # last/accumulated final
-    assert result.is_final is True
-
-
-@pytest.mark.asyncio
-async def test_funasr_batch_captures_multiple_sentences(fake_connect, monkeypatch):
-    # All audio is sent before the server emits results in a one-shot batch,
-    # so both sentences arrive AFTER finish-task, during the drain -- not via
-    # accept(). This proves drain_remaining_finals() doesn't drop the first one.
-    fake_connect["incoming"] = [
-        json.dumps({"header": {"event": "task-started"}}),
-        json.dumps({"header": {"event": "result-generated"},
-                    "payload": {"output": {"sentence": {"text": "câu một", "sentence_end": True}}}}),
-        json.dumps({"header": {"event": "result-generated"},
-                    "payload": {"output": {"sentence": {"text": "câu hai", "sentence_end": True}}}}),
-        json.dumps({"header": {"event": "task-finished"}, "payload": {"output": {}}}),
-    ]
-
-    async def fake_find(kind, engine, model_id):
-        return _FUNASR_ENTRY
-    monkeypatch.setattr(
-        "app.services.stt.providers.qwencloud_provider.model_registry_store.find", fake_find)
-
-    import wave, io
-    buf = io.BytesIO()
-    w = wave.open(buf, "wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
-    w.writeframes(b"\x00\x00" * 320); w.close()
-
-    result = await QwenCloudSttProvider().transcribe_bytes(buf.getvalue(), "vi", "fun-asr-realtime")
-    assert result.text == "câu một câu hai"
-    assert result.is_final is True
-
-
-@pytest.mark.asyncio
 async def test_finalize_swallows_send_failure_on_dropped_socket(fake_connect):
     # A partial arrives, then the socket drops: finalize()'s finish-frame send
     # raises. finalize() must swallow it and return gracefully, never propagate.
@@ -501,30 +451,95 @@ def _mono16k_wav() -> bytes:
     return buf.getvalue()
 
 
-@pytest.mark.asyncio
-async def test_funasr_batch_sends_realtime_model_not_batch_model_id(fake_connect):
-    # The one-shot batch runs over the fun-asr *realtime* WS: it must send the
-    # realtime model name (default "fun-asr-realtime"), NOT the batch model_id
-    # "fun-asr" -- the /inference endpoint rejects "fun-asr" with ModelNotFound,
-    # which used to surface as a silently-empty transcript.
-    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr", "config": {}}
-    fake_connect["incoming"] = _funasr_msgs()
-    result = await QwenCloudSttProvider(entry=entry).transcribe_bytes(_mono16k_wav(), "en")
-    run_task = next(s for s in fake_connect["ws"].sent if isinstance(s, str) and "run-task" in s)
-    assert '"model": "fun-asr-realtime"' in run_task
-    assert '"model": "fun-asr"' not in run_task
-    assert result.text == "xin chào"
+
+def test_batch_model_strips_realtime():
+    from app.services.stt.providers.qwencloud_provider import _batch_model
+    assert _batch_model("qwen3-asr-flash-realtime") == "qwen3-asr-flash"
+    assert _batch_model("fun-asr-realtime") == "fun-asr"
+    assert _batch_model("fun-asr-mtl") == "fun-asr-mtl"
+    assert _batch_model("qwen3-asr-flash") == "qwen3-asr-flash"
+
+
+def _funasr_async_mock_transport(calls):
+    def handler(request):
+        url = str(request.url)
+        calls.append((request.method, url, request.content))
+        if "/api/v1/uploads" in url:
+            return httpx.Response(200, json={"data": {
+                "policy": "POLICY", "signature": "SIG", "upload_dir": "d/xyz",
+                "upload_host": "https://upload.example.com", "oss_access_key_id": "AK",
+                "x_oss_object_acl": "private", "x_oss_forbid_overwrite": "true"}})
+        if url.startswith("https://upload.example.com"):
+            return httpx.Response(200, text="")
+        if url.endswith("/api/v1/services/audio/asr/transcription"):
+            return httpx.Response(200, json={"output": {"task_id": "TID", "task_status": "PENDING"}})
+        if "/api/v1/tasks/TID" in url:
+            return httpx.Response(200, json={"output": {"task_status": "SUCCEEDED",
+                "results": [{"transcription_url": "https://transcript.example.com/out.json"}]}})
+        if url.startswith("https://transcript.example.com"):
+            return httpx.Response(200, json={"transcripts": [{"text": "hello "}, {"text": "world"}]})
+        return httpx.Response(404, text=f"unexpected {url}")
+    return httpx.MockTransport(handler)
 
 
 @pytest.mark.asyncio
-async def test_funasr_batch_raises_on_task_failed_instead_of_empty(fake_connect):
-    # A task-failed must surface as a RuntimeError (the route turns it into an
-    # STT-failed error) rather than a success with empty text.
-    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr", "config": {}}
-    fake_connect["incoming"] = [
-        json.dumps({"header": {"event": "task-started"}}),
-        json.dumps({"header": {"event": "task-failed", "error_code": "ModelNotFound",
-                               "error_message": "Model not found (fun-asr)"}}),
-    ]
-    with pytest.raises(RuntimeError, match="Model not found"):
-        await QwenCloudSttProvider(entry=entry).transcribe_bytes(_mono16k_wav(), "en")
+async def test_funasr_mtl_async_batch_full_flow(monkeypatch):
+    calls = []
+    transport = _funasr_async_mock_transport(calls)
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient",
+                        lambda *a, **k: original(*a, **{**k, "transport": transport}))
+    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr-mtl", "config": {}}
+    result = await QwenCloudSttProvider(entry=entry).transcribe_bytes(_mono16k_wav(), None, "fun-asr-mtl")
+
+    assert result.engine == "qwencloud"
+    assert result.text == "hello world"  # joined transcripts[].text, stripped
+    urls = [u for _m, u, _c in calls]
+    assert any("action=getPolicy" in u for u in urls)
+    assert any(u.startswith("https://upload.example.com") for u in urls)  # OSS upload happened
+    # submit carried the oss:// url + async/OssResourceResolve headers, no language_hints
+    submit = next(c for c in calls if c[1].endswith("/api/v1/services/audio/asr/transcription"))
+    body = submit[2].decode()
+    assert "oss://d/xyz/audio.wav" in body
+    assert "language_hints" not in body
+    assert any("/api/v1/tasks/TID" in u for u in urls)
+
+
+@pytest.mark.asyncio
+async def test_funasr_realtime_model_id_still_routes_to_async_batch(monkeypatch):
+    # A '-realtime' id configured as the batch model must be stripped to the
+    # non-realtime batch model and go through the async path (not the WS).
+    seen = {}
+    async def fake_async(self, base_url, api_key, model, audio_bytes, max_wait):
+        seen["model"] = model
+        from app.schemas.stt import STTResult
+        return STTResult(engine="qwencloud", text="ok", is_final=True)
+    monkeypatch.setattr(QwenCloudSttProvider, "_funasr_async_batch", fake_async)
+    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr-realtime", "config": {}}
+    await QwenCloudSttProvider(entry=entry).transcribe_bytes(_mono16k_wav(), None)
+    assert seen["model"] == "fun-asr"  # -realtime stripped
+
+
+@pytest.mark.asyncio
+async def test_funasr_async_batch_raises_on_task_failed(monkeypatch):
+    def handler(request):
+        url = str(request.url)
+        if "/api/v1/uploads" in url:
+            return httpx.Response(200, json={"data": {"policy": "P", "signature": "S",
+                "upload_dir": "d/x", "upload_host": "https://upload.example.com",
+                "oss_access_key_id": "AK"}})
+        if url.startswith("https://upload.example.com"):
+            return httpx.Response(200, text="")
+        if url.endswith("/asr/transcription"):
+            return httpx.Response(200, json={"output": {"task_id": "TID", "task_status": "PENDING"}})
+        if "/api/v1/tasks/TID" in url:
+            return httpx.Response(200, json={"output": {"task_status": "FAILED",
+                "code": "ModelNotFound", "message": "no such model"}})
+        return httpx.Response(404)
+    transport = httpx.MockTransport(handler)
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient",
+                        lambda *a, **k: original(*a, **{**k, "transport": transport}))
+    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr-mtl", "config": {}}
+    with pytest.raises(RuntimeError, match="failed"):
+        await QwenCloudSttProvider(entry=entry).transcribe_bytes(_mono16k_wav(), None, "fun-asr-mtl")

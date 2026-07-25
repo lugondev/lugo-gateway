@@ -31,11 +31,37 @@ from app.services.stt.base import STTProvider, STTStream
 _DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com"
 _DEFAULT_TIMEOUT = 60.0
 _MM_PATH = "/api/v1/services/aigc/multimodal-generation/generation"
+_FUNASR_ASYNC_PATH = "/api/v1/services/audio/asr/transcription"
+_UPLOAD_PATH = "/api/v1/uploads"
+_TASKS_PATH = "/api/v1/tasks"
+_ASYNC_MAX_WAIT = 180.0  # seconds; overridable via entry config.timeout_seconds
 
 
 def _family(model: str | None) -> str:
     """Map a model id to its family. Default qwen3 (the primary family)."""
     return "funasr" if (model or "").strip().lower().startswith("fun-asr") else "qwen3"
+
+
+def _batch_model(model: str) -> str:
+    """The batch model for a given model id: strip a trailing '-realtime'.
+
+    A '-realtime' model is a conversation/streaming model; batch always uses the
+    non-realtime counterpart (qwen3-asr-flash-realtime -> qwen3-asr-flash,
+    fun-asr-realtime -> fun-asr, fun-asr-mtl -> fun-asr-mtl)."""
+    m = (model or "").strip()
+    return m[: -len("-realtime")] if m.endswith("-realtime") else m
+
+
+def _transcription_url(out: dict) -> str | None:
+    """Pull the signed transcript URL out of a SUCCEEDED task's output.results
+    (the entry may be nested one more level in older shapes)."""
+    for res in out.get("results", []) or []:
+        if res.get("transcription_url"):
+            return res["transcription_url"]
+        for sub in res.get("results", []) or []:
+            if sub.get("transcription_url"):
+                return sub["transcription_url"]
+    return None
 
 
 def _host_base(base_url: str) -> str:
@@ -172,24 +198,6 @@ class _BaseWsStream(STTStream):
         finals = [r for r in results if r.is_final]
         text = finals[-1].text if finals else (results[-1].text if results else "")
         return STTResult(engine="qwencloud", text=text, is_final=True, confidence=None) if text else None
-
-    async def drain_remaining_finals(self) -> list[str]:
-        """Send the finish frame, wait for the stream to end, and return every
-        finalized text still queued (i.e. not already returned by accept()).
-        One-shot batch relies on this because results arrive after finish."""
-        if self._ws is None:
-            return []
-        try:
-            await self._ws.send(self._finish_frame())
-            await asyncio.wait_for(self._done.wait(), timeout=15)
-        except Exception:  # noqa: BLE001 - return whatever we have
-            pass
-        finals = [r.text for r in self._drain() if r.is_final and r.text]
-        err = self._error
-        await self._close()
-        if err:
-            raise RuntimeError(f"qwencloud fun-asr task failed: {err}")
-        return finals
 
     async def _close(self) -> None:
         if self._reader is not None:
@@ -361,27 +369,88 @@ class QwenCloudSttProvider(STTProvider):
         effective = model or entry.get("model_id") or "qwen3-asr-flash"
         cfg = entry.get("config") or {}
         lang = language or cfg.get("language")
-        if _family(effective) == "funasr":
-            # The one-shot batch runs over the fun-asr *realtime* WS, whose model
-            # is "fun-asr-realtime" -- NOT the batch model_id "fun-asr", which the
-            # realtime /inference endpoint rejects with ModelNotFound (which used
-            # to surface as a silently-empty transcript).
-            realtime_model = cfg.get("realtime_model") or "fun-asr-realtime"
-            return await self._funasr_batch(base_url, api_key, realtime_model, audio_bytes, lang,
-                                             cfg.get("semantic_punctuation"))
-        return await self._qwen3_batch(base_url, api_key, timeout, effective, audio_bytes, lang)
+        # Batch always uses the non-realtime model (a '-realtime' id is a
+        # conversation model; see _batch_model). qwen3 -> inline; fun-asr -> async
+        # multilingual file-transcription (fun-asr-realtime is Chinese-only and is
+        # for streaming, never batch).
+        bm = _batch_model(effective)
+        if _family(bm) == "funasr":
+            max_wait = cfg.get("timeout_seconds") if cfg.get("timeout_seconds") is not None else _ASYNC_MAX_WAIT
+            return await self._funasr_async_batch(base_url, api_key, bm, audio_bytes, float(max_wait))
+        return await self._qwen3_batch(base_url, api_key, timeout, bm, audio_bytes, lang)
 
-    async def _funasr_batch(self, base_url, api_key, model, audio_bytes, language, semantic_punct):
-        pcm, sample_rate = _wav_to_pcm16(audio_bytes)
-        stream = FunAsrNativeStream(base_url, api_key, model, sample_rate, language, semantic_punct)
-        finals: list[str] = []
-        for i in range(0, len(pcm), 3200):
-            for r in await stream.accept(pcm[i:i + 3200]):
-                if r.is_final and r.text:
-                    finals.append(r.text)
-        finals.extend(await stream.drain_remaining_finals())
-        return STTResult(engine=self.name, text=" ".join(finals).strip(),
-                         is_final=True, confidence=None)
+    async def _funasr_async_batch(self, base_url, api_key, model, audio_bytes, max_wait):
+        """Multilingual fun-asr batch via the async file-transcription API.
+
+        DashScope has no external hosting requirement: getPolicy yields a
+        temporary OSS upload, and the async ASR resolves the resulting oss://
+        URL when X-DashScope-OssResourceResolve is enabled. No language_hints are
+        sent -- fun-asr-mtl auto-detects (this is what makes Vietnamese work)."""
+        host = _host_base(base_url)
+        auth = {"Authorization": f"Bearer {api_key}"}
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                # 1. temporary upload policy
+                resp = await client.get(f"{host}{_UPLOAD_PATH}",
+                                        params={"action": "getPolicy", "model": model}, headers=auth)
+                resp.raise_for_status()
+                pol = resp.json()["data"]
+                key = f"{pol['upload_dir']}/audio.wav"
+                # 2. OSS PostObject upload (temporary, private, ~5 min TTL)
+                form = {
+                    "OSSAccessKeyId": pol["oss_access_key_id"],
+                    "Signature": pol["signature"],
+                    "policy": pol["policy"],
+                    "key": key,
+                    "x-oss-object-acl": pol.get("x_oss_object_acl", "private"),
+                    "x-oss-forbid-overwrite": pol.get("x_oss_forbid_overwrite", "true"),
+                    "success_action_status": "200",
+                }
+                up = await client.post(pol["upload_host"], data=form,
+                                       files={"file": ("audio.wav", audio_bytes, "audio/wav")})
+                if up.status_code not in (200, 201, 203, 204):
+                    raise RuntimeError(f"{self.name} audio upload failed (HTTP {up.status_code})")
+                oss_url = f"oss://{key}"
+                # 3. submit async task (OssResourceResolve lets it read the oss:// url)
+                resp = await client.post(
+                    f"{host}{_FUNASR_ASYNC_PATH}",
+                    headers={**auth, "X-DashScope-Async": "enable",
+                             "X-DashScope-OssResourceResolve": "enable",
+                             "Content-Type": "application/json"},
+                    json={"model": model, "input": {"file_urls": [oss_url]}})
+                resp.raise_for_status()
+                task_id = resp.json()["output"]["task_id"]
+                # 4. adaptive poll (near-realtime, rate-limit-safe)
+                out = await self._poll_task(client, host, auth, task_id, max_wait)
+                # 5. fetch + parse transcript
+                turl = _transcription_url(out)
+                if not turl:
+                    raise RuntimeError(f"{self.name} async job returned no transcription_url")
+                doc = await client.get(turl)
+                doc.raise_for_status()
+                text = "".join(t.get("text", "") for t in doc.json().get("transcripts", [])).strip()
+        except httpx.HTTPError as exc:
+            raise translate_httpx_error(self.name, exc) from exc
+        return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
+
+    async def _poll_task(self, client, host, auth, task_id, max_wait):
+        elapsed = 0.0
+        await asyncio.sleep(0.8)
+        elapsed += 0.8
+        while elapsed < max_wait:
+            resp = await client.post(f"{host}{_TASKS_PATH}/{task_id}", headers=auth)
+            resp.raise_for_status()
+            out = resp.json().get("output", {})
+            status = out.get("task_status")
+            if status == "SUCCEEDED":
+                return out
+            if status == "FAILED":
+                raise RuntimeError(
+                    f"{self.name} async job failed: {out.get('message') or out.get('code') or 'unknown'}")
+            interval = 1.0 if elapsed < 20 else 2.0
+            await asyncio.sleep(interval)
+            elapsed += interval
+        raise RuntimeError(f"{self.name} async job timed out after {max_wait:.0f}s")
 
     async def _qwen3_batch(self, base_url, api_key, timeout, model, audio_bytes, language):
         b64 = base64.b64encode(audio_bytes).decode("ascii")
