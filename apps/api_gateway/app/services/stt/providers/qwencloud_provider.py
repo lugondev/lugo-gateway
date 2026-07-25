@@ -343,7 +343,13 @@ class QwenCloudSttProvider(STTProvider):
         if self._entry_override is not None:
             return self._entry_override
         if model:
-            return await model_registry_store.find(kind="stt", engine=self.name, model_id=model)
+            entry = await model_registry_store.find(kind="stt", engine=self.name, model_id=model)
+            if entry:
+                return entry
+            # `model` may be an API model name that isn't a registry row's model_id
+            # (e.g. the buffering conversation stream asks for "fun-asr-mtl" while the
+            # row is "fun-asr"). Credentials are account-level, so fall back to the
+            # engine's enabled entry -- the requested `model` still drives the API call.
         return await model_registry_store.find_enabled(kind="stt", engine=self.name)
 
     async def _creds(self, model: str | None) -> tuple[dict, str, str, float]:

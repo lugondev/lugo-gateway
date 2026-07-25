@@ -645,3 +645,38 @@ async def test_open_stream_funasr_default_is_buffering_mtl(monkeypatch):
     stream = QwenCloudSttProvider(entry=entry).open_stream(16000, "vi")
     assert isinstance(stream, BufferingStream)
     assert stream._model == "fun-asr-mtl"
+
+
+@pytest.mark.asyncio
+async def test_transcribe_falls_back_to_enabled_entry_for_unmatched_model(monkeypatch):
+    # Production path (no entry override): the buffering conversation asks
+    # transcribe_bytes for "fun-asr-mtl" but the registry row's model_id is
+    # "fun-asr". The exact model_id lookup misses -> must fall back to the enabled
+    # entry (account creds) and still call the API with "fun-asr-mtl", NOT crash
+    # with "not configured". (Regression: this was the buffering-stream bug.)
+    row = {"id": "r", "kind": "stt", "engine": "qwencloud", "model_id": "fun-asr",
+           "enabled": True, "api_key": "sk-ws-test",
+           "base_url": "https://dashscope-intl.aliyuncs.com", "config": {}}
+
+    async def fake_find(kind, engine, model_id):
+        return None  # no row has model_id == "fun-asr-mtl"
+
+    async def fake_find_enabled(kind, engine=None):
+        return row
+
+    monkeypatch.setattr(
+        "app.services.stt.providers.qwencloud_provider.model_registry_store.find", fake_find)
+    monkeypatch.setattr(
+        "app.services.stt.providers.qwencloud_provider.model_registry_store.find_enabled",
+        fake_find_enabled)
+    calls = []
+    transport = _funasr_async_mock_transport(calls)
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient",
+                        lambda *a, **k: original(*a, **{**k, "transport": transport}))
+
+    prov = QwenCloudSttProvider()  # NO entry override -- exactly like stt_service
+    result = await prov.transcribe_bytes(_mono16k_wav(), None, "fun-asr-mtl")
+    assert result.text == "hello world"
+    submit = next(c for c in calls if c[1].endswith("/api/v1/services/audio/asr/transcription"))
+    assert json.loads(submit[2])["model"] == "fun-asr-mtl"  # requested model drove the API call
