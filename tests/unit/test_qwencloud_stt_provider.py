@@ -443,3 +443,45 @@ async def test_aclose_closes_socket_and_reader(fake_connect):
     assert fake_connect["ws"].closed is True
 
     await stream.aclose()  # idempotent -- must not raise
+
+
+def test_wav_to_pcm16_decodes_stereo_and_resamples_to_16k():
+    # A stereo, 44.1kHz, 16-bit WAV must not be rejected: fun-asr batch decodes
+    # any supported audio to mono 16k PCM (old raw-wave path raised on non-mono).
+    import io
+    import wave
+
+    import numpy as np
+
+    from app.services.stt.providers.qwencloud_provider import _wav_to_pcm16
+
+    buf = io.BytesIO()
+    w = wave.open(buf, "wb")
+    w.setnchannels(2)
+    w.setsampwidth(2)
+    w.setframerate(44100)
+    w.writeframes(np.zeros(44100 * 2, dtype="<i2").tobytes())  # 1s stereo silence
+    w.close()
+
+    pcm, sr = _wav_to_pcm16(buf.getvalue())
+    assert sr == 16000
+    assert isinstance(pcm, (bytes, bytearray)) and len(pcm) > 0
+    # ~1s of mono 16-bit @ 16k = ~32000 bytes (allow resampler edge slack)
+    assert 30000 <= len(pcm) <= 34000
+
+
+def test_wav_to_pcm16_decodes_non_wav_container_no_riff_error():
+    # A non-RIFF container (OGG) must decode instead of raising
+    # "file does not start with RIFF id" -- this is the reported fun-asr bug.
+    import io
+
+    import numpy as np
+    import soundfile as sf
+
+    from app.services.stt.providers.qwencloud_provider import _wav_to_pcm16
+
+    buf = io.BytesIO()
+    sf.write(buf, np.zeros(16000, dtype="float32"), 16000, format="OGG", subtype="VORBIS")
+    pcm, sr = _wav_to_pcm16(buf.getvalue())
+    assert sr == 16000
+    assert isinstance(pcm, (bytes, bytearray)) and len(pcm) > 0

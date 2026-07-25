@@ -15,10 +15,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
-import io
 import json
 import uuid
-import wave
 from urllib.parse import urlsplit
 
 import httpx
@@ -244,15 +242,18 @@ class QwenOaiRealtimeStream(_BaseWsStream):
         return msg.get("type") in ("session.created", "session.updated")
 
 
+_FUNASR_BATCH_SAMPLE_RATE = 16000
+
+
 def _wav_to_pcm16(wav_bytes: bytes) -> tuple[bytes, int]:
-    """Extract raw PCM16 mono frames + sample rate from WAV bytes."""
-    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
-        if w.getnchannels() != 1 or w.getsampwidth() != 2:
-            raise RuntimeError(
-                f"qwencloud fun-asr batch expects mono 16-bit PCM WAV, got "
-                f"{w.getnchannels()}ch/{w.getsampwidth() * 8}-bit"
-            )
-        return w.readframes(w.getnframes()), w.getframerate()
+    """Decode any supported upload to raw PCM16 mono @ 16 kHz for the fun-asr
+    one-shot WS. Uses the project's canonical soundfile-fallback decoder
+    (wav_bytes_to_pcm16), so a non-WAV file (mp3/ogg/flac) or a stereo/other-rate
+    WAV just works -- the old raw-``wave`` path raised 'file does not start with
+    RIFF id' on any non-RIFF container and rejected non-mono/16-bit WAVs."""
+    from app.core.audio import wav_bytes_to_pcm16
+
+    return wav_bytes_to_pcm16(wav_bytes, _FUNASR_BATCH_SAMPLE_RATE), _FUNASR_BATCH_SAMPLE_RATE
 
 
 class FunAsrNativeStream(_BaseWsStream):
