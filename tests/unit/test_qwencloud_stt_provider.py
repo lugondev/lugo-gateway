@@ -74,6 +74,15 @@ async def test_qwen3_batch_posts_multimodal_with_base64(captured, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_qwen3_batch_normalizes_compatible_mode_base_url(captured):
+    entry = {**_QWEN_ENTRY, "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"}
+    await QwenCloudSttProvider(entry=entry).transcribe_bytes(b"X")
+    assert captured["url"] == (
+        "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+    )
+
+
+@pytest.mark.asyncio
 async def test_qwen3_batch_empty_output_yields_empty_text(monkeypatch):
     def handler(request):
         return httpx.Response(200, json={"output": {"choices": []}})

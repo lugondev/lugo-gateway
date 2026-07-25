@@ -13,6 +13,7 @@ admin edits take effect immediately. See the design spec dated 2026-07-25.
 from __future__ import annotations
 
 import base64
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -30,6 +31,16 @@ _MM_PATH = "/api/v1/services/aigc/multimodal-generation/generation"
 def _family(model: str | None) -> str:
     """Map a model id to its family. Default qwen3 (the primary family)."""
     return "funasr" if (model or "").strip().lower().startswith("fun-asr") else "qwen3"
+
+
+def _host_base(base_url: str) -> str:
+    """Scheme://host of a resolved base_url, dropping any path (e.g. a
+    /compatible-mode/v1 suffix). QwenCloud STT endpoints are absolute from the
+    host root. Falls back to the default host when empty/unparseable."""
+    parts = urlsplit((base_url or "").strip() or _DEFAULT_BASE_URL)
+    if not parts.scheme or not parts.netloc:
+        return _DEFAULT_BASE_URL
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 class QwenCloudSttProvider(STTProvider):
@@ -87,7 +98,7 @@ class QwenCloudSttProvider(STTProvider):
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(f"{base_url.rstrip('/')}{_MM_PATH}",
+                resp = await client.post(f"{_host_base(base_url)}{_MM_PATH}",
                                          headers=headers, json=body)
                 resp.raise_for_status()
                 payload = resp.json()
