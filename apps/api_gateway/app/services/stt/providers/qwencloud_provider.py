@@ -75,6 +75,7 @@ class _BaseWsStream(STTStream):
         self._done = asyncio.Event()
         self._ready = asyncio.Event()
         self._ready_timeout = 10.0
+        self._error: str | None = None
 
     # --- protocol hooks (override) ---
     def _hello(self):  # -> str | bytes | None
@@ -94,6 +95,10 @@ class _BaseWsStream(STTStream):
 
     def _is_ready(self, msg: dict) -> bool:
         return False
+
+    def _failure(self, msg: dict) -> str | None:
+        """Error message if this terminal frame is a failure, else None."""
+        return None
 
     # --- machinery ---
     async def _ensure(self) -> None:
@@ -125,6 +130,7 @@ class _BaseWsStream(STTStream):
                 for result in self._parse(msg):
                     await self._q.put(result)
                 if self._is_done(msg):
+                    self._error = self._failure(msg)
                     break
         except Exception:  # noqa: BLE001 - a dropped socket ends the stream, not the app
             pass
@@ -159,7 +165,10 @@ class _BaseWsStream(STTStream):
         except Exception:  # noqa: BLE001 - return whatever we have
             pass
         results = self._drain()
+        err = self._error
         await self._close()
+        if err:
+            raise RuntimeError(f"qwencloud stream task failed: {err}")
         finals = [r for r in results if r.is_final]
         text = finals[-1].text if finals else (results[-1].text if results else "")
         return STTResult(engine="qwencloud", text=text, is_final=True, confidence=None) if text else None
@@ -176,7 +185,10 @@ class _BaseWsStream(STTStream):
         except Exception:  # noqa: BLE001 - return whatever we have
             pass
         finals = [r.text for r in self._drain() if r.is_final and r.text]
+        err = self._error
         await self._close()
+        if err:
+            raise RuntimeError(f"qwencloud fun-asr task failed: {err}")
         return finals
 
     async def _close(self) -> None:
@@ -303,6 +315,12 @@ class FunAsrNativeStream(_BaseWsStream):
     def _is_ready(self, msg):
         return msg.get("header", {}).get("event") == "task-started"
 
+    def _failure(self, msg):
+        h = msg.get("header", {})
+        if h.get("event") == "task-failed":
+            return h.get("error_message") or h.get("error_code") or "task failed"
+        return None
+
 
 class QwenCloudSttProvider(STTProvider):
     name = "qwencloud"
@@ -344,7 +362,12 @@ class QwenCloudSttProvider(STTProvider):
         cfg = entry.get("config") or {}
         lang = language or cfg.get("language")
         if _family(effective) == "funasr":
-            return await self._funasr_batch(base_url, api_key, effective, audio_bytes, lang,
+            # The one-shot batch runs over the fun-asr *realtime* WS, whose model
+            # is "fun-asr-realtime" -- NOT the batch model_id "fun-asr", which the
+            # realtime /inference endpoint rejects with ModelNotFound (which used
+            # to surface as a silently-empty transcript).
+            realtime_model = cfg.get("realtime_model") or "fun-asr-realtime"
+            return await self._funasr_batch(base_url, api_key, realtime_model, audio_bytes, lang,
                                              cfg.get("semantic_punctuation"))
         return await self._qwen3_batch(base_url, api_key, timeout, effective, audio_bytes, lang)
 

@@ -485,3 +485,46 @@ def test_wav_to_pcm16_decodes_non_wav_container_no_riff_error():
     pcm, sr = _wav_to_pcm16(buf.getvalue())
     assert sr == 16000
     assert isinstance(pcm, (bytes, bytearray)) and len(pcm) > 0
+
+
+def _mono16k_wav() -> bytes:
+    import io
+    import wave
+
+    buf = io.BytesIO()
+    w = wave.open(buf, "wb")
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(16000)
+    w.writeframes(b"\x00\x00" * 320)
+    w.close()
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_funasr_batch_sends_realtime_model_not_batch_model_id(fake_connect):
+    # The one-shot batch runs over the fun-asr *realtime* WS: it must send the
+    # realtime model name (default "fun-asr-realtime"), NOT the batch model_id
+    # "fun-asr" -- the /inference endpoint rejects "fun-asr" with ModelNotFound,
+    # which used to surface as a silently-empty transcript.
+    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr", "config": {}}
+    fake_connect["incoming"] = _funasr_msgs()
+    result = await QwenCloudSttProvider(entry=entry).transcribe_bytes(_mono16k_wav(), "en")
+    run_task = next(s for s in fake_connect["ws"].sent if isinstance(s, str) and "run-task" in s)
+    assert '"model": "fun-asr-realtime"' in run_task
+    assert '"model": "fun-asr"' not in run_task
+    assert result.text == "xin chào"
+
+
+@pytest.mark.asyncio
+async def test_funasr_batch_raises_on_task_failed_instead_of_empty(fake_connect):
+    # A task-failed must surface as a RuntimeError (the route turns it into an
+    # STT-failed error) rather than a success with empty text.
+    entry = {**_FUNASR_ENTRY, "model_id": "fun-asr", "config": {}}
+    fake_connect["incoming"] = [
+        json.dumps({"header": {"event": "task-started"}}),
+        json.dumps({"header": {"event": "task-failed", "error_code": "ModelNotFound",
+                               "error_message": "Model not found (fun-asr)"}}),
+    ]
+    with pytest.raises(RuntimeError, match="Model not found"):
+        await QwenCloudSttProvider(entry=entry).transcribe_bytes(_mono16k_wav(), "en")
