@@ -66,7 +66,9 @@ el("stt-submit").addEventListener("click", async () => {
     }
     form.append("audio", sttRecordedBlob, "recording.wav");
   }
-  form.append("engine", el("stt-engine").value || "vosk");
+  const [engine = "vosk", model = ""] = (el("stt-engine").value || "").split("|");
+  form.append("engine", engine);
+  if (model) form.append("model", model);
   if (el("stt-language").value.trim()) form.append("language", el("stt-language").value.trim());
 
   print(sttResult, `Transcribing ${file ? "file" : "recording"}...`);

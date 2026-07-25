@@ -30,7 +30,7 @@ export function appendStreamLog(label, payload) {
 
 export async function startStreaming() {
   setStreamUI("starting");
-  const engine = el("stt-stream-engine").value || "vosk";
+  const [engine = "vosk", model = ""] = (el("stt-stream-engine").value || "").split("|");
   const language = el("stt-stream-language").value.trim();
   sttStream.transcript = "";
   sttStream.logLines = [];
@@ -39,6 +39,7 @@ export async function startStreaming() {
   el("stt-stream-log").textContent = "";
 
   let params = `engine=${encodeURIComponent(engine)}&sample_rate=${STREAM_SAMPLE_RATE}`;
+  if (model) params += `&model=${encodeURIComponent(model)}`;
   if (language) params += `&language=${encodeURIComponent(language)}`;
 
   let capture;
