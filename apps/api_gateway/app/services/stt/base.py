@@ -17,6 +17,11 @@ class STTStream(ABC):
         """Flush remaining audio and return the final transcript, if any."""
         raise NotImplementedError
 
+    async def aclose(self) -> None:
+        """Release any resources (sockets, tasks). Default no-op; streams that
+        hold resources (e.g. a WebSocket) override this. Safe to call anytime."""
+        return None
+
 
 class BufferingStream(STTStream):
     """Fallback streaming for engines without native incremental decoding.

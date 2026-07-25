@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import io
 import json
 import uuid
@@ -74,6 +75,8 @@ class _BaseWsStream(STTStream):
         self._q: asyncio.Queue = asyncio.Queue()
         self._reader = None
         self._done = asyncio.Event()
+        self._ready = asyncio.Event()
+        self._ready_timeout = 10.0
 
     # --- protocol hooks (override) ---
     def _hello(self):  # -> str | bytes | None
@@ -91,15 +94,26 @@ class _BaseWsStream(STTStream):
     def _is_done(self, msg: dict) -> bool:
         raise NotImplementedError
 
+    def _is_ready(self, msg: dict) -> bool:
+        return False
+
     # --- machinery ---
     async def _ensure(self) -> None:
         if self._ws is not None:
             return
-        self._ws = await _ws_connect(self._url, self._headers)
-        hello = self._hello()
-        if hello is not None:
-            await self._ws.send(hello)
+        try:
+            self._ws = await _ws_connect(self._url, self._headers)
+            hello = self._hello()
+            if hello is not None:
+                await self._ws.send(hello)
+        except Exception as exc:  # handshake/connect failures -> RuntimeError for the route
+            raise RuntimeError(f"qwencloud stream connect failed: {exc}") from exc
         self._reader = asyncio.create_task(self._read_loop())
+        # FIX 3: wait for the server to signal readiness before any audio is sent
+        try:
+            await asyncio.wait_for(self._ready.wait(), timeout=self._ready_timeout)
+        except asyncio.TimeoutError:
+            pass  # proceed anyway; not all servers emit a distinct ready event
 
     async def _read_loop(self) -> None:
         try:
@@ -108,6 +122,8 @@ class _BaseWsStream(STTStream):
                     msg = json.loads(raw)
                 except (ValueError, TypeError):
                     continue
+                if not self._ready.is_set() and self._is_ready(msg):
+                    self._ready.set()
                 for result in self._parse(msg):
                     await self._q.put(result)
                 if self._is_done(msg):
@@ -115,6 +131,7 @@ class _BaseWsStream(STTStream):
         except Exception:  # noqa: BLE001 - a dropped socket ends the stream, not the app
             pass
         finally:
+            self._ready.set()
             self._done.set()
 
     def _drain(self) -> list[STTResult]:
@@ -167,11 +184,18 @@ class _BaseWsStream(STTStream):
     async def _close(self) -> None:
         if self._reader is not None:
             self._reader.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._reader
+            self._reader = None
         if self._ws is not None:
             try:
                 await self._ws.close()
             except Exception:  # noqa: BLE001
                 pass
+            self._ws = None
+
+    async def aclose(self) -> None:
+        await self._close()
 
 
 class QwenOaiRealtimeStream(_BaseWsStream):
@@ -216,10 +240,18 @@ class QwenOaiRealtimeStream(_BaseWsStream):
     def _is_done(self, msg):
         return msg.get("type") in ("session.finished", "error")
 
+    def _is_ready(self, msg):
+        return msg.get("type") in ("session.created", "session.updated")
+
 
 def _wav_to_pcm16(wav_bytes: bytes) -> tuple[bytes, int]:
     """Extract raw PCM16 mono frames + sample rate from WAV bytes."""
     with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+        if w.getnchannels() != 1 or w.getsampwidth() != 2:
+            raise RuntimeError(
+                f"qwencloud fun-asr batch expects mono 16-bit PCM WAV, got "
+                f"{w.getnchannels()}ch/{w.getsampwidth() * 8}-bit"
+            )
         return w.readframes(w.getnframes()), w.getframerate()
 
 
@@ -266,6 +298,9 @@ class FunAsrNativeStream(_BaseWsStream):
 
     def _is_done(self, msg):
         return msg.get("header", {}).get("event") in ("task-finished", "task-failed")
+
+    def _is_ready(self, msg):
+        return msg.get("header", {}).get("event") == "task-started"
 
 
 class QwenCloudSttProvider(STTProvider):

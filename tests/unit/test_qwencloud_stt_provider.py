@@ -71,7 +71,8 @@ async def test_qwen3_batch_posts_multimodal_with_base64(captured, monkeypatch):
     assert captured["auth"] == "Bearer sk-ws-test"
     body = captured["json"].decode()
     assert "data:audio/wav;base64," in body
-    assert "UklGRkRBVEE" in body or "RIFFDATA" not in body  # base64 of b"RIFFDATA"
+    import base64 as _b64
+    assert f"data:audio/wav;base64,{_b64.b64encode(b'RIFFDATA').decode()}" in body
     assert '"language": "vi"' in body or '"language":"vi"' in body
     assert result.text == "xin chào"       # stripped
     assert result.engine == "qwencloud"
@@ -137,6 +138,7 @@ async def test_list_engines_reports_qwencloud_remote():
     row = next(e for e in engines if e["engine"] == "qwencloud")
     assert row["mode"] == "remote"
     assert "configured" in row
+    assert row["realtime"] is True
 
 
 class FakeWS:
@@ -227,10 +229,11 @@ async def test_qwen3_stream_maps_stash_and_transcript(fake_connect, monkeypatch)
 
 
 def _noop_msgs(n=1000):
-    # Frames that never trigger _is_done and never parse into a result --
+    # A ready frame first (so the readiness gate in _ensure releases), then
+    # frames that never trigger _is_done and never parse into a result --
     # keeps the reader "still running" (stream._done unset) across a couple
     # of accept() calls, without racing the reader's natural exhaustion.
-    return [json.dumps({"type": "noop"})] * n
+    return [json.dumps({"type": "session.created"})] + [json.dumps({"type": "noop"})] * n
 
 
 @pytest.mark.asyncio
@@ -390,3 +393,34 @@ async def test_finalize_swallows_send_failure_on_dropped_socket(fake_connect):
     stream._ws.send = boom            # the finish-frame send will now raise
     final = await stream.finalize()   # MUST NOT raise
     assert final is None or final.text == "xin ch"
+
+
+@pytest.mark.asyncio
+async def test_open_stream_connect_failure_raises_runtime_error(monkeypatch):
+    # FIX 2: a websocket handshake/connect failure (not a RuntimeError) must be
+    # translated to RuntimeError so the route's `except RuntimeError` catches it
+    # and emits an error event instead of crashing the endpoint.
+    async def _boom_connect(url, headers):
+        raise ConnectionError("refused")
+
+    monkeypatch.setattr(qc, "_ws_connect", _boom_connect)
+    provider = QwenCloudSttProvider(entry=_QWEN_ENTRY)
+    stream = provider.open_stream(sample_rate=16000, language="vi")
+
+    with pytest.raises(RuntimeError, match="connect failed"):
+        await stream.accept(b"\x00\x00" * 160)
+
+
+@pytest.mark.asyncio
+async def test_aclose_closes_socket_and_reader(fake_connect):
+    # FIX 1: aclose() releases the upstream socket + reader task, and is
+    # idempotent (safe to call again after the resources are already gone).
+    fake_connect["incoming"] = _qwen_msgs()
+    provider = QwenCloudSttProvider(entry=_QWEN_ENTRY)
+    stream = provider.open_stream(sample_rate=16000, language="vi")
+
+    await stream.accept(b"\x00\x00" * 160)  # connects the socket + reader
+    await stream.aclose()
+    assert fake_connect["ws"].closed is True
+
+    await stream.aclose()  # idempotent -- must not raise

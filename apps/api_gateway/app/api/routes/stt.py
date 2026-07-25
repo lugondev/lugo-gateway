@@ -211,9 +211,10 @@ async def stt_stream(websocket: WebSocket) -> None:
         _parse_bool(websocket.query_params.get("vad")), preprocessing.stt_vad_enabled
     )
 
+    stream: STTStream | None = None
     try:
         provider = stt_service.get_provider(engine)
-        stream: STTStream = provider.open_stream(sample_rate, language)
+        stream = provider.open_stream(sample_rate, language)
     except (AppError, RuntimeError) as exc:
         await websocket.send_json(
             {"event_type": "error", "session_id": session_id, "payload": {"message": str(exc)}}
@@ -320,6 +321,11 @@ async def stt_stream(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        if stream is not None:
+            try:
+                await stream.aclose()
+            except Exception:  # noqa: BLE001
+                pass
         if watchdog is not None:
             watchdog.cancel()
         event_bus.close(channel)
