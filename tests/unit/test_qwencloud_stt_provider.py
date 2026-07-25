@@ -272,3 +272,101 @@ def _async(value):
     async def _c(*a, **k):
         return value
     return _c()
+
+
+_FUNASR_ENTRY = {
+    "id": "f1", "kind": "stt", "engine": "qwencloud", "model_id": "fun-asr-realtime",
+    "label": "FunASR", "enabled": True, "stage": "stable",
+    "api_key": "sk-ws-test", "base_url": "https://dashscope-intl.aliyuncs.com",
+    "config": {"realtime_model": "fun-asr-realtime"},
+}
+
+
+def _funasr_msgs():
+    return [
+        json.dumps({"header": {"event": "task-started"}}),
+        json.dumps({"header": {"event": "result-generated"},
+                    "payload": {"output": {"sentence": {"text": "xin", "sentence_end": False}}}}),
+        json.dumps({"header": {"event": "result-generated"},
+                    "payload": {"output": {"sentence": {"text": "xin chào", "sentence_end": True}}}}),
+        json.dumps({"header": {"event": "task-finished"}, "payload": {"output": {}}}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_funasr_stream_maps_sentence_end(fake_connect):
+    fake_connect["incoming"] = _funasr_msgs()
+    stream = QwenCloudSttProvider(entry=_FUNASR_ENTRY).open_stream(sample_rate=16000, language="vi")
+
+    # Mirrors test_qwen3_stream_maps_stash_and_transcript: accept() yields once
+    # per call under the single-yield primitive, so aggregate across successive
+    # calls until the reader signals done, then finalize() for the tail.
+    collected = []
+    for _ in range(20):  # bounded; the fake ends well before this
+        collected += await stream.accept(b"\x00\x00" * 160)
+        if stream._done.is_set():
+            break
+    texts = [r.text for r in collected]
+    assert any(t == "xin" for t in texts) and any(
+        r.text == "xin" and not r.is_final for r in collected)
+    assert any(t == "xin chào" for t in texts) and any(
+        r.text == "xin chào" and r.is_final for r in collected)
+
+    # run-task text frame sent first, then a BINARY audio frame
+    assert any(isinstance(s, str) and '"run-task"' in s for s in fake_connect["ws"].sent)
+    assert any(isinstance(s, (bytes, bytearray)) for s in fake_connect["ws"].sent)
+    assert "/api-ws/v1/inference" in fake_connect["url"]
+    assert fake_connect["headers"]["Authorization"] == "bearer sk-ws-test"
+
+    await stream.finalize()
+    assert any(isinstance(s, str) and '"finish-task"' in s for s in fake_connect["ws"].sent)
+
+
+@pytest.mark.asyncio
+async def test_funasr_batch_one_shot_concatenates_finals(fake_connect, monkeypatch):
+    fake_connect["incoming"] = _funasr_msgs()
+
+    async def fake_find(kind, engine, model_id):
+        return _FUNASR_ENTRY
+    monkeypatch.setattr(
+        "app.services.stt.providers.qwencloud_provider.model_registry_store.find", fake_find)
+
+    # minimal valid WAV (44-byte header + a few PCM samples)
+    import wave, io
+    buf = io.BytesIO()
+    w = wave.open(buf, "wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+    w.writeframes(b"\x00\x00" * 320); w.close()
+
+    result = await QwenCloudSttProvider().transcribe_bytes(buf.getvalue(), "vi", "fun-asr-realtime")
+    assert result.engine == "qwencloud"
+    assert result.text == "xin chào"   # last/accumulated final
+    assert result.is_final is True
+
+
+@pytest.mark.asyncio
+async def test_funasr_batch_captures_multiple_sentences(fake_connect, monkeypatch):
+    # All audio is sent before the server emits results in a one-shot batch,
+    # so both sentences arrive AFTER finish-task, during the drain -- not via
+    # accept(). This proves drain_remaining_finals() doesn't drop the first one.
+    fake_connect["incoming"] = [
+        json.dumps({"header": {"event": "task-started"}}),
+        json.dumps({"header": {"event": "result-generated"},
+                    "payload": {"output": {"sentence": {"text": "câu một", "sentence_end": True}}}}),
+        json.dumps({"header": {"event": "result-generated"},
+                    "payload": {"output": {"sentence": {"text": "câu hai", "sentence_end": True}}}}),
+        json.dumps({"header": {"event": "task-finished"}, "payload": {"output": {}}}),
+    ]
+
+    async def fake_find(kind, engine, model_id):
+        return _FUNASR_ENTRY
+    monkeypatch.setattr(
+        "app.services.stt.providers.qwencloud_provider.model_registry_store.find", fake_find)
+
+    import wave, io
+    buf = io.BytesIO()
+    w = wave.open(buf, "wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+    w.writeframes(b"\x00\x00" * 320); w.close()
+
+    result = await QwenCloudSttProvider().transcribe_bytes(buf.getvalue(), "vi", "fun-asr-realtime")
+    assert result.text == "câu một câu hai"
+    assert result.is_final is True

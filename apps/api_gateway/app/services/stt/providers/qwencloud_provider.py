@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import uuid
+import wave
 from urllib.parse import urlsplit
 
 import httpx
@@ -147,6 +149,21 @@ class _BaseWsStream(STTStream):
         text = finals[-1].text if finals else (results[-1].text if results else "")
         return STTResult(engine="qwencloud", text=text, is_final=True, confidence=None) if text else None
 
+    async def drain_remaining_finals(self) -> list[str]:
+        """Send the finish frame, wait for the stream to end, and return every
+        finalized text still queued (i.e. not already returned by accept()).
+        One-shot batch relies on this because results arrive after finish."""
+        if self._ws is None:
+            return []
+        try:
+            await self._ws.send(self._finish_frame())
+            await asyncio.wait_for(self._done.wait(), timeout=15)
+        except Exception:  # noqa: BLE001 - return whatever we have
+            pass
+        finals = [r.text for r in self._drain() if r.is_final and r.text]
+        await self._close()
+        return finals
+
     async def _close(self) -> None:
         if self._reader is not None:
             self._reader.cancel()
@@ -200,6 +217,57 @@ class QwenOaiRealtimeStream(_BaseWsStream):
         return msg.get("type") in ("session.finished", "error")
 
 
+def _wav_to_pcm16(wav_bytes: bytes) -> tuple[bytes, int]:
+    """Extract raw PCM16 mono frames + sample rate from WAV bytes."""
+    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+        return w.readframes(w.getnframes()), w.getframerate()
+
+
+class FunAsrNativeStream(_BaseWsStream):
+    """fun-asr-realtime: DashScope-native run-task protocol, binary audio frames."""
+
+    def __init__(self, base_url, api_key, model, sample_rate, language, semantic_punct):
+        url = f"{_ws_base(base_url)}/api-ws/v1/inference"
+        super().__init__(url, {"Authorization": f"bearer {api_key}"})
+        self._model = model
+        self._sample_rate = sample_rate
+        self._language = language
+        self._semantic_punct = semantic_punct
+        self._task_id = str(uuid.uuid4())
+
+    def _hello(self):
+        params = {"format": "pcm", "sample_rate": self._sample_rate}
+        if self._semantic_punct is not None:
+            params["semantic_punctuation_enabled"] = bool(self._semantic_punct)
+        if self._language:
+            params["language_hints"] = [self._language]
+        return json.dumps({
+            "header": {"action": "run-task", "task_id": self._task_id, "streaming": "duplex"},
+            "payload": {"task_group": "audio", "task": "asr", "function": "recognition",
+                        "model": self._model, "parameters": params, "input": {}},
+        })
+
+    def _encode_audio(self, pcm):
+        return pcm  # raw binary frame
+
+    def _parse(self, msg):
+        if msg.get("header", {}).get("event") != "result-generated":
+            return []
+        s = msg.get("payload", {}).get("output", {}).get("sentence") or {}
+        text = (s.get("text") or "").strip()
+        if not text:
+            return []
+        return [STTResult(engine="qwencloud", text=text, is_final=bool(s.get("sentence_end")))]
+
+    def _finish_frame(self):
+        return json.dumps({
+            "header": {"action": "finish-task", "task_id": self._task_id, "streaming": "duplex"},
+            "payload": {"input": {}}})
+
+    def _is_done(self, msg):
+        return msg.get("header", {}).get("event") in ("task-finished", "task-failed")
+
+
 class QwenCloudSttProvider(STTProvider):
     name = "qwencloud"
 
@@ -237,9 +305,24 @@ class QwenCloudSttProvider(STTProvider):
                                model: str | None = None) -> STTResult:
         entry, base_url, api_key, timeout = await self._creds(model)
         effective = model or entry.get("model_id") or "qwen3-asr-flash"
-        # fun-asr has no inline HTTP endpoint -> one-shot WS (added in Task 4).
-        return await self._qwen3_batch(base_url, api_key, timeout, effective, audio_bytes,
-                                       language or (entry.get("config") or {}).get("language"))
+        cfg = entry.get("config") or {}
+        lang = language or cfg.get("language")
+        if _family(effective) == "funasr":
+            return await self._funasr_batch(base_url, api_key, effective, audio_bytes, lang,
+                                             cfg.get("semantic_punctuation"))
+        return await self._qwen3_batch(base_url, api_key, timeout, effective, audio_bytes, lang)
+
+    async def _funasr_batch(self, base_url, api_key, model, audio_bytes, language, semantic_punct):
+        pcm, sample_rate = _wav_to_pcm16(audio_bytes)
+        stream = FunAsrNativeStream(base_url, api_key, model, sample_rate, language, semantic_punct)
+        finals: list[str] = []
+        for i in range(0, len(pcm), 3200):
+            for r in await stream.accept(pcm[i:i + 3200]):
+                if r.is_final and r.text:
+                    finals.append(r.text)
+        finals.extend(await stream.drain_remaining_finals())
+        return STTResult(engine=self.name, text=" ".join(finals).strip(),
+                         is_final=True, confidence=None)
 
     async def _qwen3_batch(self, base_url, api_key, timeout, model, audio_bytes, language):
         b64 = base64.b64encode(audio_bytes).decode("ascii")
@@ -275,7 +358,8 @@ class QwenCloudSttProvider(STTProvider):
         realtime_model = cfg.get("realtime_model") or "qwen3-asr-flash-realtime"
         lang = language or cfg.get("language")
         if _family(realtime_model) == "funasr":
-            raise RuntimeError("fun-asr streaming lands in Task 4")  # replaced in Task 4
+            return FunAsrNativeStream(base_url, api_key, realtime_model, sample_rate, lang,
+                                      cfg.get("semantic_punctuation"))
         return QwenOaiRealtimeStream(base_url, api_key, realtime_model, sample_rate, lang,
                                      cfg.get("turn_detection"))
 
