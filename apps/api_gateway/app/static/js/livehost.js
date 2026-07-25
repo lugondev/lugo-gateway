@@ -371,6 +371,12 @@ export async function startLhSession() {
       case "aborted":
         lhStopAudio();
         break;
+      case "tts_error":
+        // Reply text already streamed via response_text; only audio failed. Flag it
+        // on the bubble + log, without the fatal status-error state (turn continues).
+        lhLog(`tts_error: ${d.message || ""}`);
+        if (lh.assistantBubble) lh.assistantBubble.textContent += " 🔇 (lỗi TTS — chỉ hiển thị văn bản)";
+        break;
       case "error":
         setLhStatus(`error: ${d.message || ""}`, "status-error");
         break;

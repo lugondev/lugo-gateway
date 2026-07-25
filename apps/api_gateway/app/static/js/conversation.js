@@ -386,6 +386,13 @@ export async function startConversation() {
       case "aborted":
         convStopAudio();  // barge-in / interrupt: stop playback immediately
         break;
+      case "tts_error":
+        // The reply text already streamed in via response_text; only the audio
+        // failed. Flag it on the bubble (persistent) and log it, WITHOUT the fatal
+        // status-error treatment -- the turn keeps going (turn_done still follows).
+        convLog(`tts_error: ${d.message || ""}`);
+        if (conv.assistantBubble) conv.assistantBubble.textContent += " 🔇 (lỗi TTS — chỉ hiển thị văn bản)";
+        break;
       case "error":
         setConvStatus(`error: ${d.message || ""}`, "status-error");
         break;

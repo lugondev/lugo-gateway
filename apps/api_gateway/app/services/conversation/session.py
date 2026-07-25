@@ -487,37 +487,49 @@ class ConversationSession:
                 return parts
 
             async def _synth(sentence: str):
+                # Returns (result, packets, error). A TTS failure is caught HERE and
+                # returned as the third element instead of raised, so the pipeline
+                # still yields this sentence -- the consumer emits its `response_text`
+                # (the LLM's words must survive a TTS outage) and a `tts_error`, then
+                # keeps the turn going. Raising instead would unwind the whole turn to
+                # the generic `error` handler and swallow the already-generated text.
                 logger.info("DEBUG_HANG _synth: starting engine=%s sentence=%r", cfg.tts_engine, sentence)
                 request = TTSRequest(
                     text=sentence, engine=cfg.tts_engine, model_id=cfg.tts_model, voice=cfg.voice,
                     ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
                     instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
                 )
-                if self.opus_encoder is not None and isinstance(self.tts_provider, RenderingTTSProvider):
-                    # Nothing downstream reads `result` once we have Opus packets (see
-                    # the `packets is not None` branch below), so synthesize()'s
-                    # write-then-immediately-read-back through the artifact store is
-                    # pure overhead on this latency-critical path. render_wav() is the
-                    # same real synthesis with no artifact side effect.
-                    wav = await self.tts_provider.render_wav(request)
+                try:
+                    if self.opus_encoder is not None and isinstance(self.tts_provider, RenderingTTSProvider):
+                        # Nothing downstream reads `result` once we have Opus packets (see
+                        # the `packets is not None` branch below), so synthesize()'s
+                        # write-then-immediately-read-back through the artifact store is
+                        # pure overhead on this latency-critical path. render_wav() is the
+                        # same real synthesis with no artifact side effect.
+                        wav = await self.tts_provider.render_wav(request)
+                        logger.info("DEBUG_HANG _synth: got result for sentence=%r", sentence)
+                        await _record_tts_usage(sentence)
+                        pcm = await asyncio.to_thread(wav_bytes_to_pcm16, wav, cfg.output_sample_rate)
+                        packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
+                        return None, packets, None
+                    result = await self.tts_provider.synthesize(request)
                     logger.info("DEBUG_HANG _synth: got result for sentence=%r", sentence)
                     await _record_tts_usage(sentence)
-                    pcm = await asyncio.to_thread(wav_bytes_to_pcm16, wav, cfg.output_sample_rate)
-                    packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
-                    return None, packets
-                result = await self.tts_provider.synthesize(request)
-                logger.info("DEBUG_HANG _synth: got result for sentence=%r", sentence)
-                await _record_tts_usage(sentence)
-                if self.opus_encoder is not None:
-                    # Fallback for engines that aren't a RenderingTTSProvider (e.g.
-                    # edge_tts, which is test-UI/batch only and produces MP3) -- keep
-                    # the artifact-backed path rather than crashing on a missing
-                    # render_wav().
-                    path = result.audio_url.lstrip("/")
-                    pcm = await asyncio.to_thread(wav_file_to_pcm16, path, cfg.output_sample_rate)
-                    packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
-                    return result, packets
-                return result, None
+                    if self.opus_encoder is not None:
+                        # Fallback for engines that aren't a RenderingTTSProvider (e.g.
+                        # edge_tts, which is test-UI/batch only and produces MP3) -- keep
+                        # the artifact-backed path rather than crashing on a missing
+                        # render_wav().
+                        path = result.audio_url.lstrip("/")
+                        pcm = await asyncio.to_thread(wav_file_to_pcm16, path, cfg.output_sample_rate)
+                        packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
+                        return result, packets, None
+                    return result, None, None
+                except asyncio.CancelledError:
+                    raise  # barge-in / turn supersede -- must propagate to unwind the turn
+                except Exception as exc:  # noqa: BLE001 - degrade to text-only, don't lose the reply
+                    logger.warning("TTS synth failed (engine=%s) for %r: %s", cfg.tts_engine, sentence, exc)
+                    return None, None, exc
 
             async with aclosing(
                 prefetch_synthesis(
@@ -537,12 +549,25 @@ class ConversationSession:
                 _prebuf = _conv_cfg.conversation_opus_prebuffer_frames
                 _pace_t0 = None
                 _pace_n = 0
-                async for index, sentence, (result, packets) in pipeline:
+                tts_error_reported = False
+                async for index, sentence, (result, packets, tts_error) in pipeline:
                     logger.info("DEBUG_HANG _stream_to_tts: pipeline yielded index=%d", index)
                     _log_first_chunk()
                     parts.append(sentence)
                     if want_text:
                         await self.emit("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
+                    if tts_error is not None:
+                        # Synth failed for this sentence: text already went out above.
+                        # Report the TTS failure once per turn (a fully-down engine
+                        # would otherwise emit one per sentence) and skip audio -- the
+                        # client falls back to showing text only.
+                        if not tts_error_reported:
+                            tts_error_reported = True
+                            await self.emit(
+                                "tts_error", turn=turn, chunk_index=index,
+                                engine=cfg.tts_engine, message=str(tts_error),
+                            )
+                        continue
                     if packets is not None:
                         # Mark when the assistant first starts speaking this turn,
                         # so feed_audio can ignore onset echo as barge-in.
