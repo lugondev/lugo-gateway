@@ -152,5 +152,7 @@ class VoskProvider(STTProvider):
 
         return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
 
-    def open_stream(self, sample_rate: int, language: str | None = None) -> STTStream:
+    def open_stream(
+        self, sample_rate: int, language: str | None = None, model: str | None = None
+    ) -> STTStream:
         return VoskStream(self.name, sample_rate)

@@ -30,10 +30,14 @@ class BufferingStream(STTStream):
     partials (the underlying engine is batch-only).
     """
 
-    def __init__(self, provider: "STTProvider", sample_rate: int, language: str | None) -> None:
+    def __init__(
+        self, provider: "STTProvider", sample_rate: int, language: str | None,
+        model: str | None = None,
+    ) -> None:
         self._provider = provider
         self._sample_rate = sample_rate
         self._language = language
+        self._model = model
         self._buffer = bytearray()
 
     async def accept(self, pcm: bytes) -> list[STTResult]:
@@ -44,9 +48,7 @@ class BufferingStream(STTStream):
         if not self._buffer:
             return None
         wav = pcm16_to_wav_bytes(bytes(self._buffer), sample_rate=self._sample_rate)
-        # no per-session model here -- falls back to this engine's process-global
-        # default by design (see app.services.stt.model_catalog)
-        return await self._provider.transcribe_bytes(wav, self._language)
+        return await self._provider.transcribe_bytes(wav, self._language, model=self._model)
 
 
 class STTProvider(ABC):
@@ -58,6 +60,8 @@ class STTProvider(ABC):
     ) -> STTResult:
         raise NotImplementedError
 
-    def open_stream(self, sample_rate: int, language: str | None = None) -> STTStream:
+    def open_stream(
+        self, sample_rate: int, language: str | None = None, model: str | None = None
+    ) -> STTStream:
         """Open a streaming session. Default buffers and transcribes on finalize."""
-        return BufferingStream(self, sample_rate, language)
+        return BufferingStream(self, sample_rate, language, model)

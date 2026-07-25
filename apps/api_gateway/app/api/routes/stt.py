@@ -198,6 +198,7 @@ async def stt_stream(websocket: WebSocket) -> None:
 
     engine = websocket.query_params.get("engine", system_config_store.get().engines.default_stt_engine)
     language = websocket.query_params.get("language")
+    model = websocket.query_params.get("model")
     sample_rate = int(
         websocket.query_params.get(
             "sample_rate", settings.stt_stream_sample_rate
@@ -214,7 +215,7 @@ async def stt_stream(websocket: WebSocket) -> None:
     stream: STTStream | None = None
     try:
         provider = stt_service.get_provider(engine)
-        stream = provider.open_stream(sample_rate, language)
+        stream = provider.open_stream(sample_rate, language, model=model)
     except (AppError, RuntimeError) as exc:
         await websocket.send_json(
             {"event_type": "error", "session_id": session_id, "payload": {"message": str(exc)}}

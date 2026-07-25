@@ -381,18 +381,25 @@ class QwenCloudSttProvider(STTProvider):
             raise translate_httpx_error(self.name, exc) from exc
         return STTResult(engine=self.name, text=_mm_text(payload), is_final=True, confidence=None)
 
-    def open_stream(self, sample_rate: int, language: str | None = None):
+    def open_stream(self, sample_rate: int, language: str | None = None, model: str | None = None):
         from app.services.providers.resolve import resolve_credentials_sync
 
-        entry = self._entry_override or model_registry_store.find_enabled_sync("stt", self.name)
+        entry = (
+            self._entry_override
+            or (model and model_registry_store.find_sync("stt", self.name, model))
+            or model_registry_store.find_enabled_sync("stt", self.name)
+        )
         if not entry:
             raise RuntimeError(f"{self.name} is not configured for streaming.")
         base_url, api_key = resolve_credentials_sync(entry)
         base_url = (base_url or "").strip() or _DEFAULT_BASE_URL
         cfg = entry.get("config") or {}
-        realtime_model = cfg.get("realtime_model") or "qwen3-asr-flash-realtime"
+        fam = _family(model or entry.get("model_id") or cfg.get("realtime_model"))
+        realtime_model = cfg.get("realtime_model") or (
+            "fun-asr-realtime" if fam == "funasr" else "qwen3-asr-flash-realtime"
+        )
         lang = language or cfg.get("language")
-        if _family(realtime_model) == "funasr":
+        if fam == "funasr":
             return FunAsrNativeStream(base_url, api_key, realtime_model, sample_rate, lang,
                                       cfg.get("semantic_punctuation"))
         return QwenOaiRealtimeStream(base_url, api_key, realtime_model, sample_rate, lang,

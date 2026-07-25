@@ -412,6 +412,25 @@ async def test_open_stream_connect_failure_raises_runtime_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_open_stream_selects_family_by_model(fake_connect, monkeypatch):
+    # two enabled rows; passing model="fun-asr" must pick the fun-asr native WS,
+    # not the first-enabled qwen3 row.
+    def fake_find_sync(kind, engine, model_id):
+        return {**_FUNASR_ENTRY, "model_id": model_id} if model_id == "fun-asr" else _QWEN_ENTRY
+
+    monkeypatch.setattr(
+        "app.services.stt.providers.qwencloud_provider.model_registry_store.find_sync", fake_find_sync)
+    monkeypatch.setattr(
+        "app.services.stt.providers.qwencloud_provider.model_registry_store.find_enabled_sync",
+        lambda kind, engine=None: _QWEN_ENTRY)
+    fake_connect["incoming"] = _funasr_msgs()
+    stream = QwenCloudSttProvider().open_stream(16000, "vi", model="fun-asr")
+    # FunAsrNativeStream connects to /api-ws/v1/inference with lowercase bearer
+    await stream.accept(b"\x00\x00" * 160)
+    assert "/api-ws/v1/inference" in fake_connect["url"]
+
+
+@pytest.mark.asyncio
 async def test_aclose_closes_socket_and_reader(fake_connect):
     # FIX 1: aclose() releases the upstream socket + reader task, and is
     # idempotent (safe to call again after the resources are already gone).
