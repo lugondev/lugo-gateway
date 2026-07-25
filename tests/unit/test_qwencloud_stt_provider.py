@@ -373,13 +373,20 @@ async def test_funasr_batch_captures_multiple_sentences(fake_connect, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_finalize_returns_last_partial_on_disconnect(fake_connect):
-    # No terminal event: the reader ends on StopAsyncIteration (socket closed).
+async def test_finalize_swallows_send_failure_on_dropped_socket(fake_connect):
+    # A partial arrives, then the socket drops: finalize()'s finish-frame send
+    # raises. finalize() must swallow it and return gracefully, never propagate.
     fake_connect["incoming"] = [
-        json.dumps({"type": "conversation.item.input_audio_transcription.text",
-                    "stash": "xin ch"}),
+        json.dumps({"type": "conversation.item.input_audio_transcription.text", "stash": "xin ch"}),
     ]
     stream = QwenCloudSttProvider(entry=_QWEN_ENTRY).open_stream(16000, "vi")
-    await stream.accept(b"\x00\x00" * 160)
-    final = await stream.finalize()          # must not raise
+    collected = []
+    for _ in range(20):
+        collected += await stream.accept(b"\x00\x00" * 160)
+        if stream._done.is_set():
+            break
+    async def boom(_frame):
+        raise ConnectionError("socket closed")
+    stream._ws.send = boom            # the finish-frame send will now raise
+    final = await stream.finalize()   # MUST NOT raise
     assert final is None or final.text == "xin ch"
