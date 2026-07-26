@@ -53,7 +53,7 @@ from app.services.system_config import system_config_store
 from app.services.tts.base import RenderingTTSProvider
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
-from app.services.usage.attribution import resolve_llm_pair
+from app.services.usage.attribution import resolve_llm_pair, resolve_usage_model
 from app.services.usage.recorder import record_usage
 from app.services.warmup import is_ready, warm_providers
 
@@ -426,20 +426,26 @@ class ConversationSession:
         # it just falls back to "" (user/global scope quotas still apply).
         provider_id = ""
         try:
-            llm_engine = (self.profile.llm.engine if self.profile else "") or ""
-            llm_model = (self.profile.llm.model if self.profile else "") or ""
-            if llm_engine:
-                entry = await model_registry_store.find("llm", llm_engine, llm_model)
-                provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
+            llm_engine, llm_model = await resolve_usage_model(
+                "llm",
+                (self.profile.llm.engine if self.profile else "") or "",
+                (self.profile.llm.model if self.profile else "") or "",
+            )
+            entry = await model_registry_store.find("llm", llm_engine, llm_model)
+            provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
         except Exception:  # noqa: BLE001 - provider_id resolution must never block the turn
-            provider_id = ""
+            llm_engine, llm_model, provider_id = "", "", ""
         try:
             from app.services.quota.gate import QuotaExceededError, quota_gate
 
-            await quota_gate(user_id=cfg.identity_user_id or "", provider_id=provider_id)
+            await quota_gate(
+                user_id=cfg.identity_user_id or "", provider_id=provider_id,
+                kind="llm", engine=llm_engine, model_id=llm_model,
+                profile_id=cfg.profile_name or "",
+            )
         except QuotaExceededError as exc:
-            # Mirror the existing STT-failure pattern (session.py ~line 601): a
-            # plain "error" notice, then return without running the turn at all.
+            # Mirror the existing STT-failure pattern: a plain "error" notice,
+            # then return without running the turn at all.
             await self.emit("error", message=str(exc))
             return
 

@@ -141,17 +141,24 @@ class MemoryExtractor:
         user/global-scope enforcement rather than blocking or crashing."""
         from app.services.model_registry.store import model_registry_store
         from app.services.quota.gate import QuotaExceededError, quota_gate
+        from app.services.usage.attribution import resolve_usage_model
 
+        usage_engine, usage_model = "", ""
         provider_id = ""
         try:
-            engine = profile.llm.engine or ""
-            if engine:
-                entry = await model_registry_store.find("llm", engine, model)
-                provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
+            usage_engine, usage_model = await resolve_usage_model(
+                "llm", profile.llm.engine or "", model
+            )
+            entry = await model_registry_store.find("llm", usage_engine, usage_model)
+            provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
         except Exception:  # noqa: BLE001 - never block memory on a lookup
             provider_id = ""
         try:
-            await quota_gate(user_id=user_id or "", provider_id=provider_id)
+            await quota_gate(
+                user_id=user_id or "", provider_id=provider_id,
+                kind="llm", engine=usage_engine, model_id=usage_model,
+                profile_id=profile.name,
+            )
         except QuotaExceededError as exc:
             logger.warning("memory extraction skipped for %s: %s", profile.name, exc)
             return True

@@ -142,7 +142,11 @@ async def chat(
     except Exception:
         provider_id = ""
     try:
-        await quota_gate(user_id=caller_id or "", provider_id=provider_id)
+        await quota_gate(
+            user_id=caller_id or "", provider_id=provider_id,
+            kind="llm", engine=quota_engine, model_id=quota_model_id,
+            profile_id=profile or "",
+        )
     except QuotaExceededError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
 
