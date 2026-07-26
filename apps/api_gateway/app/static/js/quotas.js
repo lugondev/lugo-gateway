@@ -49,7 +49,7 @@ function renderQuotas() {
         </label>
         <label class="registry-field">
           <span>Limit (USD)</span>
-          <input type="number" class="mini" data-detail-limit value="${escapeHtml(String(q.limit_usd))}" step="0.01" min="0" />
+          <input type="number" class="mini" data-detail-limit value="${escapeHtml(String(q.limit_usd))}" step="0.01" min="0.01" />
         </label>
         <label class="registry-field">
           <span>Period</span>

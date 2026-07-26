@@ -106,3 +106,24 @@ async def test_summarize_for_user_groups_by_engine_too():
         ("stt", "engine-b", "m1"),
     }
     assert {r["native_amount"] for r in rows} == {10.0, 5.0}
+
+
+async def test_summaries_count_only_served_requests():
+    """A status="blocked" row is an audit record, not usage: it served nothing.
+    Counting it would inflate both Requests and the native amount."""
+    await init_db()
+    from app.services.usage.recorder import record_usage
+
+    await record_usage(user_id="u-status", profile_id="p", kind="llm", engine="eng-status",
+                       model_id="m", unit="tokens", native_amount=100)
+    await record_usage(user_id="u-status", profile_id="p", kind="llm", engine="eng-status",
+                       model_id="m", unit="tokens", native_amount=0, status="blocked")
+
+    admin_rows = [r for r in await summarize("engine") if r["key"] == "eng-status"]
+    assert len(admin_rows) == 1
+    assert admin_rows[0]["count"] == 1
+    assert admin_rows[0]["native_amount"] == 100.0
+
+    mine = [r for r in await summarize_for_user("u-status") if r["engine"] == "eng-status"]
+    assert len(mine) == 1
+    assert mine[0]["count"] == 1

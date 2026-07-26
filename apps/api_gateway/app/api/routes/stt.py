@@ -59,21 +59,30 @@ async def transcribe(
     engine = engine or system_config_store.get().engines.default_stt_engine
     payload = STTRequest(engine=engine, language=language, model=model)
 
-    # Quota pre-flight: block BEFORE the provider does any work. model_id is
-    # not resolved per-request for STT (see the record_usage comment below),
-    # so provider_id lookup uses "" as model_id -- user/global-scope quotas
-    # still enforce regardless.
+    # Quota pre-flight: block BEFORE the provider does any work. The route knows
+    # the engine and maybe a model; resolve_usage_model turns that into the pair
+    # the registry actually holds, so a provider-scoped quota can match. A blank
+    # result still leaves user/global quotas enforced.
     from app.services.model_registry.store import model_registry_store
     from app.services.quota.gate import quota_gate, QuotaExceededError
+    from app.services.usage.attribution import resolve_usage_model
 
     provider_id = ""
     try:
-        entry = await model_registry_store.find("stt", payload.engine, "")
+        # Inside the guard, not before it: resolve_usage_model() never raises
+        # from its own logic, but its function-level import of the registry
+        # store sits outside that promise, and an ImportError there would 500 a
+        # request this gate is required to fail open on.
+        usage_engine, usage_model_id = await resolve_usage_model("stt", payload.engine, payload.model or "")
+        entry = await model_registry_store.find("stt", usage_engine, usage_model_id)
         provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
-    except Exception:
-        provider_id = ""
+    except Exception:  # noqa: BLE001 - a registry hiccup must never block a request
+        usage_engine, usage_model_id, provider_id = "", "", ""
     try:
-        await quota_gate(user_id=current_user_id(request) or "", provider_id=provider_id)
+        await quota_gate(
+            user_id=current_user_id(request) or "", provider_id=provider_id,
+            kind="stt", engine=usage_engine, model_id=usage_model_id,
+        )
     except QuotaExceededError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
 

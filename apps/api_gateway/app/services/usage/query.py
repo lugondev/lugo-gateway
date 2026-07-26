@@ -1,5 +1,9 @@
 """Read-only aggregation over `usage_events` (T1's UsageEvent table).
 
+Only `status="ok"` rows are counted: a `status="blocked"` row records a request
+a quota refused, which served nothing and so is not usage. Those rows stay in
+the table for audit and are queried directly when needed.
+
 Two entry points:
 - `summarize`: admin-facing, grouped by any one of the columns in
   `_GROUP_COLUMNS`.
@@ -54,7 +58,7 @@ async def summarize(group_by: str, period_key: str | None = None) -> list[dict]:
         func.sum(UsageEvent.cost_usd).label("cost_usd"),
         func.sum(UsageEvent.native_amount).label("native_amount"),
         func.count().label("count"),
-    ).group_by(column)
+    ).group_by(column).where(UsageEvent.status == "ok")
     if period_key:
         start, end = _period_range(period_key)
         stmt = stmt.where(UsageEvent.ts >= start, UsageEvent.ts < end)
@@ -84,7 +88,7 @@ async def summarize_for_user(user_id: str, period_key: str | None = None) -> lis
         func.sum(UsageEvent.cost_usd).label("cost_usd"),
         func.sum(UsageEvent.native_amount).label("native_amount"),
         func.count().label("count"),
-    ).where(UsageEvent.user_id == user_id).group_by(
+    ).where(UsageEvent.user_id == user_id, UsageEvent.status == "ok").group_by(
         UsageEvent.kind, UsageEvent.engine, UsageEvent.model_id
     )
     if period_key:

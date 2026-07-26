@@ -152,7 +152,7 @@ class UsageEvent(Base):
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="ok")  # ok|error
+    status: Mapped[str] = mapped_column(String(16), default="ok")  # ok|error|blocked
 
 
 class Quota(Base):

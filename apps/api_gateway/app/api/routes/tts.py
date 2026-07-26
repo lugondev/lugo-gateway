@@ -48,18 +48,28 @@ async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
 
 @router.post("/synthesize")
 async def synthesize(payload: TTSRequest, request: Request) -> dict:
-    # Quota pre-flight: block BEFORE the provider does any work.
+    # Quota pre-flight: block BEFORE the provider does any work. See the STT
+    # route for why the model is resolved before the provider lookup.
     from app.services.model_registry.store import model_registry_store
     from app.services.quota.gate import quota_gate, QuotaExceededError
+    from app.services.usage.attribution import resolve_usage_model
 
     provider_id = ""
     try:
-        entry = await model_registry_store.find("tts", payload.engine, payload.model_id or "")
+        # Inside the guard for the same reason as the STT route: resolve_usage_model()
+        # never raises from its own logic, but its function-level import of the
+        # registry store isn't covered by that, and an ImportError there would 500
+        # a request this gate is required to fail open on.
+        usage_engine, usage_model_id = await resolve_usage_model("tts", payload.engine, payload.model_id or "")
+        entry = await model_registry_store.find("tts", usage_engine, usage_model_id)
         provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
-    except Exception:
-        provider_id = ""
+    except Exception:  # noqa: BLE001 - a registry hiccup must never block a request
+        usage_engine, usage_model_id, provider_id = "", "", ""
     try:
-        await quota_gate(user_id=current_user_id(request) or "", provider_id=provider_id)
+        await quota_gate(
+            user_id=current_user_id(request) or "", provider_id=provider_id,
+            kind="tts", engine=usage_engine, model_id=usage_model_id,
+        )
     except QuotaExceededError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
 

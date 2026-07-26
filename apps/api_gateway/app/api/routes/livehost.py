@@ -20,7 +20,9 @@ from app.services.livehost.ingestor import TikTokLiveIngestor
 from app.services.livehost.orchestrator import LiveHostOrchestrator
 from app.services.livehost.registry import LivehostSession, livehost_registry
 from app.services.livehost.scheduler import EventScheduler
+from app.services.model_registry.store import model_registry_store
 from app.services.profiles.store import profile_store
+from app.services.quota.gate import QuotaExceededError, quota_gate
 from app.services.stt.model_catalog import resolve_default_stt_model
 from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
@@ -28,12 +30,56 @@ from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
-from app.services.usage.attribution import resolve_llm_pair
+from app.services.usage.attribution import resolve_llm_pair, resolve_usage_model
 from app.services.usage.recorder import record_usage
 from app.services.warmup import is_ready, warm_providers
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/livehost", tags=["livehost"])
+
+
+async def _quota_blocked_for(
+    *, user_id: str, profile_name: str, pinned_engine: str, pinned_model: str
+) -> tuple[bool, str]:
+    """(blocked, message) for one livehost turn.
+
+    `pinned_engine`/`pinned_model` are the PROFILE's pins, not a resolved pair:
+    the pairing rule below has to see whether a model was pinned at all, so
+    resolving before the call would hide exactly the fact it needs.
+
+    Returns the message rather than raising so each turn path can report it the
+    way that path reports its own failures. Fail-open: only a genuine
+    QuotaExceededError blocks; anything else logs and allows, matching
+    quota_gate's own contract.
+    """
+    try:
+        pinned_model = pinned_model or ""
+        # Only pair the profile's engine with a model the profile actually
+        # pinned. With no pin, build_responder_ex() runs the registry default --
+        # whose engine is usually a different row -- so passing this engine
+        # would make the gate check one provider while metering bills another
+        # (see resolve_llm_pair, which applies the same rule to the usage row).
+        # Both blank -> resolve_usage_model() returns the active default pair,
+        # which is what actually runs.
+        pinned_engine = (pinned_engine or "") if pinned_model else ""
+        usage_engine, usage_model = await resolve_usage_model("llm", pinned_engine, pinned_model)
+        provider_id = ""
+        try:
+            entry = await model_registry_store.find("llm", usage_engine, usage_model)
+            provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
+        except Exception:  # noqa: BLE001 - a registry hiccup must never block a turn
+            provider_id = ""
+        await quota_gate(
+            user_id=user_id or "", provider_id=provider_id,
+            kind="llm", engine=usage_engine, model_id=usage_model,
+            profile_id=profile_name or "",
+        )
+    except QuotaExceededError as exc:
+        return True, str(exc)
+    except Exception as exc:  # noqa: BLE001 - fail-open
+        logger.warning("livehost quota check failed open: %s", exc)
+    return False, ""
+
 
 # How often the disabled/revoked re-check wakes (test-tunable, same pattern as
 # lugo.py's _IDLE_TICK_S).
@@ -351,6 +397,15 @@ async def livehost_stream(websocket: WebSocket) -> None:
             nonlocal turn
             turn += 1
             await send("processing", turn=turn)
+            blocked, quota_message = await _quota_blocked_for(
+                user_id=identity.user_id or "", profile_name=profile_name or "",
+                pinned_engine=(profile.llm.engine if profile else "") or "",
+                pinned_model=llm_model or (profile.llm.model if profile else "") or "",
+            )
+            if blocked:
+                await send("error", message=quota_message)
+                await send("turn_done", turn=turn)
+                return
             wav = pcm16_to_wav_bytes(audio_pcm, sample_rate=sample_rate)
             try:
                 stt_result = await stt_provider.transcribe_bytes(wav, language, model=resolved_stt_model)
@@ -398,6 +453,15 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 "social_reply", turn=turn,
                 event_count=len(social_turn.events), overflow_count=social_turn.overflow_count,
             )
+            blocked, quota_message = await _quota_blocked_for(
+                user_id=identity.user_id or "", profile_name=profile_name or "",
+                pinned_engine=(profile.llm.engine if profile else "") or "",
+                pinned_model=llm_model or (profile.llm.model if profile else "") or "",
+            )
+            if blocked:
+                await send("error", message=quota_message)
+                await send("turn_done", turn=turn)
+                return
             history.append({"role": "user", "content": formatted_text})
             await persist("user", formatted_text)
             parts = await _stream_to_tts(responder.reply_stream(history), responder.name)
@@ -407,7 +471,8 @@ async def livehost_stream(websocket: WebSocket) -> None:
 
         async def run_social_turn(social_turn, formatted_text: str) -> None:
             # Per the spec: a social-turn failure is logged and the event is dropped,
-            # never surfaced as a hard error to the streamer — unlike run_voice_turn.
+            # never surfaced as a hard error to the streamer — unlike run_voice_turn —
+            # except a quota block, which is surfaced via _run_social_turn's own error send.
             try:
                 await _run_social_turn(social_turn, formatted_text)
             except Exception:  # noqa: BLE001 - drop this social turn, keep the session alive

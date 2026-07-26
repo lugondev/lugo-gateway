@@ -130,11 +130,15 @@ async def chat(
     # provider whose quota we check is the provider that will actually be
     # billed -- a raw (profile engine, unpinned model) pair would look up a
     # row that pairs a model with an engine it doesn't belong to.
-    quota_engine, quota_model_id = await resolve_usage_model(
-        "llm",
-        (active_profile.llm.engine if active_profile else "") or "",
-        (active_profile.llm.model if active_profile else "") or "",
-    )
+    pinned_model = (active_profile.llm.model if active_profile else "") or ""
+    # Only pair the profile's engine with a model the profile actually pinned.
+    # With no pin, build_responder_ex() runs the registry default -- whose
+    # engine is usually a different row -- so passing this engine would make the
+    # gate check one provider while metering bills another (see resolve_llm_pair,
+    # which applies the same rule to the usage row). Both blank ->
+    # resolve_usage_model() returns the active default pair, which is what runs.
+    pinned_engine = ((active_profile.llm.engine if active_profile else "") or "") if pinned_model else ""
+    quota_engine, quota_model_id = await resolve_usage_model("llm", pinned_engine, pinned_model)
     provider_id = ""
     try:
         entry = await model_registry_store.find("llm", quota_engine, quota_model_id)
@@ -142,7 +146,11 @@ async def chat(
     except Exception:
         provider_id = ""
     try:
-        await quota_gate(user_id=caller_id or "", provider_id=provider_id)
+        await quota_gate(
+            user_id=caller_id or "", provider_id=provider_id,
+            kind="llm", engine=quota_engine, model_id=quota_model_id,
+            profile_id=profile or "",
+        )
     except QuotaExceededError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
 
