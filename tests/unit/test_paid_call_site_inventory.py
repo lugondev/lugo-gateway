@@ -112,8 +112,10 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
     ),
     ("services/stt/streaming_chunked.py", "transcribe_bytes"): (
         1, "covered-by-caller",
-        "chunked streaming adapter, same path as services/stt/base.py",
-        "tests/unit/test_stt_stream_metering.py",
+        "ChunkedStreamTranscriber is not constructed by any route -- only from "
+        "its own module and a unit test with a local stub -- so it is dead code "
+        "with no live metering exposure, not a route sharing base.py's coverage",
+        "tests/unit/test_stt_streaming_chunked.py",
     ),
     ("api/routes/model_registry.py", "transcribe_bytes"): (
         1, "exempt",
@@ -155,34 +157,63 @@ _VALID_STATUSES = {
 }
 
 
-def _found_call_sites() -> dict[tuple[str, str], int]:
+def _blank_triple_quoted(line: str, open_delim: str | None) -> tuple[str, str | None]:
+    """Return (scannable, new_open_delim): `line` with any parts that fall
+    inside a triple-quoted string replaced by spaces of the same length.
+
+    Operates on segments *within* the line, not the whole line, so code before
+    an opening delimiter and code after a closing one are both still present
+    in the returned string -- only the actual string content is blanked. State
+    (which delimiter, if any, is still open) carries into the next line.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(line)
+    while i < n:
+        if open_delim is not None:
+            end = line.find(open_delim, i)
+            if end == -1:
+                out.append(" " * (n - i))
+                i = n
+            else:
+                end += len(open_delim)
+                out.append(" " * (end - i))
+                i = end
+                open_delim = None
+        else:
+            candidates = [
+                (pos, d)
+                for d in ('"""', "'''")
+                if (pos := line.find(d, i)) != -1
+            ]
+            if not candidates:
+                out.append(line[i:])
+                i = n
+            else:
+                pos, delim = min(candidates)
+                out.append(line[i:pos])
+                out.append(" " * len(delim))
+                i = pos + len(delim)
+                open_delim = delim
+    return "".join(out), open_delim
+
+
+def _found_call_sites(root: Path = APP) -> dict[tuple[str, str], int]:
     found: dict[tuple[str, str], int] = {}
-    for path in sorted(APP.rglob("*.py")):
-        rel = path.relative_to(APP).as_posix()
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
         if "__pycache__" in rel or any(rel.startswith(p) for p in _IMPLEMENTATIONS):
             continue
         open_delim: str | None = None  # the """ or ''' we're currently inside, if any
         for line in path.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
-            if open_delim is not None:
-                # Inside a triple-quoted string opened on an earlier line -- this
-                # line is prose, not code. Close it if this line ends the string.
-                if open_delim in line:
-                    open_delim = None
-                continue
             # Skip definitions and comments -- we want callers, not declarations.
-            if stripped.startswith(("def ", "async def ", "#")):
+            # Only when not already mid-string: a line inside a multi-line
+            # string can start with "#" as plain string content, not a comment.
+            if open_delim is None and stripped.startswith(("def ", "async def ", "#")):
                 continue
-            # Skip triple-quoted string lines (docstrings and multi-line string
-            # literals) so prose in them is never mistaken for a call -- whether
-            # the string opens and closes on this same line or opens here and
-            # is closed on a later one.
-            delim = next((d for d in ('"""', "'''") if d in line), None)
-            if delim is not None:
-                if line.count(delim) % 2 == 1:
-                    open_delim = delim  # opens here, closes on a later line
-                continue
-            for match in _CALL_PATTERN.finditer(line):
+            scannable, open_delim = _blank_triple_quoted(line, open_delim)
+            for match in _CALL_PATTERN.finditer(scannable):
                 found[(rel, match.group(1))] = found.get((rel, match.group(1)), 0) + 1
     return found
 
@@ -220,6 +251,67 @@ def test_call_counts_match_so_an_added_call_cannot_hide():
         "Call count changed. If you added a call, meter and gate it, then update "
         f"the count:\n  " + "\n  ".join(drifted)
     )
+
+
+def test_scanner_finds_a_call_whose_argument_is_a_multiline_triple_quoted_string(
+    tmp_path,
+):
+    """A real call site does not stop being real just because one of its
+    arguments happens to be a triple-quoted string spanning several lines."""
+    (tmp_path / "caller.py").write_text(
+        'result = await provider.synthesize("""multi\n'
+        "line prompt\n"
+        'goes here""")\n'
+    )
+    found = _found_call_sites(tmp_path)
+    assert ("caller.py", "synthesize") in found
+
+
+def test_scanner_finds_code_after_a_closing_delimiter_on_the_same_line(tmp_path):
+    """A docstring closing mid-line does not erase the real code that follows
+    it on that same physical line."""
+    (tmp_path / "caller.py").write_text(
+        '"""\n'
+        "docstring\n"
+        '"""; return provider.synthesize(x)\n'
+    )
+    found = _found_call_sites(tmp_path)
+    assert ("caller.py", "synthesize") in found
+
+
+def test_scanner_does_not_mistake_docstring_prose_for_a_call(tmp_path):
+    """Prose that merely reads like a call, inside a real docstring, must not
+    be found -- this is the false-positive class the scanner exists to avoid."""
+    (tmp_path / "caller.py").write_text(
+        "def f():\n"
+        '    """This reply (looks like a call) but is not.\n'
+        "\n"
+        "    Still just prose about synthesize(x) in here.\n"
+        '    """\n'
+        "    return 1\n"
+    )
+    found = _found_call_sites(tmp_path)
+    assert not found
+
+
+def test_scanner_finds_a_call_near_a_string_with_an_apostrophe(tmp_path):
+    """A stray apostrophe in a nearby ordinary string must not be mistaken for
+    the start of a triple-quoted block and swallow the real call after it."""
+    (tmp_path / "caller.py").write_text(
+        "text = \"it's fine\"\n" "await provider.synthesize(text)\n"
+    )
+    found = _found_call_sites(tmp_path)
+    assert ("caller.py", "synthesize") in found
+
+
+def test_scanner_skips_def_lines_and_comments(tmp_path):
+    (tmp_path / "caller.py").write_text(
+        "async def synthesize(self, payload):\n"
+        "    # await provider.synthesize(payload) -- not a real call\n"
+        "    return None\n"
+    )
+    found = _found_call_sites(tmp_path)
+    assert not found
 
 
 def test_every_classification_names_a_test_that_exists():
