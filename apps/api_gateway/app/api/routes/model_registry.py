@@ -73,14 +73,15 @@ def _location(kind: str, engine: str) -> str:
       qwen3_asr, omnivoice, vieneu, edge_tts, qwen3_tts_*, voxcpm2, ...).
     - "service": calls out to an external HTTP API -- http_stt/http_tts,
       whisper_service/eventlab, the OpenRouter-backed STT engines
-      (qwen3_asr_or/whisper_or), and every kind="llm" entry. OpenRouter,
+      (qwen3_asr_or/whisper_or), every kind="llm" entry, and every
+      kind="embed" entry (an OpenAI-compatible `/embeddings` host). OpenRouter,
       OpenAI, Together, ... are all just "service"; there is no third bucket.
 
     Whether a service needs a *configurable* base_url is a separate axis --
     see _requires_base_url (OpenRouter hits a fixed endpoint, api_key only).
     """
     if (
-        kind == "llm"
+        kind in ("llm", "embed")
         or engine in _SERVICE_STT_ENGINES
         or engine in _SERVICE_TTS_ENGINES
         or engine in _BASE_URL_STT_ENGINES
@@ -263,7 +264,7 @@ async def update_prices(payload: BulkPriceRequest) -> dict:
     return {"success": True, "data": {"updated": len(planned)}}
 
 
-_VALID_KINDS = {"stt", "tts", "llm"}
+_VALID_KINDS = {"stt", "tts", "llm", "embed"}
 
 
 @router.get("/options")
@@ -378,6 +379,12 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
                 await responder.reply([{"role": "user", "content": payload.sample_text}])
             finally:
                 await responder.aclose()
+        elif payload.kind == "embed":
+            # Same "prove it works before we store it" contract as the other
+            # kinds: one tiny embed call validates endpoint + key + model id.
+            from app.services.memory.embedder import embed_texts
+
+            await embed_texts([payload.sample_text], eff_base_url, eff_api_key, payload.model_id)
         else:
             raise HTTPException(status_code=400, detail=f"unknown kind '{payload.kind}'")
     except HTTPException:
