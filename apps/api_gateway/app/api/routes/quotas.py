@@ -132,8 +132,11 @@ async def update_quota(quota_id: str, payload: UpdateQuotaRequest) -> dict:
     await _reject_duplicate(
         merged["scope"], merged["scope_id"], merged["period"], exclude_id=quota_id,
     )
-    if "scope_id" in fields or fields.get("scope") == "global":
-        fields["scope_id"] = merged["scope_id"]
+    # Unconditionally, not just when the patch mentions scope_id: _reject_duplicate
+    # above compared the NORMALIZED value, so a legacy global row that kept its
+    # stray id would 400 as a duplicate of a clean global row on any later edit --
+    # a plain limit_usd change included.
+    fields["scope_id"] = merged["scope_id"]
 
     updated = await quota_store.set_fields(quota_id, **fields)
     if updated is None:

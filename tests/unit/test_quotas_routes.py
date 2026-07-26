@@ -205,3 +205,16 @@ def test_disabling_still_rejects_a_bad_enum(client, _with_password):
     row = _seed(scope="global", scope_id="", limit_usd=0.0, period="monthly")
     r = client.patch(f"/v1/quotas/{row['id']}", json={"enabled": False, "scope": "bogus"})
     assert r.status_code == 400, r.text
+def test_a_global_rows_stray_scope_id_is_normalized_on_any_patch(client, _with_password):
+    """_reject_duplicate compares the NORMALIZED scope_id, so leaving the stray
+    one on the row made a plain limit_usd edit 400 as a duplicate of a clean
+    global row -- and the row kept an id its scope can never use."""
+    _login_admin(client, "q-stray")
+    from app.services.quota.store import quota_store
+
+    row = _seed(scope="global", scope_id="stray", limit_usd=5.0, period="monthly")
+    r = client.patch(f"/v1/quotas/{row['id']}", json={"limit_usd": 9.0})
+    assert r.status_code == 200, r.text
+    stored = asyncio.run(quota_store.get(row["id"]))
+    assert stored["scope_id"] == "", stored
+    assert stored["limit_usd"] == 9.0
