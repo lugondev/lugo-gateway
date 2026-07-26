@@ -62,7 +62,7 @@ function _render(host, rows, groupBy) {
       <tbody>
         ${sorted.map((r) => `
           <tr>
-            <td><code>${escapeHtml(String(r.key || "") || "(none)")}</code></td>
+            <td><code>${escapeHtml(String(r.key || "") || "(not recorded)")}</code></td>
             <td>${_fmtCost(r.cost_usd)}</td>
             <td>${_fmtNum(r.native_amount)}</td>
             <td>${_fmtNum(r.count)}</td>

@@ -4,8 +4,8 @@ Two entry points:
 - `summarize`: admin-facing, grouped by any one of the columns in
   `_GROUP_COLUMNS`.
 - `summarize_for_user`: same aggregation, but scoped to one user_id and
-  always grouped by (kind, model_id) -- the breakdown a user's own "my usage"
-  view needs, regardless of what an admin might slice by.
+  always grouped by (kind, engine, model_id) -- the breakdown a user's own
+  "my usage" view needs, regardless of what an admin might slice by.
 """
 
 from __future__ import annotations
@@ -74,14 +74,19 @@ async def summarize(group_by: str, period_key: str | None = None) -> list[dict]:
 
 async def summarize_for_user(user_id: str, period_key: str | None = None) -> list[dict]:
     """Same aggregation as `summarize`, scoped to one user_id and grouped by
-    (kind, model_id) -- the breakdown behind a user's own "my usage" view."""
+    (kind, engine, model_id) -- the breakdown behind a user's own "my usage"
+    view. Engine is part of the key because a row whose model couldn't be
+    attributed (see usage/attribution.py) is still identifiable by its engine."""
     stmt = select(
         UsageEvent.kind.label("kind"),
+        UsageEvent.engine.label("engine"),
         UsageEvent.model_id.label("model_id"),
         func.sum(UsageEvent.cost_usd).label("cost_usd"),
         func.sum(UsageEvent.native_amount).label("native_amount"),
         func.count().label("count"),
-    ).where(UsageEvent.user_id == user_id).group_by(UsageEvent.kind, UsageEvent.model_id)
+    ).where(UsageEvent.user_id == user_id).group_by(
+        UsageEvent.kind, UsageEvent.engine, UsageEvent.model_id
+    )
     if period_key:
         start, end = _period_range(period_key)
         stmt = stmt.where(UsageEvent.ts >= start, UsageEvent.ts < end)
@@ -91,6 +96,7 @@ async def summarize_for_user(user_id: str, period_key: str | None = None) -> lis
     return [
         {
             "kind": row.kind,
+            "engine": row.engine,
             "model_id": row.model_id,
             "cost_usd": float(row.cost_usd or 0.0),
             "native_amount": float(row.native_amount or 0.0),
