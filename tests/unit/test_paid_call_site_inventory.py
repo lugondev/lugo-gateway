@@ -35,7 +35,7 @@ APP = Path(__file__).resolve().parents[2] / "apps" / "api_gateway" / "app"
 # widen a hardcoded list.
 _PROVIDER_METHODS = {
     "transcribe_bytes", "synthesize", "reply_stream", "reply", "open_stream",
-    "embed_texts", "embed_texts_with_usage",
+    "embed_texts", "embed_texts_with_usage", "render_wav",
 }
 
 # Bucket 2: on a provider ABC, but reaches no paid inference -- capability
@@ -53,19 +53,12 @@ _FREE_PROVIDER_METHODS = {
 # Bucket 3: real synthesis or inference, but NOT scanned as its own call site.
 # The weakest bucket -- an entry has to argue that scanning it would add nothing,
 # and say what is true of its direct callers today.
-_UNSCANNED_PROVIDER_METHODS = {
-    "render_wav": (
-        "the real-synthesis step inside RenderingTTSProvider.synthesize(), which "
-        "IS scanned, so every caller that goes through synthesize() is already "
-        "covered. services/conversation/session.py also calls it directly on its "
-        "two no-disk Opus fast paths: _synth() records usage right next to the "
-        "call, and speak() (the best-effort farewell) records none -- so promoting "
-        "render_wav into _PROVIDER_METHODS needs a per-call-site status first, "
-        "because this table's key is (file, method) and those two sites would not "
-        "share one. Until then the speak() farewell's TTS spend is unmetered and "
-        "this note is the only place that says so."
-    ),
-}
+#
+# Empty, deliberately: render_wav lived here for exactly as long as it took to
+# meter and gate the speak() farewell that made it unclassifiable, and is now a
+# scanned call site with rows of its own. Prefer emptying this bucket to growing
+# it -- an entry here is spend nothing else is watching.
+_UNSCANNED_PROVIDER_METHODS: dict[str, str] = {}
 
 # Files that DEFINE these methods rather than call a provider through them.
 _IMPLEMENTATIONS = (
@@ -123,8 +116,26 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "tests/unit/test_session_usage_metering.py",
     ),
     ("services/conversation/session.py", "synthesize"): (
-        2, "metered+gated", "conversation core TTS, prefetch and direct",
+        2, "metered+gated",
+        "conversation core TTS: the per-sentence prefetch path (gated by the turn "
+        "it runs in) and speak()'s farewell (metered, and gated as a silent skip "
+        "-- nobody is waiting on a goodbye, so over quota it is dropped, not refused)",
         "tests/unit/test_session_usage_metering.py",
+    ),
+    ("services/conversation/session.py", "render_wav"): (
+        2, "metered+gated",
+        "the same two utterances as the synthesize row above, on the no-disk Opus "
+        "seam taken when the engine is a RenderingTTSProvider: prefetch and the "
+        "farewell. One row per utterance, not per branch -- render_wav and "
+        "synthesize are alternatives for producing one utterance, never both",
+        "tests/unit/test_session_usage_metering.py",
+    ),
+    ("services/tts/base.py", "render_wav"): (
+        1, "covered-by-caller",
+        "the real-synthesis step inside RenderingTTSProvider.synthesize(); every "
+        "caller of synthesize() records a row for that call, so metering here "
+        "would double-count",
+        "tests/unit/test_tts_render_seam.py",
     ),
     ("services/conversation/session.py", "reply_stream"): (
         2, "metered+gated", "conversation core LLM, tool and plain paths",

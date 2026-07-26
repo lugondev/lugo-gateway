@@ -39,7 +39,14 @@ class _StubSTT(STTProvider):
 class _StubTTS(TTSProvider):
     name = "stub-meter-tts"
 
+    def __init__(self) -> None:
+        # One entry per real synthesis: an over-quota skip has to be provable by
+        # "the provider was never called", not only by "no row was written" -- a
+        # call that happened and went unrecorded is the bug being closed.
+        self.calls: list[str] = []
+
     async def synthesize(self, payload) -> TTSResult:
+        self.calls.append(payload.text)
         return TTSResult(engine=self.name, sample_rate=24000,
                          audio_url="/artifacts/x.wav", duration_seconds=0.1, text=payload.text)
 
@@ -437,3 +444,114 @@ async def test_unpinned_model_is_attributed_to_the_registrys_engine_not_the_prof
     finally:
         stt_service.providers.pop("stub-attr4-stt", None)
         tts_service.providers.pop("stub-attr4-tts", None)
+
+
+# --- speak(): the idle farewell -------------------------------------------------
+#
+# speak() is the one-off spoken utterance the SERVER initiates at teardown (an
+# idle goodbye), outside any turn -- so it never passed through the per-turn
+# quota gate and never recorded a usage row, while still calling the TTS
+# provider for real. Same shape as post-session memory work: meter it, and treat
+# an over-quota state as "skip quietly" (nobody is waiting on a farewell, so a
+# refusal is silence, never an error).
+
+
+async def test_the_farewell_utterance_records_a_usage_row(monkeypatch, tmp_path):
+    from app.services.db.engine import init_db
+
+    stub = _StubTTS()
+    stt_service.providers["stub-meter-stt"] = _StubSTT()
+    tts_service.providers["stub-meter-tts"] = stub
+
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    fresh_profiles.upsert(Profile(
+        name="metered-profile",
+        llm=LlmConfig(base_url="", api_key="", model="echo-model", engine="echo-engine"),
+    ))
+    await init_db()
+    try:
+        async def emit(name, **p):
+            pass
+
+        async def emit_audio(pkt):
+            pass
+
+        sess = ConversationSession(_cfg(), emit, emit_audio)
+        await sess.start()
+        farewell = "tam biet nhe"
+        await sess.speak(farewell)
+        await sess.close()
+
+        assert stub.calls == [farewell], "the farewell must actually be synthesized"
+        tts_rows = [r for r in await _rows() if r.kind == "tts"]
+        assert len(tts_rows) == 1, f"expected one row for the farewell, got {len(tts_rows)}"
+        row = tts_rows[0]
+        assert row.engine == "stub-meter-tts"
+        assert row.unit == "chars"
+        assert row.native_amount == len(farewell)
+        assert row.user_id == "user-42"
+        assert row.profile_id == "metered-profile"
+    finally:
+        stt_service.providers.pop("stub-meter-stt", None)
+        tts_service.providers.pop("stub-meter-tts", None)
+
+
+async def test_an_over_quota_session_skips_the_farewell_without_erroring(monkeypatch, tmp_path):
+    """Over quota, the farewell must not reach the provider at all -- and must
+    not become an error either: no exception, no `error` event, and the session
+    still closes cleanly. A limit that only stops the work the user is waiting
+    for is not a limit."""
+    from app.services.db.engine import init_db
+    from app.services.model_registry.store import model_registry_store
+    from app.services.quota.store import quota_store
+    from app.services.usage.recorder import record_usage
+
+    stub = _StubTTS()
+    stt_service.providers["stub-meter-stt"] = _StubSTT()
+    tts_service.providers["stub-meter-tts"] = stub
+
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    fresh_profiles.upsert(Profile(
+        name="metered-profile",
+        llm=LlmConfig(base_url="", api_key="", model="echo-model", engine="echo-engine"),
+    ))
+    await init_db()
+    quota_store.invalidate()
+    # A priced TTS row plus enough recorded spend to blow a $1 global limit:
+    # $1000 per 1k chars x 1000 chars = $1000 already spent.
+    await model_registry_store.create(
+        "tts", "stub-meter-tts", "stub-tts-model", "Stub",
+        config={"provider_id": "prov-t", "price": {"unit": "1k_chars", "rate": 1000.0}},
+    )
+    await record_usage(user_id="user-42", profile_id="metered-profile", kind="tts",
+                       engine="stub-meter-tts", model_id="stub-tts-model",
+                       unit="chars", native_amount=1000)
+    await quota_store.create(scope="global", scope_id="", limit_usd=1.0, period="monthly")
+
+    try:
+        events: list = []
+
+        async def emit(name, **p):
+            events.append((name, p))
+
+        async def emit_audio(pkt):
+            pass
+
+        sess = ConversationSession(_cfg(), emit, emit_audio)
+        await sess.start()
+        farewell = "tam biet nhe"
+        await sess.speak(farewell)  # must not raise
+        await sess.close()
+
+        assert stub.calls == [], f"over quota, the provider must not be called: {stub.calls}"
+        assert [n for n, _ in events if n == "error"] == [], "a skipped farewell is not an error"
+        served = [r for r in await _rows()
+                  if r.kind == "tts" and r.status == "ok" and r.native_amount == len(farewell)]
+        assert served == [], "nothing was synthesized, so nothing may be billed"
+        # Silence, not a half-spoken turn: no audio and no farewell text went out.
+        assert [n for n, _ in events if n in {"audio_start", "audio_chunk", "response_text"}] == []
+    finally:
+        stt_service.providers.pop("stub-meter-stt", None)
+        tts_service.providers.pop("stub-meter-tts", None)
