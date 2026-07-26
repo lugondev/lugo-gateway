@@ -218,6 +218,62 @@ async def stt_stream(websocket: WebSocket) -> None:
         _parse_bool(websocket.query_params.get("vad")), preprocessing.stt_vad_enabled
     )
 
+    from app.services.model_registry.store import model_registry_store
+    from app.services.quota.gate import QuotaExceededError, quota_gate
+    from app.services.usage.attribution import resolve_usage_model
+
+    async def _quota_message(user_id: str) -> str:
+        """"" when the socket may proceed, else the refusal to send. Resolving the
+        pair first is what lets a provider-scoped quota match (see the STT route)."""
+        try:
+            usage_engine, usage_model = await resolve_usage_model("stt", engine, model or "")
+            provider_id = ""
+            try:
+                entry = await model_registry_store.find("stt", usage_engine, usage_model)
+                provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
+            except Exception:  # noqa: BLE001 - a registry hiccup must never block a socket
+                provider_id = ""
+            await quota_gate(
+                user_id=user_id, provider_id=provider_id,
+                kind="stt", engine=usage_engine, model_id=usage_model,
+            )
+        except QuotaExceededError as exc:
+            return str(exc)
+        except Exception as exc:  # noqa: BLE001 - fail-open
+            logger.warning("stt stream quota check failed open: %s", exc)
+        return ""
+
+    caller_id = identity.user_id or ""
+    refusal = await _quota_message(caller_id)
+    if refusal:
+        await websocket.send_json(
+            {"event_type": "error", "session_id": session_id, "payload": {"message": refusal}}
+        )
+        await websocket.close()
+        return
+
+    pending_seconds = 0.0
+
+    async def _record_stream_usage() -> None:
+        """One row per flush/end for the audio received since the last row.
+
+        Per frame would be thousands of rows a minute; per session would lose the
+        work of a socket that never disconnects cleanly. Reset after recording so
+        the same audio can never be counted twice.
+        """
+        nonlocal pending_seconds
+        seconds, pending_seconds = pending_seconds, 0.0
+        if seconds <= 0:
+            return
+        try:
+            await record_usage(
+                user_id=caller_id, profile_id="",
+                kind="stt", engine=engine, model_id=model or "",
+                unit="seconds", native_amount=seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 - metering must never break the stream
+            logger.warning("stt stream usage metering failed: %s", exc)
+
     stream: STTStream | None = None
     try:
         provider = stt_service.get_provider(engine)
@@ -262,6 +318,9 @@ async def stt_stream(websocket: WebSocket) -> None:
 
             if message.get("bytes") is not None:
                 frame = message["bytes"]
+                # Count what the client sent, before VAD/denoise can shrink it: a
+                # per-minute provider bills for what it processed.
+                pending_seconds += len(frame) / 2 / sample_rate
                 if denoise or vad:
                     frame = preprocess_pcm16(
                         frame, sample_rate, denoise=denoise, vad=vad,
@@ -311,6 +370,17 @@ async def stt_stream(websocket: WebSocket) -> None:
                     if final is not None:
                         await _emit_result(final)
 
+                    await _record_stream_usage()
+                    refusal = await _quota_message(caller_id)
+                    if refusal:
+                        sequence += 1
+                        await _emit(
+                            websocket, channel,
+                            StreamEvent(event_type="error", session_id=session_id,
+                                        sequence=sequence, payload={"message": refusal}),
+                        )
+                        break
+
                 if control_type == "end":
                     sequence += 1
                     await _emit(
@@ -328,6 +398,10 @@ async def stt_stream(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        # Runs exactly once on every exit path -- normal end, a mid-session
+        # quota refusal, an exception, or a bare disconnect -- so audio sent
+        # and never flushed is still billed for.
+        await _record_stream_usage()
         if stream is not None:
             try:
                 await stream.aclose()
