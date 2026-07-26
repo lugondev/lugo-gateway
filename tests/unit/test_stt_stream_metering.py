@@ -232,19 +232,20 @@ async def test_stream_records_the_profile_when_given_one(_stub_engine):
     assert rows[0].profile_id == "my-profile"
 
 
-async def test_a_zero_sample_rate_does_not_crash_the_stream(_stub_engine):
-    """sample_rate is a query param; metering's len(frame) / 2 / sample_rate
-    must not turn a bogus value into a ZeroDivisionError that crashes the
-    socket -- metering must never break the stream it's measuring."""
+async def test_a_zero_sample_rate_is_refused_instead_of_zeroing_the_metering(_stub_engine):
+    """sample_rate is a client-controlled query param, and every audio duration
+    is len(frame) / 2 / sample_rate. Skipping the accumulation for a bogus value
+    would hand the client free STT by asking for ?sample_rate=0; there is also
+    no honest duration to bill. So the socket is refused at connect -- an error
+    event and close, like the engine-failure path -- and no crash either way."""
     await init_db()
     quota_store.invalidate()
     client = TestClient(app)
     with client.websocket_connect(
         "/v1/stt/stream?engine=stub-stream-stt&sample_rate=0&denoise=false&vad=false"
     ) as ws:
-        assert ws.receive_json()["event_type"] == "session_started"
-        ws.send_bytes(_FRAME)
-        ws.send_text(json.dumps({"type": "end"}))
-        for _ in range(5):
-            if ws.receive_json()["event_type"] == "done":
-                break
+        event = ws.receive_json()
+        assert event["event_type"] == "error", f"expected a refusal, got {event}"
+        assert "sample_rate" in event["payload"]["message"]
+
+    assert await _rows() == [], "a refused socket must not transcribe or record anything"

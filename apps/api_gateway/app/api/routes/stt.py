@@ -212,6 +212,19 @@ async def stt_stream(websocket: WebSocket) -> None:
             "sample_rate", settings.stt_stream_sample_rate
         )
     )
+    # sample_rate is client-controlled and every audio duration is derived from
+    # it, so a non-positive value has no honest duration to bill -- degrading the
+    # metering instead would hand a client free STT for the price of
+    # ?sample_rate=0. Refuse the socket the same way an engine failure does
+    # (error event, then close); after this the accumulator can divide safely.
+    if sample_rate <= 0:
+        await websocket.send_json(
+            {"event_type": "error", "session_id": session_id,
+             "payload": {"message": f"invalid sample_rate: {sample_rate} (must be > 0)"}}
+        )
+        await websocket.close()
+        return
+
     preprocessing = system_config_store.get().preprocessing
     denoise = _resolve_flag(
         _parse_bool(websocket.query_params.get("denoise")), preprocessing.stt_noise_reduce_enabled
@@ -321,12 +334,10 @@ async def stt_stream(websocket: WebSocket) -> None:
             if message.get("bytes") is not None:
                 frame = message["bytes"]
                 # Count what the client sent, before VAD/denoise can shrink it: a
-                # per-minute provider bills for what it processed. sample_rate
-                # is a query param -- a non-positive value can't give a duration,
-                # so skip accumulating rather than divide by zero; metering must
-                # never crash the stream.
-                if sample_rate > 0:
-                    pending_seconds += len(frame) / 2 / sample_rate
+                # per-minute provider bills for what it processed. Dividing is
+                # safe unconditionally -- a non-positive sample_rate was refused
+                # at connect rather than silently zeroing this accumulation.
+                pending_seconds += len(frame) / 2 / sample_rate
                 if denoise or vad:
                     frame = preprocess_pcm16(
                         frame, sample_rate, denoise=denoise, vad=vad,
