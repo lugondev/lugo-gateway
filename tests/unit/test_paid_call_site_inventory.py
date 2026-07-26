@@ -41,7 +41,11 @@ _IMPLEMENTATIONS = (
 # status is one of:
 #   "metered+gated"  -- records usage and checks the quota itself
 #   "covered-by-caller" -- a helper; its caller records one row for the whole unit
-#   "exempt" -- deliberately unmetered or ungated, with the reason stated
+#   "exempt" -- real provider spend, deliberately left unmetered or ungated, with
+#       the reason stating why -- NOT a bucket for "couldn't otherwise categorize"
+#   "not-a-provider-call" -- the pattern matched a symbol that is not actually a
+#       provider call (e.g. a same-named local helper); the reason names what it
+#       really is
 _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
     ("api/routes/conversation.py", "reply_stream"): (
         1, "metered+gated", "POST /v1/conversation/chat, tool-enabled path",
@@ -118,46 +122,37 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "tests/unit/test_model_registry_test_call_metering.py",
     ),
     ("api/routes/model_registry.py", "synthesize"): (
-        1, "exempt", "add-time credential test; see transcribe_bytes above",
+        1, "exempt",
+        "add-time credential test; metered but never gated, same as "
+        "transcribe_bytes above",
         "tests/unit/test_model_registry_test_call_metering.py",
     ),
     ("api/routes/model_registry.py", "reply"): (
-        1, "exempt", "add-time credential test; see transcribe_bytes above",
+        1, "exempt",
+        "add-time credential test; metered but never gated, same as "
+        "transcribe_bytes above",
         "tests/unit/test_model_registry_test_call_metering.py",
     ),
     ("api/routes/model_registry.py", "embed_texts"): (
-        1, "exempt", "add-time credential test; see transcribe_bytes above",
+        1, "exempt",
+        "add-time credential test; metered but never gated, same as "
+        "transcribe_bytes above",
         "tests/unit/test_model_registry_test_call_metering.py",
     ),
-    ("services/memory/extractor.py", "reply"): (
-        1, "exempt",
-        "regex false match: docstring prose 'from an LLM reply (tolerant of "
-        "prose/fences)' -- not a call at all",
-        "tests/unit/test_paid_call_site_inventory.py",
-    ),
-    ("services/tts/base.py", "synthesize"): (
-        1, "exempt",
-        "regex false match: docstring prose referencing the synthesize() method "
-        "defined just below it, which is itself a `def` line and skipped",
-        "tests/unit/test_paid_call_site_inventory.py",
-    ),
-    ("services/tts/segmenter.py", "reply"): (
-        1, "exempt",
-        "regex false match: docstring prose 'waiting for the whole reply (much "
-        "lower time-to-first-audio)' -- not a call at all",
-        "tests/unit/test_paid_call_site_inventory.py",
-    ),
     ("services/tts/streaming.py", "synthesize"): (
-        1, "exempt",
-        "regex false match: `asyncio.create_task(_synthesize())` calls a local "
-        "private helper (leading underscore fools the pattern); it awaits the "
-        "injected `synth` callable, not a provider method named synthesize -- the "
-        "real provider call is metered at whichever caller binds `synth`",
+        1, "not-a-provider-call",
+        "`asyncio.create_task(_synthesize())` calls a local private helper "
+        "coroutine (leading underscore fools the pattern's prefix match); it "
+        "awaits the injected `synth` callable, not a provider method named "
+        "synthesize -- the real provider call is metered at whichever caller "
+        "binds `synth`",
         "tests/unit/test_paid_call_site_inventory.py",
     ),
 }
 
-_VALID_STATUSES = {"metered+gated", "covered-by-caller", "exempt"}
+_VALID_STATUSES = {
+    "metered+gated", "covered-by-caller", "exempt", "not-a-provider-call",
+}
 
 
 def _found_call_sites() -> dict[tuple[str, str], int]:
@@ -166,10 +161,26 @@ def _found_call_sites() -> dict[tuple[str, str], int]:
         rel = path.relative_to(APP).as_posix()
         if "__pycache__" in rel or any(rel.startswith(p) for p in _IMPLEMENTATIONS):
             continue
+        open_delim: str | None = None  # the """ or ''' we're currently inside, if any
         for line in path.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
+            if open_delim is not None:
+                # Inside a triple-quoted string opened on an earlier line -- this
+                # line is prose, not code. Close it if this line ends the string.
+                if open_delim in line:
+                    open_delim = None
+                continue
             # Skip definitions and comments -- we want callers, not declarations.
             if stripped.startswith(("def ", "async def ", "#")):
+                continue
+            # Skip triple-quoted string lines (docstrings and multi-line string
+            # literals) so prose in them is never mistaken for a call -- whether
+            # the string opens and closes on this same line or opens here and
+            # is closed on a later one.
+            delim = next((d for d in ('"""', "'''") if d in line), None)
+            if delim is not None:
+                if line.count(delim) % 2 == 1:
+                    open_delim = delim  # opens here, closes on a later line
                 continue
             for match in _CALL_PATTERN.finditer(line):
                 found[(rel, match.group(1))] = found.get((rel, match.group(1)), 0) + 1
@@ -213,12 +224,22 @@ def test_call_counts_match_so_an_added_call_cannot_hide():
 
 def test_every_classification_names_a_test_that_exists():
     """A row claiming coverage from a test that does not exist is worse than no
-    row at all: it reads as proof."""
+    row at all: it reads as proof.
+
+    Also guards the "exempt" vocabulary itself: exempt means real provider spend
+    someone deliberately chose not to gate, not a dumping ground for anything hard
+    to categorize. Requiring the word "gate" in the reason keeps that distinction
+    from eroding -- a row that can't say why it isn't gated probably isn't exempt.
+    """
     repo_root = Path(__file__).resolve().parents[2]
     missing = []
     for key, (_count, status, reason, covering_test) in sorted(_CLASSIFIED.items()):
         assert status in _VALID_STATUSES, f"{key}: unknown status {status!r}"
         assert reason.strip(), f"{key}: a classification needs a reason"
+        if status == "exempt":
+            assert "gate" in reason.lower(), (
+                f"{key}: an exempt reason must explain why it isn't gated"
+            )
         if not (repo_root / covering_test).is_file():
             missing.append(f"{key}: {covering_test}")
     assert not missing, "Covering test file(s) do not exist:\n  " + "\n  ".join(missing)
