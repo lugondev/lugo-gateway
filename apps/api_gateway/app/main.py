@@ -139,6 +139,7 @@ async def lifespan(app: FastAPI):
         migrate_stt_local_models_to_registry,
         seed_installed_models_to_registry,
     )
+    from app.services.usage.backfill import migrate_backfill_usage_model_ids
 
     # Runs before the seed/back-fill migrations below and before warm-up so both
     # see corrected engine names, never the dead openai_stt/openai_tts.
@@ -153,6 +154,9 @@ async def lifespan(app: FastAPI):
     # After the seeder, so it can only ever remove shim rows the (now stricter)
     # seeder no longer creates -- never race a row this boot just re-added.
     await migrate_drop_stale_tts_engine_shims()
+    # After the registry migrations above, so it sees corrected/fully-migrated
+    # registry rows when resolving candidate models.
+    await migrate_backfill_usage_model_ids()
 
     if not settings.auth_enabled and settings.app_env != "dev":
         logger.warning(
