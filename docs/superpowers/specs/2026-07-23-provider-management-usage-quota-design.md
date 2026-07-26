@@ -162,3 +162,29 @@ Ghi usage đi qua **một hàm chung** `record_usage(ctx, kind, engine, model_id
 - Reset `usage_counters` đầu tháng: dùng `period_key="YYYY-MM"` nên "reset" là tự nhiên (kỳ mới = key mới, counter mới = 0). Dọn counter cũ = job phụ, chưa cần.
 - Gemini native API khác OpenAI-compat: giả định đi qua endpoint OpenAI-compat (`base_url`). Nếu cần native Gemini → provider adapter riêng, ngoài scope.
 - Dashboard UI chi tiết (biểu đồ) tách sang spec/plan riêng nếu cần.
+
+## 13. Trạng thái triển khai (cập nhật 2026-07-26)
+
+Đã bổ sung theo plan `plans/2026-07-26-usage-cost-p0.md`:
+- `usage/attribution.py`: resolve `(engine, model_id)` khi ghi usage — hết
+  `(none)`; quan trọng hơn: row có model rỗng KHÔNG khớp được registry row giữ
+  giá nên trước đây luôn $0. Chỉ suy ra khi chắc chắn (engine có đúng 1 model
+  non-sentinel), không đoán.
+- `usage/backfill.py` (chạy lúc boot): backfill model_id cho row cũ khi suy được
+  (270/307 row trên prod); không bao giờ tính lại `cost_usd` lịch sử.
+- LLM usage lấy model từ `responder.model` (model thật đã gọi), không phải pin
+  của profile.
+- `/v1/usage/me` group thêm theo `engine`; UI hiện cột Engine và nhãn
+  `(not recorded)` cho row không suy được.
+- `usage/price_schema.py`: validate/normalize `config.price` khi ghi (unit suy
+  từ kind, chặn field lạ / số âm / bool), áp cho cả POST/PATCH model_registry.
+- `GET/PATCH /v1/model_registry/prices` + tab admin "Pricing".
+- `kind="embed"` thành kind chính thức của Model Registry.
+- Đo usage 4 call site của memory: extractor LLM, compactor LLM, embed facts,
+  embed query mỗi lượt (`kind="embed"`).
+- `quota_gate` cho memory hậu-session: vượt hạn mức thì bỏ qua + log.
+
+Còn thiếu (xem audit 2026-07-26, nhóm P1/P2): audit row `status="blocked"`;
+metering/gate cho `POST /v1/tts/stream` và `WS /v1/stt/stream`; `profile_id=""`
+ở REST; hiển thị spend/limit trên tab Quotas và My Usage; rollup
+`usage_counters`; validate quota (scope_id, trùng, limit<=0).
