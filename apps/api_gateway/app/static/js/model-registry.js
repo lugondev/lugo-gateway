@@ -48,7 +48,7 @@ async function _loadEngineOptions(announce = true) {
   const wrap = el("registry-add-engine-wrap");
   if (!sel) return;
   const hasProvider = !!(el("registry-add-provider")?.value || "").trim();
-  if (kind === "llm" || hasProvider) { if (wrap) wrap.classList.add("hidden"); void _loadModelChoices(announce); return; }
+  if (kind === "llm" || kind === "embed" || hasProvider) { if (wrap) wrap.classList.add("hidden"); void _loadModelChoices(announce); return; }
   if (wrap) wrap.classList.remove("hidden");
   const prev = sel.value;
   sel.innerHTML = "";
@@ -89,7 +89,7 @@ function _maybePrefillBaseUrl() {
 function _effectiveEngine() {
   const kind = el("registry-add-kind")?.value;
   const providerId = (el("registry-add-provider")?.value || "").trim();
-  if (kind === "llm") {
+  if (kind === "llm" || kind === "embed") {
     const name = el("registry-add-provider")?.selectedOptions?.[0]?.textContent || "";
     // provider option text is `name — label`; take the name part; fallback "custom"
     return (name.split(" — ")[0] || "custom").trim() || "custom";
@@ -617,7 +617,7 @@ async function bulkPatchEntries(ids, fields, verb) {
 function _updateKindFields() {
   const kind = el("registry-add-kind").value;
   const hasProvider = !!(el("registry-add-provider")?.value || "").trim();
-  const isLlmOrStt = kind === "llm" || kind === "stt";
+  const isLlmOrStt = kind === "llm" || kind === "embed" || kind === "stt";
   // Base URL matters for every kind now: llm/stt point at an OpenAI-compatible
   // endpoint, and tts (e.g. http_tts) needs one too -- apps/model_service is
   // wired in as a remote engine the same way for all three.
@@ -646,7 +646,7 @@ export async function createModelRegistryEntry() {
     // Linked to a provider: creds come from the provider row; leave base_url/
     // api_key blank and stash the link in config so the backend resolves them.
     payload.config = { provider_id: providerId };
-  } else if (kind === "llm" || kind === "stt") {
+  } else if (kind === "llm" || kind === "embed" || kind === "stt") {
     // stt: base_url is only meaningful for remote engines (whisper_service,
     // eventlab); api_key only for OpenRouter-backed engines (qwen3_asr_or/
     // whisper_or) -- other stt engines just ignore either being empty.
