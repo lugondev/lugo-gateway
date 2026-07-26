@@ -47,7 +47,7 @@ async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
 
 
 @router.post("/synthesize")
-async def synthesize(payload: TTSRequest, request: Request) -> dict:
+async def synthesize(payload: TTSRequest, request: Request, profile: str | None = None) -> dict:
     # Quota pre-flight: block BEFORE the provider does any work. See the STT
     # route for why the model is resolved before the provider lookup.
     from app.services.model_registry.store import model_registry_store
@@ -82,7 +82,7 @@ async def synthesize(payload: TTSRequest, request: Request) -> dict:
         # no pricing row and resolves to $0, but the usage event is still
         # recorded/attributed -- $0 here is expected, not a bug.
         await record_usage(
-            user_id=current_user_id(request) or "", profile_id="",
+            user_id=current_user_id(request) or "", profile_id=profile or "",
             kind="tts", engine=payload.engine, model_id=payload.model_id or "",
             unit="chars", native_amount=len(payload.text or ""),
         )

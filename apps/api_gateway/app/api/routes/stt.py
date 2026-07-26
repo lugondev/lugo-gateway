@@ -55,6 +55,7 @@ async def transcribe(
     vad: bool | None = Form(default=None),
     vad_backend: str | None = Form(default=None),
     segment: bool | None = Form(default=None),
+    profile: str | None = None,
 ) -> dict:
     engine = engine or system_config_store.get().engines.default_stt_engine
     payload = STTRequest(engine=engine, language=language, model=model)
@@ -127,7 +128,7 @@ async def transcribe(
     data["duration"] = wav_duration_seconds(audio_bytes)
     try:
         await record_usage(
-            user_id=current_user_id(request) or "", profile_id="",
+            user_id=current_user_id(request) or "", profile_id=profile or "",
             kind="stt", engine=payload.engine, model_id=payload.model or "",
             unit="seconds", native_amount=data["duration"],
         )

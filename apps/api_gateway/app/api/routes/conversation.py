@@ -137,14 +137,22 @@ async def chat(
     # gate check one provider while metering bills another (see resolve_llm_pair,
     # which applies the same rule to the usage row). Both blank ->
     # resolve_usage_model() returns the active default pair, which is what runs.
-    pinned_engine = ((active_profile.llm.engine if active_profile else "") or "") if pinned_model else ""
-    quota_engine, quota_model_id = await resolve_usage_model("llm", pinned_engine, pinned_model)
+    quota_engine, quota_model_id = "", ""
     provider_id = ""
     try:
+        # Inside the guard, not before it: resolve_usage_model() never raises
+        # from its own logic, but its function-level import of the registry
+        # store sits outside that promise, and an ImportError there would 500 a
+        # request this gate is required to fail open on.
+        quota_engine, quota_model_id = await resolve_usage_model(
+            "llm",
+            (active_profile.llm.engine if active_profile and pinned_model else "") or "",
+            pinned_model,
+        )
         entry = await model_registry_store.find("llm", quota_engine, quota_model_id)
         provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
-    except Exception:
-        provider_id = ""
+    except Exception:  # noqa: BLE001 - a lookup failure must never block the request
+        quota_engine, quota_model_id, provider_id = "", "", ""
     try:
         await quota_gate(
             user_id=caller_id or "", provider_id=provider_id,
