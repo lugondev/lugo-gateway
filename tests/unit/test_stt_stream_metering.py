@@ -86,9 +86,20 @@ async def test_stream_records_the_audio_seconds_it_received(_stub_engine):
     assert abs(rows[0].native_amount - 0.5) < 1e-6
 
 
-async def test_audio_is_counted_before_vad_can_drop_it(_stub_engine):
-    """A per-minute provider bills for what it processed. Metering the
-    post-VAD length would systematically under-report."""
+async def test_audio_is_counted_before_preprocessing_can_shrink_it(_stub_engine, monkeypatch):
+    """In this codebase, preprocess_pcm16 always returns a frame the same byte
+    length as its input (vad_gate zeroes samples in place rather than dropping
+    them; denoising doesn't change frame length either) -- so a test that only
+    sends silence through real VAD can't actually distinguish "counted before
+    preprocessing" from "counted after": both give the same byte length. Force
+    a real difference by patching preprocess_pcm16 to return an empty frame,
+    and require the metered row to still reflect what the client sent, not the
+    (bogus, shrunk) "processed" result. This fails if the accumulator is ever
+    moved below the preprocess_pcm16 call."""
+    import app.api.routes.stt as stt_route
+
+    monkeypatch.setattr(stt_route, "preprocess_pcm16", lambda *a, **k: b"")
+
     await init_db()
     quota_store.invalidate()
     client = TestClient(app)
@@ -97,7 +108,7 @@ async def test_audio_is_counted_before_vad_can_drop_it(_stub_engine):
     ) as ws:
         assert ws.receive_json()["event_type"] == "session_started"
         for _ in range(3):
-            ws.send_bytes(_FRAME)  # pure silence: VAD will drop nearly all of it
+            ws.send_bytes(_FRAME)
         ws.send_text(json.dumps({"type": "end"}))
         # See test_stream_records_the_audio_seconds_it_received: "done" (not
         # "final") is the event that follows the server's usage record on the
@@ -108,7 +119,7 @@ async def test_audio_is_counted_before_vad_can_drop_it(_stub_engine):
 
     rows = await _rows()
     assert len(rows) == 1
-    assert abs(rows[0].native_amount - 0.3) < 1e-6, "must count received audio, not post-VAD audio"
+    assert abs(rows[0].native_amount - 0.3) < 1e-6, "must count received audio, not preprocessed audio"
 
 
 async def test_two_flushes_produce_two_rows_without_double_counting(_stub_engine):
@@ -196,3 +207,21 @@ async def test_a_disconnect_without_a_flush_still_records(_stub_engine):
     rows = await _rows()
     assert len(rows) == 1
     assert abs(rows[0].native_amount - 0.4) < 1e-6
+
+
+async def test_a_zero_sample_rate_does_not_crash_the_stream(_stub_engine):
+    """sample_rate is a query param; metering's len(frame) / 2 / sample_rate
+    must not turn a bogus value into a ZeroDivisionError that crashes the
+    socket -- metering must never break the stream it's measuring."""
+    await init_db()
+    quota_store.invalidate()
+    client = TestClient(app)
+    with client.websocket_connect(
+        "/v1/stt/stream?engine=stub-stream-stt&sample_rate=0&denoise=false&vad=false"
+    ) as ws:
+        assert ws.receive_json()["event_type"] == "session_started"
+        ws.send_bytes(_FRAME)
+        ws.send_text(json.dumps({"type": "end"}))
+        for _ in range(5):
+            if ws.receive_json()["event_type"] == "done":
+                break

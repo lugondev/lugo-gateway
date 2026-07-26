@@ -223,7 +223,7 @@ async def stt_stream(websocket: WebSocket) -> None:
     from app.services.usage.attribution import resolve_usage_model
 
     async def _quota_message(user_id: str) -> str:
-        """"" when the socket may proceed, else the refusal to send. Resolving the
+        """Return "" when the socket may proceed, else the refusal to send. Resolving the
         pair first is what lets a provider-scoped quota match (see the STT route)."""
         try:
             usage_engine, usage_model = await resolve_usage_model("stt", engine, model or "")
@@ -319,8 +319,12 @@ async def stt_stream(websocket: WebSocket) -> None:
             if message.get("bytes") is not None:
                 frame = message["bytes"]
                 # Count what the client sent, before VAD/denoise can shrink it: a
-                # per-minute provider bills for what it processed.
-                pending_seconds += len(frame) / 2 / sample_rate
+                # per-minute provider bills for what it processed. sample_rate
+                # is a query param -- a non-positive value can't give a duration,
+                # so skip accumulating rather than divide by zero; metering must
+                # never crash the stream.
+                if sample_rate > 0:
+                    pending_seconds += len(frame) / 2 / sample_rate
                 if denoise or vad:
                     frame = preprocess_pcm16(
                         frame, sample_rate, denoise=denoise, vad=vad,
