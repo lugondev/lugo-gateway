@@ -7,8 +7,11 @@ a new provider-invoking call fails it until someone adds a row below, with a
 status, a reason, and the name of a test that covers the behavior.
 
 WHAT THIS CATCHES: a new file calling a provider; a new provider-invoking method
-name; an extra call added to an already-listed file (the count is part of the
-key); a row naming a covering test that does not exist.
+name (the method set is checked against the provider abstractions themselves, so
+a method added to a provider base class fails this test until it is classified);
+an extra call added to an already-listed file (the count is part of the key); a
+row naming a covering test that does not exist, or one with nothing in it tying
+it to what it claims to cover.
 
 WHAT IT DOES NOT: it cannot tell whether a site marked "metered" really records a
 row -- that is test_every_paid_entry_point_records_usage. And a caller reaching a
@@ -22,9 +25,46 @@ from pathlib import Path
 APP = Path(__file__).resolve().parents[2] / "apps" / "api_gateway" / "app"
 
 # The methods that actually reach a provider (network or local inference).
+#
+# This set is not free-standing: test_the_provider_method_set_matches_the_
+# abstractions below derives the provider ABCs' public surface and requires every
+# name on it to appear in exactly one of the three buckets here. Adding a method
+# to a provider base class (synthesize_stream, reply_with_tools) therefore fails
+# that test until someone says which bucket it belongs in -- a new provider
+# method cannot become invisible to this gate just by nobody remembering to
+# widen a hardcoded list.
 _PROVIDER_METHODS = {
     "transcribe_bytes", "synthesize", "reply_stream", "reply", "open_stream",
     "embed_texts", "embed_texts_with_usage",
+}
+
+# Bucket 2: on a provider ABC, but reaches no paid inference -- capability
+# probes, labels and lifecycle. Each needs the reason it costs nothing.
+_FREE_PROVIDER_METHODS = {
+    "available": "dependency/binary probe, runs no inference",
+    "detail": "display label, local string",
+    "install_hint": "static help text",
+    "warm": "loads a local model into memory; no request leaves the process",
+    "list_voices": "voice catalog; a remote engine fetches a list, not synthesis",
+    "supports_voice_clone": "capability flag",
+    "aclose": "releases the HTTP client / socket",
+}
+
+# Bucket 3: real synthesis or inference, but NOT scanned as its own call site.
+# The weakest bucket -- an entry has to argue that scanning it would add nothing,
+# and say what is true of its direct callers today.
+_UNSCANNED_PROVIDER_METHODS = {
+    "render_wav": (
+        "the real-synthesis step inside RenderingTTSProvider.synthesize(), which "
+        "IS scanned, so every caller that goes through synthesize() is already "
+        "covered. services/conversation/session.py also calls it directly on its "
+        "two no-disk Opus fast paths: _synth() records usage right next to the "
+        "call, and speak() (the best-effort farewell) records none -- so promoting "
+        "render_wav into _PROVIDER_METHODS needs a per-call-site status first, "
+        "because this table's key is (file, method) and those two sites would not "
+        "share one. Until then the speak() farewell's TTS spend is unmetered and "
+        "this note is the only place that says so."
+    ),
 }
 
 # Files that DEFINE these methods rather than call a provider through them.
@@ -145,6 +185,98 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
 _VALID_STATUSES = {
     "metered+gated", "covered-by-caller", "exempt", "not-a-provider-call",
 }
+
+
+def _provider_abstraction_surface() -> dict[str, str]:
+    """The public method surface of the provider abstractions -> where declared.
+
+    Source of truth: the methods declared in the body of each provider ABC (and
+    the module-level coroutine functions of the embedder, which has no class),
+    because that is the seam a provider implementation is required to fill --
+    anything a route can call on a provider is declared there first.
+
+    Deliberately declared in this class body only (``vars(cls)``), not inherited:
+    a subclass re-declaring ``synthesize`` is the same method, and pulling in
+    ``object``'s dunders would be noise. Private names are skipped -- a ``_``
+    prefix is reachable only through its public wrapper, which is itself on this
+    surface (e.g. ``_render_wav`` behind ``render_wav``).
+
+    STTStream is NOT a provider abstraction and is left out on purpose: a stream
+    is only ever obtained from ``STTProvider.open_stream``, which is classified,
+    so a stream's whole lifetime -- and its spend -- is attributed at that call
+    site. That is exactly how the services/stt/base.py row already reads.
+    """
+    from app.services.conversation.responder import Responder
+    from app.services.memory import embedder
+    from app.services.stt.base import STTProvider
+    from app.services.tts.base import RenderingTTSProvider, TTSProvider
+
+    surface: dict[str, str] = {}
+    for cls in (STTProvider, TTSProvider, RenderingTTSProvider, Responder):
+        for name, attr in vars(cls).items():
+            if name.startswith("_") or not callable(attr):
+                continue
+            surface.setdefault(name, f"{cls.__module__}.{cls.__qualname__}")
+    for name, attr in vars(embedder).items():
+        if name.startswith("_") or getattr(attr, "__module__", "") != embedder.__name__:
+            continue
+        if not (callable(attr) and getattr(attr, "__code__", None)):
+            continue
+        # Coroutine functions only: the embedder's one sync helper (cosine) is
+        # local arithmetic, not a call to anything.
+        if attr.__code__.co_flags & 0x80:  # CO_COROUTINE
+            surface.setdefault(name, embedder.__name__)
+    return surface
+
+
+def test_the_provider_method_set_matches_the_abstractions():
+    """_PROVIDER_METHODS must not be a hardcoded list nobody rechecks.
+
+    Every public method on the provider abstractions has to be in exactly one
+    bucket: scanned as paid spend, declared free, or declared unscanned with an
+    argument. A method added to a provider base class lands in none of them and
+    fails here -- which is the point: the likeliest route to the next unmetered
+    call site is a new provider method the gate has never heard of.
+    """
+    surface = _provider_abstraction_surface()
+    buckets = {
+        "_PROVIDER_METHODS": set(_PROVIDER_METHODS),
+        "_FREE_PROVIDER_METHODS": set(_FREE_PROVIDER_METHODS),
+        "_UNSCANNED_PROVIDER_METHODS": set(_UNSCANNED_PROVIDER_METHODS),
+    }
+    classified: set[str] = set()
+    for names in buckets.values():
+        classified |= names
+
+    unclassified = sorted(set(surface) - classified)
+    assert not unclassified, (
+        "New provider method(s) on a provider abstraction, invisible to this "
+        "gate until classified. For each one: if it can spend money add it to "
+        "_PROVIDER_METHODS (and classify its call sites in _CLASSIFIED); if it "
+        "cannot, add it to _FREE_PROVIDER_METHODS with the reason; only use "
+        "_UNSCANNED_PROVIDER_METHODS if scanning it truly adds nothing:\n  "
+        + "\n  ".join(f"{name}  (declared on {surface[name]})" for name in unclassified)
+    )
+
+    stale = sorted(classified - set(surface))
+    assert not stale, (
+        "Classified method(s) that no longer exist on any provider abstraction. "
+        "Remove them so these buckets keep describing the real seam:\n  "
+        + "\n  ".join(stale)
+    )
+
+    overlaps = sorted(
+        f"{name}: {' + '.join(sorted(b for b, names in buckets.items() if name in names))}"
+        for name in classified
+        if sum(name in names for names in buckets.values()) > 1
+    )
+    assert not overlaps, (
+        "A method must be in exactly one bucket -- two answers is no answer:\n  "
+        + "\n  ".join(overlaps)
+    )
+
+    for name, reason in {**_FREE_PROVIDER_METHODS, **_UNSCANNED_PROVIDER_METHODS}.items():
+        assert reason.strip(), f"{name}: needs the reason it is not scanned"
 
 
 def _found_call_sites(root: Path = APP) -> dict[tuple[str, str], int]:
@@ -310,9 +442,19 @@ def test_scanner_finds_a_call_written_across_multiple_lines(tmp_path):
     assert ("caller.py", "synthesize") in found
 
 
-def test_every_classification_names_a_test_that_exists():
+def test_every_classification_names_a_test_that_exists_and_is_about_this_call():
     """A row claiming coverage from a test that does not exist is worse than no
     row at all: it reads as proof.
+
+    Existing is not enough, though. Three of the four statuses need no evidence
+    of their own, so a real unmetered call could be made green by naming any
+    file that happens to be there. THE RULE: the covering test's text must
+    mention either the classified method name -- it exercises the paid call --
+    or ``record_usage`` -- it asserts on the metering. One or the other; a file
+    with neither is not about this call site, whatever its name suggests.
+
+    Substring matching is a floor, not proof of coverage: it stops a plausible-
+    looking row from passing, it cannot show the assertions are any good.
 
     Also guards the "exempt" vocabulary itself: exempt means real provider spend
     someone deliberately chose not to gate, not a dumping ground for anything hard
@@ -321,6 +463,7 @@ def test_every_classification_names_a_test_that_exists():
     """
     repo_root = Path(__file__).resolve().parents[2]
     missing = []
+    unrelated = []
     for key, (_count, status, reason, covering_test) in sorted(_CLASSIFIED.items()):
         assert status in _VALID_STATUSES, f"{key}: unknown status {status!r}"
         assert reason.strip(), f"{key}: a classification needs a reason"
@@ -328,6 +471,18 @@ def test_every_classification_names_a_test_that_exists():
             assert "gate" in reason.lower(), (
                 f"{key}: an exempt reason must explain why it isn't gated"
             )
-        if not (repo_root / covering_test).is_file():
+        path = repo_root / covering_test
+        if not path.is_file():
             missing.append(f"{key}: {covering_test}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        _rel, method = key
+        if method not in text and "record_usage" not in text:
+            unrelated.append(f"{key}: {covering_test}")
     assert not missing, "Covering test file(s) do not exist:\n  " + "\n  ".join(missing)
+    assert not unrelated, (
+        "Covering test file(s) that never mention the call they are named for. "
+        f"Each must contain the method name or 'record_usage' -- add a test there "
+        "that exercises that call or asserts its usage row, or point the row at a "
+        "test that already does:\n  " + "\n  ".join(unrelated)
+    )
