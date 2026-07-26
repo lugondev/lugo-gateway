@@ -188,3 +188,25 @@ Còn thiếu (xem audit 2026-07-26, nhóm P1/P2): audit row `status="blocked"`;
 metering/gate cho `POST /v1/tts/stream` và `WS /v1/stt/stream`; `profile_id=""`
 ở REST; hiển thị spend/limit trên tab Quotas và My Usage; rollup
 `usage_counters`; validate quota (scope_id, trùng, limit<=0).
+
+## 14. Quota enforcement gaps đã đóng (2026-07-26)
+
+Theo plan `plans/2026-07-26-quota-enforcement-gaps.md`:
+- **Quota theo provider giờ mới thực sự chạy.** Trước đó mọi gate tra
+  `provider_id` bằng `find(kind, engine, "")` nên không khớp row nào và
+  `_applies()` bỏ qua toàn bộ quota scope=provider (đo được: /transcribe,
+  /synthesize, và turn hội thoại đều ra NONE). Nay mọi gate đi qua
+  `resolve_usage_model` trước, giống `/chat`.
+- **livehost đã có gate.** Trước đó `grep quota` trong `routes/livehost.py`
+  không ra gì — cả hai đường turn (voice + social) chạy STT/LLM/TTS không kiểm.
+- **Audit row `status="blocked"`** (spec §7) do chính `quota_gate` ghi, với
+  `cost_usd = 0` và `native_amount = 0` để không bao giờ tự cộng vào spend đã
+  gây ra block. Summary usage chỉ đếm `status="ok"`.
+- **Validate quota:** `scope_id` bắt buộc với scope user/provider (rỗng sẽ khớp
+  bucket thiết bị chung), `limit_usd > 0` (0 và số âm bị gate bỏ qua, tức là
+  "không giới hạn" — ngược ý admin), và chặn trùng `(scope, scope_id, period)`.
+
+Còn lại (xem audit 2026-07-26): metering + gate cho `POST /v1/tts/stream` và
+`WS /v1/stt/stream`; `profile_id=""` ở REST; hiển thị spend/limit trên tab
+Quotas và My Usage; client chưa xử lý 429 riêng; tab Pricing vẫn liệt kê row
+sentinel; rollup `usage_counters` và prune `usage_events`.
