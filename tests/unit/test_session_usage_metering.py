@@ -244,6 +244,9 @@ async def test_fast_path_stt_switch_never_pairs_new_engine_with_old_pinned_model
         # The bug: pairing the switched-to engine with the OLD engine's pinned
         # model. That pair was never used together and misses the registry
         # lookup. Recorded model_id must not be the stale pin.
+        # Resolution finds no catalog default and no registry row for a stub
+        # engine, so it stays blank -- the point of the assertion is that it
+        # is not the stale pin.
         assert stt.model_id != "pinned-for-original-engine"
         assert stt.model_id == ""
     finally:
