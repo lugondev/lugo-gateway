@@ -28,6 +28,7 @@ from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
+from app.services.usage.attribution import resolve_llm_pair
 from app.services.usage.recorder import record_usage
 from app.services.warmup import is_ready, warm_providers
 
@@ -261,19 +262,10 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 prompt_tokens = last_usage.get("prompt_tokens")
                 completion_tokens = last_usage.get("completion_tokens")
                 native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
-                pinned_model = llm_model or (profile.llm.model if profile else "") or ""
-                # The responder holds the model actually sent to the provider.
-                usage_model_id = getattr(responder_obj, "model", "") or pinned_model or ""
-                # The profile's engine may ONLY be paired with that model when the
-                # profile is where the model came from. When the model was resolved
-                # from the registry default instead, the profile's engine belongs to
-                # a different row -- pairing them would price the call at the wrong
-                # provider's rate and bill the wrong provider quota. Blank engine
-                # lets resolve_usage_model() derive the engine that owns this model.
-                usage_engine = (
-                    ((profile.llm.engine if profile else "") or "")
-                    if usage_model_id and usage_model_id == pinned_model
-                    else ""
+                usage_engine, usage_model_id = resolve_llm_pair(
+                    responder_obj,
+                    (profile.llm.engine if profile else "") or "",
+                    llm_model or (profile.llm.model if profile else "") or "",
                 )
                 await record_usage(
                     user_id=identity.user_id or "", profile_id=profile_name or "",

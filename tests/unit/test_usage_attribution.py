@@ -115,3 +115,46 @@ async def test_unambiguous_engine_never_warns(caplog):
     with caplog.at_level(logging.WARNING, logger="app.services.usage.attribution"):
         assert await resolve_usage_model("stt", "solo-warn", "") == ("solo-warn", "only-model")
     assert [r for r in caplog.records if "candidate models" in r.getMessage()] == []
+
+
+class _Responder:
+    def __init__(self, model):
+        self.model = model
+
+
+class _NoModelResponder:
+    """Stands in for EchoResponder, which has no `model` attribute at all."""
+
+
+def test_llm_pair_keeps_the_profile_engine_when_the_profile_pinned_the_model():
+    from app.services.usage.attribution import resolve_llm_pair
+
+    assert resolve_llm_pair(_Responder("gpt-4o-mini"), "OA", "gpt-4o-mini") == ("OA", "gpt-4o-mini")
+
+
+def test_llm_pair_drops_the_engine_when_the_model_came_from_the_registry_default():
+    from app.services.usage.attribution import resolve_llm_pair
+
+    # Profile pins an engine but no model -> the responder's model belongs to
+    # whichever row is the registry default, not to "openrouter". Pairing them
+    # would bill OpenRouter's rate for an OpenAI call.
+    assert resolve_llm_pair(_Responder("gpt-4o-mini"), "openrouter", "") == ("", "gpt-4o-mini")
+
+
+def test_llm_pair_drops_the_engine_when_the_responder_disagrees_with_the_pin():
+    from app.services.usage.attribution import resolve_llm_pair
+
+    assert resolve_llm_pair(_Responder("actually-called"), "OA", "pinned") == ("", "actually-called")
+
+
+def test_llm_pair_falls_back_to_the_pin_when_the_responder_has_no_model():
+    from app.services.usage.attribution import resolve_llm_pair
+
+    assert resolve_llm_pair(_NoModelResponder(), "OA", "pinned") == ("OA", "pinned")
+
+
+def test_llm_pair_is_all_blank_when_nothing_is_known():
+    from app.services.usage.attribution import resolve_llm_pair
+
+    # resolve_usage_model()'s active-default rule fills this in downstream.
+    assert resolve_llm_pair(_NoModelResponder(), "", "") == ("", "")

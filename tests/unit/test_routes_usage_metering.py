@@ -171,3 +171,72 @@ async def test_chat_non_tool_path_records_llm_usage_event():
     # No profile, no registry default, and an EchoResponder -> genuinely nothing to resolve.
     assert row.engine == ""
     assert row.model_id == ""
+
+
+async def test_chat_with_no_profile_yields_a_priceable_row():
+    """Guards the shape behind the production rows that read
+    `llm / - / (not recorded)`: POST /chat without ?profile= answers with a real
+    model but the route knows no engine or model to name.
+
+    The resolution here comes from record_usage's active-default rule, not from
+    the route -- with no profile there is no engine to mis-pair, so this test
+    would also pass against the route's older code. It is kept as an end-to-end
+    guard that the blank-blank shape still lands on a costed row; the route's
+    own pairing logic is covered by the next test.
+    """
+    from app.services.db.engine import init_db
+    from app.services.model_registry.store import model_registry_store
+
+    await init_db()
+    await model_registry_store.create(
+        "llm", "OA", "gpt-4o-mini", "OpenAI mini",
+        config={"provider_id": "prov-oa", "price": {"unit": "1M_tokens", "in": 1.0, "out": 2.0}},
+        is_default=True,
+    )
+
+    client = TestClient(app)
+    resp = client.post("/v1/conversation/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert resp.status_code == 200
+
+    llm_rows = [r for r in await _rows() if r.kind == "llm"]
+    assert len(llm_rows) == 1
+    row = llm_rows[0]
+    # Resolved through the registry default rather than left blank, which is
+    # also what makes the row priceable at all.
+    assert (row.engine, row.model_id) == ("OA", "gpt-4o-mini")
+    assert row.provider_id == "prov-oa"
+
+
+async def test_chat_never_pairs_a_profile_engine_with_an_unpinned_model():
+    """A profile pinning an engine but no model must not have that engine
+    stamped onto the registry-default model: the row would be priced at this
+    provider's rate for a call another provider served."""
+    from app.services.db.engine import init_db
+    from app.services.model_registry.store import model_registry_store
+    from app.services.profiles.models import LlmConfig, Profile
+    from app.services.profiles.store import profile_store
+
+    await init_db()
+    await model_registry_store.create(
+        "llm", "OA", "default-model", "OpenAI",
+        config={"provider_id": "prov-oa"}, is_default=True,
+    )
+    await model_registry_store.create(
+        "llm", "openrouter", "or/pricey", "OpenRouter",
+        config={"provider_id": "prov-or", "price": {"unit": "1M_tokens", "in": 99.0, "out": 99.0}},
+    )
+    profile_store.upsert(Profile(name="engine-only", llm=LlmConfig(engine="openrouter")))
+    try:
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/conversation/chat?profile=engine-only",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert resp.status_code == 200
+        llm_rows = [r for r in await _rows() if r.kind == "llm"]
+        assert len(llm_rows) == 1
+        # NOT ("openrouter", "default-model") -- that pair never ran.
+        assert llm_rows[0].engine != "openrouter"
+        assert llm_rows[0].provider_id != "prov-or"
+    finally:
+        profile_store.delete("engine-only")

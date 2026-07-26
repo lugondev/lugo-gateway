@@ -35,6 +35,7 @@ from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
+from app.services.usage.attribution import resolve_llm_pair, resolve_usage_model
 from app.services.usage.recorder import record_usage
 
 logger = logging.getLogger(__name__)
@@ -124,8 +125,16 @@ async def chat(
     from app.services.model_registry.store import model_registry_store
     from app.services.quota.gate import quota_gate, QuotaExceededError
 
-    quota_engine = (active_profile.llm.engine if active_profile else "") or ""
-    quota_model_id = llm_model or (active_profile.llm.model if active_profile else "") or ""
+    # The responder doesn't exist yet, so this pre-flight only knows the
+    # profile. Route it through the same resolver the usage rows use, so the
+    # provider whose quota we check is the provider that will actually be
+    # billed -- a raw (profile engine, unpinned model) pair would look up a
+    # row that pairs a model with an engine it doesn't belong to.
+    quota_engine, quota_model_id = await resolve_usage_model(
+        "llm",
+        (active_profile.llm.engine if active_profile else "") or "",
+        (active_profile.llm.model if active_profile else "") or "",
+    )
     provider_id = ""
     try:
         entry = await model_registry_store.find("llm", quota_engine, quota_model_id)
@@ -191,8 +200,11 @@ async def chat(
                 prompt_tokens = last_usage.get("prompt_tokens")
                 completion_tokens = last_usage.get("completion_tokens")
                 native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
-                usage_engine = (active_profile.llm.engine if active_profile else "") or ""
-                usage_model_id = llm_model or (active_profile.llm.model if active_profile else "") or ""
+                usage_engine, usage_model_id = resolve_llm_pair(
+                    responder,
+                    (active_profile.llm.engine if active_profile else "") or "",
+                    (active_profile.llm.model if active_profile else "") or "",
+                )
                 await record_usage(
                     user_id=caller_id or "", profile_id=profile or "",
                     kind="llm", engine=usage_engine, model_id=usage_model_id, unit="tokens",
@@ -207,8 +219,11 @@ async def chat(
                 prompt_tokens = last_usage.get("prompt_tokens")
                 completion_tokens = last_usage.get("completion_tokens")
                 native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
-                usage_engine = (active_profile.llm.engine if active_profile else "") or ""
-                usage_model_id = llm_model or (active_profile.llm.model if active_profile else "") or ""
+                usage_engine, usage_model_id = resolve_llm_pair(
+                    responder,
+                    (active_profile.llm.engine if active_profile else "") or "",
+                    (active_profile.llm.model if active_profile else "") or "",
+                )
                 await record_usage(
                     user_id=caller_id or "", profile_id=profile or "",
                     kind="llm", engine=usage_engine, model_id=usage_model_id, unit="tokens",

@@ -33,6 +33,29 @@ def _pick_single(candidates: list[dict]) -> dict | None:
 
 
 
+def resolve_llm_pair(responder, pinned_engine: str, pinned_model: str) -> tuple[str, str]:
+    """The (engine, model_id) an LLM usage row should carry, from a responder.
+
+    Every LLM metering site faces the same two facts: the responder holds the
+    model string actually sent to the provider, and the profile holds an engine
+    that may belong to a different model entirely. When the profile pins no
+    model, build_responder_ex() resolves the Model Registry default -- whose
+    engine is usually NOT the profile's -- so pairing them would price the call
+    at the wrong provider's rate and charge the wrong provider's quota.
+
+    So: model always from the responder; the profile's engine only when the
+    profile is where that model came from. Otherwise return a blank engine and
+    let resolve_usage_model() derive the engine that owns the model.
+
+    Lives here rather than in each caller because there are four such sites
+    (conversation session, livehost, and both /chat paths) and the rule has to
+    be identical in all of them.
+    """
+    model_id = getattr(responder, "model", "") or pinned_model or ""
+    engine = pinned_engine if (model_id and model_id == pinned_model) else ""
+    return engine, model_id
+
+
 # (kind, engine) pairs already reported as ambiguous. Attribution runs on every
 # metered request, so the warning below would otherwise repeat per turn; the
 # condition it reports is a registry misconfiguration that changes only when an
