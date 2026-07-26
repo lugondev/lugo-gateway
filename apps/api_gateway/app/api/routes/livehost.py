@@ -447,6 +447,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
             )
             if blocked:
                 await send("error", message=quota_message)
+                await send("turn_done", turn=turn)
                 return
             history.append({"role": "user", "content": formatted_text})
             await persist("user", formatted_text)
@@ -457,7 +458,8 @@ async def livehost_stream(websocket: WebSocket) -> None:
 
         async def run_social_turn(social_turn, formatted_text: str) -> None:
             # Per the spec: a social-turn failure is logged and the event is dropped,
-            # never surfaced as a hard error to the streamer — unlike run_voice_turn.
+            # never surfaced as a hard error to the streamer — unlike run_voice_turn —
+            # except a quota block, which is surfaced via _run_social_turn's own error send.
             try:
                 await _run_social_turn(social_turn, formatted_text)
             except Exception:  # noqa: BLE001 - drop this social turn, keep the session alive
