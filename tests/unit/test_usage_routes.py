@@ -183,6 +183,45 @@ def test_my_usage_reports_the_callers_own_limits(client, _with_password):
     assert isinstance(body["data"], list)
 
 
+def test_one_unreadable_spend_does_not_truncate_the_limits_list(client, _with_password, monkeypatch):
+    """`limits` is presented as *the* quotas that can block this caller, so a
+    partially-filled list is worse than a missing number: a dropped global quota
+    reads as "you have no global limit". One row's spend read failing must cost
+    that row its number, not silently delete it and every row after it -- the
+    same per-row guard GET /v1/quotas uses."""
+    import asyncio
+
+    import app.services.quota.gate as gate_mod
+    from app.services.auth.users import user_store
+    from app.services.quota.store import quota_store
+
+    _signup_login(client, "partial-limits")
+    me = asyncio.run(user_store.get_by_username("partial-limits"))
+    asyncio.run(init_db())
+    quota_store.invalidate()
+    asyncio.run(quota_store.create(scope="user", scope_id=me.id, limit_usd=5.0, period="monthly"))
+    asyncio.run(quota_store.create(scope="global", scope_id="", limit_usd=50.0, period="monthly"))
+
+    calls = []
+
+    async def flaky_spend(**kwargs):
+        # Fail on whichever row is read first, so the assertion does not depend
+        # on the store's ordering.
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("spend read exploded")
+        return 0.0
+
+    monkeypatch.setattr(gate_mod, "current_spend", flaky_spend)
+
+    body = client.get("/v1/usage/me").json()
+    scopes = sorted((l["scope"], l["limit_usd"]) for l in body["limits"])
+    assert scopes == [("global", 50.0), ("user", 5.0)], (
+        f"a failed spend read truncated the list: {body['limits']}"
+    )
+    assert all("spend_usd" in l for l in body["limits"])
+
+
 async def _record(*, provider_id: str = "", user_id: str = "u-label") -> None:
     await init_db()
     async with db_session() as s:

@@ -56,22 +56,35 @@ async def _limits_for(user_id: str) -> list[dict]:
     from app.services.quota.gate import current_spend
     from app.services.quota.store import quota_store
 
-    out = []
+    out: list[dict] = []
     try:
-        for quota in await quota_store.list_enabled():
-            if quota["scope"] == "global" or (
-                quota["scope"] == "user" and quota["scope_id"] == user_id
-            ):
-                out.append({
-                    "scope": quota["scope"],
-                    "period": quota["period"],
-                    "limit_usd": quota["limit_usd"],
-                    "spend_usd": await current_spend(
-                        scope=quota["scope"], scope_id=quota["scope_id"], period=quota["period"]
-                    ),
-                })
+        quotas = await quota_store.list_enabled()
     except Exception as exc:  # noqa: BLE001 - never break the usage view over this
         logger.warning("reading own limits failed: %s", exc)
+        return out
+    for quota in quotas:
+        if quota["scope"] != "global" and not (
+            quota["scope"] == "user" and quota["scope_id"] == user_id
+        ):
+            continue
+        # Per row, not per list (same guard as GET /v1/quotas): one unreadable
+        # spend must cost that row its number, not drop it and every row after
+        # it. The client presents this as the complete set of limits that can
+        # block the caller, so a silently truncated list reads as "you have no
+        # global quota" -- a wrong answer where 0.0 is only a stale one.
+        try:
+            spend = await current_spend(
+                scope=quota["scope"], scope_id=quota["scope_id"], period=quota["period"]
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("reading spend for a %s limit failed: %s", quota["scope"], exc)
+            spend = 0.0
+        out.append({
+            "scope": quota["scope"],
+            "period": quota["period"],
+            "limit_usd": quota["limit_usd"],
+            "spend_usd": spend,
+        })
     return out
 
 
