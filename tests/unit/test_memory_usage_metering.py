@@ -187,3 +187,41 @@ async def test_extractor_uses_the_extractor_model_id_when_set(monkeypatch):
     rows = [r for r in await _usage_rows("llm") if r.profile_id == "exm"]
     # Attribution must name the model that was actually billed, not the chat one.
     assert [r.model_id for r in rows] == ["cheap-model"]
+
+
+@pytest.mark.asyncio
+async def test_compactor_meters_its_llm_call(monkeypatch):
+    await init_db()
+    from app.services.memory.compactor import MemoryCompactor
+
+    for i in range(3):
+        await memory_store.add("cmp", f"fact {i}", user_id="u5")
+
+    async def fake_post(self, url, headers=None, json=None):
+        class R:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "choices": [{"message": {"content": "## User Profile\n### Danh tính\n- x"}}],
+                    "usage": {"prompt_tokens": 300, "completion_tokens": 40},
+                }
+
+        return R()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    profile = Profile(
+        name="cmp",
+        llm={"base_url": "http://llm.local/v1", "model": "chat", "engine": "openai"},
+        memory={"extractor_model": "cheap", "compaction_threshold": 2},
+    )
+    assert await MemoryCompactor().maybe_compact(profile, user_id="u5") is True
+
+    rows = [r for r in await _usage_rows("llm") if r.profile_id == "cmp"]
+    assert len(rows) == 1
+    assert rows[0].model_id == "cheap"          # the model actually billed
+    assert rows[0].engine == "openai"
+    assert rows[0].user_id == "u5"
+    assert rows[0].prompt_tokens == 300 and rows[0].completion_tokens == 40
+    assert rows[0].native_amount == 340

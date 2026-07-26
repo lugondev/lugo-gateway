@@ -15,7 +15,7 @@ async def test_maybe_compact_below_threshold_noop(monkeypatch):
     await memory_store.add("pet", "a")
     called = {"n": 0}
 
-    async def fake_call(self, profile, current_doc, facts):
+    async def fake_call(self, profile, current_doc, facts, user_id=None):
         called["n"] += 1
         return "## User Profile\n- x"
 
@@ -30,7 +30,7 @@ async def test_maybe_compact_below_threshold_noop(monkeypatch):
 async def test_compact_rebuilds_doc_and_prunes(monkeypatch):
     ids = [(await memory_store.add("pet", f"fact {i}"))["id"] for i in range(3)]
 
-    async def fake_call(self, profile, current_doc, facts):
+    async def fake_call(self, profile, current_doc, facts, user_id=None):
         assert "fact 0" in "\n".join(facts)
         return "## User Profile\n### Danh tính\n- merged"
 
@@ -48,7 +48,7 @@ async def test_compact_preserves_facts_added_after_snapshot(monkeypatch):
     for i in range(3):
         await memory_store.add("pet", f"old {i}")
 
-    async def fake_call(self, profile, current_doc, facts):
+    async def fake_call(self, profile, current_doc, facts, user_id=None):
         # simulate a concurrent add landing during the LLM call
         await memory_store.add("pet", "new-arrival")
         return "## User Profile\n- merged"
@@ -65,7 +65,7 @@ async def test_compact_llm_failure_keeps_facts(monkeypatch):
     await memory_store.add("pet", "b")
     await memory_store.add("pet", "c")
 
-    async def boom(self, profile, current_doc, facts):
+    async def boom(self, profile, current_doc, facts, user_id=None):
         raise RuntimeError("llm down")
 
     monkeypatch.setattr(MemoryCompactor, "_call_llm", boom)
@@ -87,7 +87,7 @@ async def test_compact_stores_doc_capped_at_max_doc_chars(monkeypatch):
         f"- fact {i} with some padding text to inflate length" for i in range(200)
     )
 
-    async def fake_call(self, profile, current_doc, facts):
+    async def fake_call(self, profile, current_doc, facts, user_id=None):
         return long_doc
 
     monkeypatch.setattr(MemoryCompactor, "_call_llm", fake_call)
@@ -104,7 +104,7 @@ async def test_compact_empty_doc_keeps_facts(monkeypatch):
     await memory_store.add("pet", "b")
     await memory_store.add("pet", "c")
 
-    async def empty(self, profile, current_doc, facts):
+    async def empty(self, profile, current_doc, facts, user_id=None):
         return "   "
 
     monkeypatch.setattr(MemoryCompactor, "_call_llm", empty)
@@ -127,7 +127,7 @@ async def test_compaction_reads_and_writes_the_user_bucket(monkeypatch):
     await memory_store.add("template", "f2", user_id="user-a")
     await memory_store.add("template", "other", user_id="user-b")
 
-    async def _fake_llm(self, prof, current_doc, facts):
+    async def _fake_llm(self, prof, current_doc, facts, user_id=None):
         return "## User Profile\n### Sở thích\n- " + ", ".join(facts)
     monkeypatch.setattr(comp.MemoryCompactor, "_call_llm", _fake_llm)
 
