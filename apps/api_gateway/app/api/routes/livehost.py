@@ -261,15 +261,19 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 prompt_tokens = last_usage.get("prompt_tokens")
                 completion_tokens = last_usage.get("completion_tokens")
                 native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
-                usage_engine = (profile.llm.engine if profile else "") or ""
-                # The responder holds the model actually sent to the provider --
-                # the only correct source once an admin changes the default;
-                # llm_model/profile pin are fallbacks for responders without one.
-                usage_model_id = (
-                    getattr(responder_obj, "model", "")
-                    or llm_model
-                    or (profile.llm.model if profile else "")
-                    or ""
+                pinned_model = llm_model or (profile.llm.model if profile else "") or ""
+                # The responder holds the model actually sent to the provider.
+                usage_model_id = getattr(responder_obj, "model", "") or pinned_model or ""
+                # The profile's engine may ONLY be paired with that model when the
+                # profile is where the model came from. When the model was resolved
+                # from the registry default instead, the profile's engine belongs to
+                # a different row -- pairing them would price the call at the wrong
+                # provider's rate and bill the wrong provider quota. Blank engine
+                # lets resolve_usage_model() derive the engine that owns this model.
+                usage_engine = (
+                    ((profile.llm.engine if profile else "") or "")
+                    if usage_model_id and usage_model_id == pinned_model
+                    else ""
                 )
                 await record_usage(
                     user_id=identity.user_id or "", profile_id=profile_name or "",
