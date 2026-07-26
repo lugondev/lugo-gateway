@@ -117,12 +117,9 @@ async def transcribe(
     data = result.model_dump()
     data["duration"] = wav_duration_seconds(audio_bytes)
     try:
-        # model_id is intentionally "" here (STT usage isn't tracked per model yet):
-        # cost resolution will find no pricing row and resolve to $0, but the
-        # usage event is still recorded/attributed -- $0 here is expected, not a bug.
         await record_usage(
             user_id=current_user_id(request) or "", profile_id="",
-            kind="stt", engine=payload.engine, model_id="",
+            kind="stt", engine=payload.engine, model_id=payload.model or "",
             unit="seconds", native_amount=data["duration"],
         )
     except Exception as exc:  # noqa: BLE001 - metering must never break the response

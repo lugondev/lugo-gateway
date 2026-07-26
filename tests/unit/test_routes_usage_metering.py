@@ -168,6 +168,6 @@ async def test_chat_non_tool_path_records_llm_usage_event():
     assert len(llm_rows) == 1
     row = llm_rows[0]
     assert row.unit == "tokens"
-    # No profile/registry override in scope -> engine/model best-effort "".
+    # No profile, no registry default, and an EchoResponder -> genuinely nothing to resolve.
     assert row.engine == ""
     assert row.model_id == ""

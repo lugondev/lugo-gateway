@@ -79,7 +79,7 @@ async def test_extract_and_upsert_dedupes(monkeypatch):
     await session_store.append_message("s1", 1, "assistant", "ok")
     await memory_store.add("pet", "user likes tea")
 
-    async def fake_extract(self, messages, base_url, api_key, model):
+    async def fake_extract(self, messages, base_url, api_key, model, **kwargs):
         return ["User Likes Tea", "User is from Hanoi"]
 
     monkeypatch.setattr(MemoryExtractor, "extract", fake_extract)
@@ -106,14 +106,16 @@ async def test_extract_and_upsert_stores_embedding(monkeypatch):
     await session_store.append_message("s3", 1, "user", "tôi thích trà")
     await session_store.append_message("s3", 1, "assistant", "ok")
 
-    async def fake_extract(self, messages, base_url, api_key, model):
+    async def fake_extract(self, messages, base_url, api_key, model, **kwargs):
         return ["User likes tea"]
 
     async def fake_embed(texts, base_url, api_key, model):
-        return [[1.0, 0.0] for _ in texts]
+        return ([[1.0, 0.0] for _ in texts], 0)
 
     monkeypatch.setattr(MemoryExtractor, "extract", fake_extract)
-    monkeypatch.setattr("app.services.memory.extractor.embed_texts", fake_embed)
+    monkeypatch.setattr(
+        "app.services.memory.extractor.embed_texts_with_usage", fake_embed
+    )
     profile = Profile(
         name="emb",
         llm={"base_url": "http://llm.local/v1", "model": "m"},
@@ -131,14 +133,16 @@ async def test_extract_and_upsert_embed_length_mismatch_drops_no_facts(monkeypat
     await session_store.append_message("s5", 1, "user", "x")
     await session_store.append_message("s5", 1, "assistant", "y")
 
-    async def fake_extract(self, messages, base_url, api_key, model):
+    async def fake_extract(self, messages, base_url, api_key, model, **kwargs):
         return ["fact one", "fact two", "fact three"]
 
     async def short_embed(texts, base_url, api_key, model):
-        return [[1.0, 0.0]]  # shorter than the 3 input texts
+        return ([[1.0, 0.0]], 0)  # shorter than the 3 input texts
 
     monkeypatch.setattr(MemoryExtractor, "extract", fake_extract)
-    monkeypatch.setattr("app.services.memory.extractor.embed_texts", short_embed)
+    monkeypatch.setattr(
+        "app.services.memory.extractor.embed_texts_with_usage", short_embed
+    )
     profile = Profile(
         name="emb3",
         llm={"base_url": "http://llm.local/v1", "model": "m"},
@@ -159,14 +163,16 @@ async def test_extract_and_upsert_cosine_dedup(monkeypatch):
     await session_store.append_message("s4", 1, "user", "x")
     await session_store.append_message("s4", 1, "assistant", "y")
 
-    async def fake_extract(self, messages, base_url, api_key, model):
+    async def fake_extract(self, messages, base_url, api_key, model, **kwargs):
         return ["User loves tea"]  # different string, near-identical meaning
 
     async def fake_embed(texts, base_url, api_key, model):
-        return [[1.0, 0.02] for _ in texts]  # cosine ~1.0 vs stored
+        return ([[1.0, 0.02] for _ in texts], 0)  # cosine ~1.0 vs stored
 
     monkeypatch.setattr(MemoryExtractor, "extract", fake_extract)
-    monkeypatch.setattr("app.services.memory.extractor.embed_texts", fake_embed)
+    monkeypatch.setattr(
+        "app.services.memory.extractor.embed_texts_with_usage", fake_embed
+    )
     profile = Profile(
         name="emb2",
         llm={"base_url": "http://llm.local/v1", "model": "m"},

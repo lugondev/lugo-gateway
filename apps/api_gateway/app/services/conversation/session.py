@@ -388,8 +388,20 @@ class ConversationSession:
             prompt_tokens = last_usage.get("prompt_tokens")
             completion_tokens = last_usage.get("completion_tokens")
             native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
-            engine = (self.profile.llm.engine if self.profile else "") or ""
-            model_id = (self.profile.llm.model if self.profile else "") or ""
+            pinned_model = (self.profile.llm.model if self.profile else "") or ""
+            # The responder holds the model actually sent to the provider.
+            model_id = getattr(self.responder, "model", "") or pinned_model or ""
+            # The profile's engine may ONLY be paired with that model when the
+            # profile is where the model came from. When the model was resolved
+            # from the registry default instead, the profile's engine belongs to
+            # a different row -- pairing them would price the call at the wrong
+            # provider's rate and bill the wrong provider quota. Blank engine
+            # lets resolve_usage_model() derive the engine that owns this model.
+            engine = (
+                ((self.profile.llm.engine if self.profile else "") or "")
+                if model_id and model_id == pinned_model
+                else ""
+            )
             await record_usage(
                 user_id=self.cfg.identity_user_id or "", profile_id=self.cfg.profile_name or "",
                 kind="llm", engine=engine, model_id=model_id, unit="tokens",

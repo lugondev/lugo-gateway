@@ -36,13 +36,14 @@ function _render(host, rows) {
   host.innerHTML = `
     <table class="data-table">
       <thead>
-        <tr><th>Kind</th><th>Model</th><th>Cost (USD)</th><th>Native amount</th><th>Requests</th></tr>
+        <tr><th>Kind</th><th>Engine</th><th>Model</th><th>Cost (USD)</th><th>Native amount</th><th>Requests</th></tr>
       </thead>
       <tbody>
         ${sorted.map((r) => `
           <tr>
             <td>${escapeHtml(String(r.kind || ""))}</td>
-            <td><code>${escapeHtml(String(r.model_id || "") || "(none)")}</code></td>
+            <td>${escapeHtml(String(r.engine || "") || "-")}</td>
+            <td><code>${escapeHtml(String(r.model_id || "") || "(not recorded)")}</code></td>
             <td>${_fmtCost(r.cost_usd)}</td>
             <td>${_fmtNum(r.native_amount)}</td>
             <td>${_fmtNum(r.count)}</td>
@@ -50,7 +51,7 @@ function _render(host, rows) {
       </tbody>
       <tfoot>
         <tr>
-          <td colspan="2"><strong>Total</strong></td>
+          <td colspan="3"><strong>Total</strong></td>
           <td><strong>${_fmtCost(tc)}</strong></td>
           <td><strong>${_fmtNum(tn)}</strong></td>
           <td><strong>${_fmtNum(tq)}</strong></td>

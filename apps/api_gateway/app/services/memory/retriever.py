@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from app.services.memory.embedder import cosine, embed_texts
+from app.services.memory.embedder import cosine, embed_texts_with_usage
 from app.services.memory.store import memory_store, profile_doc_store
 from app.services.profiles.models import Profile
+from app.services.usage.recorder import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ class MemoryRetriever:
         doc_block = _truncate_at_boundary(doc_block, MAX_DOC_CHARS)
         items = await memory_store.list(profile.name, user_id=user_id)
         if profile.memory.mode == "semantic" and query and items:
-            items = await self._semantic_filter(items, query, profile)
+            items = await self._semantic_filter(items, query, profile, user_id)
         buffer_lines: list[str] = []
         total = len(doc_block)
         header = "## Recent notes\n"
@@ -69,7 +70,7 @@ class MemoryRetriever:
         return "\n\n".join(parts)
 
     async def _semantic_filter(
-        self, items: list[dict], query: str, profile: Profile
+        self, items: list[dict], query: str, profile: Profile, user_id: str | None = None
     ) -> list[dict]:
         """Top-k by cosine similarity; falls back to the full list on any gap."""
         with_vec = [i for i in items if i.get("embedding")]
@@ -81,15 +82,25 @@ class MemoryRetriever:
             )
             return items
         try:
-            qvec = (
-                await embed_texts(
-                    [query], profile.llm.base_url, profile.llm.api_key,
-                    profile.memory.embed_model,
-                )
-            )[0]
+            vectors, tokens = await embed_texts_with_usage(
+                [query], profile.llm.base_url, profile.llm.api_key,
+                profile.memory.embed_model,
+            )
+            qvec = vectors[0]
         except Exception as exc:  # noqa: BLE001 - fall back to all memories
             logger.warning("semantic memory embed failed, using all: %s", exc)
             return items
+        # This runs on EVERY semantic-mode turn, so it's the embedding spend
+        # that actually adds up. Metered after the call succeeds, never before.
+        try:
+            await record_usage(
+                user_id=user_id or "", profile_id=profile.name,
+                kind="embed", engine=profile.llm.engine or "",
+                model_id=profile.memory.embed_model, unit="tokens",
+                native_amount=tokens, prompt_tokens=tokens,
+            )
+        except Exception as exc:  # noqa: BLE001 - metering must never break retrieval
+            logger.warning("memory query embed metering failed: %s", exc)
         scored = sorted(
             with_vec, key=lambda i: cosine(qvec, i["embedding"]), reverse=True
         )

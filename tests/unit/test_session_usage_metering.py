@@ -244,9 +244,196 @@ async def test_fast_path_stt_switch_never_pairs_new_engine_with_old_pinned_model
         # The bug: pairing the switched-to engine with the OLD engine's pinned
         # model. That pair was never used together and misses the registry
         # lookup. Recorded model_id must not be the stale pin.
+        # Resolution finds no catalog default and no registry row for a stub
+        # engine, so it stays blank -- the point of the assertion is that it
+        # is not the stale pin.
         assert stt.model_id != "pinned-for-original-engine"
         assert stt.model_id == ""
     finally:
         stt_service.providers.pop("stub-meter-stt", None)
         stt_service.providers.pop("stub-meter-stt-fast", None)
         tts_service.providers.pop("stub-meter-tts", None)
+
+
+async def test_llm_usage_names_the_responders_model_when_the_profile_pins_none(
+    monkeypatch, tmp_path
+):
+    """A profile with no llm.model still runs a real model (build_responder_ex
+    falls back to the registry default). The usage row must name THAT model,
+    read off the responder, not blank."""
+    stt_service.providers["stub-attr-stt"] = _StubSTT()
+    tts_service.providers["stub-attr-tts"] = _StubTTS()
+
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    # No llm.model and no llm.engine -- the case that produced ('', '') rows.
+    fresh_profiles.upsert(Profile(name="attr-profile", llm=LlmConfig()))
+
+    try:
+        events: list = []
+
+        async def emit(name, **p):
+            events.append((name, p))
+
+        async def emit_audio(pkt):
+            pass
+
+        # profile_name/stt_engine/tts_engine must match the profile and stub
+        # providers registered above -- this file's _cfg() defaults to the
+        # OTHER neighboring tests' names ("metered-profile", "stub-meter-*").
+        cfg = _cfg(profile_name="attr-profile", stt_engine="stub-attr-stt", tts_engine="stub-attr-tts")
+        sess = ConversationSession(cfg, emit, emit_audio)
+        await sess.start()
+        # Stand in for whatever responder build_responder_ex returned, with the
+        # model attribute a real OpenAICompatResponder carries.
+        sess.responder.model = "resolved-by-responder"
+        sess.responder.last_usage = {"prompt_tokens": 11, "completion_tokens": 3}
+        await sess._record_llm_usage()
+        await sess.close()
+
+        rows = await _rows()
+        llm = next(r for r in rows if r.kind == "llm")
+        assert llm.model_id == "resolved-by-responder"
+        assert llm.prompt_tokens == 11 and llm.completion_tokens == 3
+    finally:
+        stt_service.providers.pop("stub-attr-stt", None)
+        tts_service.providers.pop("stub-attr-tts", None)
+
+
+async def test_profile_pinned_model_used_when_responder_has_no_model_attr(
+    monkeypatch, tmp_path
+):
+    """With no base_url and no seeded Model Registry default, build_responder_ex
+    returns the real EchoResponder, which carries no `.model` attribute at all
+    (unlike OpenAICompatResponder). getattr(responder, "model", "") is then ""
+    for both the pre-fix and post-fix resolution, so this only locks in the
+    fallback-to-profile-pin path, not the responder-wins path (see the
+    differs-from-pin test below for that)."""
+    stt_service.providers["stub-attr2-stt"] = _StubSTT()
+    tts_service.providers["stub-attr2-tts"] = _StubTTS()
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    fresh_profiles.upsert(Profile(
+        name="attr2-profile",
+        llm=LlmConfig(model="pinned-model", engine="pinned-engine"),
+    ))
+    try:
+        async def emit(name, **p):
+            pass
+
+        async def emit_audio(pkt):
+            pass
+
+        cfg = _cfg(profile_name="attr2-profile", stt_engine="stub-attr2-stt", tts_engine="stub-attr2-tts")
+        sess = ConversationSession(cfg, emit, emit_audio)
+        await sess.start()
+        assert not hasattr(sess.responder, "model")  # sanity: EchoResponder, not stamped
+        sess.responder.last_usage = {"prompt_tokens": 4, "completion_tokens": 1}
+        await sess._record_llm_usage()
+        await sess.close()
+        rows = await _rows()
+        llm = next(r for r in rows if r.kind == "llm")
+        assert (llm.engine, llm.model_id) == ("pinned-engine", "pinned-model")
+    finally:
+        stt_service.providers.pop("stub-attr2-stt", None)
+        tts_service.providers.pop("stub-attr2-tts", None)
+
+
+async def test_llm_usage_names_the_responders_model_even_when_it_differs_from_the_pin(
+    monkeypatch, tmp_path
+):
+    """The discriminating case: a profile pins one model, but the responder
+    that actually ran the turn carries a DIFFERENT model string (e.g. the pin
+    was resolved through a registry override, or is simply stale). The model
+    actually sent to the provider -- read off the responder -- must win over
+    the profile pin.
+
+    `engine` must NOT come from the profile here. The profile's engine labels
+    the row the profile pinned; once the model differs, that engine belongs to
+    a different registry row, and pairing the two would price the call at the
+    wrong provider's rate and charge the wrong provider's quota. Blank engine
+    hands the pair to resolve_usage_model(), whose reverse model->engine lookup
+    names the engine that actually owns the responder's model -- and, when no
+    registry row claims that model (as here), leaves engine blank rather than
+    asserting a coherent-looking but false pairing."""
+    stt_service.providers["stub-attr3-stt"] = _StubSTT()
+    tts_service.providers["stub-attr3-tts"] = _StubTTS()
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    fresh_profiles.upsert(Profile(
+        name="attr3-profile",
+        llm=LlmConfig(model="pinned-model", engine="pinned-engine"),
+    ))
+    try:
+        async def emit(name, **p):
+            pass
+
+        async def emit_audio(pkt):
+            pass
+
+        cfg = _cfg(profile_name="attr3-profile", stt_engine="stub-attr3-stt", tts_engine="stub-attr3-tts")
+        sess = ConversationSession(cfg, emit, emit_audio)
+        await sess.start()
+        sess.responder.model = "actually-called-model"
+        sess.responder.last_usage = {"prompt_tokens": 4, "completion_tokens": 1}
+        await sess._record_llm_usage()
+        await sess.close()
+        rows = await _rows()
+        llm = next(r for r in rows if r.kind == "llm")
+        assert llm.model_id == "actually-called-model"
+        assert llm.engine == ""
+    finally:
+        stt_service.providers.pop("stub-attr3-stt", None)
+        tts_service.providers.pop("stub-attr3-tts", None)
+
+
+async def test_unpinned_model_is_attributed_to_the_registrys_engine_not_the_profiles(
+    monkeypatch, tmp_path
+):
+    """The mis-billing scenario: the profile pins an ENGINE but no model, so
+    build_responder_ex resolved the model from the Model Registry default --
+    and that model lives on a DIFFERENT engine than the profile names.
+
+    Pairing the profile's engine with the registry's model would make
+    find(kind, engine, model_id) match the profile engine's row, pricing the
+    call at that provider's rate and debiting that provider's quota for a
+    request it never served. The row must name the engine that actually owns
+    the model. Without the fix this records "profile-engine"."""
+    from app.services.db.engine import init_db
+    from app.services.model_registry.store import model_registry_store
+
+    stt_service.providers["stub-attr4-stt"] = _StubSTT()
+    tts_service.providers["stub-attr4-tts"] = _StubTTS()
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    # Engine pinned, model NOT pinned -- the exact shape that mis-bills.
+    fresh_profiles.upsert(Profile(
+        name="attr4-profile", llm=LlmConfig(engine="profile-engine"),
+    ))
+    await init_db()
+    # The registry says this model belongs to a different engine. Not is_default,
+    # so _active_llm_entry() still finds nothing and build_responder_ex keeps
+    # returning the in-process EchoResponder (no network I/O in this test).
+    await model_registry_store.create("llm", "registry-engine", "registry-model", "Registry")
+    try:
+        async def emit(name, **p):
+            pass
+
+        async def emit_audio(pkt):
+            pass
+
+        cfg = _cfg(profile_name="attr4-profile", stt_engine="stub-attr4-stt", tts_engine="stub-attr4-tts")
+        sess = ConversationSession(cfg, emit, emit_audio)
+        await sess.start()
+        sess.responder.model = "registry-model"
+        sess.responder.last_usage = {"prompt_tokens": 7, "completion_tokens": 2}
+        await sess._record_llm_usage()
+        await sess.close()
+        rows = await _rows()
+        llm = next(r for r in rows if r.kind == "llm")
+        assert llm.model_id == "registry-model"
+        assert llm.engine == "registry-engine"
+        assert llm.engine != "profile-engine"
+    finally:
+        stt_service.providers.pop("stub-attr4-stt", None)
+        tts_service.providers.pop("stub-attr4-tts", None)

@@ -18,6 +18,7 @@ from app.services.memory.retriever import MAX_DOC_CHARS, _truncate_at_boundary
 from app.services.memory.store import memory_store, profile_doc_store
 from app.services.profiles.models import Profile
 from app.services.system_config import system_config_store
+from app.services.usage.recorder import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,8 @@ class MemoryCompactor:
         return profile.memory.extractor_model or profile.llm.model
 
     async def _call_llm(
-        self, profile: Profile, current_doc: str, facts: list[str]
+        self, profile: Profile, current_doc: str, facts: list[str],
+        user_id: str | None = None,
     ) -> str:
         prompt = (
             "CURRENT PROFILE:\n"
@@ -66,7 +68,23 @@ class MemoryCompactor:
                 },
             )
             resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
+            body = resp.json()
+            content = body["choices"][0]["message"]["content"]
+        # Compaction sends the whole fact buffer -- the most expensive single
+        # memory call there is. Meter it.
+        try:
+            usage = body.get("usage") or {}
+            prompt_tokens = usage.get("prompt_tokens")
+            completion_tokens = usage.get("completion_tokens")
+            await record_usage(
+                user_id=user_id or "", profile_id=profile.name, kind="llm",
+                engine=profile.llm.engine or "", model_id=self._model(profile),
+                unit="tokens",
+                native_amount=(prompt_tokens or 0) + (completion_tokens or 0),
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001 - metering must never break compaction
+            logger.warning("memory compaction usage metering failed: %s", exc)
         return str(content).strip()
 
     async def maybe_compact(self, profile: Profile, user_id: str | None = None) -> bool:
@@ -96,7 +114,7 @@ class MemoryCompactor:
         facts = [i["content"] for i in items]
         current = await profile_doc_store.get(profile.name, user_id=user_id)
         current_doc = current["content"] if current else ""
-        new_doc = (await self._call_llm(profile, current_doc, facts) or "").strip()
+        new_doc = (await self._call_llm(profile, current_doc, facts, user_id=user_id) or "").strip()
         if not new_doc:
             logger.warning(
                 "compaction produced empty doc for %s; keeping facts", profile.name

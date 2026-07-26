@@ -13,6 +13,7 @@ from app.services.model_registry.cascade import clear_bindings_for
 from app.services.model_registry.config_schema import config_schema_for
 from app.services.model_registry.store import model_registry_store
 from app.services.providers.resolve import resolve_credentials
+from app.services.usage.price_schema import PRICE_UNIT_BY_KIND, apply_price_to_config
 from app.services.stt.providers.http_stt_provider import HttpSttProvider
 from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
 from app.services.stt.providers.qwencloud_provider import QwenCloudSttProvider
@@ -72,14 +73,15 @@ def _location(kind: str, engine: str) -> str:
       qwen3_asr, omnivoice, vieneu, edge_tts, qwen3_tts_*, voxcpm2, ...).
     - "service": calls out to an external HTTP API -- http_stt/http_tts,
       whisper_service/eventlab, the OpenRouter-backed STT engines
-      (qwen3_asr_or/whisper_or), and every kind="llm" entry. OpenRouter,
+      (qwen3_asr_or/whisper_or), every kind="llm" entry, and every
+      kind="embed" entry (an OpenAI-compatible `/embeddings` host). OpenRouter,
       OpenAI, Together, ... are all just "service"; there is no third bucket.
 
     Whether a service needs a *configurable* base_url is a separate axis --
     see _requires_base_url (OpenRouter hits a fixed endpoint, api_key only).
     """
     if (
-        kind == "llm"
+        kind in ("llm", "embed")
         or engine in _SERVICE_STT_ENGINES
         or engine in _SERVICE_TTS_ENGINES
         or engine in _BASE_URL_STT_ENGINES
@@ -203,7 +205,66 @@ async def get_config_schema(kind: str, engine: str) -> dict:
     return {"fields": config_schema_for(kind, engine)}
 
 
-_VALID_KINDS = {"stt", "tts", "llm"}
+class PriceItem(BaseModel):
+    id: str
+    price: dict | None = None
+
+
+class BulkPriceRequest(BaseModel):
+    prices: list[PriceItem]
+
+
+# NOTE: /prices must stay ABOVE the "/{entry_id}" routes -- FastAPI matches in
+# declaration order, so a later PATCH /{entry_id} would swallow this as
+# entry_id="prices".
+@router.get("/prices")
+async def list_prices() -> dict:
+    """Every registry entry with its pricing, for the admin Pricing tab.
+    Unpriced entries are included with price=null -- "which models are still
+    uncosted" is the main question this table answers."""
+    data = []
+    for entry in await model_registry_store.list_all():
+        config = entry.get("config") or {}
+        data.append({
+            "id": entry["id"],
+            "kind": entry["kind"],
+            "engine": entry["engine"],
+            "model_id": entry["model_id"],
+            "label": entry["label"],
+            "provider_id": config.get("provider_id", ""),
+            "unit": PRICE_UNIT_BY_KIND.get(entry["kind"], ""),
+            "price": config.get("price"),
+        })
+    return {"success": True, "data": data}
+
+
+@router.patch("/prices")
+async def update_prices(payload: BulkPriceRequest) -> dict:
+    """Bulk price save. Validates EVERY item before writing ANY of them: a
+    half-applied price table leaves the admin unable to tell which rows landed."""
+    entries = {e["id"]: e for e in await model_registry_store.list_all()}
+    planned: list[tuple[str, dict]] = []
+    for item in payload.prices:
+        entry = entries.get(item.id)
+        if entry is None:
+            raise HTTPException(
+                status_code=404, detail=f"model registry entry '{item.id}' not found"
+            )
+        try:
+            planned.append((
+                item.id,
+                apply_price_to_config(entry["kind"], entry.get("config") or {}, item.price),
+            ))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail=f"{entry['label'] or item.id}: {exc}"
+            ) from exc
+    for entry_id, config in planned:
+        await model_registry_store.set_fields(entry_id, config=config)
+    return {"success": True, "data": {"updated": len(planned)}}
+
+
+_VALID_KINDS = {"stt", "tts", "llm", "embed"}
 
 
 @router.get("/options")
@@ -256,6 +317,15 @@ async def get_defaults() -> dict:
 
 @router.post("")
 async def create_entry(payload: CreateEntryRequest) -> dict:
+    # Validate/normalize the price before anything else: the add-time test call
+    # is a real network round-trip, and a typo'd price shouldn't cost one.
+    try:
+        payload.config = apply_price_to_config(
+            payload.kind, payload.config, (payload.config or {}).get("price")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     _validate_known_engine(payload.kind, payload.engine)
 
     # A create() always defaults to enabled=True (no explicit `enabled` field
@@ -309,6 +379,12 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
                 await responder.reply([{"role": "user", "content": payload.sample_text}])
             finally:
                 await responder.aclose()
+        elif payload.kind == "embed":
+            # Same "prove it works before we store it" contract as the other
+            # kinds: one tiny embed call validates endpoint + key + model id.
+            from app.services.memory.embedder import embed_texts
+
+            await embed_texts([payload.sample_text], eff_base_url, eff_api_key, payload.model_id)
         else:
             raise HTTPException(status_code=400, detail=f"unknown kind '{payload.kind}'")
     except HTTPException:
@@ -335,6 +411,21 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
 @router.patch("/{entry_id}")
 async def update_entry(entry_id: str, payload: UpdateEntryRequest) -> dict:
     fields = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if "config" in fields and "price" in (fields["config"] or {}):
+        # The kind isn't in the payload -- it comes from the stored row, which is
+        # also what tells us which unit this price must use.
+        existing = await model_registry_store.get(entry_id)
+        if existing is None:
+            raise HTTPException(
+                status_code=404, detail=f"model registry entry '{entry_id}' not found"
+            )
+        try:
+            fields["config"] = apply_price_to_config(
+                existing["kind"], fields["config"], fields["config"]["price"]
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     was_enabled = None
     if fields.get("enabled") is False:
         # Snapshot before the write: only a True -> False transition is the admin

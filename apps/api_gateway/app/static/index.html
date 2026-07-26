@@ -127,6 +127,12 @@
               </button>
             </li>
             <li class="admin-only">
+              <button class="nav-item" data-section="pricing">
+                <span class="nav-icon">&#128176;</span>
+                <span class="nav-label">Pricing</span>
+              </button>
+            </li>
+            <li class="admin-only">
               <button class="nav-item" data-section="quotas">
                 <span class="nav-icon">&#128683;</span>
                 <span class="nav-label">Quotas</span>
@@ -830,6 +836,7 @@
                     <option value="stt">stt</option>
                     <option value="tts">tts</option>
                     <option value="llm">llm</option>
+                    <option value="embed">embed</option>
                   </select>
                 </label>
                 <label>
@@ -862,6 +869,7 @@
                     <option value="stt">stt</option>
                     <option value="tts">tts</option>
                     <option value="llm">llm</option>
+                    <option value="embed">embed</option>
                   </select>
                 </label>
                 <label id="registry-add-engine-wrap">
@@ -962,7 +970,7 @@
                 <h2>Usage</h2>
                 <button id="usage-refresh" class="ghost mini">Refresh</button>
               </div>
-              <p class="hint">Recorded usage (LLM tokens, STT seconds, TTS characters) and cost, aggregated. Cost is $0 for models without a configured price.</p>
+              <p class="hint">Recorded usage (LLM tokens, STT seconds, TTS characters) and cost, aggregated. Cost is $0 for models without a configured price. Set prices in the Pricing tab.</p>
               <div class="row tight">
                 <label>
                   Group by
@@ -983,6 +991,28 @@
                 <p class="hint">Loading&#8230;</p>
               </div>
               <p id="usage-status" class="meta"></p>
+            </section>
+          </div>
+
+          <!-- ============================== PRICING ============================== -->
+          <div class="section" id="section-pricing">
+            <section class="card">
+              <div class="card-head">
+                <h2>Pricing</h2>
+                <button id="pricing-refresh" class="ghost mini">Refresh</button>
+              </div>
+              <p class="hint">Per-model prices. A model with no price still records usage, but at $0 cost, and $-based quotas never see it. Units are fixed per kind: llm/embed = USD per 1M tokens (in/out), stt = USD per minute of audio, tts = USD per 1000 characters. On a two-field kind, a blank in or out field is saved as $0 for that direction, not as "leave it unchanged".</p>
+              <label class="inline">
+                <input id="pricing-only-unpriced" type="checkbox" />
+                Show only models without a price
+              </label>
+              <div id="pricing-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <div class="actions end">
+                <button id="pricing-save-btn">Save prices</button>
+              </div>
+              <p id="pricing-status" class="meta"></p>
             </section>
           </div>
 
@@ -1039,7 +1069,7 @@
                 <h2>My Usage</h2>
                 <button id="my-usage-refresh" class="ghost mini">Refresh</button>
               </div>
-              <p class="hint">Your own recorded usage (LLM tokens, STT seconds, TTS characters) and cost. Cost is $0 for models without a configured price.</p>
+              <p class="hint">Your own recorded usage (LLM tokens, STT seconds, TTS characters) and cost. Cost is $0 for models without a configured price. Rows marked "(not recorded)" are older requests logged before per-model attribution; the engine is still shown.</p>
               <div class="row tight">
                 <label>
                   Month (optional)

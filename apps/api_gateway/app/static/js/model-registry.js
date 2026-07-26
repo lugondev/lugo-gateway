@@ -48,7 +48,7 @@ async function _loadEngineOptions(announce = true) {
   const wrap = el("registry-add-engine-wrap");
   if (!sel) return;
   const hasProvider = !!(el("registry-add-provider")?.value || "").trim();
-  if (kind === "llm" || hasProvider) { if (wrap) wrap.classList.add("hidden"); void _loadModelChoices(announce); return; }
+  if (kind === "llm" || kind === "embed" || hasProvider) { if (wrap) wrap.classList.add("hidden"); void _loadModelChoices(announce); return; }
   if (wrap) wrap.classList.remove("hidden");
   const prev = sel.value;
   sel.innerHTML = "";
@@ -89,7 +89,7 @@ function _maybePrefillBaseUrl() {
 function _effectiveEngine() {
   const kind = el("registry-add-kind")?.value;
   const providerId = (el("registry-add-provider")?.value || "").trim();
-  if (kind === "llm") {
+  if (kind === "llm" || kind === "embed") {
     const name = el("registry-add-provider")?.selectedOptions?.[0]?.textContent || "";
     // provider option text is `name — label`; take the name part; fallback "custom"
     return (name.split(" — ")[0] || "custom").trim() || "custom";
@@ -516,14 +516,29 @@ function _renderConfigForm(id, schema, config) {
 }
 
 // Gather the form into a typed config object. Throws on a bad number.
+//
+// Starts from the row's CURRENTLY-STORED config (same object that seeds the raw
+// JSON textarea) and overlays the schema fields on top. PATCH {config} replaces
+// the stored config wholesale, so a bare form-only object would delete every key
+// the schema doesn't describe -- most damagingly `price`, set from the Pricing
+// tab: editing one engine setting here would silently make the model cost $0
+// from then on. `provider_id` had the same exposure. Anything the form doesn't
+// know about now survives a Form save.
+//
+// Direction matters: stored config FIRST, form fields SECOND, so what the admin
+// just typed wins over the stale stored value. And a key the form DOES describe
+// but the admin left blank is still removed -- that is the pre-existing "omit
+// empty -> resolver falls back to default" behaviour, which is the only way to
+// clear a schema field from the form.
 function _configFromForm(id) {
   const host = _detailEl(id).querySelector("[data-config-form]");
-  const out = {};
+  const stored = registryData.find((e) => e.id === id)?.config || {};
+  const out = { ...stored };
   host.querySelectorAll("[data-cfg]").forEach((input) => {
     const key = input.getAttribute("data-cfg");
     if (input.type === "checkbox") { out[key] = input.checked; return; }
     const raw = input.value.trim();
-    if (raw === "") return; // omit empty -> resolver falls back to default
+    if (raw === "") { delete out[key]; return; } // blank -> resolver falls back to default
     const t = input.getAttribute("data-cfg-type");
     if (t === "int" || t === "float") {
       const n = Number(raw);
@@ -617,7 +632,7 @@ async function bulkPatchEntries(ids, fields, verb) {
 function _updateKindFields() {
   const kind = el("registry-add-kind").value;
   const hasProvider = !!(el("registry-add-provider")?.value || "").trim();
-  const isLlmOrStt = kind === "llm" || kind === "stt";
+  const isLlmOrStt = kind === "llm" || kind === "embed" || kind === "stt";
   // Base URL matters for every kind now: llm/stt point at an OpenAI-compatible
   // endpoint, and tts (e.g. http_tts) needs one too -- apps/model_service is
   // wired in as a remote engine the same way for all three.
@@ -646,7 +661,7 @@ export async function createModelRegistryEntry() {
     // Linked to a provider: creds come from the provider row; leave base_url/
     // api_key blank and stash the link in config so the backend resolves them.
     payload.config = { provider_id: providerId };
-  } else if (kind === "llm" || kind === "stt") {
+  } else if (kind === "llm" || kind === "embed" || kind === "stt") {
     // stt: base_url is only meaningful for remote engines (whisper_service,
     // eventlab); api_key only for OpenRouter-backed engines (qwen3_asr_or/
     // whisper_or) -- other stt engines just ignore either being empty.

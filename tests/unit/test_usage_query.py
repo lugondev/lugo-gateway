@@ -88,3 +88,21 @@ async def test_summarize_for_user_scopes_and_groups_by_kind_model():
     other = await summarize_for_user("u2")
     assert len(other) == 1
     assert other[0]["kind"] == "tts"
+
+
+async def test_summarize_for_user_groups_by_engine_too():
+    await init_db()
+    from app.services.usage.recorder import record_usage
+
+    await record_usage(user_id="u-eng", profile_id="p", kind="stt", engine="engine-a",
+                       model_id="m1", unit="seconds", native_amount=10)
+    await record_usage(user_id="u-eng", profile_id="p", kind="stt", engine="engine-b",
+                       model_id="m1", unit="seconds", native_amount=5)
+
+    rows = await summarize_for_user("u-eng")
+    # Same kind + model, different engines -> two rows, each naming its engine.
+    assert {(r["kind"], r["engine"], r["model_id"]) for r in rows} == {
+        ("stt", "engine-a", "m1"),
+        ("stt", "engine-b", "m1"),
+    }
+    assert {r["native_amount"] for r in rows} == {10.0, 5.0}

@@ -88,3 +88,4 @@ def test_non_admin_forbidden_on_summary_but_ok_on_me(client, _with_password):
     assert len(body["data"]) == 1
     assert body["data"][0]["kind"] == "llm"
     assert body["data"][0]["model_id"] == "qwen-max"
+    assert "engine" in body["data"][0]

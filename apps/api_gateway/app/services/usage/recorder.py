@@ -6,6 +6,7 @@ import uuid
 from app.services.db.engine import db_session
 from app.services.db.models import UsageEvent
 from app.services.model_registry.store import model_registry_store
+from app.services.usage.attribution import resolve_usage_model
 from app.services.usage.pricing import compute_cost
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,10 @@ async def record_usage(*, user_id, profile_id, kind, engine, model_id, unit,
     Model Registry entry, computes cost. NEVER raises into the caller -- a metering
     failure must not break the STT/TTS/LLM turn that triggered it."""
     try:
+        # Blanks get resolved here rather than at each of the 9 call sites: a
+        # blank model_id can't match the registry row that carries the price, so
+        # it would silently cost $0 forever (and read as "(none)" in the UI).
+        engine, model_id = await resolve_usage_model(kind, engine, model_id)
         entry = await model_registry_store.find(kind, engine, model_id)
         cfg = (entry or {}).get("config") or {}
         provider_id = cfg.get("provider_id") or ""
