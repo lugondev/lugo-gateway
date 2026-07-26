@@ -206,6 +206,7 @@ async def stt_stream(websocket: WebSocket) -> None:
     engine = websocket.query_params.get("engine", system_config_store.get().engines.default_stt_engine)
     language = websocket.query_params.get("language")
     model = websocket.query_params.get("model")
+    profile = websocket.query_params.get("profile")
     sample_rate = int(
         websocket.query_params.get(
             "sample_rate", settings.stt_stream_sample_rate
@@ -268,7 +269,7 @@ async def stt_stream(websocket: WebSocket) -> None:
             return
         try:
             await record_usage(
-                user_id=caller_id, profile_id="",
+                user_id=caller_id, profile_id=profile or "",
                 kind="stt", engine=engine, model_id=model or "",
                 unit="seconds", native_amount=seconds,
             )

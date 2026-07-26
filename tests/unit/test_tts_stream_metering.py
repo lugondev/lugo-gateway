@@ -76,6 +76,30 @@ async def test_the_stream_job_meters_every_chunk_it_synthesizes(_stub_engine):
     assert total_chars <= len("Xin chao ban. Hom nay the nao?")
 
 
+async def test_the_stream_job_records_the_profile_when_given_one(_stub_engine):
+    """Same profile-attribution gap as the REST STT/TTS routes, but for the
+    background-job /v1/tts/stream path: without this the profile dimension of
+    the dashboards is inconsistent depending on which endpoint a client used."""
+    await init_db()
+    quota_store.invalidate()
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v1/tts/stream?profile=my-profile",
+            json={"text": "Xin chao", "engine": "stub-stream-tts"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        for _ in range(50):
+            rows = await _rows()
+            if rows:
+                break
+            await asyncio.sleep(0.02)
+
+    rows = await _rows()
+    assert len(rows) >= 1
+    assert all(r.profile_id == "my-profile" for r in rows)
+
+
 async def test_an_over_quota_stream_job_is_refused_with_429_and_never_starts(_stub_engine):
     await init_db()
     quota_store.invalidate()

@@ -209,6 +209,29 @@ async def test_a_disconnect_without_a_flush_still_records(_stub_engine):
     assert abs(rows[0].native_amount - 0.4) < 1e-6
 
 
+async def test_stream_records_the_profile_when_given_one(_stub_engine):
+    """Same profile-attribution gap as the REST STT/TTS routes, but for the WS
+    /v1/stt/stream path: without this the profile dimension of the dashboards
+    is inconsistent depending on which endpoint a client used."""
+    await init_db()
+    quota_store.invalidate()
+    client = TestClient(app)
+    with client.websocket_connect(
+        "/v1/stt/stream?engine=stub-stream-stt&sample_rate=16000&denoise=false&vad=false&profile=my-profile"
+    ) as ws:
+        assert ws.receive_json()["event_type"] == "session_started"
+        ws.send_bytes(_FRAME)
+        ws.send_text(json.dumps({"type": "end"}))
+        # "done", not "final": see test_stream_records_the_audio_seconds_it_received.
+        for _ in range(5):
+            if ws.receive_json()["event_type"] == "done":
+                break
+
+    rows = await _rows()
+    assert len(rows) == 1
+    assert rows[0].profile_id == "my-profile"
+
+
 async def test_a_zero_sample_rate_does_not_crash_the_stream(_stub_engine):
     """sample_rate is a query param; metering's len(frame) / 2 / sample_rate
     must not turn a bogus value into a ZeroDivisionError that crashes the

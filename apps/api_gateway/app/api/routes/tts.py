@@ -92,7 +92,7 @@ async def synthesize(payload: TTSRequest, request: Request, profile: str | None 
 
 
 @router.post("/stream")
-async def create_stream_job(payload: TTSRequest, request: Request) -> dict:
+async def create_stream_job(payload: TTSRequest, request: Request, profile: str | None = None) -> dict:
     # Quota pre-flight, synchronous: this endpoint returns a job_id and streams
     # over SSE, so a refusal has to happen here -- reporting it through the event
     # channel would make every client learn a second failure path. Same 429
@@ -114,6 +114,7 @@ async def create_stream_job(payload: TTSRequest, request: Request) -> dict:
     # Read the identity HERE: the background job outlives the request, and the
     # Request object must not be touched from inside it.
     caller_id = current_user_id(request) or ""
+    profile_id = profile or ""
     try:
         await quota_gate(
             user_id=caller_id, provider_id=provider_id,
@@ -148,7 +149,7 @@ async def create_stream_job(payload: TTSRequest, request: Request) -> dict:
                 process_seconds = round(time.perf_counter() - started, 3)
                 try:
                     await record_usage(
-                        user_id=caller_id, profile_id="",
+                        user_id=caller_id, profile_id=profile_id,
                         kind="tts", engine=payload.engine, model_id=payload.model_id or "",
                         unit="chars", native_amount=len(segment or ""),
                     )
