@@ -16,17 +16,16 @@ provider through an indirection these patterns do not match would slip past. Thi
 makes an omission loud; it does not make one impossible.
 """
 
-import re
+import ast
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[2] / "apps" / "api_gateway" / "app"
 
 # The methods that actually reach a provider (network or local inference).
-_CALL_PATTERN = re.compile(
-    r"(?<![\w.])(?:await\s+)?[\w.\[\]()]*\.?"
-    r"(transcribe_bytes|synthesize|reply_stream|reply|open_stream"
-    r"|embed_texts|embed_texts_with_usage)\s*\("
-)
+_PROVIDER_METHODS = {
+    "transcribe_bytes", "synthesize", "reply_stream", "reply", "open_stream",
+    "embed_texts", "embed_texts_with_usage",
+}
 
 # Files that DEFINE these methods rather than call a provider through them.
 _IMPLEMENTATIONS = (
@@ -141,15 +140,6 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "transcribe_bytes above",
         "tests/unit/test_model_registry_test_call_metering.py",
     ),
-    ("services/tts/streaming.py", "synthesize"): (
-        1, "not-a-provider-call",
-        "`asyncio.create_task(_synthesize())` calls a local private helper "
-        "coroutine (leading underscore fools the pattern's prefix match); it "
-        "awaits the injected `synth` callable, not a provider method named "
-        "synthesize -- the real provider call is metered at whichever caller "
-        "binds `synth`",
-        "tests/unit/test_paid_call_site_inventory.py",
-    ),
 }
 
 _VALID_STATUSES = {
@@ -157,64 +147,40 @@ _VALID_STATUSES = {
 }
 
 
-def _blank_triple_quoted(line: str, open_delim: str | None) -> tuple[str, str | None]:
-    """Return (scannable, new_open_delim): `line` with any parts that fall
-    inside a triple-quoted string replaced by spaces of the same length.
-
-    Operates on segments *within* the line, not the whole line, so code before
-    an opening delimiter and code after a closing one are both still present
-    in the returned string -- only the actual string content is blanked. State
-    (which delimiter, if any, is still open) carries into the next line.
-    """
-    out: list[str] = []
-    i = 0
-    n = len(line)
-    while i < n:
-        if open_delim is not None:
-            end = line.find(open_delim, i)
-            if end == -1:
-                out.append(" " * (n - i))
-                i = n
-            else:
-                end += len(open_delim)
-                out.append(" " * (end - i))
-                i = end
-                open_delim = None
-        else:
-            candidates = [
-                (pos, d)
-                for d in ('"""', "'''")
-                if (pos := line.find(d, i)) != -1
-            ]
-            if not candidates:
-                out.append(line[i:])
-                i = n
-            else:
-                pos, delim = min(candidates)
-                out.append(line[i:pos])
-                out.append(" " * len(delim))
-                i = pos + len(delim)
-                open_delim = delim
-    return "".join(out), open_delim
-
-
 def _found_call_sites(root: Path = APP) -> dict[tuple[str, str], int]:
+    """Parse each file with Python's own grammar instead of pattern-matching
+    text -- a hand-written quote tracker keeps finding new ways to be fooled
+    by what a string literal looks like (see git history of this function).
+    ast.parse never confuses a docstring, a comment, or a string containing
+    a stray quote character for code, because it isn't guessing from text at
+    all: a docstring is a string node, not a Call node, full stop.
+    """
     found: dict[tuple[str, str], int] = {}
     for path in sorted(root.rglob("*.py")):
         rel = path.relative_to(root).as_posix()
         if "__pycache__" in rel or any(rel.startswith(p) for p in _IMPLEMENTATIONS):
             continue
-        open_delim: str | None = None  # the """ or ''' we're currently inside, if any
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            # Skip definitions and comments -- we want callers, not declarations.
-            # Only when not already mid-string: a line inside a multi-line
-            # string can start with "#" as plain string content, not a comment.
-            if open_delim is None and stripped.startswith(("def ", "async def ", "#")):
+        source = path.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(source, filename=str(path))
+        except SyntaxError as exc:
+            raise AssertionError(
+                f"{rel}: could not be parsed as Python -- the inventory scanner "
+                f"cannot see calls in this file, which is a problem in its own "
+                f"right, not something to silently skip past: {exc}"
+            ) from exc
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
                 continue
-            scannable, open_delim = _blank_triple_quoted(line, open_delim)
-            for match in _CALL_PATTERN.finditer(scannable):
-                found[(rel, match.group(1))] = found.get((rel, match.group(1)), 0) + 1
+            func = node.func
+            if isinstance(func, ast.Attribute):
+                name = func.attr
+            elif isinstance(func, ast.Name):
+                name = func.id
+            else:
+                continue
+            if name in _PROVIDER_METHODS:
+                found[(rel, name)] = found.get((rel, name), 0) + 1
     return found
 
 
@@ -312,6 +278,36 @@ def test_scanner_skips_def_lines_and_comments(tmp_path):
     )
     found = _found_call_sites(tmp_path)
     assert not found
+
+
+def test_scanner_finds_a_call_after_a_string_containing_a_literal_triple_quote(
+    tmp_path,
+):
+    """A `\"\"\"` sequence inside an ordinary quoted string is just three
+    characters, not a string-opening delimiter -- a hand-written quote tracker
+    can be fooled into thinking it opens a triple-quoted block and silently
+    blank every line after it for the rest of the file. ast.parse never makes
+    this mistake because it parses the real grammar."""
+    (tmp_path / "caller.py").write_text(
+        "x = 'contains \"\"\" literally'\n"
+        "await provider.synthesize(payload)\n"
+    )
+    found = _found_call_sites(tmp_path)
+    assert ("caller.py", "synthesize") in found
+
+
+def test_scanner_finds_a_call_written_across_multiple_lines(tmp_path):
+    """A call is still a call when its argument list is wrapped across lines --
+    ast.parse works from the parsed structure, not from what's on one physical
+    line, so this can never be a blind spot the way a line-oriented pattern
+    could be."""
+    (tmp_path / "caller.py").write_text(
+        "provider.synthesize(\n"
+        "    payload,\n"
+        ")\n"
+    )
+    found = _found_call_sites(tmp_path)
+    assert ("caller.py", "synthesize") in found
 
 
 def test_every_classification_names_a_test_that_exists():
