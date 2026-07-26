@@ -366,6 +366,7 @@ export async function startLhSession() {
         break;
       case "turn_done":
         lh.assistantBubble = null;
+        lh.pendingReplyIsSocial = false;
         setLhStatus("● listening", "status-rec");
         break;
       case "aborted":
