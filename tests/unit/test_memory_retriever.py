@@ -112,9 +112,9 @@ async def test_semantic_mode_top_k(monkeypatch):
     await memory_store.add("pet", "plays guitar", embedding=[0.0, 1.0])
 
     async def fake_embed(texts, base_url, api_key, model):
-        return [[1.0, 0.0]]  # query vector ~ "tea"
+        return [[1.0, 0.0]], 3  # query vector ~ "tea"; fake-but-plausible token count
 
-    monkeypatch.setattr("app.services.memory.retriever.embed_texts", fake_embed)
+    monkeypatch.setattr("app.services.memory.retriever.embed_texts_with_usage", fake_embed)
     profile = Profile(
         name="pet",
         llm={"base_url": "http://llm.local/v1"},
