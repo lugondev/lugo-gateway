@@ -28,6 +28,12 @@ class BufferingStream(STTStream):
 
     Accumulates PCM and transcribes the whole buffer on finalize. Emits no
     partials (the underlying engine is batch-only).
+
+    finalize() consumes what it transcribed: an utterance ends at a flush, so
+    the audio it was billed for is spent. Keeping it would make a repeated
+    `flush` re-send the whole buffer -- another real paid provider request each
+    time, while the socket meters only the audio that arrived since the last
+    flush -- and would replay the previous utterance's transcript.
     """
 
     def __init__(
@@ -47,7 +53,12 @@ class BufferingStream(STTStream):
     async def finalize(self) -> STTResult | None:
         if not self._buffer:
             return None
-        wav = pcm16_to_wav_bytes(bytes(self._buffer), sample_rate=self._sample_rate)
+        pcm = bytes(self._buffer)
+        # Clear BEFORE the (awaited, failable) provider call: a provider error
+        # must not leave the same audio queued for the next flush to pay for
+        # again, and this is the only await between the two flushes.
+        self._buffer.clear()
+        wav = pcm16_to_wav_bytes(pcm, sample_rate=self._sample_rate)
         return await self._provider.transcribe_bytes(wav, self._language, model=self._model)
 
 
