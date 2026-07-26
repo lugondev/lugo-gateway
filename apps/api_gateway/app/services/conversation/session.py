@@ -389,7 +389,15 @@ class ConversationSession:
             completion_tokens = last_usage.get("completion_tokens")
             native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
             engine = (self.profile.llm.engine if self.profile else "") or ""
-            model_id = (self.profile.llm.model if self.profile else "") or ""
+            # The responder holds the model actually sent to the provider -- for a
+            # profile with no llm.model, build_responder_ex resolved the registry
+            # default and only the responder knows which one. Falling back to the
+            # profile pin keeps the explicit-pin case identical to before.
+            model_id = (
+                getattr(self.responder, "model", "")
+                or (self.profile.llm.model if self.profile else "")
+                or ""
+            )
             await record_usage(
                 user_id=self.cfg.identity_user_id or "", profile_id=self.cfg.profile_name or "",
                 kind="llm", engine=engine, model_id=model_id, unit="tokens",

@@ -262,7 +262,15 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 completion_tokens = last_usage.get("completion_tokens")
                 native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
                 usage_engine = (profile.llm.engine if profile else "") or ""
-                usage_model_id = llm_model or (profile.llm.model if profile else "") or ""
+                # The responder holds the model actually sent to the provider --
+                # the only correct source once an admin changes the default;
+                # llm_model/profile pin are fallbacks for responders without one.
+                usage_model_id = (
+                    getattr(responder_obj, "model", "")
+                    or llm_model
+                    or (profile.llm.model if profile else "")
+                    or ""
+                )
                 await record_usage(
                     user_id=identity.user_id or "", profile_id=profile_name or "",
                     kind="llm", engine=usage_engine, model_id=usage_model_id, unit="tokens",

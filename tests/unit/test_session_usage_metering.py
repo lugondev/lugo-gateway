@@ -253,3 +253,83 @@ async def test_fast_path_stt_switch_never_pairs_new_engine_with_old_pinned_model
         stt_service.providers.pop("stub-meter-stt", None)
         stt_service.providers.pop("stub-meter-stt-fast", None)
         tts_service.providers.pop("stub-meter-tts", None)
+
+
+async def test_llm_usage_names_the_responders_model_when_the_profile_pins_none(
+    monkeypatch, tmp_path
+):
+    """A profile with no llm.model still runs a real model (build_responder_ex
+    falls back to the registry default). The usage row must name THAT model,
+    read off the responder, not blank."""
+    stt_service.providers["stub-attr-stt"] = _StubSTT()
+    tts_service.providers["stub-attr-tts"] = _StubTTS()
+
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    # No llm.model and no llm.engine -- the case that produced ('', '') rows.
+    fresh_profiles.upsert(Profile(name="attr-profile", llm=LlmConfig()))
+
+    try:
+        events: list = []
+
+        async def emit(name, **p):
+            events.append((name, p))
+
+        async def emit_audio(pkt):
+            pass
+
+        # profile_name/stt_engine/tts_engine must match the profile and stub
+        # providers registered above -- this file's _cfg() defaults to the
+        # OTHER neighboring tests' names ("metered-profile", "stub-meter-*").
+        cfg = _cfg(profile_name="attr-profile", stt_engine="stub-attr-stt", tts_engine="stub-attr-tts")
+        sess = ConversationSession(cfg, emit, emit_audio)
+        await sess.start()
+        # Stand in for whatever responder build_responder_ex returned, with the
+        # model attribute a real OpenAICompatResponder carries.
+        sess.responder.model = "resolved-by-responder"
+        sess.responder.last_usage = {"prompt_tokens": 11, "completion_tokens": 3}
+        await sess._record_llm_usage()
+        await sess.close()
+
+        rows = await _rows()
+        llm = next(r for r in rows if r.kind == "llm")
+        assert llm.model_id == "resolved-by-responder"
+        assert llm.prompt_tokens == 11 and llm.completion_tokens == 3
+    finally:
+        stt_service.providers.pop("stub-attr-stt", None)
+        tts_service.providers.pop("stub-attr-tts", None)
+
+
+async def test_profile_pinned_model_still_wins_over_a_stale_responder_attr(
+    monkeypatch, tmp_path
+):
+    stt_service.providers["stub-attr2-stt"] = _StubSTT()
+    tts_service.providers["stub-attr2-tts"] = _StubTTS()
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    fresh_profiles.upsert(Profile(
+        name="attr2-profile",
+        llm=LlmConfig(model="pinned-model", engine="pinned-engine"),
+    ))
+    try:
+        async def emit(name, **p):
+            pass
+
+        async def emit_audio(pkt):
+            pass
+
+        cfg = _cfg(profile_name="attr2-profile", stt_engine="stub-attr2-stt", tts_engine="stub-attr2-tts")
+        sess = ConversationSession(cfg, emit, emit_audio)
+        await sess.start()
+        sess.responder.last_usage = {"prompt_tokens": 4, "completion_tokens": 1}
+        await sess._record_llm_usage()
+        await sess.close()
+        rows = await _rows()
+        llm = next(r for r in rows if r.kind == "llm")
+        # The responder was built FROM the pin, so both agree; the assertion
+        # guards against the responder attribute shadowing an explicit pin with
+        # something unrelated.
+        assert (llm.engine, llm.model_id) == ("pinned-engine", "pinned-model")
+    finally:
+        stt_service.providers.pop("stub-attr2-stt", None)
+        tts_service.providers.pop("stub-attr2-tts", None)
