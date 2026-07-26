@@ -516,14 +516,29 @@ function _renderConfigForm(id, schema, config) {
 }
 
 // Gather the form into a typed config object. Throws on a bad number.
+//
+// Starts from the row's CURRENTLY-STORED config (same object that seeds the raw
+// JSON textarea) and overlays the schema fields on top. PATCH {config} replaces
+// the stored config wholesale, so a bare form-only object would delete every key
+// the schema doesn't describe -- most damagingly `price`, set from the Pricing
+// tab: editing one engine setting here would silently make the model cost $0
+// from then on. `provider_id` had the same exposure. Anything the form doesn't
+// know about now survives a Form save.
+//
+// Direction matters: stored config FIRST, form fields SECOND, so what the admin
+// just typed wins over the stale stored value. And a key the form DOES describe
+// but the admin left blank is still removed -- that is the pre-existing "omit
+// empty -> resolver falls back to default" behaviour, which is the only way to
+// clear a schema field from the form.
 function _configFromForm(id) {
   const host = _detailEl(id).querySelector("[data-config-form]");
-  const out = {};
+  const stored = registryData.find((e) => e.id === id)?.config || {};
+  const out = { ...stored };
   host.querySelectorAll("[data-cfg]").forEach((input) => {
     const key = input.getAttribute("data-cfg");
     if (input.type === "checkbox") { out[key] = input.checked; return; }
     const raw = input.value.trim();
-    if (raw === "") return; // omit empty -> resolver falls back to default
+    if (raw === "") { delete out[key]; return; } // blank -> resolver falls back to default
     const t = input.getAttribute("data-cfg-type");
     if (t === "int" || t === "float") {
       const n = Number(raw);
