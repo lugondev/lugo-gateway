@@ -35,13 +35,18 @@ def _validate_period(period: str) -> None:
         raise HTTPException(status_code=400, detail=f"invalid period '{period}' (expected one of {sorted(_VALID_PERIODS)})")
 
 
-def _normalize_scope_id(scope: str, scope_id: str) -> str:
+def _normalize_scope_id(scope: str, scope_id: str, *, require: bool = True) -> str:
     """A scoped quota needs something to scope to; a global one must not carry a
-    stray id that would make two identical-looking rows differ."""
+    stray id that would make two identical-looking rows differ.
+
+    `require=False` normalizes without rejecting a blank id -- for a row that
+    ends up disabled, where an unusable scope_id enforces nothing (see
+    update_quota).
+    """
     scope_id = (scope_id or "").strip()
     if scope == "global":
         return ""
-    if not scope_id:
+    if not scope_id and require:
         raise HTTPException(
             status_code=400,
             detail=f"scope '{scope}' needs a scope_id (the {scope} it applies to)",
@@ -109,8 +114,21 @@ async def update_quota(quota_id: str, payload: UpdateQuotaRequest) -> dict:
     merged = {**existing, **fields}
     _validate_scope(merged["scope"])
     _validate_period(merged["period"])
-    merged["scope_id"] = _normalize_scope_id(merged["scope"], merged["scope_id"])
-    _validate_limit(merged["limit_usd"])
+    # ...except on a row that ends up DISABLED. The limit and scope_id checks
+    # exist so a row can't claim to enforce something it silently won't; a
+    # disabled row enforces nothing either way, so failing them can only ever
+    # loosen enforcement -- never a reason to refuse. Rows predating those checks
+    # (limit_usd=0, or a scoped row with a blank scope_id) would otherwise reject
+    # {"enabled": false}, which is all the admin UI's Disable and bulk-disable
+    # buttons send: uneditable AND undisableable, i.e. delete-only. Scope/period
+    # enums and the duplicate check still apply -- those protect the data shape,
+    # not the strength of enforcement.
+    enforcing = bool(merged["enabled"])
+    merged["scope_id"] = _normalize_scope_id(
+        merged["scope"], merged["scope_id"], require=enforcing,
+    )
+    if enforcing:
+        _validate_limit(merged["limit_usd"])
     await _reject_duplicate(
         merged["scope"], merged["scope_id"], merged["period"], exclude_id=quota_id,
     )

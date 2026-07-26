@@ -157,3 +157,51 @@ def test_patch_is_validated_the_same_way(client, _with_password):
 
     # A no-op edit of an unrelated field must still be allowed.
     assert client.patch(f"/v1/quotas/{created['id']}", json={"enabled": False}).status_code == 200
+
+
+def _seed(**kwargs) -> dict:
+    """Create a quota row straight through the store.
+
+    These shapes predate the branch's validation and the API now refuses to
+    create them, so the store is the only way to reproduce a legacy row.
+    """
+    from app.services.quota.store import quota_store
+
+    async def _go():
+        from app.services.db.engine import init_db
+
+        await init_db()
+        quota_store.invalidate()
+        return await quota_store.create(**kwargs)
+
+    return asyncio.run(_go())
+
+
+def test_a_legacy_unfireable_limit_can_still_be_disabled(client, _with_password):
+    """A row with limit_usd=0 fails _validate_limit, which used to reject even
+    {"enabled": false} -- the admin UI's Disable button sends only that field,
+    so the row became delete-only."""
+    _login_admin(client, "q-legacy-limit")
+    row = _seed(scope="global", scope_id="", limit_usd=0.0, period="monthly")
+    r = client.patch(f"/v1/quotas/{row['id']}", json={"enabled": False})
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["enabled"] is False
+
+
+def test_a_legacy_scoped_row_with_no_scope_id_can_still_be_disabled(client, _with_password):
+    """Same for the other pre-branch invalid shape: a scoped row with a blank
+    scope_id. Disabling only ever loosens enforcement, so it must be allowed."""
+    _login_admin(client, "q-legacy-scopeid")
+    row = _seed(scope="user", scope_id="", limit_usd=5.0, period="monthly")
+    r = client.patch(f"/v1/quotas/{row['id']}", json={"enabled": False})
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["enabled"] is False
+
+
+def test_disabling_still_rejects_a_bad_enum(client, _with_password):
+    """The disable escape hatch loosens enforcement checks only -- scope/period
+    still have to name something the store can hold."""
+    _login_admin(client, "q-legacy-enum")
+    row = _seed(scope="global", scope_id="", limit_usd=0.0, period="monthly")
+    r = client.patch(f"/v1/quotas/{row['id']}", json={"enabled": False, "scope": "bogus"})
+    assert r.status_code == 400, r.text
