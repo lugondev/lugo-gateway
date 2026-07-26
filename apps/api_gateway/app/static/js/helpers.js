@@ -67,6 +67,15 @@ export function setBadge(id, ok) {
   e.classList.toggle("err", !ok);
 }
 
+// A 429 carries a precise reason from the server ("user quota exceeded for u1:
+// $12.04 / $12.00 (monthly)"). Surfacing it verbatim is the difference between a
+// user knowing they are out of budget and thinking the app is broken.
+export function quotaMessage(resp, body) {
+  if (!resp || resp.status !== 429) return "";
+  const detail = (body && body.detail) || "";
+  return detail || "Quota exceeded - no budget left for this request.";
+}
+
 export function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str == null ? "" : String(str);
