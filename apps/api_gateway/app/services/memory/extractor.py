@@ -14,10 +14,11 @@ import httpx
 
 from app.services.history.store import session_store
 from app.services.memory.compactor import memory_compactor
-from app.services.memory.embedder import cosine, embed_texts
+from app.services.memory.embedder import cosine, embed_texts_with_usage
 from app.services.memory.store import memory_store
 from app.services.profiles.models import Profile
 from app.services.system_config import system_config_store
+from app.services.usage.recorder import record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,8 @@ def _parse_facts(raw: str) -> list[str]:
 
 class MemoryExtractor:
     async def extract(
-        self, messages: list[dict], base_url: str, api_key: str, model: str
+        self, messages: list[dict], base_url: str, api_key: str, model: str,
+        *, user_id: str = "", profile_id: str = "", engine: str = "",
     ) -> list[str]:
         transcript = "\n".join(
             f"{m['role']}: {m['content']}"
@@ -79,26 +81,49 @@ class MemoryExtractor:
                     },
                 )
                 resp.raise_for_status()
-                content = resp.json()["choices"][0]["message"]["content"]
+                body = resp.json()
+                content = body["choices"][0]["message"]["content"]
         except Exception as exc:  # noqa: BLE001 - extraction is best-effort
             logger.warning("memory extraction LLM call failed: %s", exc)
             return []
+        # This is a real billable LLM call: without this row, post-session
+        # memory work is spend that never shows up in usage/cost at all.
+        try:
+            usage = body.get("usage") or {}
+            prompt_tokens = usage.get("prompt_tokens")
+            completion_tokens = usage.get("completion_tokens")
+            await record_usage(
+                user_id=user_id, profile_id=profile_id, kind="llm", engine=engine,
+                model_id=model, unit="tokens",
+                native_amount=(prompt_tokens or 0) + (completion_tokens or 0),
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001 - metering must never break extraction
+            logger.warning("memory extraction usage metering failed: %s", exc)
         return _parse_facts(str(content))
 
     async def _maybe_embed(
-        self, profile: Profile, texts: list[str]
+        self, profile: Profile, texts: list[str], user_id: str | None = None
     ) -> list[list[float] | None]:
         """Embed texts when an embed_model is configured; else all None. Best-effort."""
         if not texts or not profile.memory.embed_model or not profile.llm.base_url:
             return [None] * len(texts)
         try:
-            vecs = await embed_texts(
+            vecs, tokens = await embed_texts_with_usage(
                 texts, profile.llm.base_url, profile.llm.api_key,
                 profile.memory.embed_model,
             )
         except Exception as exc:  # noqa: BLE001 - embedding is best-effort
             logger.warning("memory embed failed: %s", exc)
             return [None] * len(texts)
+        try:
+            await record_usage(
+                user_id=user_id or "", profile_id=profile.name, kind="embed",
+                engine=profile.llm.engine or "", model_id=profile.memory.embed_model,
+                unit="tokens", native_amount=tokens, prompt_tokens=tokens,
+            )
+        except Exception as exc:  # noqa: BLE001 - metering must never break extraction
+            logger.warning("memory embed metering failed: %s", exc)
         if len(vecs) != len(texts):
             logger.warning(
                 "memory embed length mismatch: got %d vectors for %d texts; "
@@ -120,7 +145,9 @@ class MemoryExtractor:
                 return 0
             model = profile.memory.extractor_model or profile.llm.model
             facts = await self.extract(
-                messages, profile.llm.base_url, profile.llm.api_key, model
+                messages, profile.llm.base_url, profile.llm.api_key, model,
+                user_id=user_id or "", profile_id=profile.name,
+                engine=profile.llm.engine or "",
             )
             if not facts:
                 return 0
@@ -129,7 +156,7 @@ class MemoryExtractor:
             existing_vecs = [
                 m["embedding"] for m in existing_items if m.get("embedding")
             ]
-            new_vecs = await self._maybe_embed(profile, facts)
+            new_vecs = await self._maybe_embed(profile, facts, user_id=user_id)
             threshold = profile.memory.dedup_threshold
             added = 0
             for fact, vec in zip(facts, new_vecs):

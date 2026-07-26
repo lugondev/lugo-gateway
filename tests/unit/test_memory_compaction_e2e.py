@@ -13,7 +13,7 @@ async def test_extract_then_compact_without_embed_model(monkeypatch):
     await session_store.append_message("e2e", 1, "user", "hello")
     await session_store.append_message("e2e", 1, "assistant", "hi")
 
-    async def fake_extract(self, messages, base_url, api_key, model):
+    async def fake_extract(self, messages, base_url, api_key, model, **kwargs):
         return ["User is Toan", "User builds an ESP32 assistant", "User speaks Vietnamese"]
 
     async def fake_call(self, profile, current_doc, facts):
