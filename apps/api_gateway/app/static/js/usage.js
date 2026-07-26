@@ -2,7 +2,19 @@ import { el, print, escapeHtml } from "./helpers.js";
 
 // Column header for the "key" varies with the group-by dimension.
 const _KEY_LABEL = {
-  provider: "Provider ID", model: "Model", kind: "Kind", engine: "Engine", user: "User ID",
+  provider: "Provider", model: "Model", kind: "Kind", engine: "Engine", user: "User",
+};
+
+// What a BLANK key means, per dimension. These are distinct states, not one
+// "unknown": no provider_id means the model runs locally with its own creds,
+// and no user_id is the shared-device bucket. Only a missing model/engine is
+// genuinely unrecorded (a row written before per-model attribution existed).
+const _EMPTY_KEY = {
+  provider: "(local - no provider)",
+  user: "(shared device)",
+  model: "(not recorded)",
+  engine: "(not recorded)",
+  kind: "(not recorded)",
 };
 
 function _fmtCost(v) {
@@ -39,6 +51,19 @@ export async function loadUsage() {
   }
 }
 
+// The server labels provider/user rows with a readable name (see
+// usage.py:_attach_labels); show that instead of the uuid, keeping the id as a
+// title so it is still copyable when debugging. Everything else is already a
+// name, and a blank key is worded per dimension rather than as "unknown".
+function _renderKey(row, groupBy) {
+  const key = String(row.key || "");
+  if (!key) return `<code>${escapeHtml(_EMPTY_KEY[groupBy] || "(not recorded)")}</code>`;
+  if (row.label) {
+    return `<span title="${escapeHtml(key)}">${escapeHtml(row.label)}</span>`;
+  }
+  return `<code>${escapeHtml(key)}</code>`;
+}
+
 function _render(host, rows, groupBy) {
   if (!rows.length) {
     host.innerHTML = `<p class="hint">No usage recorded${el("usage-period")?.value ? " for that month" : ""} yet.</p>`;
@@ -62,7 +87,7 @@ function _render(host, rows, groupBy) {
       <tbody>
         ${sorted.map((r) => `
           <tr>
-            <td><code>${escapeHtml(String(r.key || "") || "(not recorded)")}</code></td>
+            <td>${_renderKey(r, groupBy)}</td>
             <td>${_fmtCost(r.cost_usd)}</td>
             <td>${_fmtNum(r.native_amount)}</td>
             <td>${_fmtNum(r.count)}</td>

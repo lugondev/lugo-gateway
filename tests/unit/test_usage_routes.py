@@ -89,3 +89,79 @@ def test_non_admin_forbidden_on_summary_but_ok_on_me(client, _with_password):
     assert body["data"][0]["kind"] == "llm"
     assert body["data"][0]["model_id"] == "qwen-max"
     assert "engine" in body["data"][0]
+
+
+def test_summary_labels_provider_ids_with_the_providers_name(client, _with_password):
+    """The summary groups by raw provider_id; an admin reading the dashboard
+    needs "Qwen Cloud", not "faba8dad-a8a5-...". Rows whose provider_id is blank
+    (a local engine, no provider) get no label -- that is not the same thing as
+    an unknown provider, and the client renders the two differently."""
+    import asyncio
+
+    from app.services.providers.store import provider_store
+
+    _signup_login(client, "prov-label-adm", role="admin")
+    asyncio.run(init_db())
+    prov = asyncio.run(provider_store.create(name="qwencloud", label="Qwen Cloud (DashScope)"))
+    asyncio.run(_record(provider_id=prov["id"]))
+    asyncio.run(_record(provider_id=""))  # local engine
+
+    rows = client.get("/v1/usage/summary?group_by=provider").json()["data"]
+    labelled = next(r for r in rows if r["key"] == prov["id"])
+    assert labelled["label"] == "Qwen Cloud (DashScope)"
+    local = next(r for r in rows if r["key"] == "")
+    assert local["label"] == ""
+
+
+def test_summary_falls_back_to_the_provider_name_when_it_has_no_label(client, _with_password):
+    import asyncio
+
+    from app.services.providers.store import provider_store
+
+    _signup_login(client, "prov-name-adm", role="admin")
+    asyncio.run(init_db())
+    prov = asyncio.run(provider_store.create(name="bare-openai", label=""))
+    asyncio.run(_record(provider_id=prov["id"]))
+
+    rows = client.get("/v1/usage/summary?group_by=provider").json()["data"]
+    assert next(r for r in rows if r["key"] == prov["id"])["label"] == "bare-openai"
+
+
+def test_summary_labels_user_ids_with_the_username(client, _with_password):
+    import asyncio
+
+    from app.services.auth.users import user_store
+
+    _signup_login(client, "user-label-adm", role="admin")
+    asyncio.run(init_db())
+    me = asyncio.run(user_store.get_by_username("user-label-adm"))
+    asyncio.run(_record(user_id=me.id))
+
+    rows = client.get("/v1/usage/summary?group_by=user").json()["data"]
+    assert next(r for r in rows if r["key"] == me.id)["label"] == "user-label-adm"
+
+
+def test_summary_dimensions_without_ids_carry_no_label(client, _with_password):
+    """kind/engine/model keys are already human-readable; inventing a label for
+    them would just be a second copy of the key."""
+    import asyncio
+
+    _signup_login(client, "kind-label-adm", role="admin")
+    asyncio.run(init_db())
+    asyncio.run(_record(provider_id=""))
+
+    for dim in ("kind", "engine", "model"):
+        rows = client.get(f"/v1/usage/summary?group_by={dim}").json()["data"]
+        assert rows, f"no rows for group_by={dim}"
+        assert all("label" not in r for r in rows), f"group_by={dim} should not label"
+
+
+async def _record(*, provider_id: str = "", user_id: str = "u-label") -> None:
+    await init_db()
+    async with db_session() as s:
+        s.add(UsageEvent(
+            id=str(uuid.uuid4()), ts=datetime.now(timezone.utc), user_id=user_id,
+            profile_id="", provider_id=provider_id, kind="llm", engine="openrouter",
+            model_id="qwen-max", unit="tokens", native_amount=10, cost_usd=0.0,
+        ))
+        await s.commit()

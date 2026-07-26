@@ -32,6 +32,35 @@ def _pick_single(candidates: list[dict]) -> dict | None:
     return pool[0] if len(pool) == 1 else None
 
 
+
+# (kind, engine) pairs already reported as ambiguous. Attribution runs on every
+# metered request, so the warning below would otherwise repeat per turn; the
+# condition it reports is a registry misconfiguration that changes only when an
+# admin edits the registry, so saying it once per process is enough.
+_warned_ambiguous: set[tuple[str, str]] = set()
+
+
+def _warn_ambiguous_once(kind: str, engine: str, candidates: list[dict]) -> None:
+    """Explain why rows for this engine stay unattributed, and how to fix it.
+
+    Two enabled rows for one (kind, engine) is the misconfiguration
+    model_registry's find_enabled() docstring warns about: the provider picks
+    one by an unspecified tie-break, so nothing can tell us afterwards which
+    model actually ran. Recording either one would attribute cost to a price
+    that may not be the one charged -- so the row stays blank and the admin
+    gets told, instead of the dashboard quietly inventing an answer.
+    """
+    if (kind, engine) in _warned_ambiguous:
+        return
+    _warned_ambiguous.add((kind, engine))
+    logger.warning(
+        "usage attribution: %s/%s has %d candidate models (%s); usage rows for it "
+        "stay unattributed until exactly one is enabled or the profile pins a model",
+        kind, engine, len(candidates),
+        ", ".join(sorted(c["model_id"] for c in candidates)),
+    )
+
+
 async def resolve_usage_model(kind: str, engine: str, model_id: str) -> tuple[str, str]:
     """(engine, model_id) for a usage row, with blanks filled where provable.
 
@@ -58,9 +87,12 @@ async def resolve_usage_model(kind: str, engine: str, model_id: str) -> tuple[st
         real = [e for e in entries if e["kind"] == kind and e["model_id"]]
 
         if not model_id and engine:
-            match = _pick_single([e for e in real if e["engine"] == engine])
+            candidates = [e for e in real if e["engine"] == engine]
+            match = _pick_single(candidates)
             if match:
                 return engine, match["model_id"]
+            if len(candidates) > 1:
+                _warn_ambiguous_once(kind, engine, candidates)
 
         if not model_id and not engine and kind == "llm":
             # Same entry build_responder_ex() falls back to (responder.py's
