@@ -300,9 +300,15 @@ async def test_llm_usage_names_the_responders_model_when_the_profile_pins_none(
         tts_service.providers.pop("stub-attr-tts", None)
 
 
-async def test_profile_pinned_model_still_wins_over_a_stale_responder_attr(
+async def test_profile_pinned_model_used_when_responder_has_no_model_attr(
     monkeypatch, tmp_path
 ):
+    """With no base_url and no seeded Model Registry default, build_responder_ex
+    returns the real EchoResponder, which carries no `.model` attribute at all
+    (unlike OpenAICompatResponder). getattr(responder, "model", "") is then ""
+    for both the pre-fix and post-fix resolution, so this only locks in the
+    fallback-to-profile-pin path, not the responder-wins path (see the
+    differs-from-pin test below for that)."""
     stt_service.providers["stub-attr2-stt"] = _StubSTT()
     tts_service.providers["stub-attr2-tts"] = _StubTTS()
     fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
@@ -321,15 +327,53 @@ async def test_profile_pinned_model_still_wins_over_a_stale_responder_attr(
         cfg = _cfg(profile_name="attr2-profile", stt_engine="stub-attr2-stt", tts_engine="stub-attr2-tts")
         sess = ConversationSession(cfg, emit, emit_audio)
         await sess.start()
+        assert not hasattr(sess.responder, "model")  # sanity: EchoResponder, not stamped
         sess.responder.last_usage = {"prompt_tokens": 4, "completion_tokens": 1}
         await sess._record_llm_usage()
         await sess.close()
         rows = await _rows()
         llm = next(r for r in rows if r.kind == "llm")
-        # The responder was built FROM the pin, so both agree; the assertion
-        # guards against the responder attribute shadowing an explicit pin with
-        # something unrelated.
         assert (llm.engine, llm.model_id) == ("pinned-engine", "pinned-model")
     finally:
         stt_service.providers.pop("stub-attr2-stt", None)
         tts_service.providers.pop("stub-attr2-tts", None)
+
+
+async def test_llm_usage_names_the_responders_model_even_when_it_differs_from_the_pin(
+    monkeypatch, tmp_path
+):
+    """The discriminating case: a profile pins one model, but the responder
+    that actually ran the turn carries a DIFFERENT model string (e.g. the pin
+    was resolved through a registry override, or is simply stale). The model
+    actually sent to the provider -- read off the responder -- must win over
+    the profile pin. `engine` still comes from the profile: nothing else
+    carries an engine label for the responder's model."""
+    stt_service.providers["stub-attr3-stt"] = _StubSTT()
+    tts_service.providers["stub-attr3-tts"] = _StubTTS()
+    fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    fresh_profiles.upsert(Profile(
+        name="attr3-profile",
+        llm=LlmConfig(model="pinned-model", engine="pinned-engine"),
+    ))
+    try:
+        async def emit(name, **p):
+            pass
+
+        async def emit_audio(pkt):
+            pass
+
+        cfg = _cfg(profile_name="attr3-profile", stt_engine="stub-attr3-stt", tts_engine="stub-attr3-tts")
+        sess = ConversationSession(cfg, emit, emit_audio)
+        await sess.start()
+        sess.responder.model = "actually-called-model"
+        sess.responder.last_usage = {"prompt_tokens": 4, "completion_tokens": 1}
+        await sess._record_llm_usage()
+        await sess.close()
+        rows = await _rows()
+        llm = next(r for r in rows if r.kind == "llm")
+        assert llm.model_id == "actually-called-model"
+        assert llm.engine == "pinned-engine"
+    finally:
+        stt_service.providers.pop("stub-attr3-stt", None)
+        tts_service.providers.pop("stub-attr3-tts", None)
