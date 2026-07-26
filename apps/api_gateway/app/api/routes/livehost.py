@@ -39,9 +39,13 @@ router = APIRouter(prefix="/v1/livehost", tags=["livehost"])
 
 
 async def _quota_blocked_for(
-    *, user_id: str, profile_name: str, engine: str, model: str
+    *, user_id: str, profile_name: str, pinned_engine: str, pinned_model: str
 ) -> tuple[bool, str]:
     """(blocked, message) for one livehost turn.
+
+    `pinned_engine`/`pinned_model` are the PROFILE's pins, not a resolved pair:
+    the pairing rule below has to see whether a model was pinned at all, so
+    resolving before the call would hide exactly the fact it needs.
 
     Returns the message rather than raising so each turn path can report it the
     way that path reports its own failures. Fail-open: only a genuine
@@ -49,7 +53,16 @@ async def _quota_blocked_for(
     quota_gate's own contract.
     """
     try:
-        usage_engine, usage_model = await resolve_usage_model("llm", engine or "", model or "")
+        pinned_model = pinned_model or ""
+        # Only pair the profile's engine with a model the profile actually
+        # pinned. With no pin, build_responder_ex() runs the registry default --
+        # whose engine is usually a different row -- so passing this engine
+        # would make the gate check one provider while metering bills another
+        # (see resolve_llm_pair, which applies the same rule to the usage row).
+        # Both blank -> resolve_usage_model() returns the active default pair,
+        # which is what actually runs.
+        pinned_engine = (pinned_engine or "") if pinned_model else ""
+        usage_engine, usage_model = await resolve_usage_model("llm", pinned_engine, pinned_model)
         provider_id = ""
         try:
             entry = await model_registry_store.find("llm", usage_engine, usage_model)
@@ -386,8 +399,8 @@ async def livehost_stream(websocket: WebSocket) -> None:
             await send("processing", turn=turn)
             blocked, quota_message = await _quota_blocked_for(
                 user_id=identity.user_id or "", profile_name=profile_name or "",
-                engine=(profile.llm.engine if profile else "") or "",
-                model=llm_model or (profile.llm.model if profile else "") or "",
+                pinned_engine=(profile.llm.engine if profile else "") or "",
+                pinned_model=llm_model or (profile.llm.model if profile else "") or "",
             )
             if blocked:
                 await send("error", message=quota_message)
@@ -442,8 +455,8 @@ async def livehost_stream(websocket: WebSocket) -> None:
             )
             blocked, quota_message = await _quota_blocked_for(
                 user_id=identity.user_id or "", profile_name=profile_name or "",
-                engine=(profile.llm.engine if profile else "") or "",
-                model=llm_model or (profile.llm.model if profile else "") or "",
+                pinned_engine=(profile.llm.engine if profile else "") or "",
+                pinned_model=llm_model or (profile.llm.model if profile else "") or "",
             )
             if blocked:
                 await send("error", message=quota_message)

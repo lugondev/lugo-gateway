@@ -48,13 +48,13 @@ async def test_livehost_quota_helper_blocks_when_over_limit():
     await quota_store.create(scope="user", scope_id="u-lh", limit_usd=1.0, period="monthly")
 
     blocked, message = await _quota_blocked_for(
-        user_id="u-lh", profile_name="p", engine="OA", model="lh-model",
+        user_id="u-lh", profile_name="p", pinned_engine="OA", pinned_model="lh-model",
     )
     assert blocked is True
     assert "quota exceeded" in message
 
     under, message2 = await _quota_blocked_for(
-        user_id="u-nobody", profile_name="p", engine="OA", model="lh-model",
+        user_id="u-nobody", profile_name="p", pinned_engine="OA", pinned_model="lh-model",
     )
     assert under is False and message2 == ""
 
@@ -73,7 +73,7 @@ async def test_livehost_quota_helper_fails_open():
     livehost.quota_gate = boom
     try:
         blocked, message = await livehost._quota_blocked_for(
-            user_id="u-x", profile_name="p", engine="OA", model="m",
+            user_id="u-x", profile_name="p", pinned_engine="OA", pinned_model="m",
         )
         assert blocked is False and message == ""
     finally:

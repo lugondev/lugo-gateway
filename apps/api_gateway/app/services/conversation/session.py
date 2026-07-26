@@ -426,11 +426,16 @@ class ConversationSession:
         # it just falls back to "" (user/global scope quotas still apply).
         provider_id = ""
         try:
-            llm_engine, llm_model = await resolve_usage_model(
-                "llm",
-                (self.profile.llm.engine if self.profile else "") or "",
-                (self.profile.llm.model if self.profile else "") or "",
-            )
+            pinned_model = (self.profile.llm.model if self.profile else "") or ""
+            # Only pair the profile's engine with a model the profile actually
+            # pinned. With no pin, build_responder_ex() runs the registry
+            # default -- whose engine is usually a different row -- so passing
+            # this engine would make the gate check one provider while metering
+            # bills another (see resolve_llm_pair, which applies the same rule
+            # to the usage row). Both blank -> resolve_usage_model() returns the
+            # active default pair, which is what actually runs.
+            pinned_engine = ((self.profile.llm.engine if self.profile else "") or "") if pinned_model else ""
+            llm_engine, llm_model = await resolve_usage_model("llm", pinned_engine, pinned_model)
             entry = await model_registry_store.find("llm", llm_engine, llm_model)
             provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
         except Exception:  # noqa: BLE001 - provider_id resolution must never block the turn
