@@ -133,6 +133,32 @@ class MemoryExtractor:
             return [None] * len(texts)
         return vecs
 
+    async def _quota_blocked(
+        self, profile: Profile, model: str, user_id: str | None
+    ) -> bool:
+        """True when an applicable quota is already over its limit. Resolving
+        provider_id is wrapped separately so a registry hiccup degrades to
+        user/global-scope enforcement rather than blocking or crashing."""
+        from app.services.model_registry.store import model_registry_store
+        from app.services.quota.gate import QuotaExceededError, quota_gate
+
+        provider_id = ""
+        try:
+            engine = profile.llm.engine or ""
+            if engine:
+                entry = await model_registry_store.find("llm", engine, model)
+                provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
+        except Exception:  # noqa: BLE001 - never block memory on a lookup
+            provider_id = ""
+        try:
+            await quota_gate(user_id=user_id or "", provider_id=provider_id)
+        except QuotaExceededError as exc:
+            logger.warning("memory extraction skipped for %s: %s", profile.name, exc)
+            return True
+        except Exception as exc:  # noqa: BLE001 - fail-open, same as quota_gate itself
+            logger.warning("memory quota check failed open for %s: %s", profile.name, exc)
+        return False
+
     async def extract_and_upsert(
         self, session_id: str, profile: Profile, user_id: str | None = None
     ) -> int:
@@ -144,6 +170,11 @@ class MemoryExtractor:
             if len(messages) < 2:
                 return 0
             model = profile.memory.extractor_model or profile.llm.model
+            # Post-session memory work is real provider spend, so it goes
+            # through the same gate as a turn -- but nobody is waiting on it, so
+            # over-quota means "skip and log", never an error to a caller.
+            if await self._quota_blocked(profile, model, user_id):
+                return 0
             facts = await self.extract(
                 messages, profile.llm.base_url, profile.llm.api_key, model,
                 user_id=user_id or "", profile_id=profile.name,
