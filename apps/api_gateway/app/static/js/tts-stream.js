@@ -1,4 +1,4 @@
-import { el, print } from "./helpers.js";
+import { el, print, quotaMessage } from "./helpers.js";
 
 export const ttsStream = { source: null, queue: [], playing: false, lines: [] };
 
@@ -55,6 +55,11 @@ el("tts-stream-start").addEventListener("click", async () => {
       body: JSON.stringify({ text, engine: engine || "omnivoice", model_id: model }),
     });
     const body = await response.json();
+    const quota = quotaMessage(response, body);
+    if (quota) {
+      print(el("tts-stream-events"), quota, true);
+      return;
+    }
     if (!response.ok || !body.success) {
       print(el("tts-stream-events"), body, true);
       return;
