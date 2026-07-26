@@ -1001,7 +1001,7 @@
                 <h2>Pricing</h2>
                 <button id="pricing-refresh" class="ghost mini">Refresh</button>
               </div>
-              <p class="hint">Per-model prices. A model with no price still records usage, but at $0 cost, and $-based quotas never see it. Units are fixed per kind: llm/embed = USD per 1M tokens (in/out), stt = USD per minute of audio, tts = USD per 1000 characters.</p>
+              <p class="hint">Per-model prices. A model with no price still records usage, but at $0 cost, and $-based quotas never see it. Units are fixed per kind: llm/embed = USD per 1M tokens (in/out), stt = USD per minute of audio, tts = USD per 1000 characters. On a two-field kind, a blank in or out field is saved as $0 for that direction, not as "leave it unchanged".</p>
               <label class="inline">
                 <input id="pricing-only-unpriced" type="checkbox" />
                 Show only models without a price
