@@ -62,7 +62,7 @@ async def _wait_for_job(job_id: str) -> None:
 
 async def test_stream_job_closes_channel_after_success(stubs):
     resp = await tts_routes.create_stream_job(
-        TTSRequest(text="xin chào thế giới", engine="stub-tts-stream-ok")
+        TTSRequest(text="xin chào thế giới", engine="stub-tts-stream-ok"), _fake_request()
     )
     job_id = resp["data"]["job_id"]
     await _wait_for_job(job_id)
@@ -76,7 +76,7 @@ async def test_stream_job_closes_channel_when_it_crashes_before_the_loop(stubs, 
 
     monkeypatch.setattr(tts_routes, "segment_text", boom)
     resp = await tts_routes.create_stream_job(
-        TTSRequest(text="xin chào", engine="stub-tts-stream-ok")
+        TTSRequest(text="xin chào", engine="stub-tts-stream-ok"), _fake_request()
     )
     job_id = resp["data"]["job_id"]
     await _wait_for_job(job_id)
@@ -89,7 +89,7 @@ async def test_stream_job_closes_channel_when_it_crashes_before_the_loop(stubs, 
 async def test_stream_job_closes_channel_when_cancelled_mid_synthesis(stubs):
     _, blocking = stubs
     resp = await tts_routes.create_stream_job(
-        TTSRequest(text="xin chào", engine="stub-tts-stream-blocking")
+        TTSRequest(text="xin chào", engine="stub-tts-stream-blocking"), _fake_request()
     )
     job_id = resp["data"]["job_id"]
     await blocking.started.wait()
@@ -105,7 +105,7 @@ async def test_stream_job_closes_channel_when_cancelled_mid_synthesis(stubs):
 async def test_stream_job_task_reference_is_retained_while_running(stubs):
     _, blocking = stubs
     resp = await tts_routes.create_stream_job(
-        TTSRequest(text="xin chào", engine="stub-tts-stream-blocking")
+        TTSRequest(text="xin chào", engine="stub-tts-stream-blocking"), _fake_request()
     )
     job_id = resp["data"]["job_id"]
     await blocking.started.wait()
