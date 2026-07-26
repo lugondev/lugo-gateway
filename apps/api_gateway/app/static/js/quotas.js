@@ -28,6 +28,17 @@ function renderQuotas() {
       { key: "scope", label: "Scope", render: (q) => `<strong>${escapeHtml(q.scope)}</strong>` },
       { key: "scope_id", label: "Scope ID", render: (q) => `<code>${escapeHtml(q.scope_id || "—")}</code>` },
       { key: "limit_usd", label: "Limit (USD)", render: (q) => escapeHtml(String(q.limit_usd)) },
+      {
+        key: "spend_usd",
+        label: "Spent",
+        render: (q) => {
+          const spent = Number(q.spend_usd || 0);
+          const limit = Number(q.limit_usd || 0);
+          const pct = limit > 0 ? Math.round((spent / limit) * 100) : 0;
+          const over = limit > 0 && spent >= limit;
+          return `<span class="${over ? "danger" : ""}">$${spent.toFixed(4)} (${pct}%)</span>`;
+        },
+      },
       { key: "period", label: "Period", render: (q) => escapeHtml(q.period) },
       {
         key: "actions",

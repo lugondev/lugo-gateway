@@ -156,6 +156,33 @@ def test_summary_dimensions_without_ids_carry_no_label(client, _with_password):
         assert all("label" not in r for r in rows), f"group_by={dim} should not label"
 
 
+def test_my_usage_reports_the_callers_own_limits(client, _with_password):
+    """A user who gets a 429 must be able to see why. Their own user quota and
+    the global one -- never another user's, never a provider's."""
+    import asyncio
+
+    from app.services.auth.users import user_store
+    from app.services.quota.store import quota_store
+
+    _signup_login(client, "limit-viewer")
+    me = asyncio.run(user_store.get_by_username("limit-viewer"))
+    asyncio.run(init_db())
+    quota_store.invalidate()
+    asyncio.run(quota_store.create(scope="user", scope_id=me.id, limit_usd=5.0, period="monthly"))
+    asyncio.run(quota_store.create(scope="global", scope_id="", limit_usd=50.0, period="monthly"))
+    asyncio.run(quota_store.create(scope="user", scope_id="someone-else", limit_usd=1.0,
+                                   period="monthly"))
+    asyncio.run(quota_store.create(scope="provider", scope_id="prov-x", limit_usd=2.0,
+                                   period="monthly"))
+
+    body = client.get("/v1/usage/me").json()
+    scopes = sorted((l["scope"], l["limit_usd"]) for l in body["limits"])
+    assert scopes == [("global", 50.0), ("user", 5.0)], f"leaked or missing limits: {body['limits']}"
+    assert all("spend_usd" in l for l in body["limits"])
+    # The existing shape must not change -- the React client reads `data`.
+    assert isinstance(body["data"], list)
+
+
 async def _record(*, provider_id: str = "", user_id: str = "u-label") -> None:
     await init_db()
     async with db_session() as s:
