@@ -269,8 +269,9 @@ async def stt_stream(websocket: WebSocket) -> None:
 
     pending_seconds = 0.0
 
-    async def _record_stream_usage() -> None:
+    async def _record_stream_usage() -> float:
         """One row per flush/end for the audio received since the last row.
+        Returns the seconds it accounted for (0.0 when there was no new audio).
 
         Per frame would be thousands of rows a minute; per session would lose the
         work of a socket that never disconnects cleanly. Reset after recording so
@@ -279,7 +280,7 @@ async def stt_stream(websocket: WebSocket) -> None:
         nonlocal pending_seconds
         seconds, pending_seconds = pending_seconds, 0.0
         if seconds <= 0:
-            return
+            return 0.0
         try:
             await record_usage(
                 user_id=caller_id, profile_id=profile or "",
@@ -288,6 +289,7 @@ async def stt_stream(websocket: WebSocket) -> None:
             )
         except Exception as exc:  # noqa: BLE001 - metering must never break the stream
             logger.warning("stt stream usage metering failed: %s", exc)
+        return seconds
 
     stream: STTStream | None = None
     try:
@@ -387,8 +389,14 @@ async def stt_stream(websocket: WebSocket) -> None:
                     if final is not None:
                         await _emit_result(final)
 
-                    await _record_stream_usage()
-                    refusal = await _quota_message(caller_id)
+                    # Re-gate only when there was something to gate. A bare
+                    # 20-byte control frame otherwise costs a quota list_all(),
+                    # a registry find(), a list_enabled() and a SUM(cost_usd)
+                    # per applicable quota -- and cannot change the answer,
+                    # since no new spend was recorded since the last gate. The
+                    # connect-time gate above stays unconditional.
+                    recorded = await _record_stream_usage()
+                    refusal = await _quota_message(caller_id) if recorded > 0 else ""
                     if refusal:
                         sequence += 1
                         await _emit(

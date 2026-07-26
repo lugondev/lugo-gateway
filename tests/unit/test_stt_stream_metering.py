@@ -249,3 +249,53 @@ async def test_a_zero_sample_rate_is_refused_instead_of_zeroing_the_metering(_st
         assert "sample_rate" in event["payload"]["message"]
 
     assert await _rows() == [], "a refused socket must not transcribe or record anything"
+
+
+async def test_a_flush_with_no_new_audio_does_not_re_run_the_quota_gate(_stub_engine, monkeypatch):
+    """Each re-gate costs a quota list_all(), a registry find(), a list_enabled()
+    and a SUM(cost_usd) per applicable quota. A 20-byte control frame carrying no
+    audio must not pay for all that: with no new spend recorded since the last
+    gate, the answer cannot have changed. The connect-time gate stays
+    unconditional, and a flush that DID carry audio still re-gates."""
+    import app.services.quota.gate as gate_mod
+
+    calls = []
+    real_gate = gate_mod.quota_gate
+
+    async def counting_gate(**kwargs):
+        calls.append(kwargs)
+        return await real_gate(**kwargs)
+
+    monkeypatch.setattr(gate_mod, "quota_gate", counting_gate)
+
+    await init_db()
+    quota_store.invalidate()
+    client = TestClient(app)
+    with client.websocket_connect(
+        "/v1/stt/stream?engine=stub-stream-stt&sample_rate=16000&denoise=false&vad=false"
+    ) as ws:
+        assert ws.receive_json()["event_type"] == "session_started"
+        assert len(calls) == 1, "the connect-time gate is unconditional"
+
+        # Two flushes that DO carry audio, then two that carry none, then end.
+        # Only "done" is a safe place to count: the re-gate runs after the
+        # "final" event is emitted, so asserting at a "final" would race it.
+        for _ in range(2):
+            ws.send_bytes(_FRAME)
+            ws.send_text(json.dumps({"type": "flush"}))
+            for _ in range(5):
+                if ws.receive_json()["event_type"] == "final":
+                    break
+        ws.send_text(json.dumps({"type": "flush"}))
+        ws.send_text(json.dumps({"type": "flush"}))
+        ws.send_text(json.dumps({"type": "end"}))
+        for _ in range(5):
+            if ws.receive_json()["event_type"] == "done":
+                break
+
+    assert len(calls) == 3, (
+        "expected 3 gate calls (connect + the two flushes carrying audio); the "
+        f"empty flushes and the empty end must add none, got {len(calls)}"
+    )
+    rows = await _rows()
+    assert len(rows) == 2, f"and one row per flush that carried audio, got {len(rows)}"
