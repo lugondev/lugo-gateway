@@ -207,6 +207,50 @@ async def test_chat_with_no_profile_yields_a_priceable_row():
     assert row.provider_id == "prov-oa"
 
 
+async def test_rest_metering_records_the_profile_when_given_one():
+    """Without this the profile dimension of the dashboards only ever has data
+    from the conversation core, so a REST-driven integration is invisible in it.
+
+    Registered under the real "vosk" engine id (see _StubSTT), not a made-up
+    name, because STTRequest.engine is regex-restricted -- the original is
+    saved/restored the same way test_transcribe_records_stt_usage_event does."""
+    original = stt_service.providers.get(_StubSTT.name)
+    stt_service.providers[_StubSTT.name] = _StubSTT()
+    try:
+        client = TestClient(app)
+        wav = pcm16_to_wav_bytes(b"\x00\x00" * 1600, sample_rate=16000)
+        resp = client.post(
+            "/v1/stt/transcribe?profile=my-profile",
+            files={"audio": ("a.wav", wav, "audio/wav")},
+            data={"engine": _StubSTT.name},
+        )
+        assert resp.status_code == 200, resp.text
+        stt = [r for r in await _rows() if r.kind == "stt"]
+        assert len(stt) == 1
+        assert stt[0].profile_id == "my-profile"
+    finally:
+        if original is not None:
+            stt_service.providers[_StubSTT.name] = original
+        else:
+            stt_service.providers.pop(_StubSTT.name, None)
+
+
+async def test_synthesize_records_the_profile_when_given_one():
+    tts_service.providers["stub-prof-tts"] = _StubTTS()
+    try:
+        client = TestClient(app)
+        resp = client.post(
+            "/v1/tts/synthesize?profile=my-profile",
+            json={"text": "xin chao", "engine": "stub-prof-tts"},
+        )
+        assert resp.status_code == 200, resp.text
+        tts = [r for r in await _rows() if r.kind == "tts"]
+        assert len(tts) == 1
+        assert tts[0].profile_id == "my-profile"
+    finally:
+        tts_service.providers.pop("stub-prof-tts", None)
+
+
 async def test_chat_never_pairs_a_profile_engine_with_an_unpinned_model():
     """A profile pinning an engine but no model must not have that engine
     stamped onto the registry-default model: the row would be priced at this

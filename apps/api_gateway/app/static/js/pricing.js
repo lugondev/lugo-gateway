@@ -36,6 +36,10 @@ function _render() {
   const onlyUnpriced = !!el("pricing-only-unpriced")?.checked;
   const rows = pricingRows
     .filter((r) => RATE_KEYS[r.unit]) // a kind with no priceable unit can't be edited here
+    // Engine-config sentinel rows (model_id === "") can never match a usage row:
+    // attribution never resolves to a sentinel, so a price set here would
+    // silently never apply. Don't offer it.
+    .filter((r) => r.model_id)
     .filter((r) => !onlyUnpriced || !r.price)
     .sort((a, b) => a.kind.localeCompare(b.kind) || a.engine.localeCompare(b.engine) || a.model_id.localeCompare(b.model_id));
   if (!rows.length) {
@@ -76,7 +80,7 @@ function _renderRow(row) {
     <tr class="${row.price ? "" : "dim"}">
       <td><code>${escapeHtml(row.kind)}</code></td>
       <td>${escapeHtml(row.engine)}</td>
-      <td><code>${escapeHtml(row.model_id || "(engine config)")}</code></td>
+      <td><code>${escapeHtml(row.model_id)}</code></td>
       <td>${escapeHtml(row.unit)}</td>
       <td>${inputs}</td>
     </tr>`;

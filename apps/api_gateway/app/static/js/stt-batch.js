@@ -1,4 +1,4 @@
-import { el, print } from "./helpers.js";
+import { el, print, quotaMessage } from "./helpers.js";
 import { createMicCapture } from "./audio-capture.js";
 
 export let sttBatchRecorder = null;
@@ -75,7 +75,12 @@ el("stt-submit").addEventListener("click", async () => {
   try {
     const response = await fetch("/v1/stt/transcribe", { method: "POST", body: form });
     const body = await response.json();
-    print(sttResult, body, !response.ok);
+    const quota = quotaMessage(response, body);
+    if (quota) {
+      print(sttResult, quota, true);
+    } else {
+      print(sttResult, body, !response.ok);
+    }
   } catch (error) {
     print(sttResult, { error: String(error) }, true);
   }

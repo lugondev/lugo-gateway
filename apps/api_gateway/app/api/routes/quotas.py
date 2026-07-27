@@ -85,7 +85,19 @@ async def _reject_duplicate(scope: str, scope_id: str, period: str, exclude_id: 
 
 @router.get("")
 async def list_quotas() -> dict:
-    return {"success": True, "data": await quota_store.list_all()}
+    """Each row carries the spend already counted against it -- a limit without
+    its spend cannot be judged."""
+    from app.services.quota.gate import current_spend
+
+    rows = await quota_store.list_all()
+    for row in rows:
+        try:
+            row["spend_usd"] = await current_spend(
+                scope=row["scope"], scope_id=row["scope_id"], period=row["period"]
+            )
+        except Exception:  # noqa: BLE001 - a spend read must never break the list
+            row["spend_usd"] = 0.0
+    return {"success": True, "data": rows}
 
 
 @router.post("")

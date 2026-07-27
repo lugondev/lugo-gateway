@@ -218,3 +218,29 @@ def test_a_global_rows_stray_scope_id_is_normalized_on_any_patch(client, _with_p
     stored = asyncio.run(quota_store.get(row["id"]))
     assert stored["scope_id"] == "", stored
     assert stored["limit_usd"] == 9.0
+
+
+def test_quota_list_includes_current_spend(client, _with_password):
+    """An admin cannot judge a limit without seeing what has been spent against it."""
+    import asyncio
+
+    from app.services.db.engine import init_db
+    from app.services.model_registry.store import model_registry_store
+    from app.services.usage.recorder import record_usage
+
+    _login_admin(client, "q-spend")
+    asyncio.run(init_db())
+    asyncio.run(model_registry_store.create(
+        "llm", "spend-eng", "spend-model", "Spend",
+        config={"price": {"unit": "1M_tokens", "in": 3.0}},
+    ))
+    asyncio.run(record_usage(user_id="u-spend", profile_id="", kind="llm", engine="spend-eng",
+                             model_id="spend-model", unit="tokens",
+                             native_amount=1_000_000, prompt_tokens=1_000_000))  # $3
+    created = client.post("/v1/quotas", json={
+        "scope": "user", "scope_id": "u-spend", "limit_usd": 10.0, "period": "monthly",
+    }).json()["data"]
+
+    row = next(q for q in client.get("/v1/quotas").json()["data"] if q["id"] == created["id"])
+    assert abs(row["spend_usd"] - 3.0) < 1e-9
+    assert row["limit_usd"] == 10.0

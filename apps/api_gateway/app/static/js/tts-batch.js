@@ -1,4 +1,4 @@
-import { el, print } from "./helpers.js";
+import { el, print, quotaMessage } from "./helpers.js";
 
 el("tts-submit").addEventListener("click", async () => {
   const ttsText = el("tts-text");
@@ -25,12 +25,17 @@ el("tts-submit").addEventListener("click", async () => {
       }),
     });
     const body = await response.json();
-    print(ttsResult, body, !response.ok);
-    if (response.ok && body.data?.audio_url) {
-      ttsAudio.src = body.data.audio_url;
-      ttsAudio.classList.remove("hidden");
-      const proc = body.data.process_seconds != null ? ` · synthesized in ${body.data.process_seconds}s` : "";
-      ttsMeta.textContent = `${body.data.duration_seconds ?? "?"}s @ ${body.data.sample_rate}Hz${proc}`;
+    const quota = quotaMessage(response, body);
+    if (quota) {
+      print(ttsResult, quota, true);
+    } else {
+      print(ttsResult, body, !response.ok);
+      if (response.ok && body.data?.audio_url) {
+        ttsAudio.src = body.data.audio_url;
+        ttsAudio.classList.remove("hidden");
+        const proc = body.data.process_seconds != null ? ` · synthesized in ${body.data.process_seconds}s` : "";
+        ttsMeta.textContent = `${body.data.duration_seconds ?? "?"}s @ ${body.data.sample_rate}Hz${proc}`;
+      }
     }
   } catch (error) {
     print(ttsResult, { error: String(error) }, true);

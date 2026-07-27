@@ -402,6 +402,66 @@ class ConversationSession:
         except Exception as exc:  # noqa: BLE001 - metering must never break a turn
             logger.warning("llm usage metering failed: %s", exc)
 
+    async def _record_tts_usage(self, text: str) -> None:
+        """Best-effort usage row for one synthesized utterance (billed per char).
+
+        A method rather than the per-turn closure it used to be: speak()'s
+        farewell synthesizes outside any turn and must be metered by the same
+        shape, and a second copy of this is how one of the two ends up
+        forgotten -- which is exactly what happened to speak().
+        """
+        cfg = self.cfg
+        try:
+            await record_usage(
+                user_id=cfg.identity_user_id or "", profile_id=cfg.profile_name or "",
+                kind="tts", engine=cfg.tts_engine, model_id=cfg.tts_model or "",
+                unit="chars", native_amount=len(text or ""),
+            )
+        except Exception as exc:  # noqa: BLE001 - metering must never break a turn
+            logger.warning("tts usage metering failed: %s", exc)
+
+    async def _farewell_quota_blocked(self) -> bool:
+        """True when an applicable quota is already over its limit for this
+        session's TTS engine, in which case speak() skips silently.
+
+        Same shape as MemoryExtractor._quota_blocked, and for the same reason:
+        the server initiates this work at teardown and nobody is waiting on it,
+        so an over-quota state means skip and log -- never raise, never surface
+        an error to the client. Resolving provider_id is wrapped separately so a
+        registry hiccup degrades to user/global-scope enforcement instead of
+        blocking or crashing; anything other than QuotaExceededError fails open.
+        """
+        from app.services.model_registry.store import model_registry_store
+        from app.services.quota.gate import QuotaExceededError, quota_gate
+        from app.services.usage.attribution import resolve_usage_model
+
+        cfg = self.cfg
+        usage_engine, usage_model, provider_id = "", "", ""
+        try:
+            usage_engine, usage_model = await resolve_usage_model(
+                "tts", cfg.tts_engine or "", cfg.tts_model or ""
+            )
+            entry = await model_registry_store.find("tts", usage_engine, usage_model)
+            provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
+        except Exception:  # noqa: BLE001 - never block on a lookup
+            provider_id = ""
+        try:
+            await quota_gate(
+                user_id=cfg.identity_user_id or "", provider_id=provider_id,
+                kind="tts", engine=usage_engine, model_id=usage_model,
+                profile_id=cfg.profile_name or "",
+            )
+        except QuotaExceededError as exc:
+            logger.warning(
+                "farewell utterance skipped for profile %s: %s", cfg.profile_name or "-", exc
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001 - fail-open, same as quota_gate itself
+            logger.warning(
+                "farewell quota check failed open for profile %s: %s", cfg.profile_name or "-", exc
+            )
+        return False
+
     async def _handle_turn(
         self, audio_pcm: bytes | None = None, text_input: str | None = None, speech_ms: float = 0.0
     ) -> None:
@@ -478,16 +538,6 @@ class ConversationSession:
         # `conversation_tts_lookahead` sentences AHEAD of sending (prefetch_synthesis),
         # so the next sentence's audio is usually ready before the current finishes ->
         # gapless playback. Text-only just emits sentences as the LLM streams them.
-        async def _record_tts_usage(text: str) -> None:
-            try:
-                await record_usage(
-                    user_id=self.cfg.identity_user_id or "", profile_id=cfg.profile_name or "",
-                    kind="tts", engine=cfg.tts_engine, model_id=cfg.tts_model or "",
-                    unit="chars", native_amount=len(text or ""),
-                )
-            except Exception as exc:  # noqa: BLE001 - metering must never break a turn
-                logger.warning("tts usage metering failed: %s", exc)
-
         async def _stream_to_tts(sentence_aiter, responder_name: str) -> list[str]:
             parts: list[str] = []
 
@@ -523,13 +573,13 @@ class ConversationSession:
                         # same real synthesis with no artifact side effect.
                         wav = await self.tts_provider.render_wav(request)
                         logger.info("DEBUG_HANG _synth: got result for sentence=%r", sentence)
-                        await _record_tts_usage(sentence)
+                        await self._record_tts_usage(sentence)
                         pcm = await asyncio.to_thread(wav_bytes_to_pcm16, wav, cfg.output_sample_rate)
                         packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
                         return None, packets, None
                     result = await self.tts_provider.synthesize(request)
                     logger.info("DEBUG_HANG _synth: got result for sentence=%r", sentence)
-                    await _record_tts_usage(sentence)
+                    await self._record_tts_usage(sentence)
                     if self.opus_encoder is not None:
                         # Fallback for engines that aren't a RenderingTTSProvider (e.g.
                         # edge_tts, which is test-UI/batch only and produces MP3) -- keep
@@ -780,12 +830,20 @@ class ConversationSession:
         """One-off spoken utterance with no STT/LLM (e.g. an idle farewell):
         synthesize `text` and stream it as a normal speaking turn
         (tts start -> audio -> stop). Best-effort; never raises. Paced in
-        real time so a device's small jitter buffer doesn't overflow."""
+        real time so a device's small jitter buffer doesn't overflow.
+
+        Real provider spend, so it is metered and gated -- but as a SKIP, not a
+        refusal: the server initiates this at teardown and nobody is waiting on
+        it, so over quota the whole utterance (text event included) is dropped
+        with a warning. Silence is the honest outcome; an error event would
+        report a failure for something the user never asked for."""
         text = (text or "").strip()
         cfg = self.cfg
         if not text or not cfg.want_audio:
             return
         try:
+            if await self._farewell_quota_blocked():
+                return
             if cfg.want_text:
                 await self.emit("response_text", turn=self.turn, chunk_index=0, text=text, responder="system")
             request = TTSRequest(
@@ -807,6 +865,12 @@ class ConversationSession:
                     # Fallback for non-RenderingTTSProvider engines (see _synth()).
                     pcm = await asyncio.to_thread(wav_file_to_pcm16, result.audio_url.lstrip("/"), cfg.output_sample_rate)
                     packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
+
+            # ONE row for the utterance, here rather than in each branch above:
+            # render_wav and synthesize are the two ways of producing this single
+            # utterance of `text`, never both, so a row per call site would just
+            # be the same charge written twice on the day someone reorders them.
+            await self._record_tts_usage(text)
 
             if packets is not None:
                 await self.emit("audio_start", turn=self.turn, chunk_index=0, codec="opus",

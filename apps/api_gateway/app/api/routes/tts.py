@@ -47,7 +47,7 @@ async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
 
 
 @router.post("/synthesize")
-async def synthesize(payload: TTSRequest, request: Request) -> dict:
+async def synthesize(payload: TTSRequest, request: Request, profile: str | None = None) -> dict:
     # Quota pre-flight: block BEFORE the provider does any work. See the STT
     # route for why the model is resolved before the provider lookup.
     from app.services.model_registry.store import model_registry_store
@@ -82,7 +82,7 @@ async def synthesize(payload: TTSRequest, request: Request) -> dict:
         # no pricing row and resolves to $0, but the usage event is still
         # recorded/attributed -- $0 here is expected, not a bug.
         await record_usage(
-            user_id=current_user_id(request) or "", profile_id="",
+            user_id=current_user_id(request) or "", profile_id=profile or "",
             kind="tts", engine=payload.engine, model_id=payload.model_id or "",
             unit="chars", native_amount=len(payload.text or ""),
         )
@@ -92,7 +92,37 @@ async def synthesize(payload: TTSRequest, request: Request) -> dict:
 
 
 @router.post("/stream")
-async def create_stream_job(payload: TTSRequest) -> dict:
+async def create_stream_job(payload: TTSRequest, request: Request, profile: str | None = None) -> dict:
+    # Quota pre-flight, synchronous: this endpoint returns a job_id and streams
+    # over SSE, so a refusal has to happen here -- reporting it through the event
+    # channel would make every client learn a second failure path. Same 429
+    # contract as /v1/tts/synthesize.
+    from app.services.model_registry.store import model_registry_store
+    from app.services.quota.gate import quota_gate, QuotaExceededError
+    from app.services.usage.attribution import resolve_usage_model
+
+    usage_engine, usage_model_id = "", ""
+    provider_id = ""
+    try:
+        usage_engine, usage_model_id = await resolve_usage_model(
+            "tts", payload.engine, payload.model_id or ""
+        )
+        entry = await model_registry_store.find("tts", usage_engine, usage_model_id)
+        provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
+    except Exception:  # noqa: BLE001 - a registry hiccup must never block a request
+        usage_engine, usage_model_id, provider_id = "", "", ""
+    # Read the identity HERE: the background job outlives the request, and the
+    # Request object must not be touched from inside it.
+    caller_id = current_user_id(request) or ""
+    profile_id = profile or ""
+    try:
+        await quota_gate(
+            user_id=caller_id, provider_id=provider_id,
+            kind="tts", engine=usage_engine, model_id=usage_model_id,
+        )
+    except QuotaExceededError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
     job_id = str(uuid.uuid4())
     # Resolve the provider eagerly so an unknown engine returns 400 synchronously.
     provider = tts_service.get_provider(payload.engine)
@@ -117,6 +147,14 @@ async def create_stream_job(payload: TTSRequest) -> dict:
                 started = time.perf_counter()
                 result = await provider.synthesize(chunk_request)
                 process_seconds = round(time.perf_counter() - started, 3)
+                try:
+                    await record_usage(
+                        user_id=caller_id, profile_id=profile_id,
+                        kind="tts", engine=payload.engine, model_id=payload.model_id or "",
+                        unit="chars", native_amount=len(segment or ""),
+                    )
+                except Exception as exc:  # noqa: BLE001 - metering must never break the job
+                    logger.warning("tts stream usage metering failed: %s", exc)
                 sequence += 1
                 await event_bus.publish(
                     channel,

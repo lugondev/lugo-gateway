@@ -32,8 +32,21 @@ def test_access_token_is_not_usable_as_refresh_token():
 
 
 def test_tampered_token_is_rejected():
+    """Tamper a character in the MIDDLE of the signature, not the last one.
+
+    The signature segment is 27 base64url chars encoding 20 bytes: 162 encoded
+    bits for 160 real ones, so the final character's low 2 bits are padding the
+    decoder throws away. Flipping only the last character therefore leaves the
+    decoded signature byte-identical about 6% of the time (measured: 128/2000),
+    and the "tampered" token verifies -- a false failure that looked like
+    flakiness for a while. Any interior character carries 6 significant bits.
+    """
     token = issue_access_token("user-123")
-    tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
+    signature = token.rsplit(".", 1)[-1]
+    assert len(signature) > 1, "signature too short to tamper in the middle"
+    cut = len(token) - len(signature)  # first index of the signature
+    tampered = token[:cut] + ("A" if token[cut] != "A" else "B") + token[cut + 1:]
+    assert tampered != token
     assert verify_access_token(tampered) is None
 
 

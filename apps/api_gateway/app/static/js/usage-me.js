@@ -17,23 +17,36 @@ export async function loadMyUsage() {
       host.innerHTML = "";
       return;
     }
-    _render(host, body.data || []);
+    _render(host, body.data || [], body.limits || []);
     if (status) status.textContent = "";
   } catch (error) {
     print(status, String(error), true);
   }
 }
 
-function _render(host, rows) {
+function _renderLimits(limits) {
+  if (!limits || !limits.length) return "";
+  const parts = limits.map((l) => {
+    const spent = Number(l.spend_usd || 0);
+    const limit = Number(l.limit_usd || 0);
+    const over = limit > 0 && spent >= limit;
+    const label = l.scope === "global" ? "Shared limit" : "Your limit";
+    return `<li class="${over ? "danger" : ""}">${label} (${escapeHtml(String(l.period))}): $${spent.toFixed(4)} of $${limit.toFixed(2)}${over ? " - reached" : ""}</li>`;
+  });
+  return `<ul class="limit-list">${parts.join("")}</ul>`;
+}
+
+function _render(host, rows, limits) {
+  const limitsHtml = _renderLimits(limits);
   if (!rows.length) {
-    host.innerHTML = `<p class="hint">No usage recorded${el("my-usage-period")?.value ? " for that month" : ""} yet.</p>`;
+    host.innerHTML = `${limitsHtml}<p class="hint">No usage recorded${el("my-usage-period")?.value ? " for that month" : ""} yet.</p>`;
     return;
   }
   const sorted = [...rows].sort((a, b) => Number(b.cost_usd || 0) - Number(a.cost_usd || 0));
   const tc = sorted.reduce((s, r) => s + Number(r.cost_usd || 0), 0);
   const tn = sorted.reduce((s, r) => s + Number(r.native_amount || 0), 0);
   const tq = sorted.reduce((s, r) => s + Number(r.count || 0), 0);
-  host.innerHTML = `
+  const tableHtml = `
     <table class="data-table">
       <thead>
         <tr><th>Kind</th><th>Engine</th><th>Model</th><th>Cost (USD)</th><th>Native amount</th><th>Requests</th></tr>
@@ -58,6 +71,7 @@ function _render(host, rows) {
         </tr>
       </tfoot>
     </table>`;
+  host.innerHTML = limitsHtml + tableHtml;
 }
 
 if (el("my-usage-refresh")) el("my-usage-refresh").addEventListener("click", loadMyUsage);

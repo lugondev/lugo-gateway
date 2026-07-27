@@ -1,9 +1,12 @@
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core.actor import current_user_id
 from app.services.usage.query import summarize, summarize_for_user
 
 router = APIRouter(prefix="/v1/usage", tags=["usage"])
+logger = logging.getLogger(__name__)
 
 
 async def _attach_labels(group_by: str, rows: list[dict]) -> None:
@@ -45,6 +48,46 @@ async def get_summary(group_by: str, period: str | None = None) -> dict:
     return {"success": True, "data": data}
 
 
+async def _limits_for(user_id: str) -> list[dict]:
+    """The quotas that can block THIS caller: their own user quota and the
+    global one. Never another user's, and never a provider quota -- its spend is
+    cross-tenant information, and this endpoint is open to every logged-in user.
+    """
+    from app.services.quota.gate import current_spend
+    from app.services.quota.store import quota_store
+
+    out: list[dict] = []
+    try:
+        quotas = await quota_store.list_enabled()
+    except Exception as exc:  # noqa: BLE001 - never break the usage view over this
+        logger.warning("reading own limits failed: %s", exc)
+        return out
+    for quota in quotas:
+        if quota["scope"] != "global" and not (
+            quota["scope"] == "user" and quota["scope_id"] == user_id
+        ):
+            continue
+        # Per row, not per list (same guard as GET /v1/quotas): one unreadable
+        # spend must cost that row its number, not drop it and every row after
+        # it. The client presents this as the complete set of limits that can
+        # block the caller, so a silently truncated list reads as "you have no
+        # global quota" -- a wrong answer where 0.0 is only a stale one.
+        try:
+            spend = await current_spend(
+                scope=quota["scope"], scope_id=quota["scope_id"], period=quota["period"]
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("reading spend for a %s limit failed: %s", quota["scope"], exc)
+            spend = 0.0
+        out.append({
+            "scope": quota["scope"],
+            "period": quota["period"],
+            "limit_usd": quota["limit_usd"],
+            "spend_usd": spend,
+        })
+    return out
+
+
 @router.get("/me")
 async def get_my_usage(request: Request, period: str | None = None) -> dict:
     """The caller's own usage, grouped by (kind, model_id). Carved out of the
@@ -52,4 +95,4 @@ async def get_my_usage(request: Request, period: str | None = None) -> dict:
     auth_guard._USER_PREFIXES."""
     user_id = current_user_id(request) or ""
     data = await summarize_for_user(user_id, period)
-    return {"success": True, "data": data}
+    return {"success": True, "data": data, "limits": await _limits_for(user_id)}

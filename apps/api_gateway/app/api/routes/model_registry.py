@@ -1,4 +1,5 @@
 import difflib
+import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -14,12 +15,15 @@ from app.services.model_registry.config_schema import config_schema_for
 from app.services.model_registry.store import model_registry_store
 from app.services.providers.resolve import resolve_credentials
 from app.services.usage.price_schema import PRICE_UNIT_BY_KIND, apply_price_to_config
+from app.services.usage.recorder import record_usage
 from app.services.stt.providers.http_stt_provider import HttpSttProvider
 from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
 from app.services.stt.providers.qwencloud_provider import QwenCloudSttProvider
 from app.services.stt.service import stt_service
 from app.services.tts.providers.http_tts_provider import HttpTtsProvider
 from app.services.tts.service import tts_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/model_registry", tags=["model_registry"])
 
@@ -316,7 +320,7 @@ async def get_defaults() -> dict:
 
 
 @router.post("")
-async def create_entry(payload: CreateEntryRequest) -> dict:
+async def create_entry(payload: CreateEntryRequest, request: Request) -> dict:
     # Validate/normalize the price before anything else: the add-time test call
     # is a real network round-trip, and a typo'd price shouldn't cost one.
     try:
@@ -391,6 +395,21 @@ async def create_entry(payload: CreateEntryRequest) -> dict:
         raise
     except Exception as exc:  # noqa: BLE001 - surface the provider's own error to the admin
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # The add-time test call above really hit the provider, so it really cost
+    # money -- record it. Deliberately NOT gated: an admin over quota must still
+    # be able to validate the provider they need in order to fix the config that
+    # put them over. request_id marks it as validation, not serving traffic.
+    try:
+        await record_usage(
+            user_id=current_user_id(request) or "", profile_id="",
+            kind=payload.kind, engine=payload.engine, model_id=payload.model_id,
+            unit={"llm": "tokens", "embed": "tokens", "stt": "seconds", "tts": "chars"}
+                 .get(payload.kind, ""),
+            native_amount=0.0, request_id="registry-test-call",
+        )
+    except Exception as exc:  # noqa: BLE001 - metering must never break an admin action
+        logger.warning("registry test-call metering failed: %s", exc)
 
     # Persist api_key for every kind (stt: read by openrouter_provider.py and
     # http_stt_provider.py; llm: read by responder.py's

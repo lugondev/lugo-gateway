@@ -210,3 +210,31 @@ Còn lại (xem audit 2026-07-26): metering + gate cho `POST /v1/tts/stream` và
 `WS /v1/stt/stream`; `profile_id=""` ở REST; hiển thị spend/limit trên tab
 Quotas và My Usage; client chưa xử lý 429 riêng; tab Pricing vẫn liệt kê row
 sentinel; rollup `usage_counters` và prune `usage_events`.
+
+## 15. Metering gaps đã đóng + cơ chế chống bỏ sót (2026-07-26)
+
+Theo plan `plans/2026-07-26-close-metering-gaps.md`:
+- **`WS /v1/stt/stream`**: gate lúc connect và mỗi lần `flush`/`end`; đo theo giây
+  audio NHẬN được (trước VAD — provider tính tiền theo phần nó xử lý), một row mỗi
+  lần finalize, cộng một row cuối cho phần chưa flush khi disconnect.
+- **`POST /v1/tts/stream`**: thêm `Request` để có identity (trước đó không có),
+  gate đồng bộ trả 429 trước khi spawn job, đo theo từng chunk đã synthesize.
+- **Cơ chế chống bỏ sót** (`tests/unit/test_paid_call_site_inventory.py`): liệt kê
+  mọi call site gọi provider từ source và bắt buộc mỗi cái phải có status + lý do +
+  tên test bao phủ. Thêm call site mới, thêm call thứ hai vào file đã liệt kê, hay
+  khai một test không tồn tại → CI đỏ. Kèm
+  `tests/unit/test_every_paid_entry_point_meters.py` chạy thật từng entry point và
+  assert có row trong DB — cái đầu bắt "quên", cái sau bắt "khai sai".
+- **Add-time test call của Model Registry**: ĐO nhưng KHÔNG gate (`request_id =
+  "registry-test-call"`) — admin hết quota vẫn phải test được provider để sửa
+  đúng cái config làm họ hết quota.
+- REST metering ghi `profile_id` khi có `?profile=`; `/chat` resolve trong guard;
+  tab Pricing bỏ row sentinel (giá đặt ở đó không bao giờ khớp).
+- **Hiển thị**: tab Quotas có cột Spent (%, đỏ khi vượt); `/v1/usage/me` trả thêm
+  `limits` (chỉ quota user của chính caller + global, không lộ cross-tenant) và My
+  Usage hiện chúng; 429 nay hiện đúng lý do thay vì lỗi chung chung (helper
+  `quotaMessage` cho static UI, `QuotaExceededError` cho React client).
+
+Còn lại: rollup `usage_counters` + prune `usage_events` (442 row, có index — chưa
+cần); `status="error"` cho call lỗi sau khi provider đã tính tiền; `quota_store`
+cache theo process (nhiều worker sẽ stale).
