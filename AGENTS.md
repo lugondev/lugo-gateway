@@ -78,6 +78,16 @@ for the wire protocol.
   (FLEURS benchmark).
 - TTS engines output different sample rates (VieNeu 48k, OmniVoice 24k) — resample when
   re-encoding (`core/audio.py: wav_file_to_pcm16`).
+- **Opus playback pacing is per-connection, not just global.** `SessionRuntimeConfig.opus_pace`
+  (`services/conversation/session.py`) overrides the global
+  `system_config.conversation.conversation_opus_pace` when set; `None` (the default —
+  what `api/routes/lugo.py` always uses) inherits the global value, so ESP32/RPi
+  pacing is untouched. The web client (`api/routes/conversation.py`) sends
+  `?opus_pace=0` to disable server-side throttling and rely on the browser's own
+  `AudioContext` scheduling as the jitter buffer instead of the ~300ms
+  `conversation_opus_prebuffer_frames` cushion sized for device ring buffers. If web
+  playback stutters again, or an ESP32/RPi regression shows up after touching this
+  code, see `docs/superpowers/specs/2026-07-28-web-audio-jitter-buffer-design.md`.
 
 ## Where to look
 

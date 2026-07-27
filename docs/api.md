@@ -133,6 +133,7 @@ ws://localhost:8000/v1/conversation/stream?profile=vi&sample_rate=16000&audio_co
 | `output` | `audio,text` | what to send back: any of `audio`, `text` |
 | `audio_out` | `url` | reply-audio delivery: `url` (browser fetches /artifacts) or `opus` (binary frames pushed — for devices) |
 | `output_sample_rate` | 24000 | output Opus frame rate when `audio_out=opus` |
+| `opus_pace` | server config | per-connection override of Opus playback pacing (see below); `0`/`false` disables it for this session only. Omit to inherit the server-wide default — this is what device firmware does. |
 
 **`profile`** does double duty:
 1. If it names a saved profile (`POST /v1/profiles`), the session uses that profile's
@@ -159,11 +160,18 @@ libopus, falls back to `pcm16` if absent).
 
 **Output audio** (`audio_out=opus`): each reply sentence is sent as JSON `audio_start`
 `{chunk_index, text, codec:"opus", sample_rate, frames}`, then `frames` binary Opus
-packets (mono @ `output_sample_rate`, 60 ms each), then `audio_end`. The packets are
-**paced**: the first ~5 go out immediately (fast first audio), the rest at one 60 ms
-frame apart so a small device buffer isn't flooded on long replies. With `audio_out=url`
-(default) the server sends an `audio_chunk` with an `audio_url` instead. Browsers can
-decode the Opus frames via WebCodecs `AudioDecoder` — see `docs/device-integration.md` §6.
+packets (mono @ `output_sample_rate`, 60 ms each), then `audio_end`. By default the
+packets are **paced**: the first ~5 go out immediately (fast first audio), the rest at
+one 60 ms frame apart, sized so a small embedded ring buffer (ESP32/RPi) isn't flooded
+on long replies. Browsers don't have that constraint and can hold seconds of audio
+queued in `AudioContext`, so the web client sends `opus_pace=0` to receive each
+sentence's packets back-to-back as soon as they're encoded — the browser's own
+scheduling becomes the jitter buffer, which tolerates far more network/main-thread
+jitter than the ~300ms server-side cushion. See
+`docs/superpowers/specs/2026-07-28-web-audio-jitter-buffer-design.md` for the full
+rationale. With `audio_out=url` (default) the server sends an `audio_chunk` with an
+`audio_url` instead. Browsers can decode the Opus frames via WebCodecs `AudioDecoder`
+— see `docs/device-integration.md` §6.
 
 Server → client events (`{"event": ...}`):
 
