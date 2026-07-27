@@ -332,6 +332,12 @@ async def conversation_stream(websocket: WebSocket) -> None:
     # binary frames pushed over the socket (for ESP32/RPi that can't fetch mid-stream).
     audio_out = (q.get("audio_out") or "url").lower()
     output_sample_rate = int(q.get("output_sample_rate", 24000))
+    # Per-connection override of Opus playback pacing (None = inherit the
+    # global system_config default -- what api/routes/lugo.py always gets).
+    # Web sends opus_pace=0: see
+    # docs/superpowers/specs/2026-07-28-web-audio-jitter-buffer-design.md.
+    _opus_pace_raw = q.get("opus_pace")
+    opus_pace = _truthy(_opus_pace_raw, True) if _opus_pace_raw is not None else None
     # Only optional noise reduction here — the endpointer already does VAD
     # segmentation and Whisper has its own vad_filter, so an extra VAD gate on the
     # utterance would clip speech and hurt recognition.
@@ -355,6 +361,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
         denoise=denoise, resume_sid=requested_sid, stt_model=stt_model,
         tts_model=tts_model,
         identity_user_id=identity.user_id,
+        opus_pace=opus_pace,
     )
 
     async def emit(event: str, **payload) -> None:

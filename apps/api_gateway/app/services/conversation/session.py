@@ -127,6 +127,16 @@ class SessionRuntimeConfig:
     # None when auth is disabled (dev mode) or the caller used the legacy shared
     # device_auth_token; in that case the front-end falls back to profile.owner_id.
     identity_user_id: str | None = None
+    # Per-connection override of Opus playback pacing. None (the default, and
+    # the only value api/routes/lugo.py ever produces) means "not specified,
+    # inherit system_config.conversation.conversation_opus_pace" -- so
+    # ESP32/RPi sessions are byte-for-byte unaffected by this field's
+    # existence. api/routes/conversation.py (web) sets it from the
+    # `opus_pace` query param so the web client can disable the ~300ms
+    # real-time drip-feed sized for embedded ring buffers, without touching
+    # the global default devices rely on. See
+    # docs/superpowers/specs/2026-07-28-web-audio-jitter-buffer-design.md.
+    opus_pace: bool | None = None
 
 
 class ConversationSession:
@@ -610,7 +620,7 @@ class ConversationSession:
                 # and overflowed (dropped words on long replies). A single clock
                 # keeps the device buffer ~prebuffer-deep for the entire reply.
                 _conv_cfg = system_config_store.get().conversation
-                _do_pace = _conv_cfg.conversation_opus_pace
+                _do_pace = cfg.opus_pace if cfg.opus_pace is not None else _conv_cfg.conversation_opus_pace
                 _prebuf = _conv_cfg.conversation_opus_prebuffer_frames
                 _pace_t0 = None
                 _pace_n = 0
