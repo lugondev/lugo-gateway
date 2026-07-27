@@ -1,15 +1,15 @@
 import { el, wsUrl } from "./helpers.js";
-import { conv, convStopAudio } from "./conversation.js";
+import { conv, convStopAudio, updateConvEnginesInfo, annotateLabel } from "./conversation.js";
 import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
 
 export const CHAT_MODES = {
-  "text-text":   { title: "Text Chat",      hint: "Text chat with the configured LLM." },
-  "voice-voice": { title: "Voice Chat",     hint: "Speak — VAD detects your pause, transcribes, LLM replies, TTS plays back." },
-  "voice-text":  { title: "Voice → Text",   hint: "Live microphone transcription. No LLM, no TTS." },
-  "text-voice":  { title: "Text → Voice",   hint: "Type a message — the LLM replies and the reply is spoken." },
+  "text-text":   { title: "Text Chat",      hint: "Text chat with the LLM." },
+  "voice-voice": { title: "Voice Chat",     hint: "Speak — VAD detects your pause, STT transcribes, the LLM replies, TTS speaks the reply." },
+  "voice-text":  { title: "Voice → Text",   hint: "Speak — VAD detects your pause, STT transcribes, the LLM replies as text (no TTS)." },
+  "text-voice":  { title: "Text → Voice",   hint: "Type a message — the LLM replies and TTS speaks the reply." },
 };
 export let chatMode = "text-text";
-export const v2t = { ws: null, capture: null };
+export const v2t = { ws: null, capture: null, assistantBubble: null };
 
 export const chat = { history: [], busy: false };
 export let currentSessionId = null;
@@ -111,8 +111,7 @@ export function setChatMode(mode) {
   const info = CHAT_MODES[mode] || {};
   if (el("chat-section-title")) el("chat-section-title").textContent = info.title || "Chat";
   if (el("chat-hint")) el("chat-hint").textContent = info.hint || "";
-  const enginesInfo = el("conv-engines-info");
-  if (enginesInfo) enginesInfo.classList.toggle("hidden", mode !== "voice-voice");
+  updateConvEnginesInfo(mode);
 }
 
 export function initChatModes() {
@@ -135,13 +134,33 @@ export function setV2tStatus(text, cls) {
   if (e) { e.textContent = text; e.className = cls; }
 }
 
+// Voice→Text drives the SAME conversation pipeline as Voice→Voice (endpointer
+// -> STT -> LLM) via /v1/conversation/stream, just with output=text so the
+// server skips TTS synthesis entirely. This keeps LLM replies, history, and
+// session_id shared across all chat modes instead of Voice→Text being a bare
+// STT passthrough with no LLM turn.
 export async function startV2t() {
-  if (el("v2t-partial")) el("v2t-partial").textContent = "—";
   if (el("v2t-log")) el("v2t-log").textContent = "";
+  v2t.assistantBubble = null;
 
-  // No manual engine/language picker here — omitting them lets the backend use
-  // its configured default STT engine (and auto language detection).
-  const params = `sample_rate=${STREAM_SAMPLE_RATE}`;
+  const activeProfile = el("profile-select")?.value;
+
+  setV2tStatus("⏳ starting STT engine…", "status-idle");
+  try {
+    const warmParams = activeProfile ? `profile=${encodeURIComponent(activeProfile)}` : "";
+    const warmRes = await fetch(`/v1/stt/warm?${warmParams}`, { method: "POST" });
+    if (!warmRes.ok) {
+      setV2tStatus("STT engine (server default) not ready", "status-error");
+      return;
+    }
+  } catch {
+    setV2tStatus("Could not connect to STT engine", "status-error");
+    return;
+  }
+
+  let params = `sample_rate=${STREAM_SAMPLE_RATE}&output=text`;
+  if (activeProfile) params += `&profile=${encodeURIComponent(activeProfile)}`;
+  if (currentSessionId) params += `&session_id=${encodeURIComponent(currentSessionId)}`;
 
   let capture;
   try {
@@ -155,14 +174,14 @@ export async function startV2t() {
     return;
   }
 
-  const ws = new WebSocket(wsUrl(`/v1/stt/stream?${params}`));
+  const ws = new WebSocket(wsUrl(`/v1/conversation/stream?${params}`));
   v2t.ws = ws;
 
   ws.onopen = async () => {
     try {
       await capture.start();
       v2t.capture = capture;
-      setV2tStatus("● recording", "status-rec");
+      setV2tStatus("● listening", "status-rec");
       setV2tUI("recording");
     } catch {
       setV2tStatus("mic denied", "status-error");
@@ -171,22 +190,49 @@ export async function startV2t() {
   };
 
   ws.onmessage = (event) => {
-    let data;
-    try { data = JSON.parse(event.data); } catch { return; }
+    let d;
+    try { d = JSON.parse(event.data); } catch { return; }
     if (el("v2t-log")) {
       const lines = el("v2t-log").textContent.split("\n");
-      lines.push(`${data.event_type}: ${JSON.stringify(data.payload ?? {})}`);
+      lines.push(`${d.event}: ${d.text ? d.text.slice(0, 60) : JSON.stringify({ ...d, event: undefined })}`);
       if (lines.length > 30) lines.shift();
       el("v2t-log").textContent = lines.join("\n");
     }
-    if (data.event_type === "partial") {
-      if (el("v2t-partial")) el("v2t-partial").textContent = data.payload?.text || "…";
-    } else if (data.event_type === "final") {
-      const text = (data.payload?.text || "").trim();
-      if (text) chatBubble("user", text);
-      if (el("v2t-partial")) el("v2t-partial").textContent = "—";
-    } else if (data.event_type === "done") {
-      stopV2t();
+    switch (d.event) {
+      case "session_started": {
+        if (d.session_id) currentSessionId = d.session_id;
+        // Authoritative: show exactly which STT/LLM this session resolved to
+        // (mirrors Voice→Voice's session_started handling in conversation.js).
+        const info = el("conv-engines-info");
+        if (info) {
+          const llmPart = d.responder === "llm" ? `LLM: ${annotateLabel("llm", d.llm_label || d.llm_model)}` : "LLM: echo (no LLM configured)";
+          info.textContent = `STT: ${annotateLabel("stt", d.stt_label || d.stt_engine)} · ${llmPart}`;
+        }
+        break;
+      }
+      case "engines_ready":
+      case "turn_done":
+        setV2tStatus("● listening", "status-rec");
+        break;
+      case "speech_start":
+        setV2tStatus("● you're speaking", "status-rec");
+        break;
+      case "speech_end":
+        setV2tStatus("… thinking", "status-idle");
+        break;
+      case "user_transcript":
+        if (d.text) chatBubble("user", d.text);
+        break;
+      case "response_text":
+        if (d.chunk_index === 0 || !v2t.assistantBubble) {
+          v2t.assistantBubble = chatBubble("assistant", d.text);
+        } else {
+          v2t.assistantBubble.textContent += " " + d.text;
+        }
+        break;
+      case "error":
+        setV2tStatus(`error: ${d.message || ""}`, "status-error");
+        break;
     }
   };
 

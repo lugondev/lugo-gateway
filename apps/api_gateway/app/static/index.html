@@ -279,7 +279,7 @@
                 <h2 id="chat-section-title">Text Chat</h2>
                 <button id="chat-reset" class="ghost mini">Reset</button>
               </div>
-              <p class="hint" id="chat-hint">Text chat with the configured conversation model.</p>
+              <p class="hint" id="chat-hint">Text chat with the LLM.</p>
               <p class="hint engine-detail" id="conv-engines-info">Active models will appear here when the session starts.</p>
 
               <!-- Unified dialogue area -->
@@ -317,22 +317,16 @@
 
               <!-- === VOICE→TEXT === -->
               <div id="mode-voice-text" class="mode-pane hidden">
-                <p class="hint">Uses the server's default STT engine.</p>
                 <div class="actions">
                   <button id="v2t-start">Start Mic</button>
                   <button id="v2t-stop" class="ghost" disabled>Stop &amp; Finalize</button>
                   <span id="v2t-status" class="status-idle">idle</span>
-                </div>
-                <div class="transcript-wrap">
-                  <p class="field-label">Partial</p>
-                  <p id="v2t-partial" class="partial">&mdash;</p>
                 </div>
                 <pre id="v2t-log" class="output small"></pre>
               </div>
 
               <!-- === TEXT→VOICE === -->
               <div id="mode-text-voice" class="mode-pane hidden">
-                <p class="hint">Your message goes to the LLM; its reply appears in the transcript above and is spoken via the server's default TTS engine. Shares history/session with the other chat modes.</p>
                 <label>
                   Message
                   <textarea id="t2v-text" rows="2" placeholder="Type a message and press Enter (Shift+Enter for newline)&#8230;"></textarea>

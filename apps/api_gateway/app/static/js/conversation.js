@@ -1,6 +1,6 @@
 import { el, wsUrl, restoreAndBind } from "./helpers.js";
 import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
-import { currentSessionId, setCurrentSessionId } from "./chat.js";
+import { currentSessionId, setCurrentSessionId, chatMode } from "./chat.js";
 import { profileData } from "./profiles.js";
 
 export const conv = { ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null, assistantBubble: null, opusMode: false, opusDec: null, opusTs: 0, outRate: 24000 };
@@ -188,29 +188,62 @@ function defaultLabel(kind) {
   return lbl ? `${lbl} (default)` : "server default";
 }
 
-export function updateConvEnginesInfo() {
+// Each mode only runs a subset of engines — show just the parts that mode
+// actually uses (voice-voice: STT+LLM+TTS, voice-text: STT+LLM, text-voice:
+// LLM+TTS, text-text: LLM only) instead of always listing all three.
+function enginesForMode(mode) {
+  return {
+    stt: mode === "voice-voice" || mode === "voice-text",
+    tts: mode === "voice-voice" || mode === "text-voice",
+  };
+}
+
+// True when `kind` would fall back to the server default under the currently
+// selected profile (no profile selected, or the profile leaves this kind
+// unpinned) — the same condition updateConvEnginesInfo() uses to decide
+// whether to append defaultLabel()'s "(default)" marker. Session_started's
+// authoritative labels need the same marker so the "(default)" tag doesn't
+// disappear the moment a live session overwrites the pre-session estimate.
+function isServerDefault(kind) {
+  const profileName = el("profile-select")?.value || "";
+  if (!profileName) return true;
+  const p = profileData[profileName] || {};
+  if (kind === "stt") return !p.stt?.engine;
+  if (kind === "llm") return !p.llm?.engine;
+  if (kind === "tts") return !p.tts?.profile_name;
+  return false;
+}
+
+export function annotateLabel(kind, label) {
+  return isServerDefault(kind) ? `${label} (default)` : label;
+}
+
+export function updateConvEnginesInfo(mode = chatMode) {
   const info = el("conv-engines-info");
   if (!info) return;
+  const { stt: wantStt, tts: wantTts } = enginesForMode(mode);
   const profileName = el("profile-select")?.value || "";
+  const parts = [];
   if (profileName) {
     // A profile is authoritative for STT/LLM/TTS: show ITS models as friendly
     // registry labels (resolved client-side, same as the server would), so the
     // user sees exactly what's active without having to start the session.
     const p = profileData[profileName] || {};
-    const sttLabel = catalogLabel("stt", p.stt?.engine || "", p.stt?.model || "") || defaultLabel("stt");
-    const llmLabel = catalogLabel("llm", p.llm?.engine || "", p.llm?.model || "")
-      || p.llm?.model || defaultLabel("llm");
+    if (wantStt) parts.push(`STT: ${catalogLabel("stt", p.stt?.engine || "", p.stt?.model || "") || defaultLabel("stt")}`);
+    parts.push(`LLM: ${catalogLabel("llm", p.llm?.engine || "", p.llm?.model || "") || p.llm?.model || defaultLabel("llm")}`);
     // TTS is a whole profile; its friendly name IS the linked TTS profile name.
-    const ttsLabel = p.tts?.profile_name || defaultLabel("tts");
-    info.textContent = `STT: ${sttLabel} · LLM: ${llmLabel} · TTS: ${ttsLabel}`;
-    return;
+    if (wantTts) parts.push(`TTS: ${p.tts?.profile_name || defaultLabel("tts")}`);
+  } else {
+    // No profile — the server defaults apply (STT/TTS/language are no longer
+    // hand-pickable here; a profile is the way to override them). This whole
+    // branch IS the default path, so every part gets the "(default)" marker —
+    // including convDetails.llm, which used to bypass defaultLabel() and show
+    // a bare "LLM: openai/gpt-4o-mini" with no marker at all.
+    if (wantStt) parts.push(`STT: ${defaultLabel("stt")}`);
+    parts.push(`LLM: ${convDetails.llm ? `${convDetails.llm} (default)` : defaultLabel("llm")}`);
+    if (wantTts) parts.push(`TTS: ${defaultLabel("tts")}`);
   }
-  // No profile — the server defaults apply (STT/TTS/language are no longer
-  // hand-pickable here; a profile is the way to override them).
-  const sttPart = `STT: ${defaultLabel("stt")}`;
-  const llmPart = convDetails.llm ? `LLM: ${convDetails.llm}` : `LLM: ${defaultLabel("llm")}`;
-  const ttsPart = `TTS: ${defaultLabel("tts")}`;
-  info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
+  info.textContent = parts.join(" · ");
 }
 
 export async function loadConversationEngines() {
@@ -339,9 +372,9 @@ export async function startConversation() {
         // engine names or verbose provider "detail" strings).
         const info = el("conv-engines-info");
         if (info) {
-          const sttPart = `STT: ${d.stt_label || d.stt_engine}`;
-          const llmPart = d.responder === "llm" ? `LLM: ${d.llm_label || d.llm_model}` : "LLM: echo (no LLM configured)";
-          const ttsPart = `TTS: ${d.tts_label || d.tts_engine}`;
+          const sttPart = `STT: ${annotateLabel("stt", d.stt_label || d.stt_engine)}`;
+          const llmPart = d.responder === "llm" ? `LLM: ${annotateLabel("llm", d.llm_label || d.llm_model)}` : "LLM: echo (no LLM configured)";
+          const ttsPart = `TTS: ${annotateLabel("tts", d.tts_label || d.tts_engine)}`;
           info.textContent = `${sttPart} · ${llmPart} · ${ttsPart}`;
         }
         // Engines may still be cold-loading — tell the user to hold off speaking

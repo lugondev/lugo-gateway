@@ -140,6 +140,20 @@ async function clearSessions(onlyEmpty) {
   }
 }
 
+// On page load there's no "current" session yet — instead of starting every
+// mode against a brand-new session_id, pick up where the user left off. Only
+// the explicit "New session" button (below) should force a fresh one.
+export async function resumeLatestSession() {
+  if (currentSessionId) return;
+  try {
+    const body = await (await fetch("/v1/sessions?limit=1")).json();
+    const latest = (body.data || [])[0];
+    if (latest) await loadSession(latest.id);
+  } catch {
+    /* best-effort — falls back to starting a fresh session */
+  }
+}
+
 export async function loadSession(id) {
   let body;
   try {
