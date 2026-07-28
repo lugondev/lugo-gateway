@@ -130,7 +130,7 @@ class TestGenerateVoiceCloneKwargs:
         monkeypatch.setattr(provider, "_load_model", lambda kind: _FakeModel())
 
         provider._generate(TTSRequest(
-            text="hi", engine="qwen3_tts_0_6b", ref_audio_path="/ref.wav", ref_text="ref",
+            text="hi", engine="qwen3_tts_0_6b", ref_audio_path="artifacts/refs/ref.wav", ref_text="ref",
         ))
 
         assert captured["x_vector_only_mode"] is False
@@ -150,7 +150,7 @@ class TestGenerateVoiceCloneKwargs:
         monkeypatch.setattr(provider, "_load_model", lambda kind: _FakeModel())
 
         provider._generate(TTSRequest(
-            text="hi", engine="qwen3_tts_0_6b", ref_audio_path="/ref.wav", ref_text="ref",
+            text="hi", engine="qwen3_tts_0_6b", ref_audio_path="artifacts/refs/ref.wav", ref_text="ref",
         ))
 
         assert "x_vector_only_mode" not in captured

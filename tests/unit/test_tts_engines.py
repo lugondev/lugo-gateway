@@ -359,12 +359,12 @@ async def test_qwen3_tts_voice_clone_path_used_when_ref_audio_present(monkeypatc
 
     _install_fake_qwen_tts(monkeypatch, _FakeQwen3TTSModel)
 
-    payload = TTSRequest(text="hi", ref_audio_path="/tmp/ref.wav", ref_text="reference text")
+    payload = TTSRequest(text="hi", ref_audio_path="artifacts/refs/ref.wav", ref_text="reference text")
     result = await tts_service.get_provider("qwen3_tts_1_7b").synthesize(payload)
 
     assert result.sample_rate == 24000
     assert calls["checkpoint_id"] == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-    assert calls["voice_clone"] == ("hi", "Auto", "/tmp/ref.wav", "reference text", False)
+    assert calls["voice_clone"] == ("hi", "Auto", "artifacts/refs/ref.wav", "reference text", False)
 
 
 async def test_qwen3_tts_custom_voice_honors_explicit_voice_and_instruct(monkeypatch):

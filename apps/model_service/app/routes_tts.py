@@ -15,6 +15,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.schemas.tts import TTSRequest
+from app.services.artifacts import artifact_store
 from app.services.tts.base import RenderingTTSProvider
 from model_service.app.auth import make_auth_dependency
 from model_service.app.config import ServiceConfig
@@ -59,7 +60,16 @@ def build_tts_router(config: ServiceConfig, provider: RenderingTTSProvider) -> A
         try:
             if payload.ref_audio_base64:
                 ref_bytes = base64.b64decode(payload.ref_audio_base64)
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                # TTSRequest.ref_audio_path is validated against
+                # artifact_store's containment check (2026-07-28
+                # critical-authz-fixes task 5) since six providers feed it
+                # straight into Path(...).read_bytes(). This decode target is
+                # server-generated, not caller-supplied, but it still has to
+                # pass that check -- write it inside the artifacts dir
+                # (rather than the system temp dir) so it does.
+                with tempfile.NamedTemporaryFile(
+                    suffix=".wav", delete=False, dir=str(artifact_store.base_dir)
+                ) as f:
                     f.write(ref_bytes)
                     tmp_ref_path = f.name
             wav = await provider.render_wav(

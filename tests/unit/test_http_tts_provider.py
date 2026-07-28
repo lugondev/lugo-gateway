@@ -302,7 +302,16 @@ async def test_list_voices_returns_empty_when_remote_call_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_render_wav_forwards_ref_audio_as_base64(captured, tmp_path):
+async def test_render_wav_forwards_ref_audio_as_base64(captured, tmp_path, monkeypatch):
+    # TTSRequest.ref_audio_path is now validated against the artifacts dir
+    # (task 5, 2026-07-28-critical-authz-fixes) -- point the schema's
+    # artifact_store at tmp_path so this stays hermetic instead of writing
+    # into the real artifacts/ dir.
+    from app.services.artifacts import ArtifactStore
+
+    fresh_store = ArtifactStore(str(tmp_path))
+    monkeypatch.setattr("app.schemas.tts.artifact_store", fresh_store)
+
     ref_path = tmp_path / "ref.wav"
     ref_path.write_bytes(_WAV_BYTES)
 
