@@ -201,6 +201,14 @@ async def test_tts_local_engine_unavailable_when_provider_says_so(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tts_local_engine_not_ready_while_warming(monkeypatch):
+    # vieneu ships behind the optional `tts` extra (pyproject.toml), unlike
+    # vosk which is a base dependency -- module_available("vieneu") is not
+    # guaranteed on a checkout installed without that extra, so the
+    # provider.available() gate check_engine runs first must be neutralized
+    # directly, the same way test_tts_local_engine_unavailable_when_provider_
+    # says_so does for the False case.
+    monkeypatch.setattr(
+        tts_service.providers["vieneu"], "available", lambda: True, raising=False)
     monkeypatch.setattr("app.services.tts.service.is_ready", lambda p: False)
     monkeypatch.setattr("app.services.tts.service._needs_warming", lambda p: True)
     health = await tts_service.check_engine("vieneu")
@@ -209,6 +217,8 @@ async def test_tts_local_engine_not_ready_while_warming(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tts_local_engine_ok_when_warm(monkeypatch):
+    monkeypatch.setattr(
+        tts_service.providers["vieneu"], "available", lambda: True, raising=False)
     monkeypatch.setattr("app.services.tts.service.is_ready", lambda p: True)
     monkeypatch.setattr("app.services.tts.service._needs_warming", lambda p: True)
     health = await tts_service.check_engine("vieneu")
