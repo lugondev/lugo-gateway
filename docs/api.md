@@ -13,6 +13,60 @@ with an appropriate HTTP status (e.g. `400` for an unknown engine).
 
 ---
 
+## Authentication
+
+Every request is checked by `AuthGuardMiddleware` (`app/core/auth_guard.py`), which is
+**default-deny**: a route not explicitly classified there requires at least a logged-in
+user, not public access.
+
+Identity comes from exactly one of two sources, never both for a single request:
+- **Cookie session** — set by `POST /api/auth/login`. The normal path for browser
+  clients (the `/ui` playground, `/static/*` pages).
+- **Bearer token** — `Authorization: Bearer <token>`. If this header is present it is
+  the *only* identity source considered for that request; an invalid/expired bearer
+  token gets an immediate `401` and never falls back to the cookie session. A bearer
+  identity always resolves to `role="user"`, even for an account that is `admin` in
+  the DB — a bearer-holding client can never escalate to admin.
+
+**Public, no credentials at all:**
+- `/` and `/health`
+- `/static/login.html` and its assets (`/static/js/auth.js`, `/static/styles.css`,
+  `/static/brand/favicon.svg`, `/static/brand/logo-mark-light.svg`)
+- `/api/auth/*` (login/signup/refresh/logout — the only way to obtain a session)
+- `/v1/devices/pair/init` and `/v1/devices/pair/status` (the device pairing
+  handshake — the device itself has no login yet)
+
+**Requires a logged-in user (any role):** everything under `/ui`, `/static/`,
+`/v1/events`, `/artifacts`, `/v1/conversation`, `/v1/livehost`, `/v1/profiles`,
+`/v1/mcp`, `/v1/stt`, `/v1/tts`, `/v1/sessions`, `/v1/devices/mine`,
+`/v1/devices/pair/claim`, plus the read-only carve-outs `/v1/model_registry/options`,
+`/v1/model_registry/defaults`, and `/v1/usage/me`.
+
+**Requires `role == "admin"`:** `/v1/system`, `/v1/models`, `/v1/users`,
+`/v1/devices` (other than the `mine`/`pair/claim` carve-outs above), `/v1/model_registry`
+(other than the `options`/`defaults` carve-outs above), `/v1/providers`, `/v1/usage`
+(other than the `me` carve-out above), `/v1/quotas`, and the documentation/introspection
+surface: `/agents-docs`, `/docs`, `/redoc`, `/openapi.json`.
+
+An unauthenticated request gets `401 {"success": false, "error": "login required"}`
+(or a `302` redirect to `/static/login.html` for a browser navigation), and an
+authenticated-but-wrong-role request against an admin route gets
+`403 {"success": false, "error": "admin only"}`.
+
+This is the current, ground-truth list — read `auth_guard.py`'s `_PUBLIC_PATHS`,
+`_STATIC_ALLOWLIST`, `_NO_AUTH_PREFIXES`, `_USER_PREFIXES`, and `_ADMIN_PREFIXES`
+tuples directly before relying on it, since prefixes can be added without this doc
+being updated in lockstep.
+
+**WebSocket routes** (`/v1/conversation/stream`, `/v1/lugo/stream`, etc.) are not
+covered by the HTTP middleware above; they resolve identity separately via
+`resolve_ws_identity` (same three sources: bearer subprotocol, cookie session, or a
+paired-device/fleet token) and, for routes that resume a session by caller-supplied
+id, enforce ownership per-connection (a caller can't attach to another user's
+session by guessing its id).
+
+---
+
 ## Health & meta
 
 ### `GET /health`
@@ -386,11 +440,27 @@ each carrying an `audio_url` under `/artifacts/` (unlike `synthesize` above).
 ### `GET /v1/events/jobs/{job_id}`
 ### `GET /v1/events/sessions/{session_id}`
 
+**Requires a logged-in user, and ownership.** A non-admin caller who isn't the
+owner of the job/session gets `404`, not `403` — indistinguishable from the
+id simply not existing, so a caller can't use the response to fish for which
+ids are valid. Admins (and dev mode with auth disabled) are unscoped.
+
+For `/v1/events/sessions/{session_id}` specifically: the session row must
+already exist. If it doesn't (e.g. the id hasn't been created by the
+producer — typically the conversation WS — yet), the request 404s
+immediately rather than waiting. **This means subscribing *before* the
+producer creates the session fails outright** — the SSE client must wait
+until the session exists (e.g. until the WS side has signaled it) before
+calling this endpoint; it cannot preemptively subscribe and rely on buffered
+replay to catch the earliest events.
+
 Server-Sent Events stream. Each message is `event: <type>` + `data: <StreamEvent JSON>`.
 
-The bus **buffers** events per channel, so subscribing slightly after the producer
-starts still replays earlier events (e.g. `queued`). The stream **closes itself**
-after a terminal `done` event.
+The bus **buffers** events per channel, so once subscribed, connecting slightly
+after the producer started still replays earlier events on that channel (e.g.
+`queued`) — this buffering is about timing *after* the channel exists, not a way
+around the "session must already exist" requirement above. The stream **closes
+itself** after a terminal `done` event.
 
 TTS job event sequence:
 
@@ -636,8 +706,11 @@ Poll this endpoint while a download is active.
 ## Artifacts
 
 ### `GET /artifacts/{file}`
-Serves generated audio WAV files referenced by `audio_url`. Backed by the local
-filesystem (`ARTIFACTS_DIR`); swap for object storage in production.
+**Requires a logged-in user** (see Authentication above) — the filenames are
+unguessable uuid4s, but "unguessable" is not "authenticated", so this is now the
+floor rather than fully open. Serves generated audio WAV files referenced by
+`audio_url`. Backed by the local filesystem (`ARTIFACTS_DIR`); swap for object
+storage in production.
 
 ---
 
