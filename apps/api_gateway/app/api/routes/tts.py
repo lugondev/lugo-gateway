@@ -21,6 +21,25 @@ router = APIRouter(prefix="/v1/tts", tags=["tts"])
 # tasks, so a fire-and-forget create_task can be GC'd mid-synthesis.
 _stream_jobs: set[asyncio.Task] = set()
 
+# Who created each stream job -- checked by GET /v1/events/jobs/{job_id} so one
+# user cannot subscribe to another user's TTS result stream. There is no
+# persistent job store (a job is just an asyncio task + an event-bus channel),
+# so this in-memory map is the only record of ownership. Bounded FIFO eviction,
+# same shape as InMemoryEventBus._closed, since a job's relevant lifetime is
+# about the same as its channel's.
+_job_owners: dict[str, str] = {}
+_JOB_OWNERS_LIMIT = 4096
+
+
+def _record_job_owner(job_id: str, user_id: str) -> None:
+    _job_owners[job_id] = user_id
+    while len(_job_owners) > _JOB_OWNERS_LIMIT:
+        _job_owners.pop(next(iter(_job_owners)))
+
+
+def get_job_owner(job_id: str) -> str | None:
+    return _job_owners.get(job_id)
+
 
 @router.get("/engines")
 async def list_tts_engines() -> dict:
@@ -124,6 +143,7 @@ async def create_stream_job(payload: TTSRequest, request: Request, profile: str 
         raise HTTPException(status_code=429, detail=str(exc)) from exc
 
     job_id = str(uuid.uuid4())
+    _record_job_owner(job_id, caller_id)
     # Resolve the provider eagerly so an unknown engine returns 400 synchronously.
     provider = tts_service.get_provider(payload.engine)
     channel = f"job:{job_id}"
