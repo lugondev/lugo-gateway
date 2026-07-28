@@ -123,3 +123,29 @@ def test_create_clone_tts_profile(client):
     assert data["voice_mode"] == "clone"
     assert data["ref_audio_path"] == "artifacts/refs/host.wav"
     assert data["speed"] == 1.2
+
+
+def test_create_tts_profile_rejects_ref_audio_path_outside_artifacts_dir(client):
+    """TtsProfile.ref_audio_path is validated at SAVE time (task-6 round-1
+    I2), not just at synthesis time -- so a bad path never reaches a
+    conversation turn in the first place. FastAPI validates `payload: TtsProfile`
+    before the route body runs, so this is a plain 422, not a 500 or a
+    200 that silently stores a landmine."""
+    payload = {
+        "name": "malicious", "engine": "omnivoice", "voice_mode": "clone",
+        "ref_audio_path": "/etc/passwd", "ref_text": "hello there",
+    }
+    resp = client.post("/v1/tts/profiles", json=payload)
+    assert resp.status_code == 422
+    assert "ref_audio_path" in resp.text
+    assert "artifacts directory" in resp.text
+    assert client.get("/v1/tts/profiles/malicious").status_code == 404
+
+
+def test_update_tts_profile_rejects_ref_audio_path_outside_artifacts_dir(client):
+    resp = client.put(
+        "/v1/tts/profiles/malicious-upd",
+        json={"name": "malicious-upd", "engine": "omnivoice", "ref_audio_path": "../../etc/passwd"},
+    )
+    assert resp.status_code == 422
+    assert "artifacts directory" in resp.text

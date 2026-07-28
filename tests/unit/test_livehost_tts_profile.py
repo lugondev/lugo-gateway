@@ -142,6 +142,46 @@ def test_livehost_query_param_tts_profile_overrides_llm_profile(client, _local_h
     assert payload.ref_text == "pinned voice"
 
 
+def test_livehost_bad_ref_audio_path_degrades_to_tts_error(client, _local_hermetic):
+    """Regression for task-6-fixes-round-1 I2 on livehost's independent
+    _synth (api/routes/livehost.py) -- a second, separately-guarded code
+    path from session.py's conversation turn. TtsProfile.ref_audio_path now
+    rejects an out-of-bounds path at construction time, so a normal
+    TtsProfile(...) call here would itself raise; model_construct bypasses
+    that to simulate a value that reached the store some other way (a
+    legacy row, e.g.) -- the point is that even then, the turn must degrade
+    to tts_error and finish, not unwind with a bare `error`."""
+    stub_tts, profiles, tts_profiles = _local_hermetic
+    bad_profile = TtsProfile.model_construct(
+        name="bad-ref", owner_id=None, engine="stub-livehost-ttsp-tts", model_id="",
+        voice_mode="clone", voice="", ref_audio_path="/etc/passwd", ref_text="x",
+        instruct="", speed=None, language=None,
+    )
+    tts_profiles.upsert(bad_profile)
+    profiles.upsert(Profile(name="host", tts=TtsConfig(profile_name="bad-ref")))
+
+    url = "/v1/livehost/stream?profile=host&sample_rate=16000"
+    events: list = []
+    with client.websocket_connect(url) as ws:
+        assert ws.receive_json()["event"] == "session_started"
+        ws.send_bytes(_loud(500))
+        ws.send_bytes(_silence(500))
+        ws.send_bytes(_silence(500))
+        for _ in range(20):
+            ev = ws.receive_json()
+            events.append(ev)
+            if ev["event"] == "turn_done":
+                break
+
+    names = [e["event"] for e in events]
+    assert "tts_error" in names, names
+    assert "error" not in names, names
+    tts_error = next(e for e in events if e["event"] == "tts_error")
+    assert "ref_audio_path" in tts_error["message"]
+    assert "artifacts directory" in tts_error["message"]
+    assert not stub_tts.calls, "provider must never be reached -- TTSRequest construction fails first"
+
+
 def test_livehost_no_tts_profile_falls_back_to_default_tts_engine(client, _local_hermetic):
     stub_tts, _profiles, _tts_profiles = _local_hermetic
     url = "/v1/livehost/stream?voice=manual-voice&sample_rate=16000"

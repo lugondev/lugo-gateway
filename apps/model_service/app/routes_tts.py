@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import base64
 import os
-import tempfile
+import uuid
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
@@ -67,11 +67,20 @@ def build_tts_router(config: ServiceConfig, provider: RenderingTTSProvider) -> A
                 # server-generated, not caller-supplied, but it still has to
                 # pass that check -- write it inside the artifacts dir
                 # (rather than the system temp dir) so it does.
-                with tempfile.NamedTemporaryFile(
-                    suffix=".wav", delete=False, dir=str(artifact_store.base_dir)
-                ) as f:
+                #
+                # Named `<uuid4 hex>.wav`, matching ArtifactStore's own
+                # _ARTIFACT_FILENAME pattern, rather than tempfile's
+                # `tmpXXXXXXXX.wav` -- a NamedTemporaryFile-style name is
+                # never swept by prune(), so a crash between this write and
+                # the os.unlink() below would leak the file forever (the
+                # four local engines run natively from the repo root, where
+                # artifacts_dir defaults to the real "artifacts" dir, not a
+                # container-private /tmp). A random hex name is equally
+                # unguessable if briefly fetchable at /artifacts/<name>.wav
+                # in that native deployment, but collectable.
+                tmp_ref_path = str(artifact_store.base_dir / f"{uuid.uuid4().hex}.wav")
+                with open(tmp_ref_path, "wb") as f:
                     f.write(ref_bytes)
-                    tmp_ref_path = f.name
             wav = await provider.render_wav(
                 TTSRequest(
                     text=payload.input,
