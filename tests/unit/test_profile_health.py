@@ -93,3 +93,32 @@ async def test_check_profile_health_unknown_profile_uses_defaults(monkeypatch, t
     health = await check_profile_health("ghost")
     assert health.profile == "ghost"
     assert health.stt.status == "ok"
+
+
+def test_health_endpoint_returns_profile_health(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services.profiles.models import Profile, SttConfig
+    from app.services.profiles.store import ProfileStore
+
+    store = ProfileStore(str(tmp_path / "ep.json"))
+    store.upsert(Profile(name="dev", stt=SttConfig(engine="http_stt")))
+    monkeypatch.setattr("app.services.health.profile_store", store)
+
+    async def fake_stt(engine, model=""):
+        return EngineHealth(engine=engine, status="unavailable", detail="unreachable")
+
+    async def fake_tts(engine, model_id=""):
+        return EngineHealth(engine=engine, status="ok")
+
+    monkeypatch.setattr("app.services.health.stt_service.check_engine", fake_stt)
+    monkeypatch.setattr("app.services.health.tts_service.check_engine", fake_tts)
+
+    resp = TestClient(app).get("/v1/profiles/dev/health")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["profile"] == "dev"
+    assert data["stt"]["status"] == "unavailable"
+    assert data["stt"]["detail"] == "unreachable"
+    assert data["tts"]["status"] == "ok"

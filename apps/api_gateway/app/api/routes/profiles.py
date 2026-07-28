@@ -206,3 +206,14 @@ async def clone_profile(name: str, payload: CloneRequest, request: Request) -> d
     clone = Profile(**data)
     profile_store.upsert(clone)
     return {"success": True, "data": await _with_labels(clone)}
+
+
+@router.get("/{name}/health")
+async def profile_health(name: str) -> dict:
+    """Live health of the STT/TTS engines this profile would actually use.
+
+    Same check the WS connect gate runs, exposed so the admin UI can show a
+    profile as broken before a user tries to talk to it."""
+    from app.services.health import check_profile_health
+
+    return {"data": (await check_profile_health(name)).model_dump()}
