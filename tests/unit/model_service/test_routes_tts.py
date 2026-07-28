@@ -130,6 +130,34 @@ def test_create_speech_decodes_ref_audio_base64_to_a_temp_path():
     assert not Path(payload.ref_audio_path).exists()
 
 
+def test_create_speech_writes_ref_audio_temp_file_with_restrictive_permissions():
+    """round-2 Minor: the decode target sits in an HTTP-served artifacts dir
+    (see routes_tts.py's comment on why it has to live there at all -- the
+    ref_audio_path containment check from task 5). A plain open(path, "wb")
+    creates it at the umask default (usually 0644, world-readable); the
+    tempfile.NamedTemporaryFile this replaced always created 0600. Must not
+    regress to a wider mode just because it's no longer a NamedTemporaryFile."""
+    import os
+    import stat
+
+    captured: dict = {}
+
+    class _PermCheckingTTS:
+        name = "vieneu"
+
+        async def render_wav(self, payload: TTSRequest) -> bytes:
+            st = os.stat(payload.ref_audio_path)
+            captured["mode"] = stat.S_IMODE(st.st_mode)
+            return b"RIFFWAVEDATA"
+
+    _client(_PermCheckingTTS()).post(
+        "/v1/audio/speech",
+        headers=_AUTH,
+        json={"input": "xin chào", "ref_audio_base64": base64.b64encode(b"wav-bytes").decode("ascii")},
+    )
+    assert captured.get("mode") == 0o600, oct(captured.get("mode", -1))
+
+
 def test_create_speech_without_ref_audio_leaves_ref_audio_path_unset():
     provider = _FakeTTS()
     _client(provider).post("/v1/audio/speech", headers=_AUTH, json={"input": "hi"})

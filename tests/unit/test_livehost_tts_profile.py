@@ -145,17 +145,25 @@ def test_livehost_query_param_tts_profile_overrides_llm_profile(client, _local_h
 def test_livehost_bad_ref_audio_path_degrades_to_tts_error(client, _local_hermetic):
     """Regression for task-6-fixes-round-1 I2 on livehost's independent
     _synth (api/routes/livehost.py) -- a second, separately-guarded code
-    path from session.py's conversation turn. TtsProfile.ref_audio_path now
-    rejects an out-of-bounds path at construction time, so a normal
-    TtsProfile(...) call here would itself raise; model_construct bypasses
-    that to simulate a value that reached the store some other way (a
-    legacy row, e.g.) -- the point is that even then, the turn must degrade
-    to tts_error and finish, not unwind with a bare `error`."""
+    path from session.py's conversation turn.
+
+    TtsProfile.ref_audio_path is deliberately NOT validated by the model
+    itself (round-2 fix: a field_validator here would also run at DB LOAD
+    time via SqliteBackedStore._ensure(), and one bad/host-mismatched row
+    would then break every other stored profile too -- see
+    profile_models.py's module docstring and test_tts_profile_store.py).
+    The containment check instead lives in the route
+    (api/routes/tts_profiles.py's create/update, a plain 422) and, as the
+    real security boundary, in TTSRequest.ref_audio_path (schemas/tts.py) at
+    every synthesis-time read. So a plain TtsProfile(...) call with a bad
+    path (as below) no longer raises by itself -- this simulates a value
+    that reached the store some other way (bypassing the route, e.g. a
+    legacy row) -- the point is that even then, the turn must degrade to
+    tts_error with the LLM text preserved, not unwind with a bare `error`."""
     stub_tts, profiles, tts_profiles = _local_hermetic
-    bad_profile = TtsProfile.model_construct(
-        name="bad-ref", owner_id=None, engine="stub-livehost-ttsp-tts", model_id="",
-        voice_mode="clone", voice="", ref_audio_path="/etc/passwd", ref_text="x",
-        instruct="", speed=None, language=None,
+    bad_profile = TtsProfile(
+        name="bad-ref", engine="stub-livehost-ttsp-tts", voice_mode="clone",
+        ref_audio_path="/etc/passwd", ref_text="x",
     )
     tts_profiles.upsert(bad_profile)
     profiles.upsert(Profile(name="host", tts=TtsConfig(profile_name="bad-ref")))
@@ -174,6 +182,12 @@ def test_livehost_bad_ref_audio_path_degrades_to_tts_error(client, _local_hermet
                 break
 
     names = [e["event"] for e in events]
+    # The LLM's reply text must survive the TTS failure, not be swallowed --
+    # same "don't lose the reply" contract session.py's degrade path already
+    # has a test for (test_session_bad_ref_audio_path_degrades.py).
+    texts = [e["text"] for e in events if e["event"] == "response_text"]
+    assert texts, names
+    assert all(t for t in texts), texts
     assert "tts_error" in names, names
     assert "error" not in names, names
     tts_error = next(e for e in events if e["event"] == "tts_error")

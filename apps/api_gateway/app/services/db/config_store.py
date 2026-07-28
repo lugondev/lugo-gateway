@@ -68,7 +68,24 @@ class SqliteBackedStore(Generic[M]):
         init_config_tables()
         with session_scope() as s:
             rows = s.execute(select(self._row)).scalars().all()
-            self._cache = {r.name: self._model.model_validate_json(r.data) for r in rows}
+            # Per-row, not a single dict comprehension: that used to let one
+            # malformed/no-longer-valid row (e.g. a stored value a validator
+            # added *after* the row was written now rejects) raise straight
+            # out of _ensure() -- and since self._cache stayed None on that
+            # failure, EVERY subsequent list()/get() call, for every OTHER
+            # (perfectly fine) row, re-raised too, forever, until the bad row
+            # was manually removed from the DB. Mirrors _import_legacy's
+            # already-correct per-record skip-and-log below.
+            cache: dict[str, M] = {}
+            for r in rows:
+                try:
+                    cache[r.name] = self._model.model_validate_json(r.data)
+                except Exception as exc:  # noqa: BLE001 - one bad row must not break every other row
+                    logger.warning(
+                        "%s: skipping malformed stored row %r: %s",
+                        self._row.__tablename__, r.name, exc,
+                    )
+            self._cache = cache
         if not self._cache:
             path = self._resolve_path()
             if path and os.path.exists(path):

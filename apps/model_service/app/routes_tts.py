@@ -79,7 +79,16 @@ def build_tts_router(config: ServiceConfig, provider: RenderingTTSProvider) -> A
                 # unguessable if briefly fetchable at /artifacts/<name>.wav
                 # in that native deployment, but collectable.
                 tmp_ref_path = str(artifact_store.base_dir / f"{uuid.uuid4().hex}.wav")
-                with open(tmp_ref_path, "wb") as f:
+                # os.open + O_EXCL, mode 0o600: a plain open(path, "wb") creates
+                # the file at the umask default (usually 0644) -- readable by
+                # anyone on the box -- for however long it sits in this
+                # HTTP-served artifacts dir before the finally block's unlink.
+                # NamedTemporaryFile (what this replaced) always created 0600;
+                # match that instead of widening exposure. O_EXCL also means
+                # this can never silently overwrite an existing file at a
+                # colliding uuid4 name.
+                fd = os.open(tmp_ref_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as f:
                     f.write(ref_bytes)
             wav = await provider.render_wav(
                 TTSRequest(
