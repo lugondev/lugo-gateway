@@ -84,3 +84,66 @@ def test_metadata_headers_are_cors_exposed():
     exposed = {h.lower() for h in (cors.kwargs.get("expose_headers") or [])}
     for header in ("x-tts-engine", "x-tts-sample-rate", "x-tts-duration-seconds"):
         assert header in exposed, f"{header} not exposed to cross-origin clients"
+
+
+# ---------------------------------------------------------------------------
+# edge_tts: the named trap. EdgeTTSProvider is a plain TTSProvider (not a
+# RenderingTTSProvider) that produces MP3, not WAV -- it's the only engine
+# that exercises the route's media_type != "audio/wav" branch, and the only
+# reason render_audio() returns a media type at all instead of assuming WAV.
+# No network needed: _render_mp3 (the real-synthesis step, split out of
+# synthesize() so render_audio() and synthesize() share it) is monkeypatched.
+# ---------------------------------------------------------------------------
+
+_FAKE_MP3_BYTES = b"\xff\xfb\x90\x00fake-mp3-bytes-not-real-audio"
+
+
+def _patch_edge_tts_render(monkeypatch):
+    from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
+
+    async def fake_render_mp3(self, payload):
+        return _FAKE_MP3_BYTES
+
+    monkeypatch.setattr(EdgeTTSProvider, "_render_mp3", fake_render_mp3)
+
+
+def test_edge_tts_synthesize_returns_mp3_with_no_duration_header(monkeypatch):
+    _patch_edge_tts_render(monkeypatch)
+
+    from app.services import artifacts as artifacts_mod
+
+    calls = {"n": 0}
+
+    def spy(*args, **kwargs):
+        calls["n"] += 1
+        raise AssertionError("render_audio must not write an artifact")
+
+    monkeypatch.setattr(artifacts_mod.artifact_store, "save_mp3", spy, raising=False)
+
+    client = TestClient(app)
+    resp = client.post("/v1/tts/synthesize", json={"text": "xin chao", "engine": "edge_tts"})
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("audio/mpeg")
+    assert resp.content == _FAKE_MP3_BYTES
+    # Duration is computed exactly for WAV via wav_duration_seconds; for MP3
+    # it is omitted rather than guessed (edge_tts's old bitrate-estimate was
+    # deliberately dropped) -- a wrong number would be worse than no header.
+    assert "x-tts-duration-seconds" not in resp.headers
+    assert calls["n"] == 0, "the one-shot /v1/tts/synthesize path must not save an artifact"
+
+
+async def test_edge_tts_synthesize_method_still_saves_the_stream_job_artifact(monkeypatch):
+    """Symmetric pin: splitting MP3 generation out of synthesize() into
+    _render_mp3() must not have broken synthesize() itself -- /v1/tts/stream's
+    job loop still calls provider.synthesize() and depends on the artifact it
+    saves (see routes/tts.py::create_stream_job)."""
+    _patch_edge_tts_render(monkeypatch)
+
+    from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
+
+    provider = EdgeTTSProvider()
+    result = await provider.synthesize(TTSRequest(text="xin chao", engine="edge_tts"))
+
+    assert result.audio_url is not None and result.audio_url.startswith("/artifacts/")
+    assert result.engine == "edge_tts"

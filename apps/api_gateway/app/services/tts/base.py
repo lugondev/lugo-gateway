@@ -54,8 +54,11 @@ class TTSProvider(ABC):
 
         The bytes-returning seam the HTTP synthesize route uses, so a one-shot
         request doesn't have to write a temp file just to hand back a URL.
+        Every provider reachable from POST /v1/tts/synthesize must implement
+        this -- RenderingTTSProvider does below via render_wav(); a plain
+        TTSProvider subclass (e.g. EdgeTTSProvider) implements it directly.
         """
-        raise NotImplementedError
+        raise ProviderError(f"{self.name} cannot render audio")
 
 
 class RenderingTTSProvider(TTSProvider):
