@@ -4,6 +4,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.core.settings import settings
 from app.main import app
+from app.schemas.health import EngineHealth
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
 from app.services.stt.base import STTProvider
@@ -29,10 +30,22 @@ class _StubTTS(TTSProvider):
         )
 
 
+async def _ok_health(stt_engine, stt_model, tts_engine, tts_model):
+    return (
+        EngineHealth(engine=stt_engine, status="ok"),
+        EngineHealth(engine=tts_engine, status="ok"),
+    )
+
+
 @pytest.fixture(autouse=True)
-def _register_stub_engines():
+def _register_stub_engines(monkeypatch):
     stt_service.providers["stub-ws-auth-stt"] = _StubSTT()
     tts_service.providers["stub-ws-auth-tts"] = _StubTTS()
+    # "stub-ws-auth-stt"/"stub-ws-auth-tts" aren't recognized by stt_service/
+    # tts_service's real engine-listing logic, so the Task 7 health gate's
+    # check_resolved_engines() would KeyError trying to look them up. Stub the
+    # gate out -- this file tests WS auth, not the gate.
+    monkeypatch.setattr("app.api.routes.conversation.check_resolved_engines", _ok_health)
     yield
     stt_service.providers.pop("stub-ws-auth-stt", None)
     tts_service.providers.pop("stub-ws-auth-tts", None)

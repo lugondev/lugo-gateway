@@ -4,10 +4,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.schemas.health import EngineHealth
 from app.services.mcp.models import McpServer
 from app.services.mcp.server_store import McpServerStore
 from app.services.profiles.models import LlmConfig, Profile, TtsConfig
 from app.services.profiles.store import ProfileStore
+
+
+async def _ok_health(stt_engine, stt_model, tts_engine, tts_model):
+    return (
+        EngineHealth(engine=stt_engine, status="ok"),
+        EngineHealth(engine=tts_engine, status="ok"),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +31,12 @@ def _local_hermetic(monkeypatch, tmp_path):
     # _build_tool_registry moved into app.services.conversation.session, so the MCP
     # singletons it reads must be patched there (the WS route delegates to the core).
     monkeypatch.setattr("app.services.conversation.session.mcp_server_store", fresh_servers)
+    # These WS tests never configure real STT/TTS engines (they use the
+    # system defaults, e.g. vosk/omnivoice), so the Task 7 health gate would
+    # otherwise refuse the connection in this hermetic environment (no vosk
+    # model / omnivoice sidecar present) before the MCP/session behavior
+    # under test ever runs. Stub it out -- this file isn't testing the gate.
+    monkeypatch.setattr("app.api.routes.conversation.check_resolved_engines", _ok_health)
     return fresh_profiles, fresh_servers
 
 

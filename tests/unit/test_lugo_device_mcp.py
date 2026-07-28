@@ -3,6 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 from app.core.settings import settings
 from app.main import app
+from app.schemas.health import EngineHealth
 from app.schemas.stt import STTResult
 from app.services.profiles.models import Profile, SessionConfig
 from app.services.profiles.store import ProfileStore
@@ -61,6 +62,19 @@ def _local_hermetic(monkeypatch, tmp_path):
 
     monkeypatch.setattr(system_config_store, "get", _get_with_stub_stt)
     monkeypatch.setattr(settings, "device_mcp_enabled", True)
+
+    async def _ok_health(stt_engine, stt_model, tts_engine, tts_model):
+        return (
+            EngineHealth(engine=stt_engine, status="ok"),
+            EngineHealth(engine=tts_engine, status="ok"),
+        )
+
+    # "stub-mcp-stt" isn't recognized by stt_service's real engine-listing
+    # logic (and the default TTS engine isn't actually configured in this
+    # hermetic environment either), so the Task 7 health gate's
+    # check_resolved_engines() would refuse/KeyError before the device-tool
+    # behavior under test ever runs. Stub the gate out.
+    monkeypatch.setattr("app.api.routes.lugo.check_resolved_engines", _ok_health)
     # The real LLM responder can't be exercised hermetically (no live LLM), so
     # replace the responder builder that ConversationSession.start() calls
     # (session.py imports it by name via `from ...responder import

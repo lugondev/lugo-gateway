@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.schemas.health import EngineHealth
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
 from app.services.profiles.models import Profile, SttConfig
@@ -56,6 +57,18 @@ def _register_stub(monkeypatch, tmp_path):
 
     fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
     monkeypatch.setattr("app.api.routes.conversation.profile_store", fresh_profiles)
+
+    async def _ok_health(stt_engine, stt_model, tts_engine, tts_model):
+        return (
+            EngineHealth(engine=stt_engine, status="ok"),
+            EngineHealth(engine=tts_engine, status="ok"),
+        )
+
+    # These stub engine names aren't recognized by stt_service/tts_service's
+    # real engine-listing logic, so the Task 7 health gate's
+    # check_resolved_engines() would KeyError trying to look them up. Stub the
+    # gate out -- this file tests turn/barge-in behavior, not the gate.
+    monkeypatch.setattr("app.api.routes.conversation.check_resolved_engines", _ok_health)
 
     yield fresh_profiles
 
