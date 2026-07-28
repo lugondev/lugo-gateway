@@ -79,6 +79,13 @@ class HttpTtsProvider(RenderingTTSProvider):
     def detail(self) -> str:
         return "OpenAI-compatible /audio/speech (per-registry-row service)"
 
+    def available(self) -> bool:
+        """Configured = some enabled registry row carries a base_url. Mirrors
+        what STTService.list_engines() already computes for http_stt; sync
+        because TTSService.list_engines() is sync."""
+        row = model_registry_store.find_enabled_sync("tts", self.name)
+        return bool((row or {}).get("base_url", "").strip())
+
     def install_hint(self) -> str:
         return "Add a Model Registry entry pointing at a TTS service base URL."
 
