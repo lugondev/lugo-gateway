@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from app.core.settings import settings
 from app.main import app
+from app.services.auth.tokens import issue_access_token
 from app.services.auth.users import user_store
 from app.services.history.store import session_store
 
@@ -180,3 +181,99 @@ def test_ws_admin_can_still_resume_any_session(client, _with_password):
     ) as ws:
         msg = ws.receive_json()
         assert msg["event"] == "session_started"
+
+
+# --- Round-1 review fixes ---------------------------------------------------
+#
+# C1 (Critical): chat's session-create call recorded the PROFILE's owner_id,
+# not the caller, so an authenticated non-admin got 404'd out of their OWN
+# session on turn 2 (the ownership check compares against the caller). Every
+# "allowed" test above hand-writes `session_store.create(sid, user_id=<x>)`,
+# a state the production create path never actually produced -- which is
+# exactly why none of them caught it. These two exercise the REAL create path
+# end to end, on both chat and the WS resume path.
+
+
+def test_chat_end_to_end_create_then_resume_as_normal_user(client):
+    """Regression for C1. No hand-wired session_store.create() -- sid comes
+    back from a real /chat call that must have recorded `bob` as the owner,
+    or the resume below 404s him out of his own session."""
+    _as_user(client, "user")  # caller is 'bob'
+    r1 = client.post(
+        "/v1/conversation/chat",
+        json={"messages": [{"role": "user", "content": "first"}]},
+    )
+    assert r1.status_code == 200, r1.text
+    sid = r1.json()["data"]["session_id"]
+    assert sid
+
+    r2 = client.post(
+        f"/v1/conversation/chat?session_id={sid}",
+        json={"messages": [{"role": "user", "content": "second"}]},
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["data"]["session_id"] == sid
+
+
+def test_ws_end_to_end_create_then_resume_as_normal_user(client, _with_password):
+    """Same C1 regression on the WS path (session.py already recorded the
+    caller correctly pre-fix, but the brief asked for both paths covered)."""
+    _as_user(client, "user")  # caller is 'bob'
+    with client.websocket_connect("/v1/conversation/stream?output=text") as ws:
+        started = ws.receive_json()
+        assert started["event"] == "session_started"
+        sid = started["session_id"]
+
+    with client.websocket_connect(
+        f"/v1/conversation/stream?output=text&session_id={sid}"
+    ) as ws:
+        resumed = ws.receive_json()
+        assert resumed["event"] == "session_started"
+        assert resumed["session_id"] == sid
+
+
+def test_ws_shared_device_token_cannot_resume_owned_session(client, monkeypatch):
+    """I1 (Important): the legacy shared device_auth_token resolves to
+    user_id=None just like the dev-mode/no-auth short-circuit, but unlike
+    dev-mode it's a REAL auth-enabled deployment with no derivable owner.
+    Confirmed pre-fix: connecting with the fleet-wide secret returned
+    session_started on another real user's session -- any device holding
+    that shared secret could read/corrupt any user's conversation by id."""
+    monkeypatch.setattr(settings, "admin_password", "s3cret")
+    monkeypatch.setattr(settings, "device_auth_token", "fleet-shared-secret")
+    try:
+        victim_sid = "victim-shared-token-" + uuid.uuid4().hex[:8]
+        asyncio.run(session_store.create(victim_sid, user_id="someone-else"))
+
+        with client.websocket_connect(
+            f"/v1/conversation/stream?session_id={victim_sid}&device_token=fleet-shared-secret"
+        ) as ws:
+            msg = ws.receive_json()
+            assert msg["event"] == "error"
+    finally:
+        monkeypatch.setattr(settings, "admin_password", "")
+        monkeypatch.setattr(settings, "device_auth_token", "")
+
+
+def test_ws_bearer_identity_never_gets_admin_bypass(client, _with_password):
+    """I2 (Important): _bearer_actor's documented invariant (auth_guard.py) is
+    that a bearer caller always resolves to role="user", even for an admin
+    account in the DB -- a web client must not be able to escalate to admin
+    just by holding a bearer token. Confirmed pre-fix: this same admin/bearer
+    combination got session_started on another user's session over WS, while
+    the identical bearer token is denied that on HTTP /chat (current_role()
+    never returns "admin" for a bearer actor)."""
+    admin = asyncio.run(
+        user_store.create(f"admin-bearer-{uuid.uuid4().hex[:8]}", "s3cret-password", role="admin")
+    )
+    token = issue_access_token(admin["id"])
+
+    victim_sid = "victim-bearer-" + uuid.uuid4().hex[:8]
+    asyncio.run(session_store.create(victim_sid, user_id="someone-else"))
+
+    with client.websocket_connect(
+        f"/v1/conversation/stream?session_id={victim_sid}",
+        subprotocols=["bearer", token],
+    ) as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"

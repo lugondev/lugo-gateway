@@ -68,19 +68,31 @@ def _require_admin(request: Request) -> None:
 
 async def _ws_session_owner_denied(session_id: str, identity: WsIdentity) -> bool:
     """True if `session_id` already exists and is not owned by the caller.
-    Mirrors sessions.py's get_session/_scope_user_id: an unresolvable
-    identity (resolve_ws_identity's dev-mode short-circuit when auth is
-    disabled) is unscoped/full-access, matching current_role()'s same
-    dev-mode default; an admin caller is unscoped too. A session that
-    doesn't exist yet is not denied -- it's the normal "start a fresh
-    session under this id" path."""
-    if not identity.user_id:
-        return False
-    from app.services.auth.users import user_store
+    Mirrors sessions.py's get_session/_scope_user_id, adapted for the two ways
+    a WS identity can diverge from an HTTP one (round-1 review, I1 + I2):
 
-    caller = await user_store.get_by_id(identity.user_id)
-    if caller is not None and caller.role == "admin":
+    - `identity.unauthenticated` (resolve_ws_identity's dev-mode short-circuit
+      when auth is disabled) is unscoped/full-access, matching
+      current_role()'s identical dev-mode default. The legacy shared
+      device_auth_token ALSO resolves to `user_id=None`, but is not
+      `unauthenticated` -- it falls through to the plain identity-vs-owner
+      comparison below like any other identity, so it can only ever match an
+      ownerless session, never a real user's (I1).
+    - The admin-role DB lookup is skipped entirely for a bearer identity
+      (`identity.via_bearer`), so a bearer token never gets a bypass here that
+      the same token is denied on the HTTP /chat route -- current_role()
+      never returns "admin" for a bearer actor either (I2).
+
+    A session that doesn't exist yet is not denied -- it's the normal "start
+    a fresh session under this id" path."""
+    if identity.unauthenticated:
         return False
+    if identity.user_id and not identity.via_bearer:
+        from app.services.auth.users import user_store
+
+        caller = await user_store.get_by_id(identity.user_id)
+        if caller is not None and caller.role == "admin":
+            return False
     sess = await session_store.get(session_id)
     return bool(sess and sess.get("user_id") != identity.user_id)
 
@@ -223,7 +235,21 @@ async def chat(
         if session_id and await session_store.exists(session_id):
             stored = await session_store.get_messages(session_id)
         elif not await session_store.exists(sid):
-            await session_store.create(sid, profile_id=profile or "", user_id=active_profile.owner_id if active_profile else None)
+            # Caller first, profile owner as fallback -- mirrors session.py:312's
+            # WS session creation. Recording the PROFILE owner instead of the
+            # caller here was round-1's Critical: it 404'd every authenticated
+            # non-admin out of their own session on the very next turn, since
+            # the ownership check above compares against the caller, not the
+            # profile. `caller_id` is None (and this falls back to the profile
+            # owner, itself often None) only for the dev-mode/no-auth caller or
+            # an unauthenticated device -- those rows are created ownerless by
+            # construction, same as the pre-fix legacy rows; they are
+            # intentionally admin-only to resume (sessions.py's get_session),
+            # since there is no real owner to derive.
+            await session_store.create(
+                sid, profile_id=profile or "",
+                user_id=caller_id or (active_profile.owner_id if active_profile else None),
+            )
     except Exception as exc:  # noqa: BLE001 - session setup must not block the reply
         logger.warning("session setup failed for %s: %s", sid, exc)
         stored = []

@@ -191,6 +191,26 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
 class WsIdentity:
     user_id: str | None
     device_id: str | None
+    # True ONLY for the dev-mode short-circuit below (settings.auth_enabled is
+    # False): there is no way to prove ownership of anything in that mode, so
+    # a consumer like conversation.py's session-ownership check should treat
+    # it as fully unscoped, matching current_role()'s identical "no session
+    # role -> admin" dev-mode default used on the HTTP side. The legacy shared
+    # device_auth_token below ALSO resolves to user_id=None, but is a real,
+    # auth-enabled deployment with no way to derive an owner -- it must stay
+    # False here, or a caller holding that fleet-wide secret could read/
+    # corrupt any real user's session by id (round-1 review, I1).
+    unauthenticated: bool = False
+    # True ONLY when this identity came from a bearer token
+    # (Sec-WebSocket-Protocol). Mirrors _bearer_actor's documented invariant
+    # just below: a bearer caller always resolves to role="user", even for an
+    # admin account in the DB, so a web client can't escalate to admin just by
+    # holding a bearer token. A consumer granting an admin bypass (e.g.
+    # conversation.py's session-ownership check) must condition that bypass on
+    # `not via_bearer`, or the same bearer token gets cross-session admin
+    # reads over WS that the identical token is denied over HTTP (round-1
+    # review, I2).
+    via_bearer: bool = False
 
 
 async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
@@ -204,7 +224,7 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
     from app.services.auth.users import user_store
 
     if not settings.auth_enabled:
-        return WsIdentity(user_id=None, device_id=None)
+        return WsIdentity(user_id=None, device_id=None, unauthenticated=True)
 
     bearer = _bearer_from_subprotocols(websocket)
     if bearer:
@@ -214,7 +234,7 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
         user = await user_store.get_by_id(user_id)
         if user is None or user.disabled:
             return None
-        return WsIdentity(user_id=user.id, device_id=None)
+        return WsIdentity(user_id=user.id, device_id=None, via_bearer=True)
 
     session_user_id = websocket.session.get("user_id")
     if session_user_id:
