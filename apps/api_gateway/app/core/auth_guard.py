@@ -211,6 +211,15 @@ class WsIdentity:
     # reads over WS that the identical token is denied over HTTP (round-1
     # review, I2).
     via_bearer: bool = False
+    # True ONLY when this identity came from a paired-device token
+    # (services.auth.devices.device_store), i.e. an ESP32/RPi that completed
+    # the pairing handshake. A device token carries no role either -- same
+    # rationale as via_bearer above: a device acts as its owning user, never
+    # as an admin, regardless of that user's DB role. A consumer granting an
+    # admin bypass must condition it on `not via_device` too, or an ESP32
+    # paired to an admin account could resume ANY user's session, not just
+    # its own owner's.
+    via_device: bool = False
 
 
 async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
@@ -255,7 +264,7 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
         if owner is None or owner.disabled:
             return None
         await device_store.touch_last_seen(device.id)
-        return WsIdentity(user_id=device.user_id, device_id=device.id)
+        return WsIdentity(user_id=device.user_id, device_id=device.id, via_device=True)
 
     if settings.device_auth_token and hmac.compare_digest(token, settings.device_auth_token):
         return WsIdentity(user_id=None, device_id=None)
@@ -297,16 +306,20 @@ async def ws_session_owner_denied(session_id: str, identity: WsIdentity) -> bool
       comparison below like any other identity, so it can only ever match an
       ownerless session, never a real user's (round-1 review, I1).
     - The admin-role DB lookup is skipped entirely for a bearer identity
-      (`identity.via_bearer`), so a bearer token never gets a bypass here
-      that the same token is denied on the HTTP /chat route --
-      current_role() never returns "admin" for a bearer actor either
-      (round-1 review, I2).
+      (`identity.via_bearer`) or a paired-device identity
+      (`identity.via_device`), so neither a bearer token nor a device token
+      ever gets a bypass here that the same identity is denied on the HTTP
+      /chat route -- current_role() never returns "admin" for a bearer
+      actor (round-1 review, I2), and a device token carries no role
+      either: a device acts as its owning user, never as an admin, even
+      when that user's DB role is "admin" (the device-token equivalent of
+      I2, found in review of the lugo.py fix above).
 
     A session that doesn't exist yet is not denied -- it's the normal "start
     a fresh session under this id" path."""
     if identity.unauthenticated:
         return False
-    if identity.user_id and not identity.via_bearer:
+    if identity.user_id and not identity.via_bearer and not identity.via_device:
         from app.services.auth.users import user_store
 
         caller = await user_store.get_by_id(identity.user_id)

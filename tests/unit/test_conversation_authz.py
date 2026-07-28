@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from app.core.settings import settings
 from app.main import app
+from app.services.auth.devices import device_store
 from app.services.auth.tokens import issue_access_token
 from app.services.auth.users import user_store
 from app.services.history.store import session_store
@@ -277,3 +278,54 @@ def test_ws_bearer_identity_never_gets_admin_bypass(client, _with_password):
     ) as ws:
         msg = ws.receive_json()
         assert msg["event"] == "error"
+        assert msg["message"] == f"Session '{victim_sid}' not found"
+
+
+# --- Finding B (follow-on task): a paired device still got the DB-role -----
+# admin bypass, mirroring I2 above but for services.auth.devices identities
+# rather than bearer ones.
+
+
+def test_ws_device_paired_to_admin_never_gets_admin_bypass(client, _with_password):
+    """A device token carries no role either -- same rationale as
+    test_ws_bearer_identity_never_gets_admin_bypass above: a device acts as
+    its owning user, never as an admin, even when that user's DB role is
+    "admin". Confirmed pre-fix: an ESP32 paired to an admin account got
+    session_started on another real user's session over this WS route.
+
+    Connects with a FRESH client (no cookies): resolve_ws_identity checks
+    the browser cookie session before the device token, so reusing `client`
+    (logged in as the admin from _as_user) would resolve via that cookie
+    session, not via the device token -- silently testing the wrong path."""
+    admin_id = _as_user(client, "admin")
+    _device, raw_token = asyncio.run(device_store.create(admin_id, "esp32-authz-test", "serial-conv-001"))
+
+    victim_sid = "victim-device-conv-" + uuid.uuid4().hex[:8]
+    asyncio.run(session_store.create(victim_sid, user_id="someone-else"))
+
+    device_client = TestClient(app)
+    with device_client.websocket_connect(
+        f"/v1/conversation/stream?session_id={victim_sid}&device_token={raw_token}"
+    ) as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"
+        assert msg["message"] == f"Session '{victim_sid}' not found"
+
+
+def test_ws_paired_device_can_still_resume_its_owners_session(client, _with_password):
+    """The comparison is by user_id, so a device must still be able to
+    resume ITS OWN owner's session -- the fix must not break that. Fresh
+    client for the same cookie-vs-device-token reason as the test above."""
+    owner_id = _as_user(client, "user")
+    _device, raw_token = asyncio.run(device_store.create(owner_id, "esp32-owner-test", "serial-conv-002"))
+
+    owner_sid = "owner-device-conv-" + uuid.uuid4().hex[:8]
+    asyncio.run(session_store.create(owner_sid, user_id=owner_id))
+
+    device_client = TestClient(app)
+    with device_client.websocket_connect(
+        f"/v1/conversation/stream?output=text&session_id={owner_sid}&device_token={raw_token}"
+    ) as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "session_started"
+        assert msg["session_id"] == owner_sid

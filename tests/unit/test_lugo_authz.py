@@ -1,9 +1,19 @@
 """Session-ownership IDOR on apps/api_gateway/app/api/routes/lugo.py's WS
-/v1/lugo/stream: `wakeup`'s `session_id` flowed straight into cfg.resume_sid
-with NO ownership check at all -- the identical hole conversation.py's WS
-/stream had before c2ca363, just left open on the device path. Fixed by
-sharing conversation.py's ownership gate (now `ws_session_owner_denied` in
-app/core/auth_guard.py) with lugo.py."""
+/v1/lugo/stream, and the paired-device admin-bypass hole in the shared
+ws_session_owner_denied() helper (app/core/auth_guard.py) both
+/v1/conversation/stream and /v1/lugo/stream go through.
+
+1. `wakeup`'s `session_id` flowed straight into cfg.resume_sid with NO
+   ownership check at all -- the identical hole conversation.py's WS /stream
+   had before c2ca363, just left open on the device path. Fixed by sharing
+   conversation.py's ownership gate (now `ws_session_owner_denied` in
+   app/core/auth_guard.py) with lugo.py (Finding A).
+2. A paired-device identity (`WsIdentity.via_device`) still got the DB-role
+   admin bypass in that shared check even after bearer identities lost it
+   (round-1 review, I2, on the earlier conversation.py fix) -- a device
+   paired to an admin account could resume ANY user's session over
+   /v1/lugo/stream (and /v1/conversation/stream too, before this) (Finding B).
+"""
 
 import asyncio
 import uuid
@@ -13,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from app.core.settings import settings
 from app.main import app
+from app.services.auth.devices import device_store
 from app.services.auth.users import user_store
 from app.services.history.store import session_store
 from app.services.profiles.models import Profile, SessionConfig
@@ -165,3 +176,49 @@ def test_lugo_unknown_session_id_still_creates_it(client, _with_password):
         msg = ws.receive_json()
         assert msg["type"] == "welcome"
         assert msg["session_id"] == fresh_sid
+
+
+# --- Finding B: a paired device still got the DB-role admin bypass ---------
+
+
+def test_lugo_device_paired_to_admin_cannot_resume_other_users_session(client, _with_password):
+    """A device token carries no role, same as a bearer token -- a device
+    acts as its owning user, never as an admin, even when that user's DB
+    role is "admin". Confirmed pre-fix: this exact setup (ESP32 paired to an
+    admin account) got `welcome` on another real user's session.
+
+    Connects with a FRESH client (no cookies): resolve_ws_identity checks
+    the browser cookie session before the device token, so reusing `client`
+    (which is logged in as the admin from _as_user) would resolve via that
+    cookie session, not via the device token -- silently testing the wrong
+    code path."""
+    admin_id = _as_user(client, "admin")
+    _device, raw_token = asyncio.run(device_store.create(admin_id, "kitchen-esp32", "serial-001"))
+
+    victim_sid = "victim-device-session-" + uuid.uuid4().hex[:8]
+    asyncio.run(session_store.create(victim_sid, user_id="someone-else"))
+
+    device_client = TestClient(app)
+    with device_client.websocket_connect(f"/v1/lugo/stream?device_token={raw_token}") as ws:
+        _wakeup(ws, victim_sid)
+        msg = ws.receive_json()
+        assert msg["type"] == "error"
+        assert msg["message"] == f"Session '{victim_sid}' not found"
+
+
+def test_lugo_paired_device_can_still_resume_its_owners_session(client, _with_password):
+    """The comparison is by user_id, so a device must still be able to
+    resume ITS OWN owner's session -- the fix must not break that. Fresh
+    client for the same cookie-vs-device-token reason as the test above."""
+    owner_id = _as_user(client, "user")
+    _device, raw_token = asyncio.run(device_store.create(owner_id, "living-room-esp32", "serial-002"))
+
+    owner_sid = "owner-device-session-" + uuid.uuid4().hex[:8]
+    asyncio.run(session_store.create(owner_sid, user_id=owner_id))
+
+    device_client = TestClient(app)
+    with device_client.websocket_connect(f"/v1/lugo/stream?device_token={raw_token}") as ws:
+        _wakeup(ws, owner_sid)
+        msg = ws.receive_json()
+        assert msg["type"] == "welcome"
+        assert msg["session_id"] == owner_sid
