@@ -91,6 +91,24 @@ async def test_stt_http_stt_unavailable_when_probe_fails(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stt_http_stt_malformed_base_url_is_unavailable_not_raised(monkeypatch):
+    """httpx.InvalidURL (a malformed base_url, e.g. an admin typo in the Model
+    Registry UI) must not escape check_engine and crash the WS connect path --
+    it must degrade to EngineHealth(unavailable, ...) like any other
+    unreachable target. Real probe_service_health here (no monkeypatch of it),
+    since the point is that the malformed-URL path itself is caught."""
+    async def row(kind, engine, model_id=""):
+        bad = dict(_STT_ROW)
+        bad["base_url"] = "http://[::1/v1"
+        return bad
+
+    monkeypatch.setattr(
+        "app.services.model_registry.store.model_registry_store.find", row)
+    health = await stt_service.check_engine("http_stt", "Qwen/Qwen3-ASR-0.6B")
+    assert health.status == "unavailable"
+
+
+@pytest.mark.asyncio
 async def test_stt_http_stt_ok_when_probe_succeeds(monkeypatch):
     async def row(kind, engine, model_id=""):
         return dict(_STT_ROW)
@@ -143,6 +161,27 @@ async def test_stt_whisper_local_alias_unavailable_when_faster_whisper_missing(m
     monkeypatch.setattr("app.services.stt.service.module_available", lambda name: False)
     health = await stt_service.check_engine("whisper_local")
     assert health.status == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_stt_check_engine_survives_list_engines_failure(monkeypatch, tmp_path):
+    """list_engines() walks every registered STT provider with no per-provider
+    isolation (module_available, filesystem checks, provider.available(),
+    resolve_credentials...) -- it used to only risk 500ing the admin
+    /v1/stt/engines page, but check_engine() now sits on the WS connect path,
+    so one bad provider raising there must not take down every session for
+    every profile. check_engine() must isolate that failure and fall through
+    to the warming check instead of propagating."""
+    async def raiser():
+        raise RuntimeError("13th STT provider forgot a list_engines() branch")
+
+    monkeypatch.setattr(stt_service, "list_engines", raiser)
+    _patch_vosk_available(monkeypatch, tmp_path)
+    monkeypatch.setattr("app.services.stt.service.is_ready", lambda p: True)
+    monkeypatch.setattr("app.services.stt.service._needs_warming", lambda p: True)
+
+    health = await stt_service.check_engine("vosk")
+    assert health.status == "ok"
 
 
 @pytest.mark.asyncio

@@ -63,6 +63,28 @@ def test_lugo_ws_rejected_when_stt_unavailable(client, monkeypatch):
         assert "unreachable" in msg["message"]
 
 
+def test_conversation_ws_text_only_allowed_when_tts_unavailable(client, monkeypatch):
+    """Regression test: a text-only connect (?output=text, e.g. the voice-to-text
+    chat UI at static/js/chat.js) never invokes TTS at all -- session.py
+    short-circuits synthesis when want_audio is False. Refusing the session over
+    a dead/misconfigured TTS engine here would regress currently-shipped
+    behavior (this used to work on main before the health gate landed)."""
+    _patch_health(monkeypatch, "ok", "unavailable", detail="omnivoice is unavailable")
+    with client.websocket_connect("/v1/conversation/stream?output=text") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] != "error"
+
+
+def test_conversation_ws_text_only_still_rejected_when_stt_unavailable(client, monkeypatch):
+    """STT is used by every session regardless of output modality, so a
+    text-only connect must still be refused when STT is unavailable."""
+    _patch_health(monkeypatch, "unavailable", "ok", detail="unreachable at http://x")
+    with client.websocket_connect("/v1/conversation/stream?output=text") as ws:
+        msg = ws.receive_json()
+        assert msg["event"] == "error"
+        assert "unreachable at http://x" in msg["message"]
+
+
 def test_lugo_ws_allowed_when_all_ok(client, monkeypatch):
     _patch_health(monkeypatch, "ok", "ok")
     with client.websocket_connect("/v1/lugo/stream") as ws:

@@ -115,3 +115,16 @@ async def test_passes_timeout_to_client(mock_transport):
     seen = mock_transport(lambda req: httpx.Response(200))
     await probe_service_health("http://host:8100/v1", "tok", timeout=1.5)
     assert seen["timeout"] == 1.5
+
+
+@pytest.mark.asyncio
+async def test_malformed_base_url_is_unreachable_not_raised():
+    """httpx.InvalidURL (e.g. a malformed base_url typo'd into the Model
+    Registry UI, like a stray '[' in an IPv6-looking host) is NOT an
+    httpx.HTTPError subclass -- it must still degrade to (False, reason)
+    rather than escape and crash the WS connect path. No mock_transport here:
+    InvalidURL is raised during request construction, before any transport
+    is ever reached."""
+    ok, reason = await probe_service_health("http://[::1/v1", "tok")
+    assert ok is False
+    assert reason

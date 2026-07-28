@@ -357,8 +357,14 @@ async def conversation_stream(websocket: WebSocket) -> None:
     stt_health, tts_health = await check_resolved_engines(
         stt_engine, stt_model, tts_engine, tts_model
     )
-    for health in (stt_health, tts_health):
-        if health.blocks_session:
+    # STT always matters (every session transcribes). TTS only matters when the
+    # client actually requested audio output -- a text-only connect (?output=text,
+    # e.g. the voice-to-text chat UI) never calls into TTS at all
+    # (services/conversation/session.py short-circuits synthesis when want_audio
+    # is False), so refusing it over a dead/misconfigured TTS engine would be a
+    # regression of currently-shipped behavior.
+    for health, required in ((stt_health, True), (tts_health, want_audio)):
+        if required and health.blocks_session:
             await websocket.send_json({
                 "event": "error",
                 "message": f"{health.engine} is unavailable: {health.detail}",

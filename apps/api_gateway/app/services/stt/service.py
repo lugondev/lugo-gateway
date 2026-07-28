@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 
@@ -17,6 +18,8 @@ from app.services.stt.providers.qwencloud_provider import QwenCloudSttProvider
 from app.services.stt.providers.whisper_mlx_provider import WhisperMlxProvider
 from app.services.stt.providers.whisper_provider import WhisperProvider
 from app.services.warmup import _needs_warming, is_ready
+
+logger = logging.getLogger(__name__)
 
 
 class STTService:
@@ -125,7 +128,21 @@ class STTService:
         # appears in its output -- a plain string match on `engine` would
         # never find a row for the alias key and silently fall through to
         # "ok" without ever consulting its real availability.
-        for listed in await self.list_engines():
+        #
+        # list_engines() walks EVERY registered provider (module_available,
+        # filesystem checks, provider.available(), resolve_credentials per
+        # row...) to build the admin inventory, with no per-provider isolation.
+        # That used to only risk 500ing the admin /v1/stt/engines page; now
+        # it sits on the WS connect path, so one bad provider raising would
+        # refuse every session for every profile, not just this one engine.
+        # Isolate it: an inventory failure here degrades to "keep checking
+        # warmup", not a crash.
+        try:
+            listed_engines = await self.list_engines()
+        except Exception as exc:  # noqa: BLE001 -- see comment above
+            logger.warning("stt list_engines() failed during check_engine(%s): %s", engine, exc)
+            listed_engines = []
+        for listed in listed_engines:
             if self.providers.get(listed["engine"]) is not provider:
                 continue
             if not listed["available"]:

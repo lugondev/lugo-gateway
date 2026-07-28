@@ -38,7 +38,14 @@ async def probe_service_health(
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             await client.get(_health_url(base_url), headers=headers)
-    except httpx.HTTPError as exc:
+    except Exception as exc:
+        # Deliberately broad, not just httpx.HTTPError: a malformed base_url
+        # (e.g. an admin typo in the Model Registry UI) raises httpx.InvalidURL,
+        # which is NOT an HTTPError subclass and would otherwise escape this
+        # probe and crash the WS connect path for every session using that
+        # engine. This check exists to turn network trouble into a reported
+        # "unavailable" rather than an exception -- a bad input string is just
+        # another way for the target to be unreachable.
         return False, str(exc) or type(exc).__name__
     return True, None
 
@@ -76,8 +83,18 @@ async def check_remote_engine_health(
             engine=engine, status="unavailable",
             detail="not configured: no enabled Model Registry entry",
         )
-    base_url, api_key = await resolve_credentials(entry)
-    reachable, reason = await probe(base_url, api_key)
+    try:
+        base_url, api_key = await resolve_credentials(entry)
+        reachable, reason = await probe(base_url, api_key)
+    except Exception as exc:
+        # Belt-and-suspenders alongside probe_service_health's own broad catch:
+        # resolve_credentials touches the provider store too, and this whole
+        # pair sits on the WS connect path -- any failure here must degrade to
+        # "unavailable", never propagate and crash every session on this engine.
+        return EngineHealth(
+            engine=engine, status="unavailable",
+            detail=f"health check failed: {exc}",
+        )
     if not reachable:
         return EngineHealth(
             engine=engine, status="unavailable",

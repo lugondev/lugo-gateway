@@ -124,3 +124,28 @@ def test_health_endpoint_returns_profile_health(monkeypatch, tmp_path):
     assert data["stt"]["status"] == "unavailable"
     assert data["stt"]["detail"] == "unreachable"
     assert data["tts"]["status"] == "ok"
+
+
+def test_health_endpoint_404s_for_another_users_private_profile(monkeypatch):
+    """Mirrors test_get_other_users_private_profile_is_404 in
+    test_profile_ownership.py: GET /{name}/health must apply the same
+    ownership scoping as every sibling profile route, not just report
+    unavailable. Without it, any logged-in user could confirm another user's
+    private profile exists by name and read its resolved engine + verbatim
+    base_url (EngineHealth.detail) through this endpoint alone."""
+    from fastapi.testclient import TestClient
+
+    from app.core.settings import settings
+    from app.main import app
+
+    monkeypatch.setattr(settings, "admin_password", "s3cret")
+
+    client = TestClient(app)
+    client.post("/api/auth/signup", json={"username": "a", "password": "pw"})
+    client.post("/api/auth/login", json={"username": "a", "password": "pw"})
+    client.post("/v1/profiles", json={"name": "a-private"})
+
+    client.post("/api/auth/signup", json={"username": "b", "password": "pw"})
+    client.post("/api/auth/login", json={"username": "b", "password": "pw"})
+    resp = client.get("/v1/profiles/a-private/health")
+    assert resp.status_code == 404
