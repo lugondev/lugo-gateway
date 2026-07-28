@@ -20,8 +20,18 @@ _STATIC_ALLOWLIST = {
     "/static/brand/favicon.svg",
     "/static/brand/logo-mark-light.svg",
 }
-# Unauthenticated device-side pairing handshake (the device itself has no login).
-_NO_AUTH_PREFIXES = ("/v1/devices/pair/init", "/v1/devices/pair/status")
+# Reachable with no credentials. Matched with _matches(), i.e. on a segment
+# boundary -- NOT a bare startswith. A bare startswith here would make a future
+# "/api/authz/..." mount silently public, which is precisely the bug class this
+# module's default-deny exists to kill.
+_NO_AUTH_PREFIXES = (
+    # Login/signup/refresh/logout: the only way to obtain a session in the first
+    # place, so it cannot itself require one.
+    "/api/auth",
+    # Device-side pairing handshake (the device itself has no login).
+    "/v1/devices/pair/init",
+    "/v1/devices/pair/status",
+)
 # Any logged-in session (admin or user).
 _USER_PREFIXES = (
     "/ui",
@@ -123,7 +133,7 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if path in _PUBLIC_PATHS:
             return await call_next(request)
-        if path in _STATIC_ALLOWLIST or path.startswith("/api/auth") or _matches(path, _NO_AUTH_PREFIXES):
+        if path in _STATIC_ALLOWLIST or _matches(path, _NO_AUTH_PREFIXES):
             return await call_next(request)
 
         # "authentication chỉ dùng 1, không fallback" -- nếu request chào

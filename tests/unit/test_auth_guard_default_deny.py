@@ -58,6 +58,11 @@ def test_public_paths_need_no_auth(client, _with_password, path):
         "/docs",
         "/redoc",
         "/some/router/nobody/classified",
+        # The /api/auth bypass used to be a bare `path.startswith("/api/auth")`,
+        # so every one of these inherited it and was served anonymously.
+        "/api/authz/whatever",
+        "/api/authenticate",
+        "/api/auth-bypass",
     ],
 )
 def test_previously_open_paths_now_require_auth(client, _with_password, path):
@@ -70,6 +75,25 @@ def test_login_page_assets_stay_public(client, _with_password):
     """The login page must load before anyone has a session."""
     for path in ("/static/login.html", "/static/js/auth.js", "/static/styles.css"):
         assert client.get(path).status_code == 200, path
+
+
+@pytest.mark.parametrize("path", ["/api/auth/status", "/api/auth"])
+def test_auth_routes_stay_public(client, _with_password, path):
+    """Login/signup is the only way to GET a session, so it cannot require one.
+    Moving "/api/auth" out of the bare startswith and into _NO_AUTH_PREFIXES
+    must not have narrowed it: both the prefix itself and its children stay
+    anonymous."""
+    assert client.get(path).status_code != 401
+
+
+def test_login_still_works_end_to_end_through_the_guard(client, _with_password):
+    """The whole carve-out exists for this flow; assert it, not just its shape."""
+    signup = client.post("/api/auth/signup", json={"username": "newbie", "password": "s3cret"})
+    assert signup.status_code not in (401, 403), signup.text
+    login = client.post("/api/auth/login", json={"username": "newbie", "password": "s3cret"})
+    assert login.status_code == 200, login.text
+    # And the session it hands back actually opens a guarded route.
+    assert client.get("/v1/profiles").status_code not in (401, 403)
 
 
 def test_pairing_handshake_stays_public(client, _with_password):
