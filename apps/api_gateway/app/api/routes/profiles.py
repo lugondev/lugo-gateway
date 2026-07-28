@@ -206,3 +206,23 @@ async def clone_profile(name: str, payload: CloneRequest, request: Request) -> d
     clone = Profile(**data)
     profile_store.upsert(clone)
     return {"success": True, "data": await _with_labels(clone)}
+
+
+@router.get("/{name}/health")
+async def profile_health(name: str, request: Request) -> dict:
+    """Live health of the STT/TTS engines this profile would actually use.
+
+    Same check the WS connect gate runs, exposed so the admin UI can show a
+    profile as broken before a user tries to talk to it. Scoped like every
+    sibling route (get_profile, clone_profile): 404 rather than leak that
+    another user's private profile exists, or its resolved engine/base_url
+    (EngineHealth.detail returns the base_url verbatim on both the success
+    and failure paths).
+    """
+    from app.services.health import check_profile_health
+
+    profile = profile_store.get(name)
+    if not profile or not _visible(profile, current_user_id(request)):
+        raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
+
+    return {"success": True, "data": (await check_profile_health(name)).model_dump()}

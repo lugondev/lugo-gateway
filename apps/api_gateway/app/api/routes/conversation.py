@@ -26,6 +26,7 @@ from app.services.conversation.session import (
     _build_tool_registry,
     _spawn_background,
 )
+from app.services.health import check_resolved_engines
 from app.services.history.store import session_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
@@ -350,6 +351,26 @@ async def conversation_stream(websocket: WebSocket) -> None:
         await websocket.send_json({"event": "error", "message": str(exc)})
         await websocket.close()
         return
+
+    # Fail fast on a dead engine here rather than after the user has already
+    # spoken an utterance and the first transcribe/synthesize call blows up.
+    stt_health, tts_health = await check_resolved_engines(
+        stt_engine, stt_model, tts_engine, tts_model
+    )
+    # STT always matters (every session transcribes). TTS only matters when the
+    # client actually requested audio output -- a text-only connect (?output=text,
+    # e.g. the voice-to-text chat UI) never calls into TTS at all
+    # (services/conversation/session.py short-circuits synthesis when want_audio
+    # is False), so refusing it over a dead/misconfigured TTS engine would be a
+    # regression of currently-shipped behavior.
+    for health, required in ((stt_health, True), (tts_health, want_audio)):
+        if required and health.blocks_session:
+            await websocket.send_json({
+                "event": "error",
+                "message": f"{health.engine} is unavailable: {health.detail}",
+            })
+            await websocket.close()
+            return
 
     cfg = SessionRuntimeConfig(
         session_id=session_id, profile_name=profile_name, stt_engine=stt_engine,

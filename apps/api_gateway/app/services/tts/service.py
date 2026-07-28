@@ -1,5 +1,7 @@
 from app.core.errors import EngineNotFoundError
 from app.core.settings import settings
+from app.schemas.health import EngineHealth
+from app.services.model_registry.health_probe import check_remote_engine_health, probe_service_health
 from app.services.system_config import system_config_store
 from app.services.tts.base import TTSProvider
 from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
@@ -8,6 +10,7 @@ from app.services.tts.providers.omnivoice_provider import OmniVoiceProvider
 from app.services.tts.providers.http_tts_provider import HttpTtsProvider
 from app.services.tts.providers.qwen3_tts_provider import QWEN3_TTS_PROVIDERS
 from app.services.tts.providers.vieneu_provider import VieNeuProvider
+from app.services.warmup import _needs_warming, is_ready
 
 
 class TTSService:
@@ -28,6 +31,28 @@ class TTSService:
         if provider is None:
             raise EngineNotFoundError(f"Unsupported TTS engine: {engine}")
         return provider
+
+    async def check_engine(self, engine: str, model_id: str = "") -> EngineHealth:
+        """Whether a session can start on this engine right now. See
+        STTService.check_engine -- same three-state contract."""
+        provider = self.providers.get(engine)
+        if provider is None:
+            return EngineHealth(
+                engine=engine, status="unavailable", detail=f"unknown TTS engine: {engine}"
+            )
+
+        if engine == "http_tts":
+            return await check_remote_engine_health(
+                "tts", engine, model_id, probe=probe_service_health
+            )
+
+        if not provider.available():
+            return EngineHealth(
+                engine=engine, status="unavailable", detail=provider.install_hint() or "not available"
+            )
+        if _needs_warming(provider) and not is_ready(provider):
+            return EngineHealth(engine=engine, status="not_ready", detail="model still loading")
+        return EngineHealth(engine=engine, status="ok")
 
     def list_engines(self) -> list[dict]:
         result: list[dict] = []

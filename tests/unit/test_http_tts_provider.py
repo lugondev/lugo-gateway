@@ -333,3 +333,29 @@ async def test_render_wav_omits_clone_fields_when_no_ref_audio(captured):
     body = json.loads(captured["json"])
     assert "ref_audio_base64" not in body
     assert "ref_audio_path" not in body
+
+
+def test_available_false_when_no_enabled_entry(monkeypatch):
+    """Regression: this inherited TTSProvider.available()'s hardcoded True,
+    so the admin dashboard reported http_tts usable with zero registry rows."""
+    monkeypatch.setattr(
+        "app.services.model_registry.store.model_registry_store.find_enabled_sync",
+        lambda kind, engine=None: None,
+    )
+    assert HttpTtsProvider().available() is False
+
+
+def test_available_true_when_enabled_entry_has_base_url(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.model_registry.store.model_registry_store.find_enabled_sync",
+        lambda kind, engine=None: dict(_ENTRY),
+    )
+    assert HttpTtsProvider().available() is True
+
+
+def test_available_false_when_entry_has_blank_base_url(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.model_registry.store.model_registry_store.find_enabled_sync",
+        lambda kind, engine=None: {**_ENTRY, "base_url": "  "},
+    )
+    assert HttpTtsProvider().available() is False

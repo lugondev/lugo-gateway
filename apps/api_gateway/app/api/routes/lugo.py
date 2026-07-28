@@ -25,6 +25,7 @@ from app.services.conversation.session import ConversationSession, SessionRuntim
 from app.services.conversation.tools.device_mcp import (
     DeviceMcpToolSource, DeviceMcpTransport, discover_device_tools,
 )
+from app.services.health import check_resolved_engines
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
 from app.services.system_config import system_config_store
@@ -173,6 +174,18 @@ async def lugo_stream(websocket: WebSocket) -> None:
 
     async def emit_audio(packet: bytes) -> None:
         await websocket.send_bytes(encode_frame(LUGO_FRAME_OPUS, packet))
+
+    stt_health, tts_health = await check_resolved_engines(
+        stt_engine, stt_model, tts["engine"], tts["model_id"]
+    )
+    for health in (stt_health, tts_health):
+        if health.blocks_session:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"{health.engine} is unavailable: {health.detail}",
+            })
+            await websocket.close()
+            return
 
     session = ConversationSession(cfg, emit, emit_audio)
     await session.start()

@@ -1,8 +1,11 @@
+import logging
 import os
 from pathlib import Path
 
 from app.core.deps import module_available
 from app.core.errors import EngineNotFoundError
+from app.schemas.health import EngineHealth
+from app.services.model_registry.health_probe import check_remote_engine_health, probe_service_health
 from app.services.model_registry.resolve import resolve_remote_stt_config
 from app.services.stt.base import STTProvider
 from app.services.stt.providers.http_stt_provider import HttpSttProvider
@@ -14,6 +17,9 @@ from app.services.stt.providers.qwen3_asr_provider import Qwen3AsrProvider
 from app.services.stt.providers.qwencloud_provider import QwenCloudSttProvider
 from app.services.stt.providers.whisper_mlx_provider import WhisperMlxProvider
 from app.services.stt.providers.whisper_provider import WhisperProvider
+from app.services.warmup import _needs_warming, is_ready
+
+logger = logging.getLogger(__name__)
 
 
 class STTService:
@@ -94,6 +100,61 @@ class STTService:
         if provider is None:
             raise EngineNotFoundError(f"Unsupported STT engine: {engine}")
         return provider
+
+    async def check_engine(self, engine: str, model: str = "") -> EngineHealth:
+        """Whether a session can start on this engine right now.
+
+        Only http_stt gets a live network probe -- it is the one STT engine
+        backed by a self-hosted process that can silently die. Cloud engines
+        are config-checked only, to avoid paying for an API call per session.
+        """
+        provider = self.providers.get(engine)
+        if provider is None:
+            return EngineHealth(
+                engine=engine, status="unavailable", detail=f"unknown STT engine: {engine}"
+            )
+
+        if engine == "http_stt":
+            return await check_remote_engine_health(
+                "stt", engine, model, probe=probe_service_health
+            )
+
+        # Everything else: reuse the availability semantics list_engines()
+        # already publishes, so the gate and the dashboard never disagree.
+        # Match by PROVIDER IDENTITY, not by the row's engine-key string:
+        # self.providers registers "whisper" and "whisper_local" (and other
+        # alias keys) as the SAME provider instance, and list_engines() dedups
+        # by id(provider) so only the first-inserted key ("whisper") ever
+        # appears in its output -- a plain string match on `engine` would
+        # never find a row for the alias key and silently fall through to
+        # "ok" without ever consulting its real availability.
+        #
+        # list_engines() walks EVERY registered provider (module_available,
+        # filesystem checks, provider.available(), resolve_credentials per
+        # row...) to build the admin inventory, with no per-provider isolation.
+        # That used to only risk 500ing the admin /v1/stt/engines page; now
+        # it sits on the WS connect path, so one bad provider raising would
+        # refuse every session for every profile, not just this one engine.
+        # Isolate it: an inventory failure here degrades to "keep checking
+        # warmup", not a crash.
+        try:
+            listed_engines = await self.list_engines()
+        except Exception as exc:  # noqa: BLE001 -- see comment above
+            logger.warning("stt list_engines() failed during check_engine(%s): %s", engine, exc)
+            listed_engines = []
+        for listed in listed_engines:
+            if self.providers.get(listed["engine"]) is not provider:
+                continue
+            if not listed["available"]:
+                return EngineHealth(
+                    engine=engine, status="unavailable",
+                    detail=listed.get("detail") or "not configured",
+                )
+            break
+
+        if _needs_warming(provider) and not is_ready(provider):
+            return EngineHealth(engine=engine, status="not_ready", detail="model still loading")
+        return EngineHealth(engine=engine, status="ok")
 
     async def list_engines(self) -> list[dict]:
         # Lazy import to avoid any module load-order coupling.
