@@ -1,5 +1,7 @@
 from app.core.errors import EngineNotFoundError
 from app.core.settings import settings
+from app.schemas.health import EngineHealth
+from app.services.model_registry.health_probe import probe_service_health
 from app.services.system_config import system_config_store
 from app.services.tts.base import TTSProvider
 from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
@@ -8,6 +10,7 @@ from app.services.tts.providers.omnivoice_provider import OmniVoiceProvider
 from app.services.tts.providers.http_tts_provider import HttpTtsProvider
 from app.services.tts.providers.qwen3_tts_provider import QWEN3_TTS_PROVIDERS
 from app.services.tts.providers.vieneu_provider import VieNeuProvider
+from app.services.warmup import _needs_warming, is_ready
 
 
 class TTSService:
@@ -28,6 +31,46 @@ class TTSService:
         if provider is None:
             raise EngineNotFoundError(f"Unsupported TTS engine: {engine}")
         return provider
+
+    async def check_engine(self, engine: str, model_id: str = "") -> EngineHealth:
+        """Whether a session can start on this engine right now. See
+        STTService.check_engine -- same three-state contract."""
+        from app.services.model_registry.store import model_registry_store
+        from app.services.providers.resolve import resolve_credentials
+
+        provider = self.providers.get(engine)
+        if provider is None:
+            return EngineHealth(
+                engine=engine, status="unavailable", detail=f"unknown TTS engine: {engine}"
+            )
+
+        if engine == "http_tts":
+            entry = (
+                await model_registry_store.find("tts", engine, model_id)
+                if model_id
+                else await model_registry_store.find_enabled("tts", engine)
+            )
+            if not entry:
+                return EngineHealth(
+                    engine=engine, status="unavailable",
+                    detail="not configured: no enabled Model Registry entry",
+                )
+            base_url, api_key = await resolve_credentials(entry)
+            reachable, reason = await probe_service_health(base_url, api_key)
+            if not reachable:
+                return EngineHealth(
+                    engine=engine, status="unavailable",
+                    detail=f"unreachable at {base_url or '(no base_url)'}: {reason}",
+                )
+            return EngineHealth(engine=engine, status="ok", detail=base_url)
+
+        if not provider.available():
+            return EngineHealth(
+                engine=engine, status="unavailable", detail=provider.install_hint() or "not available"
+            )
+        if _needs_warming(provider) and not is_ready(provider):
+            return EngineHealth(engine=engine, status="not_ready", detail="model still loading")
+        return EngineHealth(engine=engine, status="ok")
 
     def list_engines(self) -> list[dict]:
         result: list[dict] = []

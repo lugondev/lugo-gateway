@@ -3,6 +3,8 @@ from pathlib import Path
 
 from app.core.deps import module_available
 from app.core.errors import EngineNotFoundError
+from app.schemas.health import EngineHealth
+from app.services.model_registry.health_probe import probe_service_health
 from app.services.model_registry.resolve import resolve_remote_stt_config
 from app.services.stt.base import STTProvider
 from app.services.stt.providers.http_stt_provider import HttpSttProvider
@@ -14,6 +16,7 @@ from app.services.stt.providers.qwen3_asr_provider import Qwen3AsrProvider
 from app.services.stt.providers.qwencloud_provider import QwenCloudSttProvider
 from app.services.stt.providers.whisper_mlx_provider import WhisperMlxProvider
 from app.services.stt.providers.whisper_provider import WhisperProvider
+from app.services.warmup import _needs_warming, is_ready
 
 
 class STTService:
@@ -94,6 +97,58 @@ class STTService:
         if provider is None:
             raise EngineNotFoundError(f"Unsupported STT engine: {engine}")
         return provider
+
+    async def check_engine(self, engine: str, model: str = "") -> EngineHealth:
+        """Whether a session can start on this engine right now.
+
+        Only http_stt gets a live network probe -- it is the one STT engine
+        backed by a self-hosted process that can silently die. Cloud engines
+        are config-checked only, to avoid paying for an API call per session.
+        """
+        from app.services.model_registry.store import model_registry_store
+        from app.services.providers.resolve import resolve_credentials
+
+        provider = self.providers.get(engine)
+        if provider is None:
+            return EngineHealth(
+                engine=engine, status="unavailable", detail=f"unknown STT engine: {engine}"
+            )
+
+        if engine == "http_stt":
+            entry = (
+                await model_registry_store.find("stt", engine, model)
+                if model
+                else await model_registry_store.find_enabled("stt", engine)
+            )
+            if not entry:
+                return EngineHealth(
+                    engine=engine, status="unavailable",
+                    detail="not configured: no enabled Model Registry entry",
+                )
+            base_url, api_key = await resolve_credentials(entry)
+            reachable, reason = await probe_service_health(base_url, api_key)
+            if not reachable:
+                return EngineHealth(
+                    engine=engine, status="unavailable",
+                    detail=f"unreachable at {base_url or '(no base_url)'}: {reason}",
+                )
+            return EngineHealth(engine=engine, status="ok", detail=base_url)
+
+        # Everything else: reuse the availability semantics list_engines()
+        # already publishes, so the gate and the dashboard never disagree.
+        for listed in await self.list_engines():
+            if listed["engine"] != engine:
+                continue
+            if not listed["available"]:
+                return EngineHealth(
+                    engine=engine, status="unavailable",
+                    detail=listed.get("detail") or "not configured",
+                )
+            break
+
+        if _needs_warming(provider) and not is_ready(provider):
+            return EngineHealth(engine=engine, status="not_ready", detail="model still loading")
+        return EngineHealth(engine=engine, status="ok")
 
     async def list_engines(self) -> list[dict]:
         # Lazy import to avoid any module load-order coupling.
