@@ -76,6 +76,7 @@ class SqliteBackedStore(Generic[M]):
             # (perfectly fine) row, re-raised too, forever, until the bad row
             # was manually removed from the DB. Mirrors _import_legacy's
             # already-correct per-record skip-and-log below.
+            had_rows = bool(rows)
             cache: dict[str, M] = {}
             for r in rows:
                 try:
@@ -86,7 +87,16 @@ class SqliteBackedStore(Generic[M]):
                         self._row.__tablename__, r.name, exc,
                     )
             self._cache = cache
-        if not self._cache:
+        # Gate the one-time legacy-JSON import on whether the DB table was
+        # genuinely empty (had_rows is False), NOT on whether the resulting
+        # cache ended up empty. Those are different conditions: a table whose
+        # only row(s) failed validation above (e.g. a validator added after
+        # the row was written) also leaves self._cache empty, but importing
+        # the legacy backup in that case would call _put() and overwrite the
+        # existing (newer, just-unparseable) DB row with stale legacy data --
+        # silent data loss. Only an actually-empty table should trigger the
+        # migration.
+        if not had_rows:
             path = self._resolve_path()
             if path and os.path.exists(path):
                 self._import_legacy(path)

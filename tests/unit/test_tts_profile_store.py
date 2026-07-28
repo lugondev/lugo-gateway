@@ -133,3 +133,51 @@ def test_out_of_bounds_ref_audio_path_row_still_loads_and_serves_other_rows(stor
     assert "legacy-bad" in profiles
     assert profiles["legacy-bad"].ref_audio_path == "/etc/passwd"
     assert store.get("good").engine == "vieneu"
+
+
+def test_all_rows_invalid_does_not_trigger_legacy_import_or_overwrite_row(tmp_path):
+    """Regression guard for the data-loss bug: _ensure() used to gate the
+    one-time legacy-JSON import on `not self._cache` (cache ended up empty),
+    which is also true when the DB table has rows but EVERY one of them
+    failed model_validate_json (e.g. a validator added after the row was
+    written). That made a restart re-run the legacy import and _put() the
+    stale legacy record over the still-present, just-unparseable DB row --
+    silently replacing newer data with a backup. The fix must key off
+    whether the table had rows at all (`had_rows`), not off the cache.
+
+    The row is written directly to the DB (bypassing upsert(), which would
+    only exercise TtsProfile's own validation, not the gap this guards).
+    """
+    path = str(tmp_path / "tts_profiles.json")
+    # A legacy backup file that, if imported, would produce a *different*,
+    # valid "bad" record -- distinguishable from the row already in the DB.
+    with open(path, "w") as f:
+        json.dump({"profiles": {"bad": {"name": "bad", "engine": "omnivoice"}}}, f)
+
+    store = TtsProfileStore(path)
+    malformed_data = json.dumps({"engine": "vieneu"})  # missing required "name"
+    _write_raw_row("bad", malformed_data)
+    store.invalidate()
+
+    profiles = store.list()
+    assert "bad" not in profiles  # still fails validation on read -- unchanged behavior
+
+    with session_scope() as s:
+        row = s.get(TtsProfileRow, "bad")
+        assert row is not None
+        assert row.data == malformed_data  # NOT overwritten by the legacy import
+
+
+def test_genuinely_empty_table_with_legacy_file_still_imports(tmp_path):
+    """The migration this store exists to run must keep working: an empty
+    DB table (no rows at all, valid or invalid) with a legacy JSON backup
+    present must still import it on first access."""
+    path = str(tmp_path / "tts_profiles.json")
+    with open(path, "w") as f:
+        json.dump({"profiles": {"migrated": {"name": "migrated", "engine": "omnivoice"}}}, f)
+
+    store = TtsProfileStore(path)
+    profiles = store.list()
+
+    assert "migrated" in profiles
+    assert profiles["migrated"].engine == "omnivoice"
