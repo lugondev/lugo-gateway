@@ -1,7 +1,7 @@
 from app.core.errors import EngineNotFoundError
 from app.core.settings import settings
 from app.schemas.health import EngineHealth
-from app.services.model_registry.health_probe import probe_service_health
+from app.services.model_registry.health_probe import check_remote_engine_health, probe_service_health
 from app.services.system_config import system_config_store
 from app.services.tts.base import TTSProvider
 from app.services.tts.providers.edge_tts_provider import EdgeTTSProvider
@@ -35,9 +35,6 @@ class TTSService:
     async def check_engine(self, engine: str, model_id: str = "") -> EngineHealth:
         """Whether a session can start on this engine right now. See
         STTService.check_engine -- same three-state contract."""
-        from app.services.model_registry.store import model_registry_store
-        from app.services.providers.resolve import resolve_credentials
-
         provider = self.providers.get(engine)
         if provider is None:
             return EngineHealth(
@@ -45,24 +42,9 @@ class TTSService:
             )
 
         if engine == "http_tts":
-            entry = (
-                await model_registry_store.find("tts", engine, model_id)
-                if model_id
-                else await model_registry_store.find_enabled("tts", engine)
+            return await check_remote_engine_health(
+                "tts", engine, model_id, probe=probe_service_health
             )
-            if not entry:
-                return EngineHealth(
-                    engine=engine, status="unavailable",
-                    detail="not configured: no enabled Model Registry entry",
-                )
-            base_url, api_key = await resolve_credentials(entry)
-            reachable, reason = await probe_service_health(base_url, api_key)
-            if not reachable:
-                return EngineHealth(
-                    engine=engine, status="unavailable",
-                    detail=f"unreachable at {base_url or '(no base_url)'}: {reason}",
-                )
-            return EngineHealth(engine=engine, status="ok", detail=base_url)
 
         if not provider.available():
             return EngineHealth(

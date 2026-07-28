@@ -4,7 +4,7 @@ from pathlib import Path
 from app.core.deps import module_available
 from app.core.errors import EngineNotFoundError
 from app.schemas.health import EngineHealth
-from app.services.model_registry.health_probe import probe_service_health
+from app.services.model_registry.health_probe import check_remote_engine_health, probe_service_health
 from app.services.model_registry.resolve import resolve_remote_stt_config
 from app.services.stt.base import STTProvider
 from app.services.stt.providers.http_stt_provider import HttpSttProvider
@@ -105,9 +105,6 @@ class STTService:
         backed by a self-hosted process that can silently die. Cloud engines
         are config-checked only, to avoid paying for an API call per session.
         """
-        from app.services.model_registry.store import model_registry_store
-        from app.services.providers.resolve import resolve_credentials
-
         provider = self.providers.get(engine)
         if provider is None:
             return EngineHealth(
@@ -115,29 +112,21 @@ class STTService:
             )
 
         if engine == "http_stt":
-            entry = (
-                await model_registry_store.find("stt", engine, model)
-                if model
-                else await model_registry_store.find_enabled("stt", engine)
+            return await check_remote_engine_health(
+                "stt", engine, model, probe=probe_service_health
             )
-            if not entry:
-                return EngineHealth(
-                    engine=engine, status="unavailable",
-                    detail="not configured: no enabled Model Registry entry",
-                )
-            base_url, api_key = await resolve_credentials(entry)
-            reachable, reason = await probe_service_health(base_url, api_key)
-            if not reachable:
-                return EngineHealth(
-                    engine=engine, status="unavailable",
-                    detail=f"unreachable at {base_url or '(no base_url)'}: {reason}",
-                )
-            return EngineHealth(engine=engine, status="ok", detail=base_url)
 
         # Everything else: reuse the availability semantics list_engines()
         # already publishes, so the gate and the dashboard never disagree.
+        # Match by PROVIDER IDENTITY, not by the row's engine-key string:
+        # self.providers registers "whisper" and "whisper_local" (and other
+        # alias keys) as the SAME provider instance, and list_engines() dedups
+        # by id(provider) so only the first-inserted key ("whisper") ever
+        # appears in its output -- a plain string match on `engine` would
+        # never find a row for the alias key and silently fall through to
+        # "ok" without ever consulting its real availability.
         for listed in await self.list_engines():
-            if listed["engine"] != engine:
+            if self.providers.get(listed["engine"]) is not provider:
                 continue
             if not listed["available"]:
                 return EngineHealth(

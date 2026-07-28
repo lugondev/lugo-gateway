@@ -102,8 +102,21 @@ async def test_stt_http_stt_ok_when_probe_succeeds(monkeypatch):
     assert health.status == "ok"
 
 
+def _patch_vosk_available(monkeypatch, tmp_path) -> None:
+    """Make list_engines() report vosk as available WITHOUT a real ~41MB model
+    on disk: point get_active_vosk_path at a real (but empty) tmp dir, mirroring
+    the pattern test_model_registry_routes.py already uses for the false case
+    (pointing it at a nonexistent path). vosk_present only checks os.path.isdir,
+    never the directory's contents, so an empty tmp dir is enough."""
+    monkeypatch.setattr(
+        "app.services.stt.providers.vosk_provider.get_active_vosk_path",
+        lambda: str(tmp_path),
+    )
+
+
 @pytest.mark.asyncio
-async def test_stt_local_engine_not_ready_while_warming(monkeypatch):
+async def test_stt_local_engine_not_ready_while_warming(monkeypatch, tmp_path):
+    _patch_vosk_available(monkeypatch, tmp_path)
     monkeypatch.setattr("app.services.stt.service.is_ready", lambda p: False)
     monkeypatch.setattr("app.services.stt.service._needs_warming", lambda p: True)
     health = await stt_service.check_engine("vosk")
@@ -111,11 +124,25 @@ async def test_stt_local_engine_not_ready_while_warming(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stt_local_engine_ok_when_warm(monkeypatch):
+async def test_stt_local_engine_ok_when_warm(monkeypatch, tmp_path):
+    _patch_vosk_available(monkeypatch, tmp_path)
     monkeypatch.setattr("app.services.stt.service.is_ready", lambda p: True)
     monkeypatch.setattr("app.services.stt.service._needs_warming", lambda p: True)
     health = await stt_service.check_engine("vosk")
     assert health.status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_stt_whisper_local_alias_unavailable_when_faster_whisper_missing(monkeypatch):
+    """whisper_local is registered as the SAME provider instance as whisper
+    (stt/service.py __init__), and list_engines() dedups by id(provider) so
+    it only ever emits a row keyed "whisper" -- never "whisper_local". A
+    naive string match on the row's engine key would never find that row for
+    the alias key and fall through to "ok" without consulting availability.
+    """
+    monkeypatch.setattr("app.services.stt.service.module_available", lambda name: False)
+    health = await stt_service.check_engine("whisper_local")
+    assert health.status == "unavailable"
 
 
 @pytest.mark.asyncio
@@ -170,3 +197,19 @@ async def test_tts_local_engine_unavailable_when_provider_says_so(monkeypatch):
         tts_service.providers["vieneu"], "available", lambda: False, raising=False)
     health = await tts_service.check_engine("vieneu")
     assert health.status == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_tts_local_engine_not_ready_while_warming(monkeypatch):
+    monkeypatch.setattr("app.services.tts.service.is_ready", lambda p: False)
+    monkeypatch.setattr("app.services.tts.service._needs_warming", lambda p: True)
+    health = await tts_service.check_engine("vieneu")
+    assert health.status == "not_ready"
+
+
+@pytest.mark.asyncio
+async def test_tts_local_engine_ok_when_warm(monkeypatch):
+    monkeypatch.setattr("app.services.tts.service.is_ready", lambda p: True)
+    monkeypatch.setattr("app.services.tts.service._needs_warming", lambda p: True)
+    health = await tts_service.check_engine("vieneu")
+    assert health.status == "ok"
