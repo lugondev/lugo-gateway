@@ -49,7 +49,7 @@ Identity comes from exactly one of two sources, never both for a single request:
 surface: `/agents-docs`, `/docs`, `/redoc`, `/openapi.json`.
 
 An unauthenticated request gets `401 {"success": false, "error": "login required"}`
-(or a `302` redirect to `/static/login.html` for a browser navigation), and an
+(or a `307` redirect to `/static/login.html` for a browser navigation), and an
 authenticated-but-wrong-role request against an admin route gets
 `403 {"success": false, "error": "admin only"}`.
 
