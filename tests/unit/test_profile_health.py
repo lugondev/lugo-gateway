@@ -117,7 +117,9 @@ def test_health_endpoint_returns_profile_health(monkeypatch, tmp_path):
 
     resp = TestClient(app).get("/v1/profiles/dev/health")
     assert resp.status_code == 200
-    data = resp.json()["data"]
+    resp_json = resp.json()
+    assert resp_json["success"] is True
+    data = resp_json["data"]
     assert data["profile"] == "dev"
     assert data["stt"]["status"] == "unavailable"
     assert data["stt"]["detail"] == "unreachable"

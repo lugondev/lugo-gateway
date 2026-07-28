@@ -216,4 +216,4 @@ async def profile_health(name: str) -> dict:
     profile as broken before a user tries to talk to it."""
     from app.services.health import check_profile_health
 
-    return {"data": (await check_profile_health(name)).model_dump()}
+    return {"success": True, "data": (await check_profile_health(name)).model_dump()}
