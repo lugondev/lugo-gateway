@@ -10,6 +10,9 @@ from app.core.actor import Actor
 from app.core.settings import settings
 from app.services.auth.tokens import verify_access_token
 
+# Reachable with no credentials at all. Everything NOT classified here or in
+# the user/admin tuples below is denied by default -- see dispatch().
+_PUBLIC_PATHS = frozenset({"/", "/health"})
 _STATIC_ALLOWLIST = {
     "/static/login.html",
     "/static/js/auth.js",
@@ -23,6 +26,14 @@ _NO_AUTH_PREFIXES = ("/v1/devices/pair/init", "/v1/devices/pair/status")
 _USER_PREFIXES = (
     "/ui",
     "/static/",
+    # Live SSE transcript/TTS-result streams. These carry the actual content of
+    # a session (partial + final transcripts, synthesized audio urls); they were
+    # unauthenticated purely because nobody had listed them anywhere.
+    "/v1/events",
+    # Generated audio artifacts (StaticFiles mount, not a router). The ids are
+    # unguessable uuid4s, but "unguessable" is not "authenticated" -- a logged-in
+    # session is now the floor.
+    "/artifacts",
     "/v1/conversation",
     "/v1/livehost",
     "/v1/profiles",
@@ -51,11 +62,33 @@ _USER_PREFIXES = (
     "/v1/usage/me",
 )
 # role == "admin" required.
-_ADMIN_PREFIXES = ("/v1/system", "/v1/models", "/v1/users", "/v1/devices", "/v1/model_registry", "/v1/providers", "/v1/usage", "/v1/quotas")
+_ADMIN_PREFIXES = (
+    "/v1/system",
+    "/v1/models",
+    "/v1/users",
+    "/v1/devices",
+    "/v1/model_registry",
+    "/v1/providers",
+    "/v1/usage",
+    "/v1/quotas",
+    # The internal agent runbook: AGENTS.md + docs/api.md + the full API map,
+    # served as one plaintext bundle. Operator documentation, not a public page.
+    "/agents-docs",
+    # FastAPI's auto-generated API surface map. /docs also serves
+    # /docs/oauth2-redirect, which the segment-boundary match below covers.
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+)
 
 
 def _matches(path: str, prefixes: tuple[str, ...]) -> bool:
-    return any(path == prefix or path.startswith(prefix) for prefix in prefixes)
+    """Segment-aware prefix match.
+
+    A raw startswith would make `/v1/usage/metrics` match the `/v1/usage/me`
+    user carve-out and silently escape the admin rule it sits inside.
+    """
+    return any(path == prefix or path.startswith(prefix.rstrip("/") + "/") for prefix in prefixes)
 
 
 async def _bearer_actor(request: Request) -> "Actor | None":
@@ -88,6 +121,8 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
+        if path in _PUBLIC_PATHS:
+            return await call_next(request)
         if path in _STATIC_ALLOWLIST or path.startswith("/api/auth") or _matches(path, _NO_AUTH_PREFIXES):
             return await call_next(request)
 
@@ -119,6 +154,13 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
                 return JSONResponse({"success": False, "error": "admin only"}, status_code=403)
             return await call_next(request)
 
+        # Default-DENY. Anything not classified above is treated as at least
+        # user-level rather than public, so a newly mounted router that nobody
+        # remembered to classify fails closed instead of being served to the
+        # internet (which is exactly how /v1/events, /agents-docs, /artifacts
+        # and /openapi.json ended up unauthenticated).
+        if not user_id:
+            return self._unauthenticated(request)
         return await call_next(request)
 
     @staticmethod
