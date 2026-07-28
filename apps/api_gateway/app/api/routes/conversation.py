@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from app.core.actor import current_user_id
+from app.core.actor import current_role, current_user_id
 from app.core.auth_guard import resolve_ws_identity, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
@@ -53,6 +53,18 @@ def _truthy(value: str | None, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _require_admin(request: Request) -> None:
+    """The /llm routes below mutate the Model Registry's server-wide default
+    LLM row (set_active_llm_config), despite living under the /v1/conversation
+    USER prefix. Any logged-in user hitting them today can repoint every other
+    user's LLM at an attacker endpoint, or drop the whole server to the echo
+    responder. Inline check here (rather than moving these three routes to an
+    admin-only prefix) so the public path stays exactly what
+    static/js/model-recommender.js already calls."""
+    if current_role(request) != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
+
+
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -84,20 +96,23 @@ async def _llm_config_view() -> dict:
 
 
 @router.get("/llm")
-async def get_llm_config() -> dict:
+async def get_llm_config(request: Request) -> dict:
+    _require_admin(request)
     return {"success": True, "data": await _llm_config_view()}
 
 
 @router.post("/llm")
-async def set_llm_config(payload: LlmConfig) -> dict:
+async def set_llm_config(payload: LlmConfig, request: Request) -> dict:
     """Point the conversation LLM at any OpenAI-compatible endpoint (online or local)."""
+    _require_admin(request)
     await set_active_llm_config(payload.base_url, payload.api_key, payload.model)
     return {"success": True, "data": await _llm_config_view()}
 
 
 @router.post("/llm/reset")
-async def reset_llm_config() -> dict:
+async def reset_llm_config(request: Request) -> dict:
     """Turn off the conversation LLM (falls back to the built-in echo responder)."""
+    _require_admin(request)
     await reset_active_llm_config()
     return {"success": True, "data": await _llm_config_view()}
 
