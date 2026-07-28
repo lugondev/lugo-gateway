@@ -715,7 +715,193 @@ git commit -m "fix(mcp): restrict server create/update/delete/clone to admins"
 
 ---
 
-### Task 7: Full verification
+### Task 7: `POST /v1/tts/synthesize` returns audio bytes instead of an artifact URL
+
+**Files:**
+- Modify: `apps/api_gateway/app/services/tts/base.py` (add a uniform bytes seam), `apps/api_gateway/app/services/tts/providers/edge_tts_provider.py`, `apps/api_gateway/app/api/routes/tts.py`, `apps/api_gateway/app/main.py` (CORS `expose_headers`)
+- Modify (clients): `apps/api_gateway/app/static/js/chat.js`, `apps/api_gateway/app/static/js/tts-batch.js`
+- Modify (docs): `docs/api.md`
+- Test: `tests/unit/test_synthesize_returns_bytes.py`
+
+**Interfaces:**
+- Consumes: `RenderingTTSProvider.render_wav(payload) -> bytes` (already exists at `services/tts/base.py:66`, documented as the "no artifact side effect" seam).
+- Produces: `TTSProvider.render_audio(payload) -> tuple[bytes, str]` returning `(audio_bytes, media_type)`.
+
+**Why:** the endpoint writes a WAV to `artifacts/` purely because a JSON response can't carry binary, then hands back a URL. Measured facts: 92 files / 1.6 MB is one day's churn (TTL 24 h, hourly prune), and `SELECT COUNT(*) FROM messages WHERE content LIKE '%/artifacts/%'` is **0** — nothing persists a reference, so these files are purely transient. The conversation path already proves the file is unnecessary by streaming Opus over the socket instead. Returning bytes removes the churn, removes an auth-sensitive surface, and lets the web client play the audio from a response it already authenticates.
+
+This is also finishing work the team already identified: `docs/superpowers/plans/2026-07-17-lugo-tools-screen.md:15` documented `/artifacts` having no auth as a **known accepted exposure** — "ghi vào spec như phơi nhiễm đã biết, đừng lặng lẽ ship."
+
+**Scope boundary — do NOT change these:**
+- The `/v1/tts/stream` job path keeps using artifacts. It emits many segments over SSE where a URL per segment is the right shape; redesigning it is a separate effort.
+- Voice-clone reference audio (`save_reference_audio`, `ref_*.wav`) keeps using artifacts — those are persistent assets referenced by `TtsProfile`, not transient output.
+- `conversation.js` / `livehost.js` consume `audio_url` from the WS `audio_out=url` mode, which is untouched.
+
+**Two traps, both verified:**
+
+1. **`edge_tts` is not a `RenderingTTSProvider`.** Every other provider subclasses `RenderingTTSProvider` (vieneu, omnivoice, http_tts, qwen3_tts, voxcpm2, kokoro) and already has `render_wav()`. `EdgeTTSProvider` (`edge_tts_provider.py:32`) subclasses plain `TTSProvider`, produces **MP3**, and saves via `artifact_store.save_mp3` inside its own `synthesize()` (`:94`). So the new seam must return a media type, not assume WAV, and `edge_tts` needs its MP3 generation split out from its artifact-saving.
+2. **CORS `expose_headers` is not configured** (`main.py:235-238` sets `allow_origins`/`allow_credentials` only). Cross-origin JS in `lugo-web-client` **cannot read custom `X-*` response headers** unless they are explicitly exposed. If you return metadata in headers, you MUST add `expose_headers` listing them, or the web client silently sees `null`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/unit/test_synthesize_returns_bytes.py`:
+
+```python
+"""POST /v1/tts/synthesize returns the audio itself, not a URL to a temp file.
+
+The artifact indirection existed only because JSON can't carry binary; nothing
+persists artifact URLs (0 rows in `messages` reference /artifacts/), so the
+file was pure churn and an auth-sensitive surface.
+"""
+
+import io
+import wave
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import app
+from app.schemas.tts import TTSRequest
+from app.services.tts.base import RenderingTTSProvider
+from app.services.tts.service import tts_service
+
+
+def _tiny_wav() -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(8000)
+        f.writeframes(b"\x00\x00" * 100)
+    return buf.getvalue()
+
+
+class _StubTTS(RenderingTTSProvider):
+    name = "stub-bytes-tts"
+    sample_rate = 8000
+
+    async def _render_wav(self, payload: TTSRequest) -> bytes:
+        return _tiny_wav()
+
+
+@pytest.fixture
+def client(monkeypatch):
+    monkeypatch.setitem(tts_service.providers, _StubTTS.name, _StubTTS())
+    return TestClient(app)
+
+
+def test_response_body_is_the_wav_itself(client):
+    resp = client.post("/v1/tts/synthesize", json={"text": "xin chao", "engine": _StubTTS.name})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("audio/wav")
+    assert resp.content[:4] == b"RIFF" and resp.content[8:12] == b"WAVE"
+
+
+def test_metadata_travels_in_headers(client):
+    resp = client.post("/v1/tts/synthesize", json={"text": "xin chao", "engine": _StubTTS.name})
+    assert resp.headers["x-tts-engine"] == _StubTTS.name
+    assert int(resp.headers["x-tts-sample-rate"]) == 8000
+    assert float(resp.headers["x-tts-duration-seconds"]) > 0
+
+
+def test_no_artifact_file_is_written(client, monkeypatch):
+    """The whole point: this path must stop creating temp files."""
+    calls = {"n": 0}
+    from app.services import artifacts as artifacts_mod
+
+    def spy(*args, **kwargs):
+        calls["n"] += 1
+        raise AssertionError("synthesize must not write an artifact")
+
+    monkeypatch.setattr(artifacts_mod.artifact_store, "save_wav", spy, raising=False)
+    monkeypatch.setattr(artifacts_mod.artifact_store, "save_mp3", spy, raising=False)
+
+    resp = client.post("/v1/tts/synthesize", json={"text": "xin chao", "engine": _StubTTS.name})
+    assert resp.status_code == 200
+    assert calls["n"] == 0
+
+
+def test_metadata_headers_are_cors_exposed():
+    """A cross-origin client (lugo-web-client) reads these headers; without
+    expose_headers the browser hides them and the client sees null."""
+    from app.core.settings import settings  # noqa: F401
+    from app.main import app as the_app
+
+    cors = next(
+        m for m in the_app.user_middleware if "CORSMiddleware" in str(m.cls)
+    )
+    exposed = {h.lower() for h in (cors.kwargs.get("expose_headers") or [])}
+    for header in ("x-tts-engine", "x-tts-sample-rate", "x-tts-duration-seconds"):
+        assert header in exposed, f"{header} not exposed to cross-origin clients"
+```
+
+Adapt the CORS-introspection test to however this Starlette version exposes middleware options — the assertion that matters is that the metadata headers are in `expose_headers`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `.venv/bin/pytest tests/unit/test_synthesize_returns_bytes.py -v`
+Expected: FAIL — the route currently returns JSON with `audio_url`.
+
+- [ ] **Step 3: Write the implementation**
+
+1. Add to `TTSProvider` in `services/tts/base.py`:
+
+```python
+    async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
+        """(audio_bytes, media_type) with NO artifact side effect.
+
+        The bytes-returning seam the HTTP synthesize route uses, so a one-shot
+        request doesn't have to write a temp file just to hand back a URL.
+        """
+        raise NotImplementedError
+```
+
+and on `RenderingTTSProvider`:
+
+```python
+    async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
+        return await self.render_wav(payload), "audio/wav"
+```
+
+2. In `EdgeTTSProvider`, split the MP3 generation out of `synthesize()` into a helper, implement `render_audio()` returning `(mp3_bytes, "audio/mpeg")`, and have `synthesize()` call that helper then save the artifact (so the stream-job path is unchanged).
+
+3. In `routes/tts.py`'s `synthesize`, keep the quota gate and `record_usage` exactly as they are, but replace `provider.synthesize(...)` + JSON return with `provider.render_audio(...)` and a `fastapi.Response` carrying the bytes, the media type, and `X-TTS-Engine` / `X-TTS-Sample-Rate` / `X-TTS-Duration-Seconds` / `X-TTS-Process-Seconds` headers. Compute duration with `app.core.audio.wav_duration_seconds` for WAV; for MP3 omit the duration header rather than guessing.
+
+4. In `main.py`, add `expose_headers=[...]` to `CORSMiddleware` listing those four headers.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `.venv/bin/pytest tests/unit/test_synthesize_returns_bytes.py -v`
+Expected: PASS
+
+- [ ] **Step 5: Update the two admin-UI callers and the docs**
+
+- `static/js/chat.js:316-324` currently does `audio.src = ttsBody.data.audio_url`. Change to read the response as a blob and use `URL.createObjectURL(blob)`. Revoke the object URL when replacing it, so the page doesn't leak blobs.
+- `static/js/tts-batch.js:17,33` — same change.
+- `docs/api.md:340` — document the new response shape (binary body + `X-TTS-*` headers) and note that `/v1/tts/stream` still returns URLs.
+
+**Verify the static UI by reading the files back with the Read tool after editing** — this session's shell has broken character encoding and `node --check` can false-pass smart-quote corruption.
+
+- [ ] **Step 6: Run the TTS and quota suites**
+
+Run: `.venv/bin/pytest tests/unit tests/integration -q -k "tts or quota or metering or usage"`
+Expected: PASS. Several existing tests assert on `/v1/tts/synthesize`'s JSON shape — those must be updated to the new contract (that is a legitimate contract change, not weakening a test). Tests that only assert status codes or metering behavior must keep passing untouched; if one breaks, the metering/gating wiring was disturbed and that is a real regression.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add apps/api_gateway/app/services/tts/base.py \
+        apps/api_gateway/app/services/tts/providers/edge_tts_provider.py \
+        apps/api_gateway/app/api/routes/tts.py apps/api_gateway/app/main.py \
+        apps/api_gateway/app/static/js/chat.js apps/api_gateway/app/static/js/tts-batch.js \
+        docs/api.md tests/unit/test_synthesize_returns_bytes.py
+git commit -m "refactor(tts): return audio bytes from /v1/tts/synthesize instead of an artifact URL"
+```
+
+**Note for the controller:** `lugo-web-client` is a git submodule and is NOT updated by this task. Its `src/api/tools.ts` + `src/screens/Tools.tsx` still expect `audio_url` and must be updated separately, in the submodule, before that client works against this change.
+
+---
+
+### Task 8: Full verification
 
 **Files:** none (verification only)
 
@@ -762,6 +948,7 @@ Write what you ran and what you saw to `.superpowers/sdd/2026-07-28-critical-aut
 - Critical 4 (MCP SSRF) → Task 6 ✓
 - Critical 5 (`/v1/events` unauthenticated) → Task 1 (authentication) + Task 2 (ownership) ✓
 - Root cause (default-allow middleware) → Task 1 ✓, which also closes `/agents-docs`, `/artifacts`, `/docs`, `/openapi.json` and the segment-boundary weakness.
+- Follow-on from Task 1: making `/artifacts` authenticated broke `<audio src>` in `lugo-web-client`'s TTS screen (a bare `<audio>` tag cannot send `Authorization: Bearer`, and that client is bearer-auth, cross-origin). Task 7 resolves it at the source by removing the artifact indirection from the one-shot synthesize path entirely, rather than reopening the mount or papering over it client-side.
 
 **Explicitly OUT of scope** (audit findings deferred to a later pass, listed so nobody assumes they were handled): cookie sessions never revalidated against the DB; auth fail-open when `admin_password` is unset; profile IDOR in chat/WS/lugo/livehost; `POST /v1/stt/warm` global model switch; MCP template headers leaked to all users; provider `enabled=false` not honored by `resolve_credentials`; TTS stream quota checked only once; synchronous denoise blocking the event loop; upload size limits; STT `model` field bypassing the engine whitelist.
 
