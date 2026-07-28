@@ -44,11 +44,20 @@ def _signup_login(client, username: str, role: str = "user") -> None:
 
 
 def test_user_created_mcp_server_hidden_from_other_users(client, _with_password):
+    """Post 2026-07-28-critical-authz-fixes task 6, create is admin-only, so
+    a regular user can no longer produce a user-owned row at all -- the
+    original scenario this test covered (two different non-admin owners) is
+    no longer reachable via the API. Assert the create attempt is correctly
+    denied (not silently vacuous -- the original version of this test never
+    checked the POST's status code, so it kept "passing" for the wrong
+    reason once create started 403ing), and that nothing leaked through."""
     _signup_login(client, "a", role="user")
-    client.post(
+    resp = client.post(
         "/v1/mcp/servers",
         json={"name": "a-secret-server", "url": "https://a.example.com/mcp", "headers": {"X-Api-Key": "s3cr3t"}},
     )
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "admin only"
 
     _signup_login(client, "b", role="user")
     assert "a-secret-server" not in client.get("/v1/mcp/servers").json()["data"]
@@ -56,21 +65,30 @@ def test_user_created_mcp_server_hidden_from_other_users(client, _with_password)
     assert resp.status_code == 404
 
 
-def test_create_rejects_name_taken_by_another_users_private_server(client, _with_password):
-    _signup_login(client, "a", role="user")
+def test_create_rejects_name_taken_by_an_existing_server(client, _with_password):
+    """Create is admin-only now, so there is no longer a "taken by another
+    USER's private server" scenario -- but the name-collision check itself
+    (mcp_server_store.get(name) is not None -> 409) still applies regardless
+    of who owns the existing row, so exercise it with two admins."""
+    _signup_login(client, "a", role="admin")
     client.post("/v1/mcp/servers", json={"name": "a-secret-server", "url": "https://a.example.com/mcp"})
 
-    _signup_login(client, "b", role="user")
+    _signup_login(client, "b", role="admin")
     resp = client.post("/v1/mcp/servers", json={"name": "a-secret-server", "url": "https://b.example.com/mcp"})
     assert resp.status_code == 409
     # confirm a's row (and its own url) survived untouched
-    _signup_login(client, "a", role="user")
+    _signup_login(client, "a", role="admin")
     got = client.get("/v1/mcp/servers/a-secret-server")
     assert got.status_code == 200
     assert got.json()["data"]["url"] == "https://a.example.com/mcp"
 
 
 def test_regular_user_cannot_update_or_delete_admin_template(client, _with_password):
+    """Pre-task-6 this was a 404 (ownership check hid the target's
+    existence); post-task-6 the admin gate runs first and denies with 403
+    uniformly, before any ownership/existence lookup -- see
+    tests/unit/test_mcp_ssrf.py for the dedicated SSRF-focused coverage of
+    this same gate."""
     _signup_login(client, "root", role="admin")
     client.post("/v1/mcp/servers", json={"name": "template-mcp-2", "url": "https://t.example.com/mcp"})
 
@@ -79,19 +97,25 @@ def test_regular_user_cannot_update_or_delete_admin_template(client, _with_passw
         "/v1/mcp/servers/template-mcp-2",
         json={"name": "template-mcp-2", "url": "https://mallory.example.com/mcp"},
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "admin only"
     resp = client.delete("/v1/mcp/servers/template-mcp-2")
-    assert resp.status_code == 404
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "admin only"
     got = client.get("/v1/mcp/servers/template-mcp-2")
     assert got.status_code == 200
     assert got.json()["data"]["url"] == "https://t.example.com/mcp"
 
 
 def test_clone_mcp_server(client, _with_password):
+    """Clone moved to admin-only in task 6 -- a regular user cloning a
+    template (the original scenario here) is now a 403, covered in
+    tests/unit/test_mcp_ssrf.py. This exercises the still-legitimate path:
+    an admin cloning a template gets their own private copy."""
     _signup_login(client, "root", role="admin")
     client.post("/v1/mcp/servers", json={"name": "template-mcp", "url": "https://t.example.com/mcp"})
 
-    _signup_login(client, "toan", role="user")
-    resp = client.post("/v1/mcp/servers/template-mcp/clone", json={"new_name": "toan-mcp"})
+    _signup_login(client, "root2", role="admin")
+    resp = client.post("/v1/mcp/servers/template-mcp/clone", json={"new_name": "root2-mcp"})
     assert resp.status_code == 200
     assert resp.json()["data"]["owner_id"] is not None
