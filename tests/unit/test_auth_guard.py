@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -5,6 +7,7 @@ from app.core.settings import settings
 from app.main import app
 from app.services.auth.devices import device_store
 from app.services.auth.users import user_store
+from app.services.history.store import session_store
 
 
 @pytest.fixture
@@ -160,6 +163,13 @@ async def test_resolve_identity_from_browser_cookie_session(_with_password):
     assert identity is not None
     assert identity.user_id == user["id"]
     assert identity.device_id is None
+    # round-2 review: the cookie-session branch is the ONE identity source
+    # that sets via_login=True -- that's what ws_session_owner_denied's
+    # admin-bypass allow-list is keyed on.
+    assert identity.via_login is True
+    assert identity.via_bearer is False
+    assert identity.via_device is False
+    assert identity.via_fleet_token is False
 
 
 @pytest.mark.asyncio
@@ -189,6 +199,8 @@ async def test_resolve_identity_from_paired_device_token(_with_password):
     assert identity is not None
     assert identity.user_id == user["id"]
     assert identity.device_id == device["id"]
+    assert identity.via_device is True
+    assert identity.via_login is False
 
 
 @pytest.mark.asyncio
@@ -223,6 +235,11 @@ async def test_resolve_identity_accepts_legacy_shared_device_token(_with_passwor
     )
     assert identity is not None
     assert identity.user_id is None and identity.device_id is None
+    # round-2 review, minor: gives this identity source an explicit positive
+    # marker instead of it being identifiable only as "user_id is None and
+    # not unauthenticated".
+    assert identity.via_fleet_token is True
+    assert identity.via_login is False
 
 
 @pytest.mark.asyncio
@@ -245,3 +262,46 @@ async def test_resolve_identity_enforced_when_only_bootstrap_password_set(monkey
         assert identity is None
     finally:
         monkeypatch.setattr(settings, "admin_bootstrap_password", "")
+
+
+# --- round-2 review: ws_session_owner_denied's admin bypass is an ALLOW-list
+# (via_login), not a deny-list. These pin the property that motivated the
+# rewrite, plus behavioral equivalence with the pre-rewrite deny-list for the
+# one case that must still work.
+
+
+@pytest.mark.asyncio
+async def test_ws_session_owner_denied_fails_closed_for_unclassified_identity(_with_password):
+    """The whole point of the allow-list rewrite: a WsIdentity with a
+    user_id but NONE of the provenance flags set -- simulating a future
+    identity source resolve_ws_identity doesn't classify yet -- must NOT get
+    the admin bypass, even when the underlying DB user is a real admin. This
+    is exactly the property that would have caught both prior recurrences
+    (bearer identities kept the bypass until round-1 review's I2; paired-
+    device identities kept it until round-2 review) the moment each identity
+    source was introduced, rather than needing a dedicated review pass to
+    notice the deny-list wasn't extended."""
+    from app.core.auth_guard import WsIdentity, ws_session_owner_denied
+
+    admin = await user_store.create(f"future-source-admin-{uuid.uuid4().hex[:8]}", "pw", role="admin")
+    victim_sid = "victim-unclassified-" + uuid.uuid4().hex[:8]
+    await session_store.create(victim_sid, user_id="someone-else")
+
+    mystery_identity = WsIdentity(user_id=admin["id"], device_id=None)  # every flag defaults False
+    assert await ws_session_owner_denied(victim_sid, mystery_identity) is True
+
+
+@pytest.mark.asyncio
+async def test_ws_session_owner_denied_still_bypasses_for_real_login(_with_password):
+    """Behavioral-equivalence check for the rewrite: the one legitimate
+    bypass source (an interactive cookie login, via_login=True) must still
+    get it -- the allow-list must be a pure reshaping of "just the
+    cookie-session branch", not an accidental narrowing."""
+    from app.core.auth_guard import WsIdentity, ws_session_owner_denied
+
+    admin = await user_store.create(f"real-admin-login-{uuid.uuid4().hex[:8]}", "pw", role="admin")
+    victim_sid = "victim-real-login-" + uuid.uuid4().hex[:8]
+    await session_store.create(victim_sid, user_id="someone-else")
+
+    login_identity = WsIdentity(user_id=admin["id"], device_id=None, via_login=True)
+    assert await ws_session_owner_denied(victim_sid, login_identity) is False

@@ -205,21 +205,43 @@ class WsIdentity:
     # (Sec-WebSocket-Protocol). Mirrors _bearer_actor's documented invariant
     # just below: a bearer caller always resolves to role="user", even for an
     # admin account in the DB, so a web client can't escalate to admin just by
-    # holding a bearer token. A consumer granting an admin bypass (e.g.
-    # ws_session_owner_denied below) must condition that bypass on
-    # `not via_bearer`, or the same bearer token gets cross-session admin
-    # reads over WS that the identical token is denied over HTTP (round-1
-    # review, I2).
+    # holding a bearer token. Provenance marker only as of the `via_login`
+    # rewrite below (round-2 review): ws_session_owner_denied's admin bypass
+    # is now an ALLOW-list keyed on `via_login`, which a bearer identity
+    # never sets, so it's excluded from the bypass by construction rather
+    # than by anything checking this flag directly.
     via_bearer: bool = False
     # True ONLY when this identity came from a paired-device token
     # (services.auth.devices.device_store), i.e. an ESP32/RPi that completed
-    # the pairing handshake. A device token carries no role either -- same
-    # rationale as via_bearer above: a device acts as its owning user, never
-    # as an admin, regardless of that user's DB role. A consumer granting an
-    # admin bypass must condition it on `not via_device` too, or an ESP32
-    # paired to an admin account could resume ANY user's session, not just
-    # its own owner's.
+    # the pairing handshake. Same provenance-marker-only note as via_bearer
+    # above -- excluded from the admin bypass by the `via_login` allow-list
+    # (round-2 review), not by a dedicated `not via_device` check.
     via_device: bool = False
+    # True ONLY when this identity came from the browser-cookie-session
+    # branch below (websocket.session.get("user_id")), i.e. an actual
+    # interactive login -- the ONE identity source that legitimately gets
+    # ws_session_owner_denied's admin-role DB-lookup bypass. Deliberately an
+    # ALLOW-list, not the deny-list this module used through two rounds of
+    # review (`not via_bearer`, then `... and not via_device`): a deny-list
+    # fails OPEN for every identity source added to resolve_ws_identity
+    # later -- whoever adds one must remember to both mint a new flag AND
+    # extend the deny-list, or the new source silently inherits the admin
+    # bypass. That's exactly how this bug class recurred twice already
+    # (bearer, then paired-device). Default False and set True ONLY at the
+    # cookie-session branch, so a future branch that forgets to set it is
+    # denied the bypass by construction instead of granted it by omission.
+    via_login: bool = False
+    # True ONLY when this identity came from the legacy shared
+    # device_auth_token fallback (a real, auth-enabled deployment with no
+    # per-device pairing yet). Purely a provenance marker, same as
+    # via_bearer/via_device -- this identity always has user_id=None, so
+    # it's already excluded from the admin bypass by the `identity.user_id
+    # and` guard in ws_session_owner_denied regardless of this flag. Gives
+    # that identity source an explicit positive marker instead of it being
+    # identifiable only as "user_id is None and not unauthenticated",
+    # previously documented in prose across two comment blocks (round-2
+    # review, minor).
+    via_fleet_token: bool = False
 
 
 async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
@@ -250,7 +272,7 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
         user = await user_store.get_by_id(session_user_id)
         if user is None or user.disabled:
             return None
-        return WsIdentity(user_id=user.id, device_id=None)
+        return WsIdentity(user_id=user.id, device_id=None, via_login=True)
 
     token = websocket.query_params.get("device_token")
     if not token:
@@ -267,7 +289,7 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
         return WsIdentity(user_id=device.user_id, device_id=device.id, via_device=True)
 
     if settings.device_auth_token and hmac.compare_digest(token, settings.device_auth_token):
-        return WsIdentity(user_id=None, device_id=None)
+        return WsIdentity(user_id=None, device_id=None, via_fleet_token=True)
     return None
 
 
@@ -305,21 +327,25 @@ async def ws_session_owner_denied(session_id: str, identity: WsIdentity) -> bool
       `unauthenticated` -- it falls through to the plain identity-vs-owner
       comparison below like any other identity, so it can only ever match an
       ownerless session, never a real user's (round-1 review, I1).
-    - The admin-role DB lookup is skipped entirely for a bearer identity
-      (`identity.via_bearer`) or a paired-device identity
-      (`identity.via_device`), so neither a bearer token nor a device token
-      ever gets a bypass here that the same identity is denied on the HTTP
-      /chat route -- current_role() never returns "admin" for a bearer
-      actor (round-1 review, I2), and a device token carries no role
-      either: a device acts as its owning user, never as an admin, even
-      when that user's DB role is "admin" (the device-token equivalent of
-      I2, found in review of the lugo.py fix above).
+    - The admin-role DB lookup is an ALLOW-list keyed on `identity.via_login`
+      -- ONLY the browser-cookie-session branch of resolve_ws_identity sets
+      it -- rather than a deny-list of excluded sources. A deny-list
+      (`not identity.via_bearer`, then `... and not identity.via_device`,
+      this function's shape through two rounds of review) fails OPEN for
+      every identity source added to resolve_ws_identity later: adding one
+      means remembering to both mint a new flag AND extend the deny-list, or
+      the new source silently inherits the admin bypass -- exactly how this
+      recurred twice already (bearer identities had the bypass until
+      round-1 review's I2; paired-device identities had it until round-2
+      review). The allow-list fails CLOSED instead: a new branch that
+      forgets to set `via_login=True` is denied the bypass by construction,
+      never granted it by omission.
 
     A session that doesn't exist yet is not denied -- it's the normal "start
     a fresh session under this id" path."""
     if identity.unauthenticated:
         return False
-    if identity.user_id and not identity.via_bearer and not identity.via_device:
+    if identity.user_id and identity.via_login:
         from app.services.auth.users import user_store
 
         caller = await user_store.get_by_id(identity.user_id)
