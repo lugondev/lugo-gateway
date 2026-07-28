@@ -43,14 +43,18 @@ def _signup_login(client, username: str, role: str = "user") -> None:
     client.post("/api/auth/login", json={"username": username, "password": "pw"})
 
 
-def test_user_created_mcp_server_hidden_from_other_users(client, _with_password):
+def test_regular_user_cannot_create_a_server_and_nothing_leaks(client, _with_password):
     """Post 2026-07-28-critical-authz-fixes task 6, create is admin-only, so
     a regular user can no longer produce a user-owned row at all -- the
     original scenario this test covered (two different non-admin owners) is
-    no longer reachable via the API. Assert the create attempt is correctly
-    denied (not silently vacuous -- the original version of this test never
-    checked the POST's status code, so it kept "passing" for the wrong
-    reason once create started 403ing), and that nothing leaked through."""
+    no longer reachable via the API. This only proves the create attempt is
+    correctly denied and that nothing leaked through as a result -- it is
+    NOT a test of _visible()'s ownership-hiding branch (see
+    test_clone_owner_id_hides_row_from_other_admins below for that; this
+    test's previous name implied it covered that branch, but its old body
+    never checked the POST's status code, so it was passing vacuously --
+    the row was never created in the first place, so of course it wasn't
+    visible to anyone)."""
     _signup_login(client, "a", role="user")
     resp = client.post(
         "/v1/mcp/servers",
@@ -63,6 +67,25 @@ def test_user_created_mcp_server_hidden_from_other_users(client, _with_password)
     assert "a-secret-server" not in client.get("/v1/mcp/servers").json()["data"]
     resp = client.get("/v1/mcp/servers/a-secret-server")
     assert resp.status_code == 404
+
+
+def test_clone_owner_id_hides_row_from_other_admins(client, _with_password):
+    """_visible() (mcp.py) still has a live branch: clone_server sets
+    owner_id=<cloning caller's user id> unconditionally (mcp.py:145), and
+    since clone is now admin-only, that caller is always an admin -- so an
+    admin's clone is invisible to every OTHER user, admin or not. Nothing
+    in the suite exercised that until now (a prior grep for owner_id across
+    tests/unit/test_mcp*.py found exactly one hit, and it only asserted
+    non-null, not who it hides the row from)."""
+    _signup_login(client, "root", role="admin")
+    client.post("/v1/mcp/servers", json={"name": "template-mcp-3", "url": "https://t.example.com/mcp"})
+    clone_resp = client.post("/v1/mcp/servers/template-mcp-3/clone", json={"new_name": "root-private-clone"})
+    assert clone_resp.status_code == 200, clone_resp.text
+    assert clone_resp.json()["data"]["owner_id"] is not None
+
+    _signup_login(client, "other-admin", role="admin")
+    assert "root-private-clone" not in client.get("/v1/mcp/servers").json()["data"]
+    assert client.get("/v1/mcp/servers/root-private-clone").status_code == 404
 
 
 def test_create_rejects_name_taken_by_an_existing_server(client, _with_password):

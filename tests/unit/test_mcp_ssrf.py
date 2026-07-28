@@ -144,6 +144,23 @@ def test_admin_can_still_update_delete_and_clone(client, _with_password):
     assert resp.status_code == 200, resp.text
 
 
+def test_normal_user_cannot_toggle_enabled_on_a_template(client, _with_password):
+    """PATCH /servers/{name}/enabled is the one mutating route _require_admin
+    does NOT gate directly -- it doesn't let a caller point the gateway at a
+    new url, so it's out of scope for the SSRF fix. It is still correctly
+    admin-only today, but only as a side effect of two other facts: (1)
+    templates (owner_id=None) require role=="admin" in _can_write, and (2)
+    create is now admin-only so no non-admin-owned row can exist for a
+    normal user to legitimately toggle. Pin that reasoning here so it isn't
+    accidentally relied on without a test."""
+    _as_user(client, "admin")
+    client.post("/v1/mcp/servers", json={"name": "toggle-me", "url": "http://localhost:8090"})
+
+    _as_user(client, "user")
+    resp = client.patch("/v1/mcp/servers/toggle-me/enabled", json={"enabled": False})
+    assert resp.status_code == 404
+
+
 def test_ssrf_url_no_longer_reachable_end_to_end_for_a_normal_user(client, _with_password):
     """Full scenario from the brief: a non-admin can no longer make the
     gateway fetch and reflect back an arbitrary/internal URL at all, because

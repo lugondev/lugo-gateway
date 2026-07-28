@@ -63,10 +63,13 @@ async def add_server(payload: McpServerRequest, request: Request) -> dict:
     _require_admin(request)
     if mcp_server_store.get(payload.name) is not None:
         raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
-    owner_id = None if current_role(request) == "admin" else current_user_id(request)
+    # _require_admin above guarantees role == "admin" here, so this always
+    # creates a template (owner_id=None, visible to everyone) -- the old
+    # "non-admin creates a private row" branch is dead now that create is
+    # gated to admins only.
     entry = McpServer(
         name=payload.name, url=payload.url, headers=payload.headers,
-        enabled=payload.enabled, owner_id=owner_id,
+        enabled=payload.enabled, owner_id=None,
     )
     mcp_server_store.upsert(entry)
     return {"success": True, "data": entry.model_dump()}
