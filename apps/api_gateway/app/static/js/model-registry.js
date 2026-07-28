@@ -128,11 +128,13 @@ async function _loadModelChoices(announce = true) {
         print(status, `Couldn't load models (${body.data.error}) — type the model id manually.`, true);
       }
     } else if (kind === "stt" || kind === "tts") {
-      // Local: the selected engine's single configured model (default_model / model_path).
+      // Local: the selected engine's single configured model (default_model / model_path / *_model_id).
       const engine = (el("registry-add-engine")?.value || "").trim();
       if (engine) {
         const body = await (await fetch(`/v1/model_registry/config_schema?kind=${encodeURIComponent(kind)}&engine=${encodeURIComponent(engine)}`)).json();
-        const f = (body.fields || []).find((x) => x.key === "default_model" || x.key === "model_path");
+        const f = (body.fields || []).find(
+          (x) => x.key === "default_model" || x.key === "model_path" || x.key.endsWith("_model_id")
+        );
         if (f && f.default) _modelChoices = [String(f.default)];
       }
     }
