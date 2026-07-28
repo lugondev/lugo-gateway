@@ -17,7 +17,7 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.core.auth_guard import resolve_ws_identity
+from app.core.auth_guard import resolve_ws_identity, ws_session_owner_denied
 from app.core.identity_watch import identity_still_valid
 from app.core.settings import settings
 from app.services.conversation.lugo_frame import LUGO_FRAME_OPUS, encode_frame
@@ -105,6 +105,23 @@ async def lugo_stream(websocket: WebSocket) -> None:
     requested_sid = hello.get("session_id")
     if not isinstance(requested_sid, str) or not requested_sid:
         requested_sid = None
+    # Same IDOR conversation.py's WS /stream guards against (see
+    # ws_session_owner_denied in auth_guard.py): requested_sid flows straight
+    # into cfg.resume_sid below and is consumed by ConversationSession.start()
+    # with no ownership check, so any device (or anyone driving the Lugo wire
+    # protocol directly) that could guess or observe another user's session
+    # id could resume -- read and corrupt -- their private conversation.
+    # Checked before requested_sid is used for anything.
+    if requested_sid and await ws_session_owner_denied(requested_sid, identity):
+        # Lugo's own wire error shape ({"type": "error", ...}), NOT
+        # conversation.py's {"event": "error", ...} -- same shape as every
+        # other error send in this handler above/below.
+        await websocket.send_json({
+            "type": "error",
+            "message": f"Session '{requested_sid}' not found",
+        })
+        await websocket.close()
+        return
     session_id = requested_sid or str(uuid.uuid4())
     default_sample_rate = settings.stt_stream_sample_rate
     try:

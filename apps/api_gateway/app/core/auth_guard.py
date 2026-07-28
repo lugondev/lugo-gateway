@@ -206,7 +206,7 @@ class WsIdentity:
     # just below: a bearer caller always resolves to role="user", even for an
     # admin account in the DB, so a web client can't escalate to admin just by
     # holding a bearer token. A consumer granting an admin bypass (e.g.
-    # conversation.py's session-ownership check) must condition that bypass on
+    # ws_session_owner_denied below) must condition that bypass on
     # `not via_bearer`, or the same bearer token gets cross-session admin
     # reads over WS that the identical token is denied over HTTP (round-1
     # review, I2).
@@ -276,3 +276,43 @@ def ws_subprotocol(websocket: WebSocket) -> str | None:
     """Subprotocol mà server phải echo lại khi accept. Trình duyệt đóng kết
     nối nếu server không echo đúng cái nó chào."""
     return "bearer" if _bearer_from_subprotocols(websocket) else None
+
+
+async def ws_session_owner_denied(session_id: str, identity: WsIdentity) -> bool:
+    """True if `session_id` already exists and is not owned by the caller.
+
+    Shared by every WS route that lets a caller resume a session by id --
+    conversation.py's /v1/conversation/stream and lugo.py's /v1/lugo/stream
+    both resolve identity via resolve_ws_identity and take a caller-supplied
+    session id straight into resume_sid; neither ConversationSession.start()
+    nor session_store checks ownership on its own. Mirrors sessions.py's
+    get_session/_scope_user_id, adapted for the ways a WS identity can
+    diverge from an HTTP one:
+
+    - `identity.unauthenticated` (resolve_ws_identity's dev-mode
+      short-circuit when auth is disabled) is unscoped/full-access, matching
+      current_role()'s identical dev-mode default. The legacy shared
+      device_auth_token ALSO resolves to `user_id=None`, but is not
+      `unauthenticated` -- it falls through to the plain identity-vs-owner
+      comparison below like any other identity, so it can only ever match an
+      ownerless session, never a real user's (round-1 review, I1).
+    - The admin-role DB lookup is skipped entirely for a bearer identity
+      (`identity.via_bearer`), so a bearer token never gets a bypass here
+      that the same token is denied on the HTTP /chat route --
+      current_role() never returns "admin" for a bearer actor either
+      (round-1 review, I2).
+
+    A session that doesn't exist yet is not denied -- it's the normal "start
+    a fresh session under this id" path."""
+    if identity.unauthenticated:
+        return False
+    if identity.user_id and not identity.via_bearer:
+        from app.services.auth.users import user_store
+
+        caller = await user_store.get_by_id(identity.user_id)
+        if caller is not None and caller.role == "admin":
+            return False
+    from app.services.history.store import session_store
+
+    sess = await session_store.get(session_id)
+    return bool(sess and sess.get("user_id") != identity.user_id)
