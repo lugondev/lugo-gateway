@@ -5,8 +5,9 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from app.api.routes.sessions import _scope_user_id
 from app.core.actor import current_role, current_user_id
-from app.core.auth_guard import resolve_ws_identity, ws_subprotocol
+from app.core.auth_guard import WsIdentity, resolve_ws_identity, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
@@ -63,6 +64,25 @@ def _require_admin(request: Request) -> None:
     static/js/model-recommender.js already calls."""
     if current_role(request) != "admin":
         raise HTTPException(status_code=403, detail="admin only")
+
+
+async def _ws_session_owner_denied(session_id: str, identity: WsIdentity) -> bool:
+    """True if `session_id` already exists and is not owned by the caller.
+    Mirrors sessions.py's get_session/_scope_user_id: an unresolvable
+    identity (resolve_ws_identity's dev-mode short-circuit when auth is
+    disabled) is unscoped/full-access, matching current_role()'s same
+    dev-mode default; an admin caller is unscoped too. A session that
+    doesn't exist yet is not denied -- it's the normal "start a fresh
+    session under this id" path."""
+    if not identity.user_id:
+        return False
+    from app.services.auth.users import user_store
+
+    caller = await user_store.get_by_id(identity.user_id)
+    if caller is not None and caller.role == "admin":
+        return False
+    sess = await session_store.get(session_id)
+    return bool(sess and sess.get("user_id") != identity.user_id)
 
 
 class ChatMessage(BaseModel):
@@ -123,6 +143,23 @@ async def chat(
 ) -> dict:
     """Text chat with the configured conversation responder (LLM or echo)."""
     caller_id = current_user_id(request)
+
+    # Ownership check on an explicit ?session_id=: without this, any logged-in
+    # user could resume (read AND corrupt) another user's EXISTING session by
+    # guessing or brute-forcing its id -- session_store.exists()/.get_messages()
+    # below don't check who owns it. Same 404-on-mismatch rule as sessions.py's
+    # get_session (a non-owner can't distinguish "not yours" from "doesn't
+    # exist"); scope is None for admins (and for the dev-mode/no-auth fallback
+    # current_role() already applies), so they still see everything. A
+    # session_id that doesn't exist yet isn't an IDOR (there's nothing to
+    # read) and falls through to the existing create-on-first-use path below.
+    if session_id:
+        existing_sess = await session_store.get(session_id)
+        if existing_sess:
+            scope = _scope_user_id(request)
+            if scope is not None and existing_sess.get("user_id") != scope:
+                raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
+
     active_profile = profile_store.get(profile) if profile else None
     llm_base_url = (active_profile.llm.base_url or None) if (active_profile and active_profile.llm.base_url) else None
     llm_api_key = active_profile.llm.api_key if (active_profile and active_profile.llm.base_url) else None
@@ -297,6 +334,19 @@ async def conversation_stream(websocket: WebSocket) -> None:
         return
     await websocket.accept(subprotocol=ws_subprotocol(websocket))
     requested_sid = websocket.query_params.get("session_id")
+    # Same IDOR the HTTP /chat route guards against: `requested_sid` flows
+    # into `resume_sid` below and is consumed by ConversationSession.start()
+    # (services/conversation/session.py) with no ownership check, so anyone
+    # who could guess or observe another user's session id could resume
+    # (read + corrupt) their private conversation over the WS path too.
+    # Checked before resume_sid is used for anything.
+    if requested_sid and await _ws_session_owner_denied(requested_sid, identity):
+        await websocket.send_json({
+            "event": "error",
+            "message": f"Session '{requested_sid}' not found",
+        })
+        await websocket.close()
+        return
     session_id = requested_sid or str(uuid.uuid4())
     q = websocket.query_params
 
