@@ -242,6 +242,17 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    # POST /v1/tts/synthesize returns audio metadata in X-TTS-* response
+    # headers instead of a JSON body (see routes/tts.py). Custom response
+    # headers are hidden from cross-origin JS (lugo-web-client) unless
+    # explicitly exposed here -- without this the client silently reads
+    # `null` instead of an error.
+    expose_headers=[
+        "X-TTS-Engine",
+        "X-TTS-Sample-Rate",
+        "X-TTS-Duration-Seconds",
+        "X-TTS-Process-Seconds",
+    ],
 )
 
 

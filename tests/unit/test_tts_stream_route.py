@@ -12,6 +12,7 @@ import pytest
 from starlette.requests import Request
 
 from app.api.routes import tts as tts_routes
+from app.core.audio import pcm16_to_wav_bytes
 from app.schemas.tts import TTSRequest, TTSResult
 from app.services.tts.base import TTSProvider
 from app.services.tts.service import tts_service
@@ -27,9 +28,16 @@ def _fake_request() -> Request:
 
 class _InstantStub(TTSProvider):
     name = "stub-tts-stream-ok"
+    sample_rate = 24000
 
     async def synthesize(self, payload):
         return TTSResult(engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav", text=payload.text)
+
+    async def render_audio(self, payload):
+        # /v1/tts/synthesize now calls this bytes-returning seam directly
+        # (see app.services.tts.base.TTSProvider.render_audio); /v1/tts/stream
+        # still uses synthesize() above, unchanged.
+        return pcm16_to_wav_bytes(b"\x00\x00" * 10, sample_rate=self.sample_rate), "audio/wav"
 
 
 class _BlockingStub(TTSProvider):
@@ -121,11 +129,11 @@ async def test_stream_job_task_reference_is_retained_while_running(stubs):
 
 async def test_synthesize_reports_wall_clock_process_seconds(stubs):
     # The response must carry how long synthesis actually took, distinct from
-    # duration_seconds (the length of the produced audio).
+    # duration_seconds (the length of the produced audio). Task 7 moved this
+    # from the JSON body to an X-TTS-Process-Seconds header (the endpoint now
+    # returns the audio bytes directly, see routes/tts.py::synthesize).
     resp = await tts_routes.synthesize(
         TTSRequest(text="xin chào", engine="stub-tts-stream-ok"), _fake_request()
     )
-    data = resp["data"]
-    assert "process_seconds" in data
-    assert isinstance(data["process_seconds"], float)
-    assert data["process_seconds"] >= 0
+    process_seconds = float(resp.headers["X-TTS-Process-Seconds"])
+    assert process_seconds >= 0

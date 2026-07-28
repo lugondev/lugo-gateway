@@ -35,7 +35,7 @@ APP = Path(__file__).resolve().parents[2] / "apps" / "api_gateway" / "app"
 # widen a hardcoded list.
 _PROVIDER_METHODS = {
     "transcribe_bytes", "synthesize", "reply_stream", "reply", "open_stream",
-    "embed_texts", "embed_texts_with_usage", "render_wav",
+    "embed_texts", "embed_texts_with_usage", "render_wav", "render_audio",
 }
 
 # Bucket 2: on a provider ABC, but reaches no paid inference -- capability
@@ -96,8 +96,16 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "tests/unit/test_stt_stream_metering.py",
     ),
     ("api/routes/tts.py", "synthesize"): (
-        2, "metered+gated", "POST /v1/tts/synthesize and the /v1/tts/stream job",
+        1, "metered+gated", "the /v1/tts/stream job (POST /v1/tts/synthesize moved "
+        "to render_audio in Task 7, see the row below)",
         "tests/unit/test_tts_stream_metering.py",
+    ),
+    ("api/routes/tts.py", "render_audio"): (
+        1, "metered+gated",
+        "POST /v1/tts/synthesize -- Task 7 made this endpoint return audio bytes "
+        "directly instead of an artifact URL, so it calls the bytes-returning "
+        "seam instead of synthesize()",
+        "tests/unit/test_routes_usage_metering.py",
     ),
     ("api/routes/livehost.py", "transcribe_bytes"): (
         1, "metered+gated", "livehost voice turn STT",
@@ -131,10 +139,11 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "tests/unit/test_session_usage_metering.py",
     ),
     ("services/tts/base.py", "render_wav"): (
-        1, "covered-by-caller",
-        "the real-synthesis step inside RenderingTTSProvider.synthesize(); every "
-        "caller of synthesize() records a row for that call, so metering here "
-        "would double-count",
+        2, "covered-by-caller",
+        "the real-synthesis step inside RenderingTTSProvider.synthesize() and "
+        "RenderingTTSProvider.render_audio() (Task 7's bytes-returning seam); "
+        "every caller of synthesize()/render_audio() records a row for that "
+        "call, so metering here would double-count",
         "tests/unit/test_tts_render_seam.py",
     ),
     ("services/conversation/session.py", "reply_stream"): (

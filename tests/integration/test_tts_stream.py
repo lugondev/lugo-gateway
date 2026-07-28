@@ -64,13 +64,17 @@ async def test_unknown_tts_engine_returns_400(client):
         assert resp.json()["success"] is False
 
 
-async def test_synthesize_returns_audio_url(client):
+async def test_synthesize_returns_wav_bytes(client):
+    """Task 7: /v1/tts/synthesize returns the audio itself (binary body +
+    X-TTS-* headers), not a JSON body pointing at an /artifacts/ file --
+    /v1/tts/stream (tested above) is the one that still returns URLs."""
     async with client:
         resp = await client.post(
             "/v1/tts/synthesize", json={"text": "hello there", "engine": "omnivoice"}
         )
         assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["audio_url"].startswith("/artifacts/")
-        assert data["sample_rate"] == 24000
-        assert data["duration_seconds"] > 0
+        assert resp.headers["content-type"].startswith("audio/wav")
+        assert resp.content[:4] == b"RIFF" and resp.content[8:12] == b"WAVE"
+        assert resp.headers["x-tts-engine"] == "omnivoice"
+        assert int(resp.headers["x-tts-sample-rate"]) == 24000
+        assert float(resp.headers["x-tts-duration-seconds"]) > 0

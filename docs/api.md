@@ -357,24 +357,27 @@ Voice modes (OmniVoice):
 - **Design** — provide `instruct`, e.g. `"female, low pitch, british accent"`.
 - **Auto** — provide neither.
 
-Response `data` (`TTSResult`):
+**Response: the audio itself**, not a JSON body pointing at a file. `200 OK` with:
+- Body: the raw encoded audio (`audio/wav` for every engine except `edge_tts`, which
+  is `audio/mpeg`).
+- Headers: `X-TTS-Engine`, `X-TTS-Sample-Rate`, `X-TTS-Process-Seconds`, and
+  `X-TTS-Duration-Seconds` (WAV only — an MP3 duration would have to be
+  estimated, so it's omitted rather than guessed). These are listed in CORS
+  `expose_headers` so cross-origin clients (e.g. lugo-web-client) can read them.
 
-```json
-{
-  "engine": "omnivoice",
-  "sample_rate": 24000,
-  "audio_url": "/artifacts/<id>.wav",
-  "duration_seconds": 1.6,
-  "job_id": null,
-  "text": "Hello world"
-}
-```
+This used to write a temporary WAV under `artifacts/` and return its URL —
+that indirection existed only because JSON can't carry binary. Nothing
+persisted the URL (no message ever referenced one), so the file was pure
+churn and an unauthenticated-by-default surface; returning bytes removes
+both. `/v1/tts/stream` below is unchanged and still returns URLs — it emits
+many segments over SSE, where a URL per segment is the right shape.
 
-A failed synthesis returns an error response (502) instead of a placeholder.
+A failed synthesis returns a JSON error response (502) instead of a placeholder.
 
 ### `POST /v1/tts/stream`
 Start a pseudo-streaming synthesis job. Same body as `synthesize`.
-→ `{ "data": { "job_id": "<uuid>" } }`. Subscribe via SSE to receive chunks.
+→ `{ "data": { "job_id": "<uuid>" } }`. Subscribe via SSE to receive chunks,
+each carrying an `audio_url` under `/artifacts/` (unlike `synthesize` above).
 
 ---
 

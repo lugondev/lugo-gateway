@@ -3,9 +3,10 @@ import logging
 import time
 import uuid
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
 
 from app.core.actor import current_user_id
+from app.core.audio import wav_duration_seconds
 from app.schemas.common import StreamEvent
 from app.schemas.tts import TTSRequest
 from app.services.artifacts import artifact_store
@@ -66,7 +67,7 @@ async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
 
 
 @router.post("/synthesize")
-async def synthesize(payload: TTSRequest, request: Request, profile: str | None = None) -> dict:
+async def synthesize(payload: TTSRequest, request: Request, profile: str | None = None) -> Response:
     # Quota pre-flight: block BEFORE the provider does any work. See the STT
     # route for why the model is resolved before the provider lookup.
     from app.services.model_registry.store import model_registry_store
@@ -94,8 +95,8 @@ async def synthesize(payload: TTSRequest, request: Request, profile: str | None 
 
     provider = tts_service.get_provider(payload.engine)
     started = time.perf_counter()
-    result = await provider.synthesize(payload)
-    result.process_seconds = round(time.perf_counter() - started, 3)
+    audio_bytes, media_type = await provider.render_audio(payload)
+    process_seconds = round(time.perf_counter() - started, 3)
     try:
         # model_id may be "" when the caller omits it: cost resolution then finds
         # no pricing row and resolves to $0, but the usage event is still
@@ -107,7 +108,18 @@ async def synthesize(payload: TTSRequest, request: Request, profile: str | None 
         )
     except Exception as exc:  # noqa: BLE001 - metering must never break the response
         logger.warning("tts usage metering failed: %s", exc)
-    return {"success": True, "data": result.model_dump()}
+
+    headers = {
+        "X-TTS-Engine": provider.name,
+        "X-TTS-Sample-Rate": str(getattr(provider, "sample_rate", 0)),
+        "X-TTS-Process-Seconds": str(process_seconds),
+    }
+    # Duration is computed exactly for WAV; for other containers (e.g. edge_tts's
+    # MP3) omit the header rather than guessing -- a wrong number is worse than
+    # a missing one.
+    if media_type == "audio/wav":
+        headers["X-TTS-Duration-Seconds"] = str(round(wav_duration_seconds(audio_bytes), 3))
+    return Response(content=audio_bytes, media_type=media_type, headers=headers)
 
 
 @router.post("/stream")
