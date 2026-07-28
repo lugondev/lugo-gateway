@@ -2,7 +2,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.schemas.health import EngineHealth
 from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
 from app.services.tts.service import tts_service
@@ -11,13 +10,6 @@ from app.services.tts.service import tts_service
 @pytest.fixture
 def client():
     return TestClient(app)
-
-
-async def _ok_health(stt_engine, stt_model, tts_engine, tts_model):
-    return (
-        EngineHealth(engine=stt_engine, status="ok"),
-        EngineHealth(engine=tts_engine, status="ok"),
-    )
 
 
 @pytest.fixture(autouse=True)
@@ -39,14 +31,6 @@ def _pin_conversation_engines(monkeypatch):
         })
 
     monkeypatch.setattr(system_config_store, "get", _get_pinned)
-    # These tests exercise the cold/warm readiness signal via fake providers
-    # registered ad hoc under "whisper"/"vieneu" -- not the real faster-whisper
-    # install or the (never-installed, per repo hermeticity rules) vieneu
-    # extra. The Task 7 health gate's check_resolved_engines() would otherwise
-    # consult the real engine listing for those names and refuse the session
-    # before session_started is even emitted. Stub it out; this file tests
-    # readiness reporting, not the gate.
-    monkeypatch.setattr("app.api.routes.conversation.check_resolved_engines", _ok_health)
 
 
 class _ColdProvider:

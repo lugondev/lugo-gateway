@@ -4,18 +4,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.schemas.health import EngineHealth
 from app.services.history.store import session_store
 from app.services.memory.store import memory_store
 from app.services.profiles.store import ProfileStore
 from app.services.profiles.models import Profile
-
-
-async def _ok_health(stt_engine, stt_model, tts_engine, tts_model):
-    return (
-        EngineHealth(engine=stt_engine, status="ok"),
-        EngineHealth(engine=tts_engine, status="ok"),
-    )
 
 
 @pytest.fixture(autouse=True)
@@ -23,11 +15,6 @@ def _profiles(tmp_path, monkeypatch):
     fresh = ProfileStore(str(tmp_path / "profiles.json"))
     fresh.upsert(Profile(name="pet"))
     monkeypatch.setattr("app.api.routes.conversation.profile_store", fresh)
-    # This file's WS test connects with the system default STT/TTS engines
-    # (vosk/omnivoice), which aren't actually configured in this hermetic
-    # environment. Stub the Task 7 health gate so the connection isn't
-    # refused before the history-persistence behavior under test ever runs.
-    monkeypatch.setattr("app.api.routes.conversation.check_resolved_engines", _ok_health)
 
 
 @pytest.fixture

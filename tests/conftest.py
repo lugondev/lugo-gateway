@@ -95,6 +95,37 @@ def _hermetic(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_engine_health(monkeypatch):
+    """Default the Task 7 WS health gate to "everything's fine" so tests that
+    connect to /v1/conversation/stream or /v1/lugo/stream aren't refused (or
+    KeyError'd -- see app/services/stt/service.py:241's `list_engines()`
+    fallback, which only recognizes a fixed set of real engine names) by a
+    real check_resolved_engines() call against engines that are either
+    genuinely unconfigured in this hermetic environment (the real defaults,
+    e.g. vosk/omnivoice) or synthetic per-test stub names it has never heard
+    of. Both route modules bind the name at import time (`from
+    app.services.health import check_resolved_engines`), so -- same as
+    warm_providers above -- patching the source function wouldn't reach
+    either call site; each module binding must be patched individually.
+
+    Tests that want to exercise the gate itself (test_session_health_gate.py)
+    monkeypatch this same attribute again inside the test body; that later
+    setattr wins over this fixture's earlier one for the duration of the
+    test, so this default never shadows an intentional override.
+    """
+    from app.schemas.health import EngineHealth
+
+    async def _ok_health(stt_engine, stt_model, tts_engine, tts_model):
+        return (
+            EngineHealth(engine=stt_engine, status="ok"),
+            EngineHealth(engine=tts_engine, status="ok"),
+        )
+
+    monkeypatch.setattr("app.api.routes.conversation.check_resolved_engines", _ok_health)
+    monkeypatch.setattr("app.api.routes.lugo.check_resolved_engines", _ok_health)
+
+
+@pytest.fixture(autouse=True)
 def _tmp_db(tmp_path, monkeypatch):
     """Point the DB engine at a per-test tmp file so no test ever touches
     the real data/app.db, even tests that only indirectly hit routes

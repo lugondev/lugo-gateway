@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from app.core.settings import settings
 from app.main import app
-from app.schemas.health import EngineHealth
 from app.schemas.stt import STTResult
 from app.services.auth.users import user_store
 from app.services.stt.base import STTProvider
@@ -26,19 +25,6 @@ def _hermetic(monkeypatch):
     monkeypatch.setattr(settings, "admin_password", "s3cret")
     monkeypatch.setattr("app.api.routes.conversation._IDENTITY_RECHECK_INTERVAL_S", 0.05, raising=False)
     stt_service.providers["stub-cutoff-stt"] = _StubSTT()
-
-    async def _ok_health(stt_engine, stt_model, tts_engine, tts_model):
-        return (
-            EngineHealth(engine=stt_engine, status="ok"),
-            EngineHealth(engine=tts_engine, status="ok"),
-        )
-
-    # "stub-cutoff-stt" isn't recognized by stt_service's real engine-listing
-    # logic (and the default TTS engine isn't actually configured in this
-    # hermetic environment either), so the Task 7 health gate's
-    # check_resolved_engines() would refuse/KeyError before the disabled-user
-    # cutoff behavior under test ever runs. Stub the gate out.
-    monkeypatch.setattr("app.api.routes.conversation.check_resolved_engines", _ok_health)
     yield
     stt_service.providers.pop("stub-cutoff-stt", None)
     monkeypatch.setattr(settings, "admin_password", "")

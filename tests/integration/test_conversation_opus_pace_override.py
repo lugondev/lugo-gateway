@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 
 from app.core.audio import pcm16_to_wav_bytes
 from app.main import app
-from app.schemas.health import EngineHealth
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSRequest
 from app.services.profiles.models import Profile, SttConfig
@@ -103,18 +102,6 @@ def _stub(monkeypatch, tmp_path):
     monkeypatch.setattr("app.api.routes.conversation.system_config_store", fresh_config)
     monkeypatch.setattr("app.services.conversation.session.system_config_store", fresh_config)
     monkeypatch.setattr(sc_mod, "system_config_store", fresh_config)
-
-    async def _ok_health(stt_engine, stt_model, tts_engine, tts_model):
-        return (
-            EngineHealth(engine=stt_engine, status="ok"),
-            EngineHealth(engine=tts_engine, status="ok"),
-        )
-
-    # "stub-pace-stt"/"stub-pace-tts" aren't recognized by stt_service/
-    # tts_service's real engine-listing logic, so the Task 7 health gate's
-    # check_resolved_engines() would KeyError trying to look them up. Stub the
-    # gate out -- this file tests opus pacing, not the gate.
-    monkeypatch.setattr("app.api.routes.conversation.check_resolved_engines", _ok_health)
 
     yield
 

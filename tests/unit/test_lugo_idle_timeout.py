@@ -1,7 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
-from app.schemas.health import EngineHealth
 from app.schemas.stt import STTResult
 from app.services.profiles.models import Profile, SessionConfig
 from app.services.profiles.store import ProfileStore
@@ -57,19 +56,6 @@ def _local_hermetic(monkeypatch, tmp_path):
     # idle tests from depending on a TTS provider.
     _patch_conversation(monkeypatch, stt_engine="stub-idle-stt", conversation_goodbye_text="")
     stt_service.providers["stub-idle-stt"] = _StubSTT()
-
-    async def _ok_health(stt_engine, stt_model, tts_engine, tts_model):
-        return (
-            EngineHealth(engine=stt_engine, status="ok"),
-            EngineHealth(engine=tts_engine, status="ok"),
-        )
-
-    # "stub-idle-stt" isn't recognized by stt_service's real engine-listing
-    # logic (and the default TTS engine isn't actually configured in this
-    # hermetic environment either), so the Task 7 health gate's
-    # check_resolved_engines() would refuse/KeyError before the idle-timeout
-    # behavior under test ever runs. Stub the gate out.
-    monkeypatch.setattr("app.api.routes.lugo.check_resolved_engines", _ok_health)
     fresh = ProfileStore(str(tmp_path / "profiles.json"))
     fresh.upsert(Profile(name="fast", session=SessionConfig(idle_timeout_s=1)))
     monkeypatch.setattr("app.api.routes.lugo.profile_store", fresh)

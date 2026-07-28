@@ -3,7 +3,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.schemas.health import EngineHealth
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
 from app.services.profiles.models import Profile, SttConfig, TtsConfig
@@ -39,24 +38,11 @@ class _RecordingTTS(TTSProvider):
         )
 
 
-async def _ok_health(stt_engine, stt_model, tts_engine, tts_model):
-    return (
-        EngineHealth(engine=stt_engine, status="ok"),
-        EngineHealth(engine=tts_engine, status="ok"),
-    )
-
-
 @pytest.fixture(autouse=True)
 def _local_hermetic(monkeypatch, tmp_path):
     # Named distinctly from conftest.py's `_hermetic` so both autouse fixtures
     # run (a same-named fixture here would shadow, not compose with, the
     # global one).
-    # This file's stub engine names ("stub-conv-ttsp*") aren't recognized by
-    # stt_service/tts_service's real engine-listing logic (it only knows
-    # real, named engines), so the Task 7 health gate's check_resolved_engines()
-    # would KeyError trying to look them up. Stub the gate out -- this file
-    # tests TTS-profile resolution, not the gate.
-    monkeypatch.setattr("app.api.routes.conversation.check_resolved_engines", _ok_health)
     stt_service.providers["stub-conv-ttsp"] = _StubSTT()
     stub_tts = _RecordingTTS()
     tts_service.providers["stub-conv-ttsp-tts"] = stub_tts

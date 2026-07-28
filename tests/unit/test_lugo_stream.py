@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 from app.core.audio import pcm16_to_wav_bytes
 from app.core.opus import OpusFrameEncoder, opus_available
 from app.main import app
-from app.schemas.health import EngineHealth
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSResult
 from app.services.artifacts import artifact_store
@@ -92,19 +91,6 @@ def _local_hermetic(monkeypatch, tmp_path):
         })
 
     monkeypatch.setattr(system_config_store, "get", _get_with_stub_engines)
-
-    async def _ok_health(stt_engine, stt_model, tts_engine, tts_model):
-        return (
-            EngineHealth(engine=stt_engine, status="ok"),
-            EngineHealth(engine=tts_engine, status="ok"),
-        )
-
-    # "stub-lugo-stt"/"stub-lugo-tts" aren't recognized by stt_service/
-    # tts_service's real engine-listing logic (it only knows real, named
-    # engines), so the Task 7 health gate's check_resolved_engines() would
-    # KeyError trying to look them up. Stub the gate out -- this file tests
-    # the Lugo wire protocol, not the gate.
-    monkeypatch.setattr("app.api.routes.lugo.check_resolved_engines", _ok_health)
     stt_service.providers["stub-lugo-stt"] = _StubSTT()
     tts_service.providers["stub-lugo-tts"] = _StubTTS()
     fresh = ProfileStore(str(tmp_path / "profiles.json"))
