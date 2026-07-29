@@ -4,11 +4,12 @@ import logging
 import uuid
 from contextlib import aclosing
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from app.core.actor import current_role, current_user_id
 from app.core.audio import pcm16_to_wav_bytes, wav_duration_seconds, wav_file_to_pcm16
-from app.core.auth_guard import resolve_ws_identity, ws_subprotocol
+from app.core.auth_guard import resolve_ws_identity, ws_session_owner_denied, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
@@ -95,29 +96,45 @@ class TikTokConnectRequest(BaseModel):
     unique_id: str
 
 
-@router.post("/{session_id}/connect")
-async def connect_tiktok(session_id: str, payload: TikTokConnectRequest) -> dict:
+def _scope_user_id(request: Request) -> str | None:
+    """None for admins, or when auth is fully disabled (dev mode -- see
+    app.core.actor.current_role), which is unfiltered/unchanged from today's
+    behavior; the caller's own id otherwise. Same pattern as sessions.py's
+    identically-named helper."""
+    return None if current_role(request) == "admin" else current_user_id(request)
+
+
+def _get_owned_session(session_id: str, request: Request) -> LivehostSession:
+    """H5: connect/disconnect/status previously did only
+    `livehost_registry.get(session_id)`, with no owner check at all -- any
+    logged-in user could drive/stop/inspect another user's live TikTok
+    session by id. 404s uniformly for "doesn't exist" and "exists but isn't
+    yours", same as get_session/_scope_user_id in sessions.py, so this isn't
+    a new existence oracle."""
     session = livehost_registry.get(session_id)
-    if session is None:
+    scope = _scope_user_id(request)
+    if session is None or (scope is not None and session.user_id != scope):
         raise HTTPException(status_code=404, detail=f"livehost session '{session_id}' not found")
+    return session
+
+
+@router.post("/{session_id}/connect")
+async def connect_tiktok(session_id: str, payload: TikTokConnectRequest, request: Request) -> dict:
+    session = _get_owned_session(session_id, request)
     await session.ingestor.start(payload.unique_id)
     return {"success": True, "data": {"state": session.ingestor.state.value, "unique_id": payload.unique_id}}
 
 
 @router.post("/{session_id}/disconnect")
-async def disconnect_tiktok(session_id: str) -> dict:
-    session = livehost_registry.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail=f"livehost session '{session_id}' not found")
+async def disconnect_tiktok(session_id: str, request: Request) -> dict:
+    session = _get_owned_session(session_id, request)
     await session.ingestor.stop()
     return {"success": True, "data": {"state": session.ingestor.state.value}}
 
 
 @router.get("/{session_id}/status")
-async def livehost_status(session_id: str) -> dict:
-    session = livehost_registry.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail=f"livehost session '{session_id}' not found")
+async def livehost_status(session_id: str, request: Request) -> dict:
+    session = _get_owned_session(session_id, request)
     return {
         "success": True,
         "data": {
@@ -136,6 +153,26 @@ async def livehost_stream(websocket: WebSocket) -> None:
         return
     await websocket.accept(subprotocol=ws_subprotocol(websocket))
     session_id = websocket.query_params.get("session_id") or str(uuid.uuid4())
+    # H5: mirrors conversation.py's/lugo.py's WS resume-ownership check.
+    # Without this, a caller-supplied ?session_id= flowed straight into
+    # livehost_registry.register() below, which unconditionally OVERWRITES
+    # any existing entry for that key -- so any logged-in user could hijack
+    # (overwrite the ingestor/scheduler of) another user's already-live
+    # session, and unregister() on close would then orphan it. Checked
+    # before session_id is used for anything. session_store (consulted by
+    # ws_session_owner_denied) is the shared ownership source of truth this
+    # route's own session_store.create() call below populates for a
+    # legitimate first connect under this id.
+    if await ws_session_owner_denied(session_id, identity):
+        # livehost's own wire error shape ({"event": "error", ...}), same as
+        # every other error send in this handler (see the AppError except
+        # branch below) -- NOT lugo.py's {"type": "error", ...}.
+        await websocket.send_json({
+            "event": "error",
+            "message": f"Session '{session_id}' not found",
+        })
+        await websocket.close()
+        return
     q = websocket.query_params
 
     profile_name = q.get("profile")
@@ -270,7 +307,9 @@ async def livehost_stream(websocket: WebSocket) -> None:
         offline_poll_interval=settings.livehost_offline_poll_interval_seconds,
         watchdog_idle_seconds=settings.livehost_watchdog_idle_seconds,
     )
-    livehost_registry.register(session_id, LivehostSession(scheduler=scheduler, ingestor=ingestor))
+    livehost_registry.register(
+        session_id, LivehostSession(scheduler=scheduler, ingestor=ingestor, user_id=identity.user_id)
+    )
     orchestrator = LiveHostOrchestrator(scheduler)
     try:
         current_turn: asyncio.Task | None = None
