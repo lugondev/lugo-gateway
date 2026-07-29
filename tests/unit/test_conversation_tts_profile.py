@@ -125,7 +125,7 @@ def test_query_param_tts_profile_overrides_llm_profile(client, _local_hermetic):
     tts_profiles.upsert(TtsProfile(name="from-llm-profile", engine="stub-conv-ttsp-tts", voice="v1"))
     tts_profiles.upsert(TtsProfile(
         name="pinned", engine="stub-conv-ttsp-tts", voice_mode="clone",
-        ref_audio_path="ref.wav", ref_text="pinned voice",
+        ref_audio_path="artifacts/refs/ref.wav", ref_text="pinned voice",
     ))
     profiles.upsert(Profile(name="host", tts=TtsConfig(profile_name="from-llm-profile")))
 
@@ -138,7 +138,7 @@ def test_query_param_tts_profile_overrides_llm_profile(client, _local_hermetic):
         _run_one_turn(ws)
 
     payload = stub_tts.calls[0]
-    assert payload.ref_audio_path == "ref.wav"
+    assert payload.ref_audio_path == "artifacts/refs/ref.wav"
     assert payload.ref_text == "pinned voice"
 
 

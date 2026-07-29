@@ -32,6 +32,7 @@ def _estimate_duration_seconds(mp3_bytes: bytes) -> float:
 class EdgeTTSProvider(TTSProvider):
     name = "edge_tts"
     install_package = "edge_tts"
+    sample_rate = _SAMPLE_RATE
 
     DEFAULT_VOICE = "vi-VN-HoaiMyNeural"
     VOICES = [
@@ -57,7 +58,13 @@ class EdgeTTSProvider(TTSProvider):
             return "+0%"
         return f"{round((speed - 1) * 100):+d}%"
 
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:
+    async def _render_mp3(self, payload: TTSRequest) -> bytes:
+        """Real synthesis -> MP3 bytes, no artifact side effect.
+
+        Split out of synthesize() so render_audio() (the bytes-returning HTTP
+        seam) and synthesize() (the artifact-saving stream-job path) share the
+        same generation logic.
+        """
         try:
             import edge_tts
         except ImportError as exc:
@@ -90,7 +97,14 @@ class EdgeTTSProvider(TTSProvider):
                 ) from last_error
             raise ProviderError(f"{self.name} synthesis failed after {_MAX_ATTEMPTS} attempts: no audio received")
 
-        mp3_bytes = bytes(chunks)
+        return bytes(chunks)
+
+    async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
+        mp3_bytes = await self._render_mp3(payload)
+        return mp3_bytes, "audio/mpeg"
+
+    async def synthesize(self, payload: TTSRequest) -> TTSResult:
+        mp3_bytes = await self._render_mp3(payload)
         _, audio_url = artifact_store.save_mp3(mp3_bytes)
 
         return TTSResult(

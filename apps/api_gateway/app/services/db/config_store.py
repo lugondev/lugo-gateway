@@ -68,8 +68,35 @@ class SqliteBackedStore(Generic[M]):
         init_config_tables()
         with session_scope() as s:
             rows = s.execute(select(self._row)).scalars().all()
-            self._cache = {r.name: self._model.model_validate_json(r.data) for r in rows}
-        if not self._cache:
+            # Per-row, not a single dict comprehension: that used to let one
+            # malformed/no-longer-valid row (e.g. a stored value a validator
+            # added *after* the row was written now rejects) raise straight
+            # out of _ensure() -- and since self._cache stayed None on that
+            # failure, EVERY subsequent list()/get() call, for every OTHER
+            # (perfectly fine) row, re-raised too, forever, until the bad row
+            # was manually removed from the DB. Mirrors _import_legacy's
+            # already-correct per-record skip-and-log below.
+            had_rows = bool(rows)
+            cache: dict[str, M] = {}
+            for r in rows:
+                try:
+                    cache[r.name] = self._model.model_validate_json(r.data)
+                except Exception as exc:  # noqa: BLE001 - one bad row must not break every other row
+                    logger.warning(
+                        "%s: skipping malformed stored row %r: %s",
+                        self._row.__tablename__, r.name, exc,
+                    )
+            self._cache = cache
+        # Gate the one-time legacy-JSON import on whether the DB table was
+        # genuinely empty (had_rows is False), NOT on whether the resulting
+        # cache ended up empty. Those are different conditions: a table whose
+        # only row(s) failed validation above (e.g. a validator added after
+        # the row was written) also leaves self._cache empty, but importing
+        # the legacy backup in that case would call _put() and overwrite the
+        # existing (newer, just-unparseable) DB row with stale legacy data --
+        # silent data loss. Only an actually-empty table should trigger the
+        # migration.
+        if not had_rows:
             path = self._resolve_path()
             if path and os.path.exists(path):
                 self._import_legacy(path)

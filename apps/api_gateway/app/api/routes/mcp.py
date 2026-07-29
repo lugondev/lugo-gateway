@@ -20,6 +20,21 @@ def _can_write(server: McpServer, user_id: str | None, role: str) -> bool:
     return server.owner_id == user_id
 
 
+def _require_admin(request: Request) -> None:
+    """Create/update/delete/clone let the caller point the gateway's outbound
+    fetch at an arbitrary url + headers, then GET .../tools makes the gateway
+    fetch it and return the response body to the caller -- a full SSRF proxy
+    with reflection (e.g. against http://169.254.169.254) for any logged-in
+    user before this gate. Admin-only; deliberately NO IP blocklist -- the
+    only real server in the live DB (basic-tools) self-hosts on loopback,
+    which is the normal deployment pattern here, and a blocklist would only
+    raise the bar for an actor who must already be an admin. Read routes
+    (list/get/tools) stay open to normal users -- only the write surface is
+    gated. See docs/superpowers/sdd/2026-07-28-critical-authz-fixes/task-6-brief.md."""
+    if current_role(request) != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
+
+
 class McpServerRequest(BaseModel):
     name: str
     url: str
@@ -45,12 +60,16 @@ async def list_servers(request: Request) -> dict:
 
 @router.post("/servers")
 async def add_server(payload: McpServerRequest, request: Request) -> dict:
+    _require_admin(request)
     if mcp_server_store.get(payload.name) is not None:
         raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
-    owner_id = None if current_role(request) == "admin" else current_user_id(request)
+    # _require_admin above guarantees role == "admin" here, so this always
+    # creates a template (owner_id=None, visible to everyone) -- the old
+    # "non-admin creates a private row" branch is dead now that create is
+    # gated to admins only.
     entry = McpServer(
         name=payload.name, url=payload.url, headers=payload.headers,
-        enabled=payload.enabled, owner_id=owner_id,
+        enabled=payload.enabled, owner_id=None,
     )
     mcp_server_store.upsert(entry)
     return {"success": True, "data": entry.model_dump()}
@@ -66,6 +85,7 @@ async def get_server(name: str, request: Request) -> dict:
 
 @router.put("/servers/{name}")
 async def update_server(name: str, payload: McpServerRequest, request: Request) -> dict:
+    _require_admin(request)
     old = mcp_server_store.get(name)
     if not old or not _can_write(old, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
@@ -90,6 +110,7 @@ async def set_server_enabled(name: str, payload: McpServerEnabledRequest, reques
 
 @router.delete("/servers/{name}")
 async def delete_server(name: str, request: Request) -> dict:
+    _require_admin(request)
     if name in PRESET_NAMES:
         raise HTTPException(
             status_code=400,
@@ -115,6 +136,7 @@ async def list_server_tools(name: str, request: Request) -> dict:
 
 @router.post("/servers/{name}/clone")
 async def clone_server(name: str, payload: CloneRequest, request: Request) -> dict:
+    _require_admin(request)
     user_id = current_user_id(request)
     source = mcp_server_store.get(name)
     if not source or not _visible(source, user_id):

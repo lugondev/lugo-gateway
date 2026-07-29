@@ -86,6 +86,12 @@ class _StubTTS(TTSProvider):
         return TTSResult(audio_url="/artifacts/x.wav", duration_seconds=0.1,
                          sample_rate=16000, engine=self.name)
 
+    async def render_audio(self, request) -> tuple[bytes, str]:
+        # /v1/tts/synthesize now calls this bytes-returning seam directly
+        # (see app.services.tts.base.TTSProvider.render_audio). Must be a
+        # real WAV -- the route computes duration via wav_duration_seconds.
+        return pcm16_to_wav_bytes(b"\x00\x00" * 10, sample_rate=16000), "audio/wav"
+
 
 @pytest.fixture
 def _stubs():

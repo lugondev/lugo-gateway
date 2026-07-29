@@ -49,6 +49,17 @@ class TTSProvider(ABC):
         """Whether ref_audio_path/ref_text (voice cloning) works for this engine."""
         return False
 
+    async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
+        """(audio_bytes, media_type) with NO artifact side effect.
+
+        The bytes-returning seam the HTTP synthesize route uses, so a one-shot
+        request doesn't have to write a temp file just to hand back a URL.
+        Every provider reachable from POST /v1/tts/synthesize must implement
+        this -- RenderingTTSProvider does below via render_wav(); a plain
+        TTSProvider subclass (e.g. EdgeTTSProvider) implements it directly.
+        """
+        raise ProviderError(f"{self.name} cannot render audio")
+
 
 class RenderingTTSProvider(TTSProvider):
     """Base that runs real synthesis and wraps the WAV as a fetchable artifact.
@@ -84,3 +95,6 @@ class RenderingTTSProvider(TTSProvider):
             duration_seconds=round(wav_duration_seconds(wav), 3),
             text=payload.text,
         )
+
+    async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
+        return await self.render_wav(payload), "audio/wav"

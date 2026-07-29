@@ -24,19 +24,29 @@ el("tts-submit").addEventListener("click", async () => {
         voice: el("tts-voice").value || null,
       }),
     });
-    const body = await response.json();
-    const quota = quotaMessage(response, body);
-    if (quota) {
-      print(ttsResult, quota, true);
-    } else {
-      print(ttsResult, body, !response.ok);
-      if (response.ok && body.data?.audio_url) {
-        ttsAudio.src = body.data.audio_url;
-        ttsAudio.classList.remove("hidden");
-        const proc = body.data.process_seconds != null ? ` · synthesized in ${body.data.process_seconds}s` : "";
-        ttsMeta.textContent = `${body.data.duration_seconds ?? "?"}s @ ${body.data.sample_rate}Hz${proc}`;
-      }
+    if (!response.ok) {
+      // Error responses are still JSON (see app.core.errors's AppError
+      // handler); only the 200 body is now raw audio bytes.
+      const body = await response.json();
+      const quota = quotaMessage(response, body);
+      print(ttsResult, quota || body, true);
+      return;
     }
+    // POST /v1/tts/synthesize now returns the audio bytes directly (see
+    // routes/tts.py), not a JSON body with an /artifacts/ URL. Metadata
+    // travels in X-TTS-* response headers instead.
+    const blob = await response.blob();
+    if (ttsAudio.dataset.objectUrl) URL.revokeObjectURL(ttsAudio.dataset.objectUrl);
+    const objectUrl = URL.createObjectURL(blob);
+    ttsAudio.dataset.objectUrl = objectUrl;
+    ttsAudio.src = objectUrl;
+    ttsAudio.classList.remove("hidden");
+    const duration = response.headers.get("X-TTS-Duration-Seconds");
+    const sampleRate = response.headers.get("X-TTS-Sample-Rate");
+    const processSeconds = response.headers.get("X-TTS-Process-Seconds");
+    const proc = processSeconds != null ? ` · synthesized in ${processSeconds}s` : "";
+    print(ttsResult, `OK: ${blob.size} bytes`);
+    ttsMeta.textContent = `${duration ?? "?"}s @ ${sampleRate}Hz${proc}`;
   } catch (error) {
     print(ttsResult, { error: String(error) }, true);
   }

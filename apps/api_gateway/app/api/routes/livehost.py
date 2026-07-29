@@ -334,38 +334,67 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 return parts
 
             async def _synth(sentence: str):
-                result = await tts_provider.synthesize(
-                    TTSRequest(
+                # (result, packets, error) mirrors
+                # services/conversation/session.py's _synth: a TTS failure
+                # (including TTSRequest construction itself -- e.g. a stored
+                # profile's ref_audio_path that fails the artifacts-dir
+                # containment check) is caught HERE and returned as the
+                # third element instead of raised, so prefetch_synthesis
+                # doesn't propagate it and unwind the whole turn -- which
+                # would drop every not-yet-sent sentence's response_text
+                # along with it. The consumer below emits this sentence's
+                # response_text regardless, then a `tts_error` for audio only.
+                try:
+                    request = TTSRequest(
                         text=sentence, engine=tts_engine, model_id=tts_model, voice=voice,
                         ref_audio_path=ref_audio_path, ref_text=ref_text,
                         instruct=tts_instruct, speed=tts_speed, language=tts_language,
                     )
-                )
-                try:
-                    await record_usage(
-                        user_id=identity.user_id or "", profile_id=profile_name or "",
-                        kind="tts", engine=tts_engine, model_id=tts_model or "",
-                        unit="chars", native_amount=len(sentence or ""),
-                    )
-                except Exception as exc:  # noqa: BLE001 - metering must never break the turn
-                    logger.warning("livehost tts usage metering failed: %s", exc)
-                if opus_encoder is not None:
-                    path = result.audio_url.lstrip("/")
-                    pcm = await asyncio.to_thread(wav_file_to_pcm16, path, output_sample_rate)
-                    packets = await asyncio.to_thread(opus_encoder.encode_pcm16, pcm)
-                    return result, packets
-                return result, None
+                    result = await tts_provider.synthesize(request)
+                    try:
+                        await record_usage(
+                            user_id=identity.user_id or "", profile_id=profile_name or "",
+                            kind="tts", engine=tts_engine, model_id=tts_model or "",
+                            unit="chars", native_amount=len(sentence or ""),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - metering must never break the turn
+                        logger.warning("livehost tts usage metering failed: %s", exc)
+                    if opus_encoder is not None:
+                        path = result.audio_url.lstrip("/")
+                        pcm = await asyncio.to_thread(wav_file_to_pcm16, path, output_sample_rate)
+                        packets = await asyncio.to_thread(opus_encoder.encode_pcm16, pcm)
+                        return result, packets, None
+                    return result, None, None
+                except asyncio.CancelledError:
+                    raise  # barge-in / turn supersede -- must propagate to unwind the turn
+                except Exception as exc:  # noqa: BLE001 - degrade to text-only, don't lose the reply
+                    logger.warning("livehost TTS synth failed (engine=%s) for %r: %s", tts_engine, sentence, exc)
+                    return None, None, exc
 
+            tts_error_reported = False
             async with aclosing(
                 prefetch_synthesis(
                     sentence_aiter, _synth,
                     lookahead=system_config_store.get().conversation.conversation_tts_lookahead,
                 )
             ) as pipeline:
-                async for index, sentence, (result, packets) in pipeline:
+                async for index, sentence, (result, packets, tts_error) in pipeline:
                     parts.append(sentence)
                     if want_text:
                         await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
+                    if tts_error is not None:
+                        # Synth failed for this sentence: text already went out above.
+                        # Report the TTS failure once per turn (a fully-down engine
+                        # would otherwise emit one per sentence) and skip audio -- the
+                        # client (livehost.js) already handles `tts_error` by leaving
+                        # the turn running and flagging the bubble text-only.
+                        if not tts_error_reported:
+                            tts_error_reported = True
+                            await send(
+                                "tts_error", turn=turn, chunk_index=index,
+                                engine=tts_engine, message=str(tts_error),
+                            )
+                        continue
                     if packets is not None:
                         await send(
                             "audio_start", turn=turn, chunk_index=index,

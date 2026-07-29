@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.actor import current_role, current_user_id
+from app.services.artifacts import artifact_store
 from app.services.auth.users import user_store
 from app.services.model_registry.gate import check_model_allowed
 from app.services.tts.profile_models import TtsProfile
@@ -15,6 +16,23 @@ async def _resolve_acting_user(request: Request):
     disabled). check_model_allowed handles a None user without crashing."""
     user_id = current_user_id(request)
     return await user_store.get_by_id(user_id) if user_id else None
+
+
+def _require_ref_audio_path_contained(ref_audio_path: str) -> None:
+    """Reject a NEW ref_audio_path outside the artifacts dir at save time,
+    with a clear 422 -- deliberately a route-level check, not a TtsProfile
+    field_validator, so it never runs against an EXISTING stored row (see
+    profile_models.py's module docstring for why that distinction matters:
+    a validator on the persisted model would also run at load time and one
+    bad/host-mismatched row would break every other profile). Empty string
+    is this model's "not set" sentinel, not a path."""
+    if not ref_audio_path:
+        return
+    if not artifact_store.contains(ref_audio_path):
+        raise HTTPException(
+            status_code=422,
+            detail="ref_audio_path must be inside the artifacts directory",
+        )
 
 
 def _visible(profile: TtsProfile, user_id: str | None) -> bool:
@@ -43,6 +61,7 @@ async def list_tts_profiles(request: Request) -> dict:
 async def create_tts_profile(payload: TtsProfile, request: Request) -> dict:
     if tts_profile_store.get(payload.name) is not None:
         raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
+    _require_ref_audio_path_contained(payload.ref_audio_path)
     owner_id = None if current_role(request) == "admin" else current_user_id(request)
     profile = payload.model_copy(update={"owner_id": owner_id})
     if profile.engine:
@@ -69,6 +88,7 @@ async def update_tts_profile(name: str, payload: TtsProfile, request: Request) -
     # merely able to see it -- see _can_write for the template/admin distinction).
     if existing and not _can_write(existing, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"TTS profile '{name}' not found")
+    _require_ref_audio_path_contained(payload.ref_audio_path)
     data = payload.model_dump()
     data["name"] = name
     data["owner_id"] = existing.owner_id if existing else (

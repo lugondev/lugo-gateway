@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import base64
 import os
-import tempfile
+import uuid
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.schemas.tts import TTSRequest
+from app.services.artifacts import artifact_store
 from app.services.tts.base import RenderingTTSProvider
 from model_service.app.auth import make_auth_dependency
 from model_service.app.config import ServiceConfig
@@ -59,9 +60,36 @@ def build_tts_router(config: ServiceConfig, provider: RenderingTTSProvider) -> A
         try:
             if payload.ref_audio_base64:
                 ref_bytes = base64.b64decode(payload.ref_audio_base64)
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                # TTSRequest.ref_audio_path is validated against
+                # artifact_store's containment check (2026-07-28
+                # critical-authz-fixes task 5) since six providers feed it
+                # straight into Path(...).read_bytes(). This decode target is
+                # server-generated, not caller-supplied, but it still has to
+                # pass that check -- write it inside the artifacts dir
+                # (rather than the system temp dir) so it does.
+                #
+                # Named `<uuid4 hex>.wav`, matching ArtifactStore's own
+                # _ARTIFACT_FILENAME pattern, rather than tempfile's
+                # `tmpXXXXXXXX.wav` -- a NamedTemporaryFile-style name is
+                # never swept by prune(), so a crash between this write and
+                # the os.unlink() below would leak the file forever (the
+                # four local engines run natively from the repo root, where
+                # artifacts_dir defaults to the real "artifacts" dir, not a
+                # container-private /tmp). A random hex name is equally
+                # unguessable if briefly fetchable at /artifacts/<name>.wav
+                # in that native deployment, but collectable.
+                tmp_ref_path = str(artifact_store.base_dir / f"{uuid.uuid4().hex}.wav")
+                # os.open + O_EXCL, mode 0o600: a plain open(path, "wb") creates
+                # the file at the umask default (usually 0644) -- readable by
+                # anyone on the box -- for however long it sits in this
+                # HTTP-served artifacts dir before the finally block's unlink.
+                # NamedTemporaryFile (what this replaced) always created 0600;
+                # match that instead of widening exposure. O_EXCL also means
+                # this can never silently overwrite an existing file at a
+                # colliding uuid4 name.
+                fd = os.open(tmp_ref_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as f:
                     f.write(ref_bytes)
-                    tmp_ref_path = f.name
             wav = await provider.render_wav(
                 TTSRequest(
                     text=payload.input,

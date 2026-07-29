@@ -1,5 +1,9 @@
+import json
+
 import pytest
 
+from app.services.db.config_models import TtsProfileRow
+from app.services.db.sync_engine import init_config_tables, session_scope
 from app.services.tts.profile_models import TtsProfile
 from app.services.tts.profile_store import TtsProfileStore
 
@@ -71,3 +75,109 @@ def test_clone_profile_roundtrips(store):
     assert result.voice_mode == "clone"
     assert result.ref_audio_path == "artifacts/refs/host.wav"
     assert result.ref_text == "hello"
+
+
+def _write_raw_row(name: str, data: str) -> None:
+    """Write straight to the config_tts_profiles table via the sync engine,
+    bypassing TtsProfileStore.upsert() (and therefore TtsProfile's own
+    validation) entirely -- the same as data that arrived from a legacy
+    import, a manual DB edit, or a row saved under an older code version."""
+    init_config_tables()
+    with session_scope() as s:
+        s.merge(TtsProfileRow(name=name, data=data))
+
+
+def test_malformed_stored_row_does_not_break_other_profiles(store):
+    """SqliteBackedStore._ensure() (config_store.py) used to deserialize every
+    row in one dict comprehension with no per-row guard, and left the cache
+    at None on failure -- so ONE malformed row raised out of _ensure() and
+    then made every subsequent list()/get() call, for every OTHER (perfectly
+    fine) row, raise too, forever. `name` is TtsProfile's only field with no
+    default, so a row missing it is a real model_validate_json failure,
+    independent of the ref_audio_path-specific scenario below."""
+    store.upsert(TtsProfile(name="good", engine="vieneu"))
+    _write_raw_row("bad", json.dumps({"engine": "vieneu"}))  # missing required "name"
+    store.invalidate()  # force the next call through _ensure()'s DB reload
+
+    profiles = store.list()
+    assert "good" in profiles
+    assert profiles["good"].engine == "vieneu"
+    assert "bad" not in profiles
+    assert store.get("good") is not None
+    assert store.get("good").engine == "vieneu"
+
+
+def test_out_of_bounds_ref_audio_path_row_still_loads_and_serves_other_rows(store):
+    """The specific landmine this regression guards: three rows in the live
+    DB store an absolute path (`<repo>/artifacts/refs/*.wav`) that only
+    satisfies containment when the process's CWD matches the exact host root
+    that wrote it -- any deployment-root change flips them from valid to
+    store-bricking. TtsProfile.ref_audio_path is deliberately NOT validated
+    (see profile_models.py's module docstring) so this kind of row loads
+    fine regardless of containment; the actual security boundary is
+    TTSRequest.ref_audio_path (schemas/tts.py) at synthesis time, which
+    still rejects a bad value on every read -- see
+    test_ref_audio_path_containment.py and
+    test_session_bad_ref_audio_path_degrades.py."""
+    store.upsert(TtsProfile(name="good", engine="vieneu"))
+    bad_data = json.dumps({
+        "name": "legacy-bad", "owner_id": None, "engine": "omnivoice", "model_id": "",
+        "voice_mode": "clone", "voice": "", "ref_audio_path": "/etc/passwd",
+        "ref_text": "x", "instruct": "", "speed": None, "language": None,
+    })
+    _write_raw_row("legacy-bad", bad_data)
+    store.invalidate()
+
+    profiles = store.list()
+    assert "good" in profiles
+    assert "legacy-bad" in profiles
+    assert profiles["legacy-bad"].ref_audio_path == "/etc/passwd"
+    assert store.get("good").engine == "vieneu"
+
+
+def test_all_rows_invalid_does_not_trigger_legacy_import_or_overwrite_row(tmp_path):
+    """Regression guard for the data-loss bug: _ensure() used to gate the
+    one-time legacy-JSON import on `not self._cache` (cache ended up empty),
+    which is also true when the DB table has rows but EVERY one of them
+    failed model_validate_json (e.g. a validator added after the row was
+    written). That made a restart re-run the legacy import and _put() the
+    stale legacy record over the still-present, just-unparseable DB row --
+    silently replacing newer data with a backup. The fix must key off
+    whether the table had rows at all (`had_rows`), not off the cache.
+
+    The row is written directly to the DB (bypassing upsert(), which would
+    only exercise TtsProfile's own validation, not the gap this guards).
+    """
+    path = str(tmp_path / "tts_profiles.json")
+    # A legacy backup file that, if imported, would produce a *different*,
+    # valid "bad" record -- distinguishable from the row already in the DB.
+    with open(path, "w") as f:
+        json.dump({"profiles": {"bad": {"name": "bad", "engine": "omnivoice"}}}, f)
+
+    store = TtsProfileStore(path)
+    malformed_data = json.dumps({"engine": "vieneu"})  # missing required "name"
+    _write_raw_row("bad", malformed_data)
+    store.invalidate()
+
+    profiles = store.list()
+    assert "bad" not in profiles  # still fails validation on read -- unchanged behavior
+
+    with session_scope() as s:
+        row = s.get(TtsProfileRow, "bad")
+        assert row is not None
+        assert row.data == malformed_data  # NOT overwritten by the legacy import
+
+
+def test_genuinely_empty_table_with_legacy_file_still_imports(tmp_path):
+    """The migration this store exists to run must keep working: an empty
+    DB table (no rows at all, valid or invalid) with a legacy JSON backup
+    present must still import it on first access."""
+    path = str(tmp_path / "tts_profiles.json")
+    with open(path, "w") as f:
+        json.dump({"profiles": {"migrated": {"name": "migrated", "engine": "omnivoice"}}}, f)
+
+    store = TtsProfileStore(path)
+    profiles = store.list()
+
+    assert "migrated" in profiles
+    assert profiles["migrated"].engine == "omnivoice"

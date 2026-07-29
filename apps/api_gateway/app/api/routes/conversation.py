@@ -5,8 +5,13 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from app.core.actor import current_user_id
-from app.core.auth_guard import resolve_ws_identity, ws_subprotocol
+from app.api.routes.sessions import _scope_user_id
+from app.core.actor import current_role, current_user_id
+from app.core.auth_guard import (
+    resolve_ws_identity,
+    ws_session_owner_denied,
+    ws_subprotocol,
+)
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
@@ -53,6 +58,18 @@ def _truthy(value: str | None, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _require_admin(request: Request) -> None:
+    """The /llm routes below mutate the Model Registry's server-wide default
+    LLM row (set_active_llm_config), despite living under the /v1/conversation
+    USER prefix. Any logged-in user hitting them today can repoint every other
+    user's LLM at an attacker endpoint, or drop the whole server to the echo
+    responder. Inline check here (rather than moving these three routes to an
+    admin-only prefix) so the public path stays exactly what
+    static/js/model-recommender.js already calls."""
+    if current_role(request) != "admin":
+        raise HTTPException(status_code=403, detail="admin only")
+
+
 class ChatMessage(BaseModel):
     role: str
     content: str
@@ -84,20 +101,23 @@ async def _llm_config_view() -> dict:
 
 
 @router.get("/llm")
-async def get_llm_config() -> dict:
+async def get_llm_config(request: Request) -> dict:
+    _require_admin(request)
     return {"success": True, "data": await _llm_config_view()}
 
 
 @router.post("/llm")
-async def set_llm_config(payload: LlmConfig) -> dict:
+async def set_llm_config(payload: LlmConfig, request: Request) -> dict:
     """Point the conversation LLM at any OpenAI-compatible endpoint (online or local)."""
+    _require_admin(request)
     await set_active_llm_config(payload.base_url, payload.api_key, payload.model)
     return {"success": True, "data": await _llm_config_view()}
 
 
 @router.post("/llm/reset")
-async def reset_llm_config() -> dict:
+async def reset_llm_config(request: Request) -> dict:
     """Turn off the conversation LLM (falls back to the built-in echo responder)."""
+    _require_admin(request)
     await reset_active_llm_config()
     return {"success": True, "data": await _llm_config_view()}
 
@@ -108,6 +128,23 @@ async def chat(
 ) -> dict:
     """Text chat with the configured conversation responder (LLM or echo)."""
     caller_id = current_user_id(request)
+
+    # Ownership check on an explicit ?session_id=: without this, any logged-in
+    # user could resume (read AND corrupt) another user's EXISTING session by
+    # guessing or brute-forcing its id -- session_store.exists()/.get_messages()
+    # below don't check who owns it. Same 404-on-mismatch rule as sessions.py's
+    # get_session (a non-owner can't distinguish "not yours" from "doesn't
+    # exist"); scope is None for admins (and for the dev-mode/no-auth fallback
+    # current_role() already applies), so they still see everything. A
+    # session_id that doesn't exist yet isn't an IDOR (there's nothing to
+    # read) and falls through to the existing create-on-first-use path below.
+    if session_id:
+        existing_sess = await session_store.get(session_id)
+        if existing_sess:
+            scope = _scope_user_id(request)
+            if scope is not None and existing_sess.get("user_id") != scope:
+                raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
+
     active_profile = profile_store.get(profile) if profile else None
     llm_base_url = (active_profile.llm.base_url or None) if (active_profile and active_profile.llm.base_url) else None
     llm_api_key = active_profile.llm.api_key if (active_profile and active_profile.llm.base_url) else None
@@ -171,7 +208,21 @@ async def chat(
         if session_id and await session_store.exists(session_id):
             stored = await session_store.get_messages(session_id)
         elif not await session_store.exists(sid):
-            await session_store.create(sid, profile_id=profile or "", user_id=active_profile.owner_id if active_profile else None)
+            # Caller first, profile owner as fallback -- mirrors session.py:312's
+            # WS session creation. Recording the PROFILE owner instead of the
+            # caller here was round-1's Critical: it 404'd every authenticated
+            # non-admin out of their own session on the very next turn, since
+            # the ownership check above compares against the caller, not the
+            # profile. `caller_id` is None (and this falls back to the profile
+            # owner, itself often None) only for the dev-mode/no-auth caller or
+            # an unauthenticated device -- those rows are created ownerless by
+            # construction, same as the pre-fix legacy rows; they are
+            # intentionally admin-only to resume (sessions.py's get_session),
+            # since there is no real owner to derive.
+            await session_store.create(
+                sid, profile_id=profile or "",
+                user_id=caller_id or (active_profile.owner_id if active_profile else None),
+            )
     except Exception as exc:  # noqa: BLE001 - session setup must not block the reply
         logger.warning("session setup failed for %s: %s", sid, exc)
         stored = []
@@ -282,6 +333,19 @@ async def conversation_stream(websocket: WebSocket) -> None:
         return
     await websocket.accept(subprotocol=ws_subprotocol(websocket))
     requested_sid = websocket.query_params.get("session_id")
+    # Same IDOR the HTTP /chat route guards against: `requested_sid` flows
+    # into `resume_sid` below and is consumed by ConversationSession.start()
+    # (services/conversation/session.py) with no ownership check, so anyone
+    # who could guess or observe another user's session id could resume
+    # (read + corrupt) their private conversation over the WS path too.
+    # Checked before resume_sid is used for anything.
+    if requested_sid and await ws_session_owner_denied(requested_sid, identity):
+        await websocket.send_json({
+            "event": "error",
+            "message": f"Session '{requested_sid}' not found",
+        })
+        await websocket.close()
+        return
     session_id = requested_sid or str(uuid.uuid4())
     q = websocket.query_params
 

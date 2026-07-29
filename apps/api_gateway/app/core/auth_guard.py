@@ -10,6 +10,9 @@ from app.core.actor import Actor
 from app.core.settings import settings
 from app.services.auth.tokens import verify_access_token
 
+# Reachable with no credentials at all. Everything NOT classified here or in
+# the user/admin tuples below is denied by default -- see dispatch().
+_PUBLIC_PATHS = frozenset({"/", "/health"})
 _STATIC_ALLOWLIST = {
     "/static/login.html",
     "/static/js/auth.js",
@@ -17,12 +20,30 @@ _STATIC_ALLOWLIST = {
     "/static/brand/favicon.svg",
     "/static/brand/logo-mark-light.svg",
 }
-# Unauthenticated device-side pairing handshake (the device itself has no login).
-_NO_AUTH_PREFIXES = ("/v1/devices/pair/init", "/v1/devices/pair/status")
+# Reachable with no credentials. Matched with _matches(), i.e. on a segment
+# boundary -- NOT a bare startswith. A bare startswith here would make a future
+# "/api/authz/..." mount silently public, which is precisely the bug class this
+# module's default-deny exists to kill.
+_NO_AUTH_PREFIXES = (
+    # Login/signup/refresh/logout: the only way to obtain a session in the first
+    # place, so it cannot itself require one.
+    "/api/auth",
+    # Device-side pairing handshake (the device itself has no login).
+    "/v1/devices/pair/init",
+    "/v1/devices/pair/status",
+)
 # Any logged-in session (admin or user).
 _USER_PREFIXES = (
     "/ui",
     "/static/",
+    # Live SSE transcript/TTS-result streams. These carry the actual content of
+    # a session (partial + final transcripts, synthesized audio urls); they were
+    # unauthenticated purely because nobody had listed them anywhere.
+    "/v1/events",
+    # Generated audio artifacts (StaticFiles mount, not a router). The ids are
+    # unguessable uuid4s, but "unguessable" is not "authenticated" -- a logged-in
+    # session is now the floor.
+    "/artifacts",
     "/v1/conversation",
     "/v1/livehost",
     "/v1/profiles",
@@ -51,11 +72,33 @@ _USER_PREFIXES = (
     "/v1/usage/me",
 )
 # role == "admin" required.
-_ADMIN_PREFIXES = ("/v1/system", "/v1/models", "/v1/users", "/v1/devices", "/v1/model_registry", "/v1/providers", "/v1/usage", "/v1/quotas")
+_ADMIN_PREFIXES = (
+    "/v1/system",
+    "/v1/models",
+    "/v1/users",
+    "/v1/devices",
+    "/v1/model_registry",
+    "/v1/providers",
+    "/v1/usage",
+    "/v1/quotas",
+    # The internal agent runbook: AGENTS.md + docs/api.md + the full API map,
+    # served as one plaintext bundle. Operator documentation, not a public page.
+    "/agents-docs",
+    # FastAPI's auto-generated API surface map. /docs also serves
+    # /docs/oauth2-redirect, which the segment-boundary match below covers.
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+)
 
 
 def _matches(path: str, prefixes: tuple[str, ...]) -> bool:
-    return any(path == prefix or path.startswith(prefix) for prefix in prefixes)
+    """Segment-aware prefix match.
+
+    A raw startswith would make `/v1/usage/metrics` match the `/v1/usage/me`
+    user carve-out and silently escape the admin rule it sits inside.
+    """
+    return any(path == prefix or path.startswith(prefix.rstrip("/") + "/") for prefix in prefixes)
 
 
 async def _bearer_actor(request: Request) -> "Actor | None":
@@ -88,7 +131,9 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
-        if path in _STATIC_ALLOWLIST or path.startswith("/api/auth") or _matches(path, _NO_AUTH_PREFIXES):
+        if path in _PUBLIC_PATHS:
+            return await call_next(request)
+        if path in _STATIC_ALLOWLIST or _matches(path, _NO_AUTH_PREFIXES):
             return await call_next(request)
 
         # "authentication chỉ dùng 1, không fallback" -- nếu request chào
@@ -119,6 +164,13 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
                 return JSONResponse({"success": False, "error": "admin only"}, status_code=403)
             return await call_next(request)
 
+        # Default-DENY. Anything not classified above is treated as at least
+        # user-level rather than public, so a newly mounted router that nobody
+        # remembered to classify fails closed instead of being served to the
+        # internet (which is exactly how /v1/events, /agents-docs, /artifacts
+        # and /openapi.json ended up unauthenticated).
+        if not user_id:
+            return self._unauthenticated(request)
         return await call_next(request)
 
     @staticmethod
@@ -139,6 +191,57 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
 class WsIdentity:
     user_id: str | None
     device_id: str | None
+    # True ONLY for the dev-mode short-circuit below (settings.auth_enabled is
+    # False): there is no way to prove ownership of anything in that mode, so
+    # a consumer like conversation.py's session-ownership check should treat
+    # it as fully unscoped, matching current_role()'s identical "no session
+    # role -> admin" dev-mode default used on the HTTP side. The legacy shared
+    # device_auth_token below ALSO resolves to user_id=None, but is a real,
+    # auth-enabled deployment with no way to derive an owner -- it must stay
+    # False here, or a caller holding that fleet-wide secret could read/
+    # corrupt any real user's session by id (round-1 review, I1).
+    unauthenticated: bool = False
+    # True ONLY when this identity came from a bearer token
+    # (Sec-WebSocket-Protocol). Mirrors _bearer_actor's documented invariant
+    # just below: a bearer caller always resolves to role="user", even for an
+    # admin account in the DB, so a web client can't escalate to admin just by
+    # holding a bearer token. Provenance marker only as of the `via_login`
+    # rewrite below (round-2 review): ws_session_owner_denied's admin bypass
+    # is now an ALLOW-list keyed on `via_login`, which a bearer identity
+    # never sets, so it's excluded from the bypass by construction rather
+    # than by anything checking this flag directly.
+    via_bearer: bool = False
+    # True ONLY when this identity came from a paired-device token
+    # (services.auth.devices.device_store), i.e. an ESP32/RPi that completed
+    # the pairing handshake. Same provenance-marker-only note as via_bearer
+    # above -- excluded from the admin bypass by the `via_login` allow-list
+    # (round-2 review), not by a dedicated `not via_device` check.
+    via_device: bool = False
+    # True ONLY when this identity came from the browser-cookie-session
+    # branch below (websocket.session.get("user_id")), i.e. an actual
+    # interactive login -- the ONE identity source that legitimately gets
+    # ws_session_owner_denied's admin-role DB-lookup bypass. Deliberately an
+    # ALLOW-list, not the deny-list this module used through two rounds of
+    # review (`not via_bearer`, then `... and not via_device`): a deny-list
+    # fails OPEN for every identity source added to resolve_ws_identity
+    # later -- whoever adds one must remember to both mint a new flag AND
+    # extend the deny-list, or the new source silently inherits the admin
+    # bypass. That's exactly how this bug class recurred twice already
+    # (bearer, then paired-device). Default False and set True ONLY at the
+    # cookie-session branch, so a future branch that forgets to set it is
+    # denied the bypass by construction instead of granted it by omission.
+    via_login: bool = False
+    # True ONLY when this identity came from the legacy shared
+    # device_auth_token fallback (a real, auth-enabled deployment with no
+    # per-device pairing yet). Purely a provenance marker, same as
+    # via_bearer/via_device -- this identity always has user_id=None, so
+    # it's already excluded from the admin bypass by the `identity.user_id
+    # and` guard in ws_session_owner_denied regardless of this flag. Gives
+    # that identity source an explicit positive marker instead of it being
+    # identifiable only as "user_id is None and not unauthenticated",
+    # previously documented in prose across two comment blocks (round-2
+    # review, minor).
+    via_fleet_token: bool = False
 
 
 async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
@@ -152,7 +255,7 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
     from app.services.auth.users import user_store
 
     if not settings.auth_enabled:
-        return WsIdentity(user_id=None, device_id=None)
+        return WsIdentity(user_id=None, device_id=None, unauthenticated=True)
 
     bearer = _bearer_from_subprotocols(websocket)
     if bearer:
@@ -162,14 +265,14 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
         user = await user_store.get_by_id(user_id)
         if user is None or user.disabled:
             return None
-        return WsIdentity(user_id=user.id, device_id=None)
+        return WsIdentity(user_id=user.id, device_id=None, via_bearer=True)
 
     session_user_id = websocket.session.get("user_id")
     if session_user_id:
         user = await user_store.get_by_id(session_user_id)
         if user is None or user.disabled:
             return None
-        return WsIdentity(user_id=user.id, device_id=None)
+        return WsIdentity(user_id=user.id, device_id=None, via_login=True)
 
     token = websocket.query_params.get("device_token")
     if not token:
@@ -183,10 +286,10 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
         if owner is None or owner.disabled:
             return None
         await device_store.touch_last_seen(device.id)
-        return WsIdentity(user_id=device.user_id, device_id=device.id)
+        return WsIdentity(user_id=device.user_id, device_id=device.id, via_device=True)
 
     if settings.device_auth_token and hmac.compare_digest(token, settings.device_auth_token):
-        return WsIdentity(user_id=None, device_id=None)
+        return WsIdentity(user_id=None, device_id=None, via_fleet_token=True)
     return None
 
 
@@ -204,3 +307,51 @@ def ws_subprotocol(websocket: WebSocket) -> str | None:
     """Subprotocol mà server phải echo lại khi accept. Trình duyệt đóng kết
     nối nếu server không echo đúng cái nó chào."""
     return "bearer" if _bearer_from_subprotocols(websocket) else None
+
+
+async def ws_session_owner_denied(session_id: str, identity: WsIdentity) -> bool:
+    """True if `session_id` already exists and is not owned by the caller.
+
+    Shared by every WS route that lets a caller resume a session by id --
+    conversation.py's /v1/conversation/stream and lugo.py's /v1/lugo/stream
+    both resolve identity via resolve_ws_identity and take a caller-supplied
+    session id straight into resume_sid; neither ConversationSession.start()
+    nor session_store checks ownership on its own. Mirrors sessions.py's
+    get_session/_scope_user_id, adapted for the ways a WS identity can
+    diverge from an HTTP one:
+
+    - `identity.unauthenticated` (resolve_ws_identity's dev-mode
+      short-circuit when auth is disabled) is unscoped/full-access, matching
+      current_role()'s identical dev-mode default. The legacy shared
+      device_auth_token ALSO resolves to `user_id=None`, but is not
+      `unauthenticated` -- it falls through to the plain identity-vs-owner
+      comparison below like any other identity, so it can only ever match an
+      ownerless session, never a real user's (round-1 review, I1).
+    - The admin-role DB lookup is an ALLOW-list keyed on `identity.via_login`
+      -- ONLY the browser-cookie-session branch of resolve_ws_identity sets
+      it -- rather than a deny-list of excluded sources. A deny-list
+      (`not identity.via_bearer`, then `... and not identity.via_device`,
+      this function's shape through two rounds of review) fails OPEN for
+      every identity source added to resolve_ws_identity later: adding one
+      means remembering to both mint a new flag AND extend the deny-list, or
+      the new source silently inherits the admin bypass -- exactly how this
+      recurred twice already (bearer identities had the bypass until
+      round-1 review's I2; paired-device identities had it until round-2
+      review). The allow-list fails CLOSED instead: a new branch that
+      forgets to set `via_login=True` is denied the bypass by construction,
+      never granted it by omission.
+
+    A session that doesn't exist yet is not denied -- it's the normal "start
+    a fresh session under this id" path."""
+    if identity.unauthenticated:
+        return False
+    if identity.user_id and identity.via_login:
+        from app.services.auth.users import user_store
+
+        caller = await user_store.get_by_id(identity.user_id)
+        if caller is not None and caller.role == "admin":
+            return False
+    from app.services.history.store import session_store
+
+    sess = await session_store.get(session_id)
+    return bool(sess and sess.get("user_id") != identity.user_id)

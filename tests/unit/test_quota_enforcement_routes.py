@@ -48,6 +48,12 @@ class _StubTTS(TTSProvider):
             duration_seconds=0.1, text=payload.text,
         )
 
+    async def render_audio(self, payload) -> tuple[bytes, str]:
+        # /v1/tts/synthesize now calls this bytes-returning seam directly
+        # (see app.services.tts.base.TTSProvider.render_audio). Must be a
+        # real WAV -- the route computes duration via wav_duration_seconds.
+        return pcm16_to_wav_bytes(b"\x00\x00" * 10, sample_rate=24000), "audio/wav"
+
 
 def _wav_bytes(ms: int = 300) -> bytes:
     n = int(SR * ms / 1000)
