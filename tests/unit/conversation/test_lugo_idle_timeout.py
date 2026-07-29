@@ -107,9 +107,6 @@ def test_idle_countdown_starts_after_the_bot_finishes(monkeypatch):
     class _SlowTTS(TTSProvider):
         name = "stub-slow-tts"
 
-        async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
-            raise NotImplementedError("this stub only exercises render_audio()")
-
         async def render_audio(self, payload) -> tuple[bytes, str]:
             await asyncio.sleep(1.5)  # turn takes longer than idle_timeout_s=1
             wav = pcm16_to_wav_bytes(b"\x00\x00" * 2400, sample_rate=24000)
@@ -158,9 +155,6 @@ def test_idle_speaks_farewell_before_goodbye(monkeypatch):
 
     class _FarewellTTS(TTSProvider):
         name = "stub-fw-tts"
-
-        async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
-            raise NotImplementedError("this stub only exercises render_audio()")
 
         async def render_audio(self, payload) -> tuple[bytes, str]:
             wav = pcm16_to_wav_bytes(b"\x00\x00" * 2400, sample_rate=24000)

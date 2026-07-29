@@ -24,8 +24,8 @@ scoped to "the gate doesn't block the happy path".
 
 import uuid
 
+from app.core.audio import pcm16_to_wav_bytes
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
 from app.services.db.engine import db_session
 from app.services.db.models import UsageEvent
@@ -54,9 +54,8 @@ class _StubSTT(STTProvider):
 class _StubTTS(TTSProvider):
     name = "stub-quota-tts"
 
-    async def synthesize(self, payload) -> TTSResult:
-        return TTSResult(engine=self.name, sample_rate=24000,
-                         audio_url="/artifacts/x.wav", duration_seconds=0.1, text=payload.text)
+    async def render_audio(self, payload) -> tuple[bytes, str]:
+        return pcm16_to_wav_bytes(b"\x00\x00" * 2400, sample_rate=24000), "audio/wav"
 
 
 def _cfg(**over):
@@ -150,6 +149,12 @@ async def test_turn_runs_normally_when_under_quota(monkeypatch, tmp_path):
         assert "user_transcript" in names
         assert "turn_done" in names
         assert "error" not in names
+        # The real synthesis path must actually run here, not silently degrade
+        # to a tts_error: _StubTTS.render_audio() returns real WAV bytes, so
+        # the turn should produce audio like any working engine would.
+        assert "tts_error" not in names
+        assert "audio_start" in names
+        assert "audio_end" in names
     finally:
         stt_service.providers.pop("stub-quota-stt", None)
         tts_service.providers.pop("stub-quota-tts", None)

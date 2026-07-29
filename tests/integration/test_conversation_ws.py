@@ -33,18 +33,12 @@ class _StubSTT(STTProvider):
 class _StubTTS(TTSProvider):
     name = "stub-conv-tts"
 
-    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
-        raise NotImplementedError("this stub only exercises render_audio()")
-
     async def render_audio(self, payload) -> tuple[bytes, str]:
         return _silence_wav(), "audio/wav"
 
 
 class _SlowTTS(TTSProvider):
     name = "slow-conv-tts"
-
-    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
-        raise NotImplementedError("this stub only exercises render_audio()")
 
     async def render_audio(self, payload) -> tuple[bytes, str]:
         await asyncio.sleep(0.5)  # window for barge-in

@@ -17,7 +17,6 @@ from fastapi.testclient import TestClient
 from app.core.audio import pcm16_to_wav_bytes
 from app.main import app
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
 from app.services.db.engine import db_session
 from app.services.db.models import UsageEvent
 from app.services.stt.base import STTProvider
@@ -40,12 +39,6 @@ class _StubSTT(STTProvider):
 
 class _StubTTS(TTSProvider):
     name = "stub-meter-route-tts"
-
-    async def synthesize(self, payload) -> TTSResult:
-        return TTSResult(
-            engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
-            duration_seconds=0.1, text=payload.text,
-        )
 
     async def render_audio(self, payload) -> tuple[bytes, str]:
         # /v1/tts/synthesize now calls this bytes-returning seam directly

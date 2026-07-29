@@ -27,9 +27,6 @@ class _BoomTTS(TTSProvider):
     """Every render_audio attempt raises -- simulates a misconfigured/down TTS engine."""
     name = "stub-ttsfail-tts"
 
-    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
-        raise NotImplementedError("this stub only exercises render_audio()")
-
     async def render_audio(self, payload) -> tuple[bytes, str]:
         raise RuntimeError("tts engine exploded")
 

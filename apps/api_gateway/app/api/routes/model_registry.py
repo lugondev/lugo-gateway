@@ -342,7 +342,7 @@ async def create_entry(payload: CreateEntryRequest, request: Request) -> dict:
                 )
             else:
                 provider = tts_service.get_provider(payload.engine)
-            await provider.synthesize(TTSRequest(text=payload.sample_text, engine=payload.engine))
+            await provider.render_audio(TTSRequest(text=payload.sample_text, engine=payload.engine))
         elif payload.kind == "llm":
             responder = OpenAICompatResponder(
                 base_url=eff_base_url, api_key=eff_api_key, model=payload.model_id,

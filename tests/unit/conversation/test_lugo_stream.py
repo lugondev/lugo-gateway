@@ -62,9 +62,6 @@ class _StubTTS(TTSProvider):
     # audio_start/audio_end, hanging the test's receive loop.
     name = "stub-lugo-tts"
 
-    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
-        raise NotImplementedError("this stub only exercises render_audio()")
-
     async def render_audio(self, payload) -> tuple[bytes, str]:
         wav = pcm16_to_wav_bytes(b"\x00\x00" * 2400, sample_rate=24000)  # 100ms silence
         return wav, "audio/wav"

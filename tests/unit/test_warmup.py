@@ -93,13 +93,13 @@ def test_is_ready_true_immediately_for_provider_without_warm():
 def test_is_ready_true_for_tts_provider_using_inherited_noop_warm():
     """TTSProvider.warm() defaults to a no-op for engines with nothing to load
     (e.g. mocks, remote APIs) — those should never report as 'cold'."""
-    from app.schemas.tts import TTSRequest, TTSResult
+    from app.schemas.tts import TTSRequest
     from app.services.tts.base import TTSProvider
 
     class _NoopWarmTTS(TTSProvider):
         name = "noop-warm-tts"
 
-        async def synthesize(self, payload: TTSRequest) -> TTSResult:
+        async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
             raise NotImplementedError
 
     provider = _NoopWarmTTS()
@@ -108,13 +108,13 @@ def test_is_ready_true_for_tts_provider_using_inherited_noop_warm():
 
 @pytest.mark.asyncio
 async def test_warm_providers_skips_tts_provider_with_inherited_noop_warm(monkeypatch):
-    from app.schemas.tts import TTSRequest, TTSResult
+    from app.schemas.tts import TTSRequest
     from app.services.tts.base import TTSProvider
 
     class _NoopWarmTTS(TTSProvider):
         name = "noop-warm-tts-2"
 
-        async def synthesize(self, payload: TTSRequest) -> TTSResult:
+        async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
             raise NotImplementedError
 
     provider = _NoopWarmTTS()

@@ -91,7 +91,7 @@ async def test_render_failure_raises_provider_error_no_silent_fallback():
             raise RuntimeError("model not loaded")
 
     with pytest.raises(ProviderError):
-        await _BrokenTTS().synthesize(TTSRequest(text="hi"))
+        await _BrokenTTS().render_audio(TTSRequest(text="hi"))
 
 
 def test_lists_edge_tts():
@@ -135,7 +135,7 @@ def _install_fake_edge_tts(monkeypatch, communicate_cls):
     monkeypatch.setitem(sys.modules, "edge_tts", fake_mod)
 
 
-async def test_edge_tts_synthesize_wraps_stream_exception_as_provider_error(monkeypatch):
+async def test_edge_tts_render_audio_wraps_stream_exception_as_provider_error(monkeypatch):
     class _BrokenCommunicate:
         def __init__(self, *args, **kwargs):
             pass
@@ -147,10 +147,10 @@ async def test_edge_tts_synthesize_wraps_stream_exception_as_provider_error(monk
     _install_fake_edge_tts(monkeypatch, _BrokenCommunicate)
 
     with pytest.raises(ProviderError):
-        await EdgeTTSProvider().synthesize(TTSRequest(text="hi"))
+        await EdgeTTSProvider().render_audio(TTSRequest(text="hi"))
 
 
-async def test_edge_tts_synthesize_raises_on_no_audio_received(monkeypatch):
+async def test_edge_tts_render_audio_raises_on_no_audio_received(monkeypatch):
     class _SilentCommunicate:
         def __init__(self, *args, **kwargs):
             pass
@@ -163,10 +163,10 @@ async def test_edge_tts_synthesize_raises_on_no_audio_received(monkeypatch):
     _install_fake_edge_tts(monkeypatch, _SilentCommunicate)
 
     with pytest.raises(ProviderError, match="no audio received"):
-        await EdgeTTSProvider().synthesize(TTSRequest(text="hi"))
+        await EdgeTTSProvider().render_audio(TTSRequest(text="hi"))
 
 
-async def test_edge_tts_synthesize_retries_and_succeeds_after_transient_failure(monkeypatch):
+async def test_edge_tts_render_audio_retries_and_succeeds_after_transient_failure(monkeypatch):
     from app.services.tts.providers import edge_tts_provider
 
     monkeypatch.setattr(edge_tts_provider, "_RETRY_DELAY_SECONDS", 0)
@@ -183,13 +183,14 @@ async def test_edge_tts_synthesize_retries_and_succeeds_after_transient_failure(
 
     _install_fake_edge_tts(monkeypatch, _FlakyCommunicate)
 
-    result = await EdgeTTSProvider().synthesize(TTSRequest(text="hi"))
+    audio_bytes, media_type = await EdgeTTSProvider().render_audio(TTSRequest(text="hi"))
 
     assert len(attempts) == 2
-    assert result.engine == "edge_tts"
+    assert media_type == "audio/mpeg"
+    assert audio_bytes == b"x" * 100
 
 
-async def test_edge_tts_synthesize_gives_up_after_max_attempts(monkeypatch):
+async def test_edge_tts_render_audio_gives_up_after_max_attempts(monkeypatch):
     from app.services.tts.providers import edge_tts_provider
 
     monkeypatch.setattr(edge_tts_provider, "_RETRY_DELAY_SECONDS", 0)
@@ -206,7 +207,7 @@ async def test_edge_tts_synthesize_gives_up_after_max_attempts(monkeypatch):
     _install_fake_edge_tts(monkeypatch, _AlwaysBrokenCommunicate)
 
     with pytest.raises(ProviderError, match="connection reset"):
-        await EdgeTTSProvider().synthesize(TTSRequest(text="hi"))
+        await EdgeTTSProvider().render_audio(TTSRequest(text="hi"))
 
     assert len(attempts) == edge_tts_provider._MAX_ATTEMPTS
 
@@ -332,10 +333,12 @@ async def test_qwen3_tts_custom_voice_path_used_when_no_ref_audio(monkeypatch):
 
     _install_fake_qwen_tts(monkeypatch, _FakeQwen3TTSModel)
 
-    result = await tts_service.get_provider("qwen3_tts_0_6b").synthesize(TTSRequest(text="xin chào"))
+    provider = tts_service.get_provider("qwen3_tts_0_6b")
+    audio_bytes, media_type = await provider.render_audio(TTSRequest(text="xin chào"))
 
-    assert result.engine == "qwen3_tts_0_6b"
-    assert result.sample_rate == 24000
+    assert media_type == "audio/wav"
+    assert audio_bytes[:4] == b"RIFF"
+    assert provider.sample_rate == 24000
     assert calls["checkpoint_id"] == "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
     assert calls["custom_voice"] == ("xin chào", "Auto", "Vivian", None)
 
@@ -360,9 +363,12 @@ async def test_qwen3_tts_voice_clone_path_used_when_ref_audio_present(monkeypatc
     _install_fake_qwen_tts(monkeypatch, _FakeQwen3TTSModel)
 
     payload = TTSRequest(text="hi", ref_audio_path="artifacts/refs/ref.wav", ref_text="reference text")
-    result = await tts_service.get_provider("qwen3_tts_1_7b").synthesize(payload)
+    provider = tts_service.get_provider("qwen3_tts_1_7b")
+    audio_bytes, media_type = await provider.render_audio(payload)
 
-    assert result.sample_rate == 24000
+    assert media_type == "audio/wav"
+    assert audio_bytes[:4] == b"RIFF"
+    assert provider.sample_rate == 24000
     assert calls["checkpoint_id"] == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     assert calls["voice_clone"] == ("hi", "Auto", "artifacts/refs/ref.wav", "reference text", False)
 
@@ -386,6 +392,6 @@ async def test_qwen3_tts_custom_voice_honors_explicit_voice_and_instruct(monkeyp
     _install_fake_qwen_tts(monkeypatch, _FakeQwen3TTSModel)
 
     payload = TTSRequest(text="hello", voice="Ryan", instruct="cheerful", language="English")
-    await tts_service.get_provider("qwen3_tts_0_6b").synthesize(payload)
+    await tts_service.get_provider("qwen3_tts_0_6b").render_audio(payload)
 
     assert calls["custom_voice"] == ("hello", "English", "Ryan", "cheerful")

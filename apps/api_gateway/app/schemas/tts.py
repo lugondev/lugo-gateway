@@ -60,13 +60,3 @@ class TTSRequest(BaseModel):
         if not artifact_store.contains(v):
             raise ValueError("ref_audio_path must be inside the artifacts directory")
         return v
-
-
-class TTSResult(BaseModel):
-    engine: str
-    sample_rate: int
-    audio_url: str | None = None
-    duration_seconds: float | None = None  # length of the produced audio
-    process_seconds: float | None = None  # wall-clock time spent synthesizing it
-    job_id: str | None = None
-    text: str | None = None

@@ -90,12 +90,7 @@ def wav_bytes_to_pcm16(wav_bytes: bytes, target_sr: int) -> bytes:
     soundfile/libsndfile, which decodes all of those already -- this is what
     lets e.g. an mp3 uploaded through the admin STT test page just work instead
     of needing a clear rejection or a manual conversion step. Raises
-    ``soundfile.LibsndfileError`` for bytes neither reader can make sense of.
-
-    The single implementation behind both this and ``wav_file_to_pcm16`` below --
-    the latter exists only because some callers have a path (an artifact on
-    disk) rather than bytes already in hand (e.g. real synthesis output on the
-    Opus hot path, which never touches disk)."""
+    ``soundfile.LibsndfileError`` for bytes neither reader can make sense of."""
     try:
         with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
             sr = wav_file.getframerate()
@@ -118,12 +113,6 @@ def wav_bytes_to_pcm16(wav_bytes: bytes, target_sr: int) -> bytes:
         g = gcd(sr, target_sr)
         samples = resample_poly(samples, target_sr // g, sr // g)
     return (np.clip(samples, -1.0, 1.0) * 32767).astype("<i2").tobytes()
-
-
-def wav_file_to_pcm16(path: str, target_sr: int) -> bytes:
-    """Read a WAV file, downmix to mono, resample to target_sr, return PCM16 bytes."""
-    with open(path, "rb") as f:
-        return wav_bytes_to_pcm16(f.read(), target_sr)
 
 
 # ---------------------------------------------------------------- preprocessing

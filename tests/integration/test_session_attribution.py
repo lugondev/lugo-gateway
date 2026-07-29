@@ -52,9 +52,6 @@ class _StubSTT(STTProvider):
 class _StubTTS(TTSProvider):
     name = "stub-attrib-tts"
 
-    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
-        raise NotImplementedError("this stub only exercises render_audio()")
-
     async def render_audio(self, payload) -> tuple[bytes, str]:
         return _silence_wav(), "audio/wav"
 

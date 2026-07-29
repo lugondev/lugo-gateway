@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 from app.core.audio import pcm16_to_wav_bytes
 from app.core.settings import settings
 from app.main import app
-from app.schemas.tts import TTSResult
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
 from app.services.tts.base import TTSProvider
@@ -68,8 +67,8 @@ class _FailStub(STTProvider):
 class _TtsOkStub(TTSProvider):
     name = "stub-tts-registry-ok"
 
-    async def synthesize(self, payload):
-        return TTSResult(engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav", text=payload.text)
+    async def render_audio(self, payload) -> tuple[bytes, str]:
+        return pcm16_to_wav_bytes(b"\x00\x00" * 100, sample_rate=24000), "audio/wav"
 
 
 @pytest.fixture(autouse=True)
@@ -509,12 +508,11 @@ def test_tts_entry_keeps_its_base_url(client, monkeypatch):
     from app.services.tts.providers import http_tts_provider
 
     async def fake_render(self, payload):
-        # Must be a real WAV container, not just the "RIFFWAVEDATA" placeholder:
-        # RenderingTTSProvider.synthesize() runs wav_duration_seconds() on this
-        # return value, which raises wave.Error on anything that isn't a real
-        # RIFF/WAVE file -- masking the base_url regression behind an unrelated
-        # 400 ("not a WAVE file") instead of exercising the code path this test
-        # is meant to pin.
+        # Must be a real WAV container, not just a "RIFFWAVEDATA" placeholder --
+        # anything downstream that tries to decode it (e.g. wav_duration_seconds)
+        # would otherwise raise wave.Error, masking the base_url regression
+        # behind an unrelated decode failure instead of exercising the code
+        # path this test is meant to pin.
         return pcm16_to_wav_bytes(b"\x00\x00" * 100, sample_rate=24000)
 
     monkeypatch.setattr(http_tts_provider.HttpTtsProvider, "_render_wav", fake_render)

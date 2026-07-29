@@ -1,25 +1,15 @@
-"""Local filesystem artifact store for generated audio.
+"""Local filesystem store for voice-clone reference audio.
 
-This is the foundation implementation. The architecture allows swapping this
-for an S3-compatible object store later without touching callers.
+Synthesized audio is never persisted -- TTS providers return bytes
+(`render_audio`) that go straight out over the request or socket. What lives
+here is user-uploaded reference audio for voice cloning, plus OmniVoice's
+pinned voice reference, and it is never served over HTTP.
 """
 
-import asyncio
-import logging
-import re
-import time
 import uuid
 from pathlib import Path
 
 from app.core.settings import settings
-
-logger = logging.getLogger(__name__)
-
-# Only files this store itself created (uuid4().hex + extension) are ever
-# pruned. The directory is shared: OmniVoice keeps its pinned voice reference
-# (_omnivoice_voice_ref.wav -- deleting it makes the cloned voice change) and
-# its open sidecar log here, and operators may drop files in too.
-_ARTIFACT_FILENAME = re.compile(r"^[0-9a-f]{32}\.(wav|mp3)$")
 
 
 class ArtifactStore:
@@ -28,27 +18,12 @@ class ArtifactStore:
         self.url_prefix = url_prefix.rstrip("/")
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
-    def save_wav(self, data: bytes) -> tuple[str, str]:
-        """Persist WAV bytes; return (artifact_id, public_url)."""
-        artifact_id = uuid.uuid4().hex
-        filename = f"{artifact_id}.wav"
-        (self.base_dir / filename).write_bytes(data)
-        return artifact_id, f"{self.url_prefix}/{filename}"
-
-    def save_mp3(self, data: bytes) -> tuple[str, str]:
-        """Persist MP3 bytes; return (artifact_id, public_url)."""
-        artifact_id = uuid.uuid4().hex
-        filename = f"{artifact_id}.mp3"
-        (self.base_dir / filename).write_bytes(data)
-        return artifact_id, f"{self.url_prefix}/{filename}"
-
     def save_reference_audio(self, data: bytes) -> tuple[str, str]:
         """Persist a voice-clone reference clip; return (artifact_id, public_url).
 
-        Prefixed `ref_` (unlike the bare uuid4-hex names save_wav/save_mp3
-        use) so it never matches _ARTIFACT_FILENAME and is never swept up by
-        prune() -- the same protection OmniVoice's pinned reference already
-        relies on, see the module docstring above."""
+        Prefixed `ref_` so it's clearly distinguished from OmniVoice's own
+        pinned reference file (`_omnivoice_voice_ref.wav`) sharing this
+        directory -- see the module docstring above."""
         artifact_id = f"ref_{uuid.uuid4().hex}"
         filename = f"{artifact_id}.wav"
         (self.base_dir / filename).write_bytes(data)
@@ -74,48 +49,12 @@ class ArtifactStore:
         return resolved.is_relative_to(self.base_dir.resolve())
 
     def path_for(self, artifact_id: str) -> Path:
-        """Resolve an id from save_wav/save_mp3/save_reference_audio back to
-        its file on disk."""
+        """Resolve an id from save_reference_audio back to its file on disk."""
         for ext in ("wav", "mp3"):
             path = self.base_dir / f"{artifact_id}.{ext}"
             if path.exists():
                 return path
         raise FileNotFoundError(artifact_id)
-
-    def prune(self, max_age_s: float) -> int:
-        """Delete artifacts older than `max_age_s`; return how many were removed.
-
-        Every synthesized sentence writes a file here and nothing else ever
-        deleted them, so an always-on deployment grew without bound. Blocking
-        directory walk -- call via `asyncio.to_thread` from async code (see
-        `prune_loop`)."""
-        cutoff = time.time() - max_age_s
-        removed = 0
-        for path in self.base_dir.iterdir():
-            if not _ARTIFACT_FILENAME.match(path.name):
-                continue
-            try:
-                if path.stat().st_mtime < cutoff:
-                    path.unlink()
-                    removed += 1
-            except OSError:
-                # Raced with a concurrent delete/replace -- skip, next run gets it.
-                continue
-        return removed
-
-
-async def prune_loop(store: ArtifactStore, max_age_s: float, interval_s: float) -> None:
-    """Periodically prune old artifacts. Sleeps BEFORE the first prune so that
-    merely starting the app (including test lifespans pointed at the real
-    artifacts dir) never deletes anything by itself."""
-    while True:
-        await asyncio.sleep(interval_s)
-        try:
-            removed = await asyncio.to_thread(store.prune, max_age_s)
-            if removed:
-                logger.info("artifact prune: removed %d files older than %.0fh", removed, max_age_s / 3600)
-        except Exception:  # noqa: BLE001 - the janitor must survive any single failure
-            logger.exception("artifact prune failed; retrying next interval")
 
 
 artifact_store = ArtifactStore(settings.artifacts_dir_resolved)

@@ -8,12 +8,12 @@ that catches the ref_audio_path-containment / any-other-construction-failure
 per-sentence ``tts_error`` degrade instead of raising and unwinding the whole
 turn (which would swallow already-generated response text).
 
-Deliberately narrow: the provider call (`.synthesize()` / `.render_wav()`),
+Deliberately narrow: the provider call (`.render_audio()` / `.render_wav()`),
 usage metering, opus encode, and pacing loop are each route's OWN
 responsibility and stay exactly where they are -- session.py's global-clock
 pacer differs from livehost's per-sentence pacer, and
 tests/unit/test_paid_call_site_inventory.py pins the paid call sites
-(`.synthesize()` et al.) to their current files. This helper never touches
+(`.render_audio()` et al.) to their current files. This helper never touches
 either.
 """
 

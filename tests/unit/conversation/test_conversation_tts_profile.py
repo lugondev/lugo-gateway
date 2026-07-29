@@ -37,9 +37,6 @@ class _RecordingTTS(TTSProvider):
     def __init__(self) -> None:
         self.calls: list = []
 
-    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
-        raise NotImplementedError("this stub only exercises render_audio()")
-
     async def render_audio(self, payload) -> tuple[bytes, str]:
         self.calls.append(payload)
         return _silence_wav(), "audio/wav"

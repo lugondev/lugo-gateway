@@ -10,8 +10,7 @@ import asyncio
 
 from app.core.deps import module_available
 from app.core.errors import ProviderError
-from app.schemas.tts import TTSRequest, TTSResult
-from app.services.artifacts import artifact_store
+from app.schemas.tts import TTSRequest
 from app.services.tts.base import TTSProvider
 
 _SAMPLE_RATE = 24000
@@ -59,12 +58,7 @@ class EdgeTTSProvider(TTSProvider):
         return f"{round((speed - 1) * 100):+d}%"
 
     async def _render_mp3(self, payload: TTSRequest) -> bytes:
-        """Real synthesis -> MP3 bytes, no artifact side effect.
-
-        Split out of synthesize() so render_audio() (the bytes-returning HTTP
-        seam) and synthesize() (the artifact-saving stream-job path) share the
-        same generation logic.
-        """
+        """Real synthesis -> MP3 bytes, no artifact side effect."""
         try:
             import edge_tts
         except ImportError as exc:
@@ -102,15 +96,3 @@ class EdgeTTSProvider(TTSProvider):
     async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
         mp3_bytes = await self._render_mp3(payload)
         return mp3_bytes, "audio/mpeg"
-
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:
-        mp3_bytes = await self._render_mp3(payload)
-        _, audio_url = artifact_store.save_mp3(mp3_bytes)
-
-        return TTSResult(
-            engine=self.name,
-            sample_rate=_SAMPLE_RATE,
-            audio_url=audio_url,
-            duration_seconds=round(_estimate_duration_seconds(mp3_bytes), 3),
-            text=payload.text,
-        )

@@ -35,7 +35,6 @@ from sqlalchemy import select
 from app.core.audio import pcm16_to_wav_bytes
 from app.main import app
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
 from app.services.db.engine import db_session, init_db
 from app.services.db.models import UsageEvent
 from app.services.stt.base import STTProvider
@@ -74,10 +73,6 @@ class _StubTTS(TTSProvider):
 
     def available(self) -> bool:
         return True
-
-    async def synthesize(self, request) -> TTSResult:
-        return TTSResult(audio_url="/artifacts/x.wav", duration_seconds=0.1,
-                         sample_rate=16000, engine=self.name)
 
     async def render_audio(self, request) -> tuple[bytes, str]:
         # /v1/tts/synthesize now calls this bytes-returning seam directly

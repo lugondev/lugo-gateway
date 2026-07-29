@@ -34,7 +34,7 @@ APP = Path(__file__).resolve().parents[2] / "apps" / "api_gateway" / "app"
 # method cannot become invisible to this gate just by nobody remembering to
 # widen a hardcoded list.
 _PROVIDER_METHODS = {
-    "transcribe_bytes", "synthesize", "reply_stream", "reply", "open_stream",
+    "transcribe_bytes", "reply_stream", "reply", "open_stream",
     "embed_texts", "embed_texts_with_usage", "render_wav", "render_audio",
 }
 
@@ -134,10 +134,10 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "tests/unit/conversation/test_session_usage_metering.py",
     ),
     ("services/tts/base.py", "render_wav"): (
-        2, "covered-by-caller",
-        "the real-synthesis step inside RenderingTTSProvider.synthesize() and "
-        "RenderingTTSProvider.render_audio() (Task 7's bytes-returning seam); "
-        "every caller of synthesize()/render_audio() records a row for that "
+        1, "covered-by-caller",
+        "the real-synthesis step inside RenderingTTSProvider.render_audio() "
+        "(the only bytes-returning seam left after Task 4 deleted "
+        "synthesize()); every caller of render_audio() records a row for that "
         "call, so metering here would double-count",
         "tests/unit/tts/test_tts_render_seam.py",
     ),
@@ -177,10 +177,11 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "quota could not validate the provider needed to fix it",
         "tests/unit/model_registry/test_model_registry_test_call_metering.py",
     ),
-    ("api/routes/model_registry.py", "synthesize"): (
+    ("api/routes/model_registry.py", "render_audio"): (
         1, "exempt",
         "add-time credential test; metered but never gated, same as "
-        "transcribe_bytes above",
+        "transcribe_bytes above -- Task 4 (drop-audio-artifacts) moved this "
+        "off synthesize() (deleted) onto the bytes-returning seam",
         "tests/unit/model_registry/test_model_registry_test_call_metering.py",
     ),
     ("api/routes/model_registry.py", "reply"): (
@@ -372,12 +373,12 @@ def test_scanner_finds_a_call_whose_argument_is_a_multiline_triple_quoted_string
     """A real call site does not stop being real just because one of its
     arguments happens to be a triple-quoted string spanning several lines."""
     (tmp_path / "caller.py").write_text(
-        'result = await provider.synthesize("""multi\n'
+        'result = await provider.render_audio("""multi\n'
         "line prompt\n"
         'goes here""")\n'
     )
     found = _found_call_sites(tmp_path)
-    assert ("caller.py", "synthesize") in found
+    assert ("caller.py", "render_audio") in found
 
 
 def test_scanner_finds_code_after_a_closing_delimiter_on_the_same_line(tmp_path):
@@ -386,10 +387,10 @@ def test_scanner_finds_code_after_a_closing_delimiter_on_the_same_line(tmp_path)
     (tmp_path / "caller.py").write_text(
         '"""\n'
         "docstring\n"
-        '"""; return provider.synthesize(x)\n'
+        '"""; return provider.render_audio(x)\n'
     )
     found = _found_call_sites(tmp_path)
-    assert ("caller.py", "synthesize") in found
+    assert ("caller.py", "render_audio") in found
 
 
 def test_scanner_does_not_mistake_docstring_prose_for_a_call(tmp_path):
@@ -399,7 +400,7 @@ def test_scanner_does_not_mistake_docstring_prose_for_a_call(tmp_path):
         "def f():\n"
         '    """This reply (looks like a call) but is not.\n'
         "\n"
-        "    Still just prose about synthesize(x) in here.\n"
+        "    Still just prose about render_audio(x) in here.\n"
         '    """\n'
         "    return 1\n"
     )
@@ -411,16 +412,16 @@ def test_scanner_finds_a_call_near_a_string_with_an_apostrophe(tmp_path):
     """A stray apostrophe in a nearby ordinary string must not be mistaken for
     the start of a triple-quoted block and swallow the real call after it."""
     (tmp_path / "caller.py").write_text(
-        "text = \"it's fine\"\n" "await provider.synthesize(text)\n"
+        "text = \"it's fine\"\n" "await provider.render_audio(text)\n"
     )
     found = _found_call_sites(tmp_path)
-    assert ("caller.py", "synthesize") in found
+    assert ("caller.py", "render_audio") in found
 
 
 def test_scanner_skips_def_lines_and_comments(tmp_path):
     (tmp_path / "caller.py").write_text(
-        "async def synthesize(self, payload):\n"
-        "    # await provider.synthesize(payload) -- not a real call\n"
+        "async def render_audio(self, payload):\n"
+        "    # await provider.render_audio(payload) -- not a real call\n"
         "    return None\n"
     )
     found = _found_call_sites(tmp_path)
@@ -437,10 +438,10 @@ def test_scanner_finds_a_call_after_a_string_containing_a_literal_triple_quote(
     this mistake because it parses the real grammar."""
     (tmp_path / "caller.py").write_text(
         "x = 'contains \"\"\" literally'\n"
-        "await provider.synthesize(payload)\n"
+        "await provider.render_audio(payload)\n"
     )
     found = _found_call_sites(tmp_path)
-    assert ("caller.py", "synthesize") in found
+    assert ("caller.py", "render_audio") in found
 
 
 def test_scanner_finds_a_call_written_across_multiple_lines(tmp_path):
@@ -449,12 +450,12 @@ def test_scanner_finds_a_call_written_across_multiple_lines(tmp_path):
     line, so this can never be a blind spot the way a line-oriented pattern
     could be."""
     (tmp_path / "caller.py").write_text(
-        "provider.synthesize(\n"
+        "provider.render_audio(\n"
         "    payload,\n"
         ")\n"
     )
     found = _found_call_sites(tmp_path)
-    assert ("caller.py", "synthesize") in found
+    assert ("caller.py", "render_audio") in found
 
 
 def test_every_classification_names_a_test_that_exists_and_is_about_this_call():

@@ -50,9 +50,6 @@ class _StubTTS(TTSProvider):
         # call that happened and went unrecorded is the bug being closed.
         self.calls: list[str] = []
 
-    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
-        raise NotImplementedError("this stub only exercises render_audio()")
-
     async def render_audio(self, payload) -> tuple[bytes, str]:
         self.calls.append(payload.text)
         return _silence_wav(), "audio/wav"

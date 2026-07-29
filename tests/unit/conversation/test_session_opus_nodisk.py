@@ -23,7 +23,7 @@ import pytest
 from app.core.audio import pcm16_to_wav_bytes
 from app.core.opus import opus_available
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSRequest, TTSResult
+from app.schemas.tts import TTSRequest
 from app.services.artifacts import artifact_store
 from app.services.conversation import session as session_module
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
@@ -53,7 +53,7 @@ class _StubSTT(STTProvider):
 
 
 class _FakeRenderingTTS(RenderingTTSProvider):
-    """A real RenderingTTSProvider: exercises the actual render_wav()/synthesize()
+    """A real RenderingTTSProvider: exercises the actual render_wav()/render_audio()
     delegation from app.services.tts.base, not a hand-rolled double."""
 
     name = "stub-opus-nodisk-render-tts"
@@ -62,29 +62,21 @@ class _FakeRenderingTTS(RenderingTTSProvider):
     def __init__(self, wav: bytes):
         self._wav = wav
         self.render_wav_calls = 0
-        self.synthesize_calls = 0
 
     async def _render_wav(self, payload: TTSRequest) -> bytes:
         self.render_wav_calls += 1
         return self._wav
 
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:
-        self.synthesize_calls += 1
-        return await super().synthesize(payload)
-
 
 class _NonRenderingTTS(TTSProvider):
     """Stands in for edge_tts: a plain TTSProvider (not a RenderingTTSProvider),
-    so it has no render_wav() at all -- only render_audio(), same as every
-    other engine now that the artifact-backed synthesize() fallback is gone."""
+    so it has no render_wav() at all -- only render_audio(), the only seam
+    every engine implements now."""
 
     name = "stub-opus-nodisk-nonrender-tts"
 
     def __init__(self, wav: bytes):
         self._wav = wav
-
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:  # pragma: no cover - unused seam
-        raise NotImplementedError("this stub only exercises render_audio()")
 
     async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
         return self._wav, "audio/mpeg"
@@ -130,26 +122,19 @@ async def _drive_text_turn(cfg) -> tuple[ConversationSession, list, list]:
 
 
 @pytest.mark.asyncio
-async def test_opus_mode_calls_render_wav_not_synthesize_and_writes_no_artifact(monkeypatch):
+async def test_opus_mode_calls_render_wav_and_writes_no_artifact():
     fake_wav = _silence_wav()
     provider = _FakeRenderingTTS(fake_wav)
     tts_service.providers["stub-opus-nodisk-render-tts"] = provider
 
-    save_wav_calls: list = []
-    original_save_wav = artifact_store.save_wav
-
-    def spy_save_wav(data):
-        save_wav_calls.append(data)
-        return original_save_wav(data)
-
-    monkeypatch.setattr(artifact_store, "save_wav", spy_save_wav)
-
+    before = set(artifact_store.base_dir.iterdir())
     sess, events, audio_pkts = await _drive_text_turn(_cfg())
 
     assert sess.opus_encoder is not None  # sanity: opus mode actually engaged
     assert provider.render_wav_calls >= 1
-    assert provider.synthesize_calls == 0
-    assert save_wav_calls == []  # the load-bearing property: no artifact written
+    # the load-bearing property: no artifact written -- render_audio() is the
+    # only seam, and it never touches the artifact store.
+    assert set(artifact_store.base_dir.iterdir()) == before
     assert audio_pkts  # opus packets did get emitted
     names = [n for n, _ in events]
     assert "audio_start" in names
