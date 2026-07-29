@@ -19,12 +19,15 @@ def test_sweep_removes_leftover_tmp_refs_but_keeps_reference_audio():
     # the pinned file silently changes the cloned voice. The `.wav.bak` name
     # is 32 hex chars followed by ".wav" followed by more text -- it pins the
     # regex's end anchor: an unanchored `^[0-9a-f]{32}\.wav` would wrongly
-    # match and delete it.
+    # match and delete it. Backdated past the staleness threshold (like
+    # `stale` below) so its survival is proof the *regex* rejects it, not a
+    # side effect of the mtime guard hitting `continue` first.
+    backdated_bak = artifact_store.base_dir / (("aa" * 16) + ".wav.bak")
     keepers = [
         artifact_store.base_dir / "ref_deadbeef.wav",
         artifact_store.base_dir / "_omnivoice_voice_ref.wav",
         artifact_store.base_dir / "notes.txt",
-        artifact_store.base_dir / (("aa" * 16) + ".wav.bak"),
+        backdated_bak,
         fresh_tmp_ref,
     ]
     stale.write_bytes(b"RIFF")
@@ -33,6 +36,7 @@ def test_sweep_removes_leftover_tmp_refs_but_keeps_reference_audio():
 
     old = time.time() - _STALE_SECONDS
     os.utime(stale, (old, old))
+    os.utime(backdated_bak, (old, old))
 
     try:
         removed = sweep_stale_ref_audio(artifact_store.base_dir)
