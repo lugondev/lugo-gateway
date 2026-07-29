@@ -95,11 +95,6 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         1, "metered+gated", "WS /v1/stt/stream: gated at connect and each flush",
         "tests/unit/stt/test_stt_stream_metering.py",
     ),
-    ("api/routes/tts.py", "synthesize"): (
-        1, "metered+gated", "the /v1/tts/stream job (POST /v1/tts/synthesize moved "
-        "to render_audio in Task 7, see the row below)",
-        "tests/unit/tts/test_tts_stream_metering.py",
-    ),
     ("api/routes/tts.py", "render_audio"): (
         1, "metered+gated",
         "POST /v1/tts/synthesize -- Task 7 made this endpoint return audio bytes "

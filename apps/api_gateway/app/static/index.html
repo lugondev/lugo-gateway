@@ -539,30 +539,6 @@
             </section>
 
             <section class="card">
-              <h2>TTS Stream <span class="tag">SSE</span></h2>
-              <p class="hint">Text is split into sentences; each chunk is synthesized and played back in order as it arrives.</p>
-              <div class="row">
-                <label>
-                  Engine
-                  <select id="tts-stream-engine"></select>
-                  <small class="engine-detail" id="tts-stream-engine-detail"></small>
-                </label>
-              </div>
-              <label>
-                Stream text
-                <textarea id="tts-stream-text" rows="4" placeholder="Type longer text to stream chunk events..."></textarea>
-              </label>
-              <div class="actions">
-                <button id="tts-stream-start">Start Stream Job</button>
-                <button id="tts-stream-stop" class="ghost">Stop Listening</button>
-              </div>
-              <p id="tts-job" class="meta"></p>
-              <audio id="tts-stream-audio" class="player hidden" controls></audio>
-              <ol id="tts-stream-chunks" class="chunk-list"></ol>
-              <pre id="tts-stream-events" class="output small"></pre>
-            </section>
-
-            <section class="card">
               <h2>TTS Profiles</h2>
               <p class="hint">Bundle an engine, a voice (preset or cloned), and style/speed/language into a reusable named profile. Reference it from an LLM Profile's "TTS Profile" field, or pin one per-session with <code>?tts_profile=&lt;name&gt;</code>.</p>
               <div id="tts-profile-list" class="model-list"></div>
