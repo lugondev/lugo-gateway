@@ -25,7 +25,7 @@ class _EchoProvider(STTProvider):
     async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
         return STTResult(engine=self.name, text="batch", is_final=True)
 
-    def open_stream(self, sample_rate, language=None) -> STTStream:
+    def open_stream(self, sample_rate, language=None, model=None) -> STTStream:
         return _EchoStream()
 
 
