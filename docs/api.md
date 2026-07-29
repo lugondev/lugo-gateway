@@ -37,7 +37,7 @@ Identity comes from exactly one of two sources, never both for a single request:
   handshake — the device itself has no login yet)
 
 **Requires a logged-in user (any role):** everything under `/ui`, `/static/`,
-`/v1/events`, `/artifacts`, `/v1/conversation`, `/v1/livehost`, `/v1/profiles`,
+`/v1/events`, `/v1/conversation`, `/v1/livehost`, `/v1/profiles`,
 `/v1/mcp`, `/v1/stt`, `/v1/tts`, `/v1/sessions`, `/v1/devices/mine`,
 `/v1/devices/pair/claim`, plus the read-only carve-outs `/v1/model_registry/options`,
 `/v1/model_registry/defaults`, and `/v1/usage/me`.
@@ -185,7 +185,7 @@ ws://localhost:8000/v1/conversation/stream?profile=vi&sample_rate=16000&audio_co
 | `sample_rate` | 16000 | input audio rate (Hz) |
 | `audio_codec` | `pcm16` | **input** codec: `pcm16` or `opus` |
 | `output` | `audio,text` | what to send back: any of `audio`, `text` |
-| `audio_out` | `url` | reply-audio delivery: `url` (browser fetches /artifacts) or `opus` (binary frames pushed — for devices) |
+| `audio_out` | `wav` | reply-audio delivery: `wav` (WAV or MP3 pushed as a binary WebSocket frame per sentence) or `opus` (binary Opus frames pushed — for devices). Unrecognized values normalize to `wav`. |
 | `output_sample_rate` | 24000 | output Opus frame rate when `audio_out=opus` |
 | `opus_pace` | server config | per-connection override of Opus playback pacing (see below); `0`/`false` disables it for this session only. Omit to inherit the server-wide default — this is what device firmware does. |
 
@@ -213,19 +213,27 @@ less bandwidth — native for ESP32/RPi firmware + browser WebCodecs; server dec
 libopus, falls back to `pcm16` if absent).
 
 **Output audio** (`audio_out=opus`): each reply sentence is sent as JSON `audio_start`
-`{chunk_index, text, codec:"opus", sample_rate, frames}`, then `frames` binary Opus
-packets (mono @ `output_sample_rate`, 60 ms each), then `audio_end`. By default the
-packets are **paced**: the first ~5 go out immediately (fast first audio), the rest at
-one 60 ms frame apart, sized so a small embedded ring buffer (ESP32/RPi) isn't flooded
-on long replies. Browsers don't have that constraint and can hold seconds of audio
+`{turn, chunk_index, text?, codec:"opus", sample_rate, frames}`, then `frames` binary
+Opus packets (mono @ `output_sample_rate`, 60 ms each), then `audio_end` `{turn,
+chunk_index}`. By default the packets are **paced**: the first ~5 go out immediately
+(fast first audio), the rest at one 60 ms frame apart, sized so a small embedded ring
+buffer (ESP32/RPi) isn't flooded on long replies. Browsers don't have that constraint
+and can hold seconds of audio
 queued in `AudioContext`, so the web client sends `opus_pace=0` to receive each
 sentence's packets back-to-back as soon as they're encoded — the browser's own
 scheduling becomes the jitter buffer, which tolerates far more network/main-thread
 jitter than the ~300ms server-side cushion. See
 `docs/superpowers/specs/2026-07-28-web-audio-jitter-buffer-design.md` for the full
-rationale. With `audio_out=url` (default) the server sends an `audio_chunk` with an
-`audio_url` instead. Browsers can decode the Opus frames via WebCodecs `AudioDecoder`
-— see `docs/device-integration.md` §6.
+rationale. Browsers can decode the Opus frames via WebCodecs `AudioDecoder` — see
+`docs/device-integration.md` §6.
+
+**Output audio** (`audio_out=wav`, the default): each reply sentence is sent as
+JSON `audio_start` `{turn, chunk_index, text?, codec:"wav"|"mp3"}`, then **one**
+binary WebSocket frame carrying the complete audio container (the whole WAV or
+MP3 file for that sentence, not a stream of packets), then `audio_end` `{turn,
+chunk_index}`. `codec` mirrors the TTS provider's media type: `audio/wav` →
+`"wav"`, `audio/mpeg` (edge_tts) → `"mp3"`. Nothing is written to disk — there is
+no artifact directory in this path and no URL is ever sent.
 
 Server → client events (`{"event": ...}`):
 
@@ -237,8 +245,7 @@ Server → client events (`{"event": ...}`):
 | `processing` | transcribing + generating | `turn` |
 | `user_transcript` | STT result (or echoed text input) for the turn | `text` |
 | `response_text` | assistant reply text (when `output` includes `text`) | `text`, `responder` |
-| `audio_chunk` | reply TTS sentence as a URL (when `audio_out=url`) | `chunk_index`, `text`, `audio_url` |
-| `audio_start` / `audio_end` | brackets binary Opus frames for a sentence (when `audio_out=opus`) | `chunk_index`, `codec`, `sample_rate`, `frames` |
+| `audio_start` / `audio_end` | brackets one sentence's binary audio frame(s) (when `output` includes `audio`) | `turn`, `chunk_index`, `text?` (start only), `codec:"wav"\|"mp3"` (default `audio_out=wav`) or `codec:"opus"`, `sample_rate`, `frames` (`audio_out=opus`) |
 | `aborted` | turn cancelled (barge-in / superseded) | `reason` |
 | `turn_done` | turn complete | `turn` |
 | `error` / `done` / `reset` | — | — |
@@ -419,57 +426,49 @@ Voice modes (OmniVoice):
   estimated, so it's omitted rather than guessed). These are listed in CORS
   `expose_headers` so cross-origin clients (e.g. lugo-web-client) can read them.
 
-This used to write a temporary WAV under `artifacts/` and return its URL —
-that indirection existed only because JSON can't carry binary. Nothing
-persisted the URL (no message ever referenced one), so the file was pure
-churn and an unauthenticated-by-default surface; returning bytes removes
-both. `/v1/tts/stream` below is unchanged and still returns URLs — it emits
-many segments over SSE, where a URL per segment is the right shape.
+This used to write a temporary WAV under `artifacts/` and return a URL pointing
+at it — that indirection existed only because JSON can't carry binary. Nothing
+persisted that reference (no message ever pointed back at it after the initial
+response), so the file was pure churn and an unauthenticated-by-default
+surface; returning bytes removes both. The pseudo-streaming SSE job route pair
+that used to exist alongside this one for multi-segment playback (a
+job-starting POST plus a per-job SSE subscription) has been deleted for the
+same reason — the conversation socket's `audio_start`/binary-frame/`audio_end`
+framing (see above) now covers streamed, sentence-by-sentence playback without
+ever handing out a file reference.
 
 A failed synthesis returns a JSON error response (502) instead of a placeholder.
-
-### `POST /v1/tts/stream`
-Start a pseudo-streaming synthesis job. Same body as `synthesize`.
-→ `{ "data": { "job_id": "<uuid>" } }`. Subscribe via SSE to receive chunks,
-each carrying an `audio_url` under `/artifacts/` (unlike `synthesize` above).
 
 ---
 
 ## Events (SSE)
 
-### `GET /v1/events/jobs/{job_id}`
 ### `GET /v1/events/sessions/{session_id}`
 
 **Requires a logged-in user, and ownership.** A non-admin caller who isn't the
-owner of the job/session gets `404`, not `403` — indistinguishable from the
-id simply not existing, so a caller can't use the response to fish for which
-ids are valid. Admins (and dev mode with auth disabled) are unscoped.
+owner of the session gets `404`, not `403` — indistinguishable from the id
+simply not existing, so a caller can't use the response to fish for which ids
+are valid. Admins (and dev mode with auth disabled) are unscoped.
 
-For `/v1/events/sessions/{session_id}` specifically: the session row must
-already exist. If it doesn't (e.g. the id hasn't been created by the
-producer — typically the conversation WS — yet), the request 404s
-immediately rather than waiting. **This means subscribing *before* the
-producer creates the session fails outright** — the SSE client must wait
-until the session exists (e.g. until the WS side has signaled it) before
-calling this endpoint; it cannot preemptively subscribe and rely on buffered
-replay to catch the earliest events.
+The session row must already exist. If it doesn't (e.g. the id hasn't been
+created by the producer — the STT WebSocket, see `WS /v1/stt/stream` above —
+yet), the request 404s immediately rather than waiting. **This means
+subscribing *before* the producer creates the session fails outright** — the
+SSE client must wait until the session exists (e.g. until the WS side has
+signaled it) before calling this endpoint; it cannot preemptively subscribe
+and rely on buffered replay to catch the earliest events.
 
 Server-Sent Events stream. Each message is `event: <type>` + `data: <StreamEvent JSON>`.
 
 The bus **buffers** events per channel, so once subscribed, connecting slightly
 after the producer started still replays earlier events on that channel (e.g.
-`queued`) — this buffering is about timing *after* the channel exists, not a way
-around the "session must already exist" requirement above. The stream **closes
-itself** after a terminal `done` event.
+`session_started`) — this buffering is about timing *after* the channel exists,
+not a way around the "session must already exist" requirement above. The
+stream **closes itself** after a terminal `done` event.
 
-TTS job event sequence:
-
-| `event_type` | payload |
-|--------------|---------|
-| `queued` | `{ "text", "total_chunks" }` |
-| `audio_chunk` | `{ "chunk_index", "text", "audio_url", "duration_seconds", "mock" }` |
-| `error` | `{ "message" }` (only on failure) |
-| `done` | `{ "message" }` |
+The events mirrored here are the same ones sent over the STT WebSocket —
+`session_started`, `partial`, `final`, `error`, `done` — see the table under
+`WS /v1/stt/stream` above.
 
 ---
 
@@ -705,12 +704,13 @@ Poll this endpoint while a download is active.
 
 ## Artifacts
 
-### `GET /artifacts/{file}`
-**Requires a logged-in user** (see Authentication above) — the filenames are
-unguessable uuid4s, but "unguessable" is not "authenticated", so this is now the
-floor rather than fully open. Serves generated audio WAV files referenced by
-`audio_url`. Backed by the local filesystem (`ARTIFACTS_DIR`); swap for object
-storage in production.
+There is no longer an HTTP-served artifacts route. Synthesized reply audio is
+never written to disk — it goes out as response bytes (`POST
+/v1/tts/synthesize`) or as binary WebSocket frames (the conversation socket,
+above). The `artifacts/` directory still exists on the local filesystem, but
+only for voice-clone **reference audio** (`POST /v1/tts/reference-audio`,
+`ref_audio_path`) — it is never mounted or served over HTTP, so there is no
+`GET /artifacts/{file}` route to hit.
 
 ---
 
@@ -718,9 +718,9 @@ storage in production.
 
 ```json
 {
-  "event_type": "audio_chunk",
-  "session_id": null,
-  "job_id": "…",
+  "event_type": "partial",
+  "session_id": "…",
+  "job_id": null,
   "sequence": 2,
   "timestamp": "2026-06-25T15:10:57.499171Z",
   "payload": { }

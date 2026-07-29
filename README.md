@@ -101,18 +101,15 @@ docker compose up --build
 - POST /v1/stt/warm (preload a heavy STT model, e.g. whisper large)
 - WS /v1/stt/stream
 - POST /v1/tts/synthesize
-- POST /v1/tts/stream
 - WS /v1/conversation/stream (voice turn-taking; `?audio_codec=pcm16|opus`)
 - GET/POST /v1/conversation/llm + POST /v1/conversation/llm/reset (online LLM config)
 - POST /v1/conversation/chat (text chat with the conversation responder)
 - POST /v1/models/{whisper,vieneu,omnivoice,llm,...}/download|select|delete
-- GET /v1/events/jobs/{job_id} (SSE)
 - GET /v1/events/sessions/{session_id} (SSE)
 - GET /v1/system/status
 - GET /v1/models
 - POST /v1/models/vosk/download
 - DELETE /v1/models/vosk/{name}
-- GET /artifacts/{file} (generated audio)
 
 Platform (auth, devices, profiles, registry, memory):
 
@@ -147,15 +144,15 @@ Query params: `?engine=vosk&language=en&sample_rate=16000`.
 - Vosk decodes incrementally (real partials + finals). Other engines buffer audio and
   return a single `final` on flush/end.
 
-### TTS pseudo-streaming (SSE)
+### TTS (batch)
 
-1. POST `/v1/tts/stream` with `{text, engine}` -> `{job_id}`.
-2. GET `/v1/events/jobs/{job_id}` (SSE). The event bus buffers events, so subscribing
-   after the job starts still replays `queued` and earlier chunks.
-3. Events: `queued`, `audio_chunk` (text split into sentences; each chunk carries an
-   `audio_url`), `error`, `done`. The stream closes itself on `done`.
+POST `/v1/tts/synthesize` with `{text, engine}` returns the raw synthesized audio
+bytes directly (`audio/wav`, or `audio/mpeg` for `edge_tts`) plus `X-TTS-*` headers
+— no job/SSE indirection and no URL pointing at a file. For sentence-by-sentence
+streaming playback, use the conversation socket (below); it pushes each sentence's
+audio as binary WebSocket frames instead of a URL.
 
-Every TTS request runs real synthesis; a failing engine reports an `error` event
+Every TTS request runs real synthesis; a failing engine returns a JSON error
 (HTTP 502) instead of a silent placeholder.
 
 ## STT engine options
@@ -181,8 +178,10 @@ the admin UI); a profile can override it per-conversation.
 It's a unified **text/audio → text/audio** gateway: input is audio frames or a
 `{"type":"text"}` message; `?output=audio,text` picks what comes back — covering
 audio→audio, text→audio, audio→text, text→text. Input audio is PCM16 or Opus
-(`?audio_codec=opus`); reply audio is an `audio_url` (browser) or pushed Opus binary
-frames (`?audio_out=opus`, for ESP32 / Raspberry Pi). See [docs/api.md](docs/api.md).
+(`?audio_codec=opus`); reply audio is pushed as binary WebSocket frames, one
+complete WAV or MP3 container per sentence (`?audio_out=wav`, the default), or as
+Opus binary frames (`?audio_out=opus`, for ESP32 / Raspberry Pi) — never a URL, and
+nothing synthesized is persisted to disk. See [docs/api.md](docs/api.md).
 
 Remote engine endpoints (whisper_service, eventlab: base url/API key/model) are
 configured in the admin System tab (System settings > remote_stt group), not .env.

@@ -7,18 +7,18 @@ sit behind provider interfaces so they can be swapped or added without touching 
 routes. An in-memory event bus fans streaming events out to SSE subscribers.
 
 ```
-                ┌─────────────────────────── FastAPI gateway ───────────────────────────┐
-  client ──►   │  /v1/stt/*      /v1/tts/*       /v1/events/*        /artifacts/*  /ui   │
-                │      │              │                │                  │               │
-                │      ▼              ▼                ▼                  ▼               │
-                │  STTService     TTSService       EventBus         ArtifactStore        │
-                │   providers      providers     (replay+close)     (local FS → S3)      │
-                │  ┌─────────┐   ┌────────────┐                                          │
-                │  │ vosk    │   │ omnivoice  │  segmenter → per-chunk synth → events    │
-                │  │ whisper │   └────────────┘                                          │
-                │  │ remote  │                                                            │
-                │  └─────────┘                                                            │
-                └────────────────────────────────────────────────────────────────────────┘
+                ┌────────────────────────── FastAPI gateway ───────────────────────────┐
+  client ──►   │  /v1/stt/*      /v1/tts/*      /v1/events/*   /v1/conversation/*  /ui  │
+                │      │              │               │              │                  │
+                │      ▼              ▼               ▼              ▼                  │
+                │  STTService     TTSService      EventBus     ConversationSession      │
+                │   providers      providers    (replay+close)  (binary WAV/Opus out)   │
+                │  ┌─────────┐   ┌────────────┐                                        │
+                │  │ vosk    │   │ omnivoice  │  segmenter → per-sentence synth →       │
+                │  │ whisper │   └────────────┘  audio_start / binary frame / audio_end │
+                │  │ remote  │                                                          │
+                │  └─────────┘                                                          │
+                └──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Components
@@ -26,8 +26,11 @@ routes. An in-memory event bus fans streaming events out to SSE subscribers.
 ### API layer (`app/api/routes`)
 - `health` — liveness.
 - `stt` — batch `POST /transcribe`, engine list, and the streaming `WS /stream`.
-- `tts` — `POST /synthesize` and `POST /stream` (spawns a background job).
-- `events` — SSE for job/session channels.
+- `tts` — `POST /synthesize` (returns raw audio bytes) and `POST /reference-audio`
+  (voice-clone reference upload).
+- `events` — SSE for STT session channels (`GET /sessions/{session_id}`).
+- `conversation` — `WS /stream`, the voice turn-taking gateway; pushes reply audio
+  as binary WebSocket frames (WAV/MP3 or Opus), never a URL.
 - `ui` — serves the static playground.
 
 Routes are thin: they validate input, resolve a provider, and translate domain
@@ -51,15 +54,22 @@ errors. They never embed model logic.
 - **TTS providers** implement `synthesize()`.
   - `OmniVoiceProvider` — lazy-loads OmniVoice from the configured path (admin System
     tab), runs inference in a worker thread, and raises `ProviderError` (502) on failure.
-- **ArtifactStore** — persists generated WAVs and returns a `/artifacts/...` URL.
+- **ArtifactStore** — persists voice-clone **reference audio** only
+  (`POST /v1/tts/reference-audio`, `ref_audio_path`). Synthesized reply audio is never
+  written here or anywhere else on disk; providers return bytes directly to the
+  caller (HTTP response or WebSocket frame). The directory is not mounted over HTTP.
 - **segmenter** — splits text into sentence-sized chunks for streaming TTS.
 
 ### Streaming (`app/streaming/event_bus.py`)
 `InMemoryEventBus` provides pub/sub with two properties that matter for correctness:
 - **Replay** — a bounded per-channel history is replayed to late subscribers, so the
-  SSE client never misses `queued`/early chunks due to the subscribe-after-publish race.
+  SSE client never misses `session_started`/early events due to the
+  subscribe-after-publish race.
 - **Terminal close** — a `done` event closes the channel and wakes subscribers with a
   sentinel so the SSE generator stops and memory is reclaimed.
+
+Only STT streaming publishes to this bus today (`session:{id}` channels); TTS/
+conversation audio goes straight to the WebSocket and has no SSE/event-bus path.
 
 ## Data flows
 
@@ -70,12 +80,16 @@ errors. They never embed model logic.
    on `flush`/`end`.
 4. Events go to the socket and are mirrored to `session:{id}` on the event bus.
 
-### TTS pseudo-streaming (SSE)
-1. `POST /v1/tts/stream` returns a `job_id` and starts a background task.
-2. The task segments the text, synthesizes each chunk, and publishes `audio_chunk`
-   events carrying an `audio_url`.
-3. The client subscribes to `/v1/events/jobs/{job_id}` and plays chunks in order.
-4. A final `done` event closes the channel.
+### Conversation reply audio (WebSocket, binary frames)
+1. The conversation session segments the reply text into sentences and synthesizes
+   each one.
+2. For each sentence the server sends `audio_start` (JSON: `turn`, `chunk_index`,
+   `text?`, `codec`), then **one binary frame** carrying the complete audio
+   container for that sentence, then `audio_end` (JSON: `turn`, `chunk_index`).
+3. `codec` is `"wav"` or `"mp3"` (default, `?audio_out=wav`, mapped from the TTS
+   provider's media type) or `"opus"` (`?audio_out=opus`, for ESP32/RPi — framed as
+   many small Opus packets instead of one container). Nothing is persisted to disk
+   and no URL is ever sent — see `docs/api.md`.
 
 OmniVoice generates per segment (no native token-level streaming), so first-byte time
 is driven by chunk size — short leading sentences play sooner.
@@ -89,9 +103,7 @@ output is 24 kHz WAV.
 ## Upgrade paths (not yet implemented)
 - **Event bus → Redis Pub/Sub + streams** for multi-worker scale and reconnect/replay
   across processes. The `InMemoryEventBus` interface is the seam.
-- **ArtifactStore → S3-compatible object storage**; callers already depend only on the
-  returned URL.
 - **Reliability** — queue, retries, timeouts, circuit breakers around model calls.
 - **Observability** — first-chunk latency, real-time factor, error-rate metrics, and
-  structured tracing keyed by `job_id`/`session_id`.
+  structured tracing keyed by `session_id`.
 - **Auth** at the gateway.

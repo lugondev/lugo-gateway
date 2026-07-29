@@ -85,7 +85,7 @@ variables (or `.env`). See `.env.example` for the full list.
 | `CORS_ALLOW_ORIGINS` | `*` | comma-separated origins, or `*` |
 | `ADMIN_PASSWORD` | — | browser control-panel login |
 | `SESSION_SECRET` | — (random per process) | signs cookie sessions **and** bearer tokens — see below |
-| `ARTIFACTS_DIR` | `artifacts` | where generated WAVs are written |
+| `ARTIFACTS_DIR` | `artifacts` | voice-clone reference audio only (never served over HTTP) — synthesized reply audio is never written to disk |
 
 ### `SESSION_SECRET` — set it in production before the web client ships
 

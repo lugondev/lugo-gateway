@@ -62,9 +62,9 @@ scripts/                   # setup + convert_phowhisper_mlx.sh + rpi_voice_clien
 
 `WS /v1/conversation/stream` is a **text/audio → text/audio** gateway. Pipeline:
 input (audio frames or `{"type":"text"}`) → optional STT → reply (echo / OpenAI-compat
-LLM) → per-sentence TTS → output (text events + audio as `audio_url` or pushed Opus
-frames). VAD endpointer + barge-in. See `docs/api.md` and `docs/device-integration.md`
-for the wire protocol.
+LLM) → per-sentence TTS → output (text events + audio pushed as binary WebSocket
+frames — WAV/MP3 by default or Opus, never a URL). VAD endpointer + barge-in. See
+`docs/api.md` and `docs/device-integration.md` for the wire protocol.
 
 ## Platform gotchas (read before touching audio/STT)
 
