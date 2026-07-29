@@ -146,7 +146,7 @@ def test_admin_can_still_update_delete_and_clone(client, _with_password):
 
 def test_normal_user_cannot_toggle_enabled_on_a_template(client, _with_password):
     """PATCH /servers/{name}/enabled is now directly `_require_admin`-gated
-    (Task 7 / M4 -- see tests/unit/test_mcp_enabled_gate.py for the dedicated
+    (Task 7 / M4 -- see tests/unit/mcp/test_mcp_enabled_gate.py for the dedicated
     coverage), so a non-admin is denied with 403 before any ownership/
     existence lookup runs, matching create/update/delete/clone. Previously
     this route only ran `_can_write`, which happened to also deny a normal

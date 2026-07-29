@@ -10,7 +10,7 @@ job channel closes on its "done" event), but a channel nobody ever publishes
 to or closes blocks forever -- `client.stream(...)` never returns, sync or
 async, and the run only ends via pytest-timeout's 120s kill. So "allowed"
 cases here call the route coroutine directly (same pattern already used by
-tests/unit/test_tts_stream_route.py) instead of going through a client and
+tests/unit/tts/test_tts_stream_route.py) instead of going through a client and
 opening the stream body.
 """
 

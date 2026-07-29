@@ -13,7 +13,7 @@ defense-in-depth fix in session.py's _synth (and speak()): the TTSRequest(...)
 construction has to sit INSIDE the guarding try, not before it, so any future
 source of a bad value here (a legacy row, a different resolution path, a
 different validation failure entirely) still degrades rather than erroring
-out the turn. Mirrors tests/unit/test_session_tts_failure.py's harness."""
+out the turn. Mirrors tests/unit/conversation/test_session_tts_failure.py's harness."""
 
 import pytest
 from app.schemas.stt import STTResult

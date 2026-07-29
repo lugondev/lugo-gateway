@@ -8,7 +8,7 @@ from app.services.mcp.server_store import McpServerStore
 
 @pytest.fixture(autouse=True)
 def _clean_store(tmp_path, monkeypatch):
-    # Mirrors tests/unit/test_mcp_routes.py: mcp_server_store is a
+    # Mirrors tests/unit/mcp/test_mcp_routes.py: mcp_server_store is a
     # module-level singleton with an in-memory cache that, once populated,
     # ignores the fresh per-test SQLite file the autouse tests/conftest.py
     # `_tmp_db` fixture points the engine at -- writes would silently target
@@ -110,7 +110,7 @@ def test_regular_user_cannot_update_or_delete_admin_template(client, _with_passw
     """Pre-task-6 this was a 404 (ownership check hid the target's
     existence); post-task-6 the admin gate runs first and denies with 403
     uniformly, before any ownership/existence lookup -- see
-    tests/unit/test_mcp_ssrf.py for the dedicated SSRF-focused coverage of
+    tests/unit/mcp/test_mcp_ssrf.py for the dedicated SSRF-focused coverage of
     this same gate."""
     _signup_login(client, "root", role="admin")
     client.post("/v1/mcp/servers", json={"name": "template-mcp-2", "url": "https://t.example.com/mcp"})
@@ -133,7 +133,7 @@ def test_regular_user_cannot_update_or_delete_admin_template(client, _with_passw
 def test_clone_mcp_server(client, _with_password):
     """Clone moved to admin-only in task 6 -- a regular user cloning a
     template (the original scenario here) is now a 403, covered in
-    tests/unit/test_mcp_ssrf.py. This exercises the still-legitimate path:
+    tests/unit/mcp/test_mcp_ssrf.py. This exercises the still-legitimate path:
     an admin cloning a template gets their own private copy."""
     _signup_login(client, "root", role="admin")
     client.post("/v1/mcp/servers", json={"name": "template-mcp", "url": "https://t.example.com/mcp"})

@@ -44,7 +44,7 @@ def test_upload_reference_audio_saves_and_returns_a_path(client, tmp_path, monke
     the operator picks a file, this saves it server-side, and the returned
     ref_audio_path is what gets stored on the TtsProfile (and, for a remote
     engine, base64-forwarded by HttpTtsProvider -- see
-    tests/unit/test_http_tts_provider.py)."""
+    tests/unit/tts/test_http_tts_provider.py)."""
     from app.services.artifacts import ArtifactStore
 
     fresh_store = ArtifactStore(str(tmp_path))

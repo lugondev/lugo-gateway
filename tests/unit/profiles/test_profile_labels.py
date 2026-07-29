@@ -8,7 +8,7 @@ from app.services.profiles.store import ProfileStore
 
 @pytest.fixture(autouse=True)
 def _clean_store(tmp_path, monkeypatch):
-    # Mirrors tests/unit/test_profile_model_gate.py: profile_store is a
+    # Mirrors tests/unit/profiles/test_profile_model_gate.py: profile_store is a
     # module-level singleton with an in-memory cache that, once populated,
     # ignores the fresh per-test SQLite file the autouse `_tmp_db` fixture
     # points the engine at -- a brand new ProfileStore (cache=None) per test

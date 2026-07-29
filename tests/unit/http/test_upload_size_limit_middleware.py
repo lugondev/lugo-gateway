@@ -4,7 +4,7 @@ These drive the middleware directly at the ASGI level (fake scope/receive/
 send, a stub downstream app) instead of through the real FastAPI app, so
 they can precisely assert what fix-round-1's review flagged: the cap must
 trip BEFORE the request body is fully received/spooled, not merely before
-the route handler starts running. tests/unit/test_tts_dos_hardening.py adds
+the route handler starts running. tests/unit/tts/test_tts_dos_hardening.py adds
 one end-to-end check (a real oversized upload against the real app) on top
 of these.
 """

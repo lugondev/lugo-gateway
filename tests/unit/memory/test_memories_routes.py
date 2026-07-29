@@ -11,7 +11,7 @@ def _profiles(tmp_path, monkeypatch):
     # The memories routes now gate on the parent profile's ownership, so these
     # profiles must exist for the CRUD under test to be reachable at all.
     # owner_id=None (template) + dev-mode role "admin" keeps writes allowed --
-    # ownership itself is covered by tests/unit/test_memory_ownership.py.
+    # ownership itself is covered by tests/unit/memory/test_memory_ownership.py.
     fresh = ProfileStore(str(tmp_path / "profiles.json"))
     for name in ("pet", "other"):
         fresh.upsert(Profile(name=name))

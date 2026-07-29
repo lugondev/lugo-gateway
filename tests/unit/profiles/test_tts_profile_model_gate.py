@@ -13,7 +13,7 @@ from app.services.tts.profile_store import TtsProfileStore
 
 @pytest.fixture(autouse=True)
 def _clean_store(tmp_path, monkeypatch):
-    # Mirrors tests/unit/test_tts_profile_ownership.py / test_tts_profile_routes.py:
+    # Mirrors tests/unit/profiles/test_tts_profile_ownership.py / test_tts_profile_routes.py:
     # tts_profile_store is a module-level singleton with an in-memory cache that,
     # once populated, ignores the fresh per-test SQLite file the autouse
     # tests/conftest.py `_tmp_db` fixture points the engine at -- writes would

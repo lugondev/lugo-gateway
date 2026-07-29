@@ -15,8 +15,8 @@ async def test_livehost_module_gates_its_turns():
 
     livehost's turn functions are closures over a live WebSocket, so driving
     them end to end needs the full socket harness. This asserts the wiring
-    exists; the gate's own behavior is covered by tests/unit/test_quota_gate.py
-    and the REST paths in tests/unit/test_quota_provider_scope.py.
+    exists; the gate's own behavior is covered by tests/unit/quota/test_quota_gate.py
+    and the REST paths in tests/unit/quota/test_quota_provider_scope.py.
     """
     import inspect
 

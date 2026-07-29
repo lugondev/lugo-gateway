@@ -1,12 +1,12 @@
 """Task 5: ConversationSession must abort a turn with a notice when over quota.
 
 Approach: reuse the ConversationSession harness from
-tests/unit/test_session_usage_metering.py (stubbed STT/TTS providers + a
+tests/unit/conversation/test_session_usage_metering.py (stubbed STT/TTS providers + a
 profile with no LLM base_url so build_responder_ex falls back to the
 built-in EchoResponder -- no real HTTP call needed). `_tmp_db`
 (tests/conftest.py, autouse) points the DB engine at a fresh per-test sqlite
 file, so we seed a real over-limit GLOBAL-scope quota via quota_store.create
-+ a UsageEvent row (same pattern as tests/unit/test_quota_gate.py), then
++ a UsageEvent row (same pattern as tests/unit/quota/test_quota_gate.py), then
 drive ONE turn through `_handle_turn` and assert:
 
   (a) the turn was aborted before STT ran -- the stub STT provider's

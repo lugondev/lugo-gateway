@@ -4,8 +4,8 @@ UsageEvent after the work completes.
 Approach: drive /transcribe and /synthesize (and /chat, which needs no
 provider setup since the default EchoResponder is used) via the sync
 TestClient with stub STT/TTS providers registered directly on the service
-singletons -- same pattern as tests/unit/test_model_registry_routes.py and
-tests/unit/test_conversation_profile.py. `_tmp_db` (tests/conftest.py,
+singletons -- same pattern as tests/unit/model_registry/test_model_registry_routes.py and
+tests/unit/conversation/test_conversation_profile.py. `_tmp_db` (tests/conftest.py,
 autouse) points the DB at a fresh per-test sqlite file, so we assert real
 rows in `usage_events` rather than a record_usage spy -- no route here needs
 heavy provider setup, so the brief's spy fallback isn't needed.

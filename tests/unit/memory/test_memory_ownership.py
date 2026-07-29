@@ -8,7 +8,7 @@ from app.services.profiles.store import ProfileStore
 
 @pytest.fixture(autouse=True)
 def _clean_store(tmp_path, monkeypatch):
-    # Mirrors tests/unit/test_profile_ownership.py: profile_store is a module-level
+    # Mirrors tests/unit/profiles/test_profile_ownership.py: profile_store is a module-level
     # singleton whose in-memory cache would otherwise ignore the per-test SQLite
     # file. memories.py binds `profile_store` at import time, so patching the
     # services module alone would leave the route holding the stale singleton.

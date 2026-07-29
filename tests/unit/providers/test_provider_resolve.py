@@ -1,4 +1,4 @@
-# tests/unit/test_provider_resolve.py
+# tests/unit/providers/test_provider_resolve.py
 import pytest
 
 from app.services.db.engine import init_db

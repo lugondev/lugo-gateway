@@ -7,7 +7,7 @@ doesn't need to wire the exact provider_id resolution -- a global quota
 applies regardless of user/provider (see `_applies` in
 app.services.quota.gate). Seed a usage_events row with cost over the limit,
 then drive /transcribe and /synthesize via the sync TestClient with stub
-providers (same pattern as tests/unit/test_routes_usage_metering.py) and
+providers (same pattern as tests/unit/usage/test_routes_usage_metering.py) and
 assert 429. Control: no quota at all -> normal 200.
 """
 

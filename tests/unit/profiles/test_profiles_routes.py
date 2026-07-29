@@ -220,7 +220,7 @@ def test_update_profile_rejects_invalid_stt_model(client):
 # That route is admin-gated (see core/auth_guard._ADMIN_PREFIXES), so these
 # repointed tests log in as admin. "enabled stable entry appears, with no
 # api_key/base_url leaked" is already asserted by exact-dict equality in
-# tests/unit/test_model_registry_options_route.py, so that former case
+# tests/unit/model_registry/test_model_registry_options_route.py, so that former case
 # (test_llm_options_lists_enabled_stable_entries_for_regular_user) was dropped
 # as an exact duplicate. What's kept here is the route-level wiring the options
 # route test doesn't cover: per-user testing-stage visibility and disabled-hidden.

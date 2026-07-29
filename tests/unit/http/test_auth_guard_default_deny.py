@@ -8,7 +8,7 @@ NOTE on the `_with_password` fixture: tests/conftest.py's autouse `_hermetic`
 fixture blanks `admin_password`/`admin_bootstrap_password`, which makes
 `settings.auth_enabled` False and short-circuits the whole middleware. Every
 test below that asserts on guard behaviour therefore has to turn auth back on
-first -- same pattern as tests/unit/test_auth_guard.py.
+first -- same pattern as tests/unit/http/test_auth_guard.py.
 """
 
 import pytest

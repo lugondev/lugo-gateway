@@ -22,7 +22,7 @@ from app.streaming.event_bus import event_bus
 def _fake_request() -> Request:
     # Task 6 added a `request` param to synthesize() (for usage-metering
     # attribution) -- direct calls that bypass the ASGI app need a minimal
-    # stand-in, same shape as tests/unit/test_actor.py's helper.
+    # stand-in, same shape as tests/unit/core/test_actor.py's helper.
     return Request({"type": "http", "method": "POST", "path": "/", "headers": [], "state": {}, "session": {}})
 
 
