@@ -10,15 +10,27 @@ import base64
 import os
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from app.core.upload_limits import REFERENCE_AUDIO_MAX_BYTES
 from app.schemas.tts import TTSRequest
 from app.services.artifacts import artifact_store
 from app.services.tts.base import RenderingTTSProvider
 from model_service.app.auth import make_auth_dependency
 from model_service.app.config import ServiceConfig
+
+# base64 expands 3 raw bytes into 4 encoded chars; bound the ENCODED string
+# length (rather than decoding first and checking the result) so an
+# oversized payload never gets fully materialized in memory just to be
+# rejected. This endpoint sits behind the service bearer token (only the
+# gateway or a token holder reaches it -- see make_auth_dependency below),
+# so this is defense-in-depth, not the primary control; it reuses the same
+# reference-audio cap the gateway enforces on the multipart upload path
+# (app/core/upload_limits.py) so the two limits can't silently drift apart.
+# +4 for base64 padding slop rather than computing the exact ceil().
+_REF_AUDIO_BASE64_MAX_CHARS = (REFERENCE_AUDIO_MAX_BYTES * 4 // 3) + 4
 
 
 class SpeechRequest(BaseModel):
@@ -59,6 +71,11 @@ def build_tts_router(config: ServiceConfig, provider: RenderingTTSProvider) -> A
         tmp_ref_path = None
         try:
             if payload.ref_audio_base64:
+                if len(payload.ref_audio_base64) > _REF_AUDIO_BASE64_MAX_CHARS:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="ref_audio_base64 exceeds the reference-audio size limit",
+                    )
                 ref_bytes = base64.b64decode(payload.ref_audio_base64)
                 # TTSRequest.ref_audio_path is validated against
                 # artifact_store's containment check (2026-07-28

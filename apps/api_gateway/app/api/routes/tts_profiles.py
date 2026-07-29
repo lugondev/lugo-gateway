@@ -151,5 +151,12 @@ async def clone_tts_profile(name: str, payload: CloneRequest, request: Request) 
     data["name"] = payload.new_name
     data["owner_id"] = user_id
     clone = TtsProfile(**data)
+    # Clone copies engine/model_id straight from the source without going
+    # through create/update's model-registry gate -- without this, a user
+    # denied a model could still get it by cloning an admin template pinned
+    # to it. Same gate, same call shape as create_tts_profile/update_tts_profile.
+    if clone.engine:
+        acting_user = await _resolve_acting_user(request)
+        await check_model_allowed("tts", clone.engine, clone.model_id, acting_user)
     tts_profile_store.upsert(clone)
     return {"success": True, "data": clone.model_dump()}

@@ -36,8 +36,17 @@ class TTSRequest(BaseModel):
         the gateway (e.g. `/app/.env`) or hang a worker on a device node.
         `POST /v1/tts/reference-audio` legitimately returns absolute paths
         under the artifacts dir, so this accepts those -- it only rejects
-        paths that resolve outside `artifact_store.base_dir`."""
-        if v is None:
+        paths that resolve outside `artifact_store.base_dir`.
+
+        Falsy (None or "") short-circuits as "not set": `TtsProfile` uses ""
+        as its not-set sentinel (see routes/tts_profiles.py's
+        `_require_ref_audio_path_contained`), and an API client that echoes
+        a profile's fields straight into /v1/tts/synthesize would otherwise
+        get a spurious 422 here -- `contains("")` resolves "" to the
+        artifacts dir itself, which isn't even a readable file, let alone
+        one outside it. A real (non-empty) path still runs the full
+        containment check below."""
+        if not v:
             return v
         if not artifact_store.contains(v):
             raise ValueError("ref_audio_path must be inside the artifacts directory")

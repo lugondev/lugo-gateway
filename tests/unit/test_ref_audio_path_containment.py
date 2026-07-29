@@ -23,6 +23,17 @@ def test_accepts_none():
     assert TTSRequest(text="hi").ref_audio_path is None
 
 
+def test_accepts_empty_string_as_not_set():
+    """TtsProfile uses "" as its "not set" sentinel (see
+    routes/tts_profiles.py's _require_ref_audio_path_contained). An API
+    client that echoes a profile's fields straight into
+    /v1/tts/synthesize must not get a spurious 422 for an unset value --
+    contains("") would otherwise resolve "" to the artifacts dir itself
+    and reject it as "outside" (it isn't outside; it's just not a path)."""
+    req = TTSRequest(text="hi", ref_audio_path="")
+    assert req.ref_audio_path == ""
+
+
 @pytest.mark.parametrize(
     "bad",
     [

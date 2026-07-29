@@ -263,6 +263,12 @@ async def clone_profile(name: str, payload: CloneRequest, request: Request) -> d
         # on, so its mcp_servers must go through the same non-admin gate.
         data["mcp_servers"] = []
     clone = Profile(**data)
+    # Clone copies stt/llm engine+model straight from the source without
+    # going through create/update's model-registry gate -- without this, a
+    # user denied a model could still get it by cloning an admin template
+    # pinned to it. Same gate, same call shape as create_profile/update_profile.
+    acting_user = await _resolve_acting_user(request)
+    await _validate_profile_models(clone, acting_user)
     profile_store.upsert(clone)
     return {"success": True, "data": await _with_labels(clone)}
 
