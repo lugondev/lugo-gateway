@@ -126,19 +126,16 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         1, "metered+gated", "conversation core STT, incl. the fast-path engine switch",
         "tests/unit/conversation/test_session_usage_metering.py",
     ),
-    ("services/conversation/session.py", "synthesize"): (
+    ("services/conversation/session.py", "render_audio"): (
         2, "metered+gated",
         "conversation core TTS: the per-sentence prefetch path (gated by the turn "
         "it runs in) and speak()'s farewell (metered, and gated as a silent skip "
-        "-- nobody is waiting on a goodbye, so over quota it is dropped, not refused)",
-        "tests/unit/conversation/test_session_usage_metering.py",
-    ),
-    ("services/conversation/session.py", "render_wav"): (
-        2, "metered+gated",
-        "the same two utterances as the synthesize row above, on the no-disk Opus "
-        "seam taken when the engine is a RenderingTTSProvider: prefetch and the "
-        "farewell. One row per utterance, not per branch -- render_wav and "
-        "synthesize are alternatives for producing one utterance, never both",
+        "-- nobody is waiting on a goodbye, so over quota it is dropped, not "
+        "refused). Task 1 (drop-audio-artifacts) moved both off synthesize()/"
+        "render_wav() onto this one bytes-returning seam -- Opus mode decodes the "
+        "bytes to PCM16 and encodes packets, wav mode pushes them straight over "
+        "the wire -- but _record_tts_usage still fires exactly once per "
+        "synthesized sentence/utterance on both branches, unchanged",
         "tests/unit/conversation/test_session_usage_metering.py",
     ),
     ("services/tts/base.py", "render_wav"): (
