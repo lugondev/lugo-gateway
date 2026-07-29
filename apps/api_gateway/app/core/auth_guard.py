@@ -210,13 +210,15 @@ async def _bearer_actor(request: Request) -> "Actor | None":
 
 class AuthGuardMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # Fix #5 (M2): ONLY a genuine CORS preflight (carries
-        # Access-Control-Request-Method) skips the guard. A plain OPTIONS is
-        # classified like any other method, so it can no longer enumerate the
-        # admin surface via the router's auto `405/200 Allow:`.
-        if request.method == "OPTIONS" and "access-control-request-method" in request.headers:
-            return await call_next(request)
-
+        # Fix #5 (M2): the guard has NO OPTIONS exemption. A genuine CORS
+        # preflight (Origin + Access-Control-Request-Method, per the Fetch spec)
+        # is answered by CORSMiddleware, which is registered OUTSIDE this guard
+        # (main.py) and consumes the preflight before it ever reaches here -- so
+        # an exemption would only ever apply to a NON-genuine OPTIONS (an
+        # Origin-less request CORS ignores and passes through), which is exactly
+        # the admin-surface method-enumeration oracle M2 describes (the router's
+        # auto `405/200 Allow:` served with no credentials). OPTIONS is therefore
+        # classified like any other method.
         if not settings.auth_enabled:
             return await call_next(request)
 

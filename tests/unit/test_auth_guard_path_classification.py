@@ -211,7 +211,24 @@ def test_plain_options_is_guarded(client, _with_password):
     assert resp.status_code in (401, 403), resp.status_code
 
 
-def test_genuine_cors_preflight_passes(client, _with_password):
-    """A real preflight (Access-Control-Request-Method present) still passes."""
+def test_options_with_acrm_but_no_origin_is_guarded(client, _with_password):
+    """The M2 re-open: Access-Control-Request-Method WITHOUT Origin is not a
+    genuine preflight (Fetch spec requires both). CORSMiddleware ignores it for
+    lack of Origin and passes it through, so the guard must still deny it --
+    otherwise this one header re-opens the admin-surface enumeration oracle."""
     resp = client.options("/v1/users", headers={"Access-Control-Request-Method": "GET"})
+    assert resp.status_code in (401, 403), resp.status_code
+
+
+def test_genuine_cors_preflight_passes(client, _with_password):
+    """A GENUINE preflight carries BOTH Origin and Access-Control-Request-Method.
+    CORSMiddleware (outside the guard) answers it before the guard runs, so it is
+    never blocked -- and never reaches the router's enumeration oracle either."""
+    resp = client.options(
+        "/v1/users",
+        headers={
+            "Origin": "https://app.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
     assert resp.status_code not in (401, 403), resp.status_code
