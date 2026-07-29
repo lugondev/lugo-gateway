@@ -105,6 +105,53 @@ def test_burn_threshold_tolerates_a_few_wrong_guesses_then_succeeds(client):
     assert claim.status_code == 200
 
 
+def test_sustained_wrong_claim_stream_cannot_indefinitely_block_pairing(client):
+    """Round-2 DoS regression (this is the test that would have caught it):
+    round 1 charged *every* failed claim against *every* currently-live
+    pairing, full stop. A single low-cost account trickling wrong guesses
+    could therefore burn any pairing -- including ones created *after* the
+    trickle started -- within a handful of requests, indefinitely: no
+    legitimate device could ever finish pairing while the attacker
+    persisted, since re-init just yielded a fresh code the ongoing stream
+    immediately burned again.
+
+    The fix scopes collateral charging to pairings that already existed
+    *before* the current miss streak became sustained (see pairing.py's
+    module docstring, defense #1, "Round 2"). This test proves a pairing
+    created *during* an already-ongoing wrong-claim stream survives the
+    stream continuing around it and can still be claimed with its correct
+    code -- i.e. the DoS is closed."""
+    _login(client, "sustained-attacker")
+
+    # Build a sustained miss streak (the burst threshold is 6 misses within
+    # the burst window -- see pairing._BURST_MISS_THRESHOLD). No pairing
+    # exists yet, so none of these have anything to burn.
+    for i in range(6):
+        resp = client.post(
+            "/v1/devices/pair/claim", json={"code": f"9{i:07d}", "name": "x"}
+        )
+        assert resp.status_code == 400
+
+    # A device inits *mid-streak* and gets a code.
+    init = client.post(
+        "/v1/devices/pair/init", json={"serial": "MID:STREAM:01"}
+    ).json()["data"]
+    real_code = init["code"]
+
+    # The attacker keeps trickling wrong guesses -- well past the old
+    # burn threshold -- while this pairing is live.
+    wrong_codes = [c for c in (f"8{i:07d}" for i in range(8)) if c != real_code]
+    for code in wrong_codes:
+        resp = client.post("/v1/devices/pair/claim", json={"code": code, "name": "x"})
+        assert resp.status_code == 400
+
+    # It must still be claimable with its correct code -- closed, not burned.
+    claim = client.post(
+        "/v1/devices/pair/claim", json={"code": real_code, "name": "survived"}
+    )
+    assert claim.status_code == 200
+
+
 def test_claim_burst_is_rate_limited(client):
     """Rate limiting (defense #3): a rapid burst of pair/claim calls from
     the same (IP, user) is throttled with 429, independent of whether any
