@@ -70,8 +70,20 @@ _background_tasks: set[asyncio.Task] = set()
 
 async def _build_tool_registry(profile) -> ToolRegistry | None:
     """Merge global + per-profile MCP servers (profile wins on name collision),
-    skip disabled entries, and fetch each enabled server's tools."""
-    global_servers = mcp_server_store.list()
+    skip disabled entries, and fetch each enabled server's tools.
+
+    Global rows are filtered to owner_id is None (server-managed/template
+    rows) before merging. Only admins can create/update/enable/clone mcp_server
+    rows (see routes/mcp_servers.py's `_require_admin`), so today every row is
+    ownerless -- but that wasn't always true, and a legacy owner-scoped row
+    left enabled from before that authz work would otherwise have its tools
+    (and header secrets, and invocation URL) injected into every OTHER user's
+    turn, not just its owner's. profile.mcp_servers is a separate, already
+    admin-gated field (Task 3) and is intentionally NOT filtered here -- it is
+    per-profile by construction, not globally broadcast."""
+    global_servers = {
+        name: srv for name, srv in mcp_server_store.list().items() if srv.owner_id is None
+    }
     profile_specific = {s.name: s for s in (profile.mcp_servers if profile else [])}
     merged_servers = {**global_servers, **profile_specific}
 

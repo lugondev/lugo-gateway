@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 
+from starlette._utils import get_route_path
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,15 @@ class UploadSizeLimitMiddleware:
         self.max_bytes = max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope["path"] not in self.paths:
+        # Match on the ROUTER's dispatch path (root_path stripped), the same
+        # call auth_guard.py and Starlette's own routing use -- not
+        # scope["path"], which still carries the root_path prefix. Under
+        # `--root-path /gw` those two diverge, and matching scope["path"]
+        # would silently fall through to the unwrapped receive(), reopening
+        # H3 (see module docstring). This is the twin fix to auth_guard.py's
+        # Fix #1 (H1/M3), applied to the second place in this app that has
+        # to classify a request by path before routing runs.
+        if scope["type"] != "http" or get_route_path(scope) not in self.paths:
             await self.app(scope, receive, send)
             return
 

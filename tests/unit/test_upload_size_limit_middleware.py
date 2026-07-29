@@ -14,11 +14,15 @@ import pytest
 from app.core.upload_size_limit import UploadSizeLimitMiddleware
 
 
-def _scope(path: str = "/v1/tts/reference-audio", content_length: int | None = None) -> dict:
+def _scope(
+    path: str = "/v1/tts/reference-audio",
+    content_length: int | None = None,
+    root_path: str = "",
+) -> dict:
     headers = []
     if content_length is not None:
         headers.append((b"content-length", str(content_length).encode()))
-    return {"type": "http", "path": path, "headers": headers}
+    return {"type": "http", "path": path, "root_path": root_path, "headers": headers}
 
 
 class _RecordingSend:
@@ -145,6 +149,44 @@ async def test_request_under_cap_passes_through_unmodified():
     assert seen["body"] == body
     assert send.status == 200
     assert send.body == b"ok"
+
+
+@pytest.mark.asyncio
+async def test_matches_and_caps_when_root_path_prefix_is_present():
+    """Regression for the round-2 finding: scope["path"] includes the
+    root_path prefix (e.g. under `--root-path /gw`), but the router (and
+    auth_guard.py) dispatch on get_route_path(scope), which strips it. If
+    this middleware matched on scope["path"] directly, a deployment behind
+    a root_path would never match self.paths and the cap would silently
+    stop applying -- reopening H3. Content-Length is set over the cap so a
+    correct match rejects at the fast pre-check, before receive() runs."""
+    receive_calls = 0
+
+    async def receive() -> dict:
+        nonlocal receive_calls
+        receive_calls += 1
+        raise AssertionError("receive() must not be called for an over-cap Content-Length")
+
+    app_calls = 0
+
+    async def downstream_app(scope, receive, send):
+        nonlocal app_calls
+        app_calls += 1
+
+    middleware = UploadSizeLimitMiddleware(
+        downstream_app, paths={"/v1/tts/reference-audio"}, max_bytes=1024
+    )
+    send = _RecordingSend()
+    scope = _scope(
+        path="/gw/v1/tts/reference-audio",
+        content_length=2048,
+        root_path="/gw",
+    )
+    await middleware(scope, receive, send)
+
+    assert send.status == 413
+    assert receive_calls == 0
+    assert app_calls == 0
 
 
 @pytest.mark.asyncio
