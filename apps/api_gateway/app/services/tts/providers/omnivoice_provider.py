@@ -135,7 +135,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
             if _voice_ref.get("path") and os.path.isfile(_voice_ref["path"]):
                 return _voice_ref
             omnivoice = resolve_omnivoice_config()
-            ref_dir = Path(settings.artifacts_dir).resolve()
+            ref_dir = Path(settings.artifacts_dir_resolved).resolve()
             ref_dir.mkdir(parents=True, exist_ok=True)
             ref_path = str(ref_dir / "_omnivoice_voice_ref.wav")
             wav = await self._synth(
@@ -180,7 +180,7 @@ class OmniVoiceProvider(RenderingTTSProvider):
             # OmniVoice venv interpreter and can break its imports.
             env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "VIRTUAL_ENV")}
             log_fh = open(  # noqa: SIM115 - kept open for the child's lifetime
-                Path(settings.artifacts_dir).resolve() / "_omnivoice_sidecar.log", "ab"
+                Path(settings.artifacts_dir_resolved).resolve() / "_omnivoice_sidecar.log", "ab"
             )
             _sidecar_process = subprocess.Popen(  # noqa: S603 - local model server
                 cmd, cwd=omnivoice.omnivoice_path, env=env,

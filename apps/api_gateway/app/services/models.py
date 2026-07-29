@@ -34,7 +34,7 @@ VOSK_SUGGESTIONS = [
 
 class ModelManager:
     def __init__(self) -> None:
-        self._base = Path(settings.stt_model_dir)
+        self._base = Path(settings.stt_model_dir_resolved)
         self._base.mkdir(parents=True, exist_ok=True)
         # name -> {"state": downloading|installed|error, "progress": float, "error": str|None}
         self._jobs: dict[str, dict] = {}

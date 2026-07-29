@@ -1,10 +1,61 @@
+import os
 import secrets
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Sinh một lần lúc import -> ổn định trong process, reset khi restart.
 # Giữ đúng hành vi cũ của main.py (secrets.token_hex(32) ở module scope).
 _GENERATED_SESSION_SECRET = secrets.token_hex(32)
+
+
+def _default_app_root() -> Path:
+    """Repo root derived from this file's own location, NOT the process CWD.
+
+    settings.py lives at apps/api_gateway/app/core/settings.py, so
+    parents[4] is core -> app -> api_gateway -> apps -> ROOT. Verified by
+    checking the resolved path contains pyproject.toml (see task-2-report.md).
+    """
+    return Path(__file__).resolve().parents[4]
+
+
+# Stable anchor for the CWD-dependent path defaults below (artifacts_dir,
+# stt_model_dir, the sqlite path inside database_url). Closes B1: a process
+# started with CWD=apps/api_gateway/ used to silently read/write a second,
+# stale data/app.db + artifacts/ there instead of the repo-root ones. Prefer
+# an explicit APP_ROOT env var (e.g. for containers with an unusual layout);
+# otherwise derive it from this file's location so it's correct regardless
+# of where the process is launched from.
+APP_ROOT: Path = Path(os.environ["APP_ROOT"]).resolve() if os.environ.get("APP_ROOT") else _default_app_root()
+
+_SQLITE_AIOSQLITE_PREFIX = "sqlite+aiosqlite:///"
+
+
+def resolve_under_root(value: str, root: Path = APP_ROOT) -> str:
+    """Resolve a plain relative path against `root`. Absolute paths (env
+    overrides like ARTIFACTS_DIR=/tmp/artifacts) pass through unchanged."""
+    path = Path(value)
+    if path.is_absolute():
+        return str(path)
+    return str(root / path)
+
+
+def resolve_sqlite_url(url: str, root: Path = APP_ROOT) -> str:
+    """Anchor a relative sqlite+aiosqlite URL's path against `root`.
+
+    `sqlite+aiosqlite:///data/app.db` (3 slashes = scheme + RELATIVE path
+    `data/app.db`) becomes the 4-slash absolute form
+    `sqlite+aiosqlite:////<root>/data/app.db`. Left unchanged: any non-sqlite
+    URL (e.g. `postgresql://...`), an already-absolute sqlite URL (4 slashes,
+    e.g. the model_service image's `sqlite+aiosqlite:////tmp/model_service.db`),
+    and the in-memory `sqlite+aiosqlite:///:memory:` form.
+    """
+    if not url.startswith(_SQLITE_AIOSQLITE_PREFIX):
+        return url
+    path_part = url[len(_SQLITE_AIOSQLITE_PREFIX):]
+    if path_part == ":memory:" or path_part.startswith("/"):
+        return url
+    return f"{_SQLITE_AIOSQLITE_PREFIX}{root / path_part}"
 
 
 class Settings(BaseSettings):
@@ -121,5 +172,21 @@ class Settings(BaseSettings):
         if not value or value == "*":
             return ["*"]
         return [origin.strip() for origin in value.split(",") if origin.strip()]
+
+    # CWD-independent forms of the three path-shaped settings above (Task 2,
+    # closes B1). The raw fields (`artifacts_dir`, `stt_model_dir`,
+    # `database_url`) keep their literal string values -- consumers that need
+    # an actual filesystem/DB location should use these instead.
+    @property
+    def artifacts_dir_resolved(self) -> str:
+        return resolve_under_root(self.artifacts_dir)
+
+    @property
+    def stt_model_dir_resolved(self) -> str:
+        return resolve_under_root(self.stt_model_dir)
+
+    @property
+    def database_url_resolved(self) -> str:
+        return resolve_sqlite_url(self.database_url)
 
 settings = Settings()

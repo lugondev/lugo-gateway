@@ -30,7 +30,7 @@ def configure(url: str | None = None) -> None:
     global _engine, _factory, _tables_ready
     if _engine is not None:
         _engine.dispose()
-    sync_url = sync_database_url(url or settings.database_url)
+    sync_url = sync_database_url(url or settings.database_url_resolved)
     if sync_url.startswith("sqlite"):
         db_file = sync_url.split("///", 1)[-1]
         if db_file and db_file != ":memory:":

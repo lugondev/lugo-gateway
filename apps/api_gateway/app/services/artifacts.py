@@ -118,4 +118,4 @@ async def prune_loop(store: ArtifactStore, max_age_s: float, interval_s: float) 
             logger.exception("artifact prune failed; retrying next interval")
 
 
-artifact_store = ArtifactStore(settings.artifacts_dir)
+artifact_store = ArtifactStore(settings.artifacts_dir_resolved)
