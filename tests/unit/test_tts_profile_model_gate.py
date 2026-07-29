@@ -88,6 +88,44 @@ def test_tts_profile_create_allows_catalogued_row(client, _with_password):
     assert resp.status_code == 200
 
 
+def test_tts_profile_clone_rejects_row_disabled_after_template_was_created(client, _with_password):
+    """Clone copies engine/model_id straight from the source profile without
+    going through the model-registry gate that create/update run -- a user
+    denied a model could otherwise still get it onto their own profile by
+    cloning an admin template pinned to it (created back when the row was
+    still enabled). Cloning must be gated the same as create/update."""
+    # The route's check_model_allowed reads through the module-level
+    # model_registry_store singleton, which caches rows in memory (see
+    # store.py) -- a second, freshly-instantiated ModelRegistryStore() here
+    # would write through to the same DB but leave the singleton's cache
+    # stale after the create-profile API call below has already primed it.
+    # Use the singleton directly so this test's create/disable is visible to
+    # the same instance the clone route reads.
+    from app.services.auth.users import user_store as _users
+    from app.services.model_registry.store import model_registry_store as store
+
+    asyncio.run(store.create("tts", "omnivoice", "omnivoice", "OmniVoice"))
+
+    client.post("/api/auth/signup", json={"username": "root", "password": "pw"})
+    admin = asyncio.run(_users.get_by_username("root"))
+    asyncio.run(_users.set_fields(admin.id, role="admin"))
+    client.post("/api/auth/login", json={"username": "root", "password": "pw"})
+
+    resp = client.post(
+        "/v1/tts/profiles",
+        json={"name": "template-a", "engine": "omnivoice", "model_id": "omnivoice"},
+    )
+    assert resp.status_code == 200
+
+    entry = asyncio.run(store.find("tts", "omnivoice", "omnivoice"))
+    asyncio.run(store.set_fields(entry["id"], enabled=False))
+
+    _signup_login(client, "toan")
+    resp = client.post("/v1/tts/profiles/template-a/clone", json={"new_name": "toan-copy"})
+    # Same error create/update would give for this now-disabled row.
+    assert resp.status_code == 403
+
+
 def test_tts_profile_engine_only_is_not_gated(client, _with_password):
     # An engine with no model_id is the "inherit / first-enabled fallback" case
     # (the provider resolves the row via find_enabled). Like STT/LLM, the gate

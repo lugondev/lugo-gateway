@@ -45,6 +45,7 @@ from app.services.mcp.server_store import mcp_server_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
 from app.services.model_registry.store import model_registry_store
+from app.services.profile_visibility import visible_profile_or_none
 from app.services.profiles.store import profile_store
 from app.services.stt.model_catalog import resolve_default_stt_model
 from app.services.stt.routing import select_stt_engine
@@ -69,8 +70,20 @@ _background_tasks: set[asyncio.Task] = set()
 
 async def _build_tool_registry(profile) -> ToolRegistry | None:
     """Merge global + per-profile MCP servers (profile wins on name collision),
-    skip disabled entries, and fetch each enabled server's tools."""
-    global_servers = mcp_server_store.list()
+    skip disabled entries, and fetch each enabled server's tools.
+
+    Global rows are filtered to owner_id is None (server-managed/template
+    rows) before merging. Only admins can create/update/enable/clone mcp_server
+    rows (see routes/mcp_servers.py's `_require_admin`), so today every row is
+    ownerless -- but that wasn't always true, and a legacy owner-scoped row
+    left enabled from before that authz work would otherwise have its tools
+    (and header secrets, and invocation URL) injected into every OTHER user's
+    turn, not just its owner's. profile.mcp_servers is a separate, already
+    admin-gated field (Task 3) and is intentionally NOT filtered here -- it is
+    per-profile by construction, not globally broadcast."""
+    global_servers = {
+        name: srv for name, srv in mcp_server_store.list().items() if srv.owner_id is None
+    }
     profile_specific = {s.name: s for s in (profile.mcp_servers if profile else [])}
     merged_servers = {**global_servers, **profile_specific}
 
@@ -122,11 +135,22 @@ class SessionRuntimeConfig:
     stt_model: str = ""  # optional model-variant override (SttConfig.model, resolve_stt's 3rd value)
     tts_model: str = ""  # optional registry-row selector within tts_engine (TTSRequest.model_id)
     # The authenticated WS caller's user id (resolve_ws_identity's identity.user_id),
-    # if any. Preferred over profile.owner_id when recording the session -- the
-    # session belongs to whoever is actually speaking, not the profile's owner.
-    # None when auth is disabled (dev mode) or the caller used the legacy shared
-    # device_auth_token; in that case the front-end falls back to profile.owner_id.
+    # if any. This -- never profile.owner_id -- is what a created session is
+    # recorded under: the session belongs to whoever is actually speaking, not
+    # the profile's owner. None when auth is disabled (dev mode) or the caller
+    # used the legacy shared device_auth_token; in that case the session is
+    # created ownerless (there is no real owner to attribute it to), not
+    # attributed to the named profile's owner.
     identity_user_id: str | None = None
+    # True ONLY for the dev-mode short-circuit (WsIdentity.unauthenticated,
+    # auth_guard.py -- settings.auth_enabled is False). start() below uses it
+    # the same way ws_session_owner_denied does: fully unscoped, since there
+    # is no way to prove ownership of anything in that mode. False (the
+    # default) for the legacy shared device_auth_token, which also has
+    # identity_user_id=None but IS a real, auth-enabled deployment -- that
+    # case must still only ever resolve a template profile (owner_id=None),
+    # never someone else's private one.
+    identity_unauthenticated: bool = False
     # Per-connection override of Opus playback pacing. None (the default, and
     # the only value api/routes/lugo.py ever produces) means "not specified,
     # inherit system_config.conversation.conversation_opus_pace" -- so
@@ -206,7 +230,25 @@ class ConversationSession:
         # Re-resolve the profile object + LLM config from the profile name. This is
         # deterministic from profile_name (the front-end already emitted any
         # "profile not found" warning during its own query-param resolution).
-        profile = profile_store.get(cfg.profile_name) if cfg.profile_name else None
+        #
+        # This is the actual choke point for C2 (profile IDOR --
+        # docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md):
+        # llm_api_key, system_prompt and the tool_registry (-> session_started's
+        # active_tools) below are ALL derived from `profile`, so this resolution
+        # -- not the route-level one -- is what must not hand back a profile the
+        # caller doesn't own. The route (conversation.py/lugo.py/livehost.py)
+        # also gates its own connect-time use of the profile (STT/TTS
+        # resolution, health check), but does not need to additionally null out
+        # `cfg.profile_name` for this to be safe: visible_profile_or_none here
+        # re-checks visibility against cfg.identity_user_id independently.
+        # bypass=cfg.identity_unauthenticated preserves the pre-existing
+        # dev-mode fallback (identity.unauthenticated -> fully unscoped, see
+        # SessionRuntimeConfig.identity_unauthenticated's docstring).
+        profile = visible_profile_or_none(
+            profile_store.get(cfg.profile_name) if cfg.profile_name else None,
+            cfg.identity_user_id,
+            bypass=cfg.identity_unauthenticated,
+        )
         self.profile = profile
         llm_base_url = (profile.llm.base_url or None) if (profile and profile.llm.base_url) else None
         llm_api_key = profile.llm.api_key if (profile and profile.llm.base_url) else None
@@ -309,7 +351,12 @@ class ConversationSession:
                     cfg.session_id,
                     profile_id=cfg.profile_name or "",
                     meta={"stt_engine": cfg.stt_engine, "tts_engine": cfg.tts_engine},
-                    user_id=cfg.identity_user_id or (profile.owner_id if profile else None),
+                    # No `or profile.owner_id` fallback: a fleet/dev-mode caller
+                    # (identity_user_id is None) must create an ownerless row, not
+                    # one silently attributed to the owner of whatever profile
+                    # name was passed in (H2 -- that let a named profile's owner
+                    # be billed for / attributed a session they never touched).
+                    user_id=cfg.identity_user_id,
                 )
         except Exception as exc:  # noqa: BLE001 - session setup must not drop the connection
             logger.warning("session setup failed for %s: %s", cfg.session_id, exc)

@@ -20,6 +20,8 @@ from app.services.auth.devices import device_store
 from app.services.auth.tokens import issue_access_token
 from app.services.auth.users import user_store
 from app.services.history.store import session_store
+from app.services.profiles.models import Profile
+from app.services.profiles.store import profile_store
 
 
 @pytest.fixture
@@ -329,3 +331,65 @@ def test_ws_paired_device_can_still_resume_its_owners_session(client, _with_pass
         msg = ws.receive_json()
         assert msg["event"] == "session_started"
         assert msg["session_id"] == owner_sid
+
+
+# --- H2: `caller_id or profile.owner_id` create-time fallback --------------
+#
+# session.py's start() re-resolves `?profile=` via visible_profile_or_none()
+# with `bypass=cfg.identity_unauthenticated` (C2's choke point). For a REAL
+# auth-enabled deployment (identity.unauthenticated=False -- e.g. the legacy
+# shared device_auth_token) that bypass is False, so a private profile is
+# already invisible/None to a null-identity caller and the H2 fallback never
+# had a non-None `profile` to read `.owner_id` off of. The live H2 path is the
+# dev-mode/no-auth short-circuit (identity.unauthenticated=True -- the default
+# in this test module, since `_hermetic` in conftest.py blanks the admin
+# passwords unless a test opts into `_with_password`): there,
+# visible_profile_or_none is called with bypass=True and hands back the named
+# profile UNCONDITIONALLY, regardless of owner_id. Pre-fix, the session-create
+# call then did `cfg.identity_user_id or profile.owner_id` -- identity_user_id
+# is None in dev mode, so that fallback resolved to the named profile's
+# owner_id, silently attributing the new session to a real victim account
+# instead of creating it ownerless.
+
+
+def test_ws_dev_mode_naming_a_profile_creates_ownerless_session_not_victim_owned(client):
+    """No _with_password here -- this deliberately runs in the default
+    dev-mode/no-auth state (identity.unauthenticated=True, identity.user_id
+    is None) that most other tests in this file opt OUT of via _with_password.
+    That's the exact state H2 exploited."""
+    victim_id = "victim-h2-" + uuid.uuid4().hex[:8]
+    profile_name = "victim-profile-" + uuid.uuid4().hex[:8]
+    profile_store.upsert(Profile(name=profile_name, owner_id=victim_id))
+
+    with client.websocket_connect(
+        f"/v1/conversation/stream?output=text&profile={profile_name}"
+    ) as ws:
+        started = ws.receive_json()
+        assert started["event"] == "session_started"
+        sid = started["session_id"]
+
+    row = asyncio.run(session_store.get(sid))
+    assert row is not None
+    assert row["user_id"] is None, (
+        f"session {sid} was created owned by {row['user_id']!r}; "
+        f"H2 regression: should be ownerless (None), not victim {victim_id!r}"
+    )
+
+
+def test_http_chat_dev_mode_naming_a_profile_creates_ownerless_session(client):
+    """Same H2 regression on the HTTP /chat create path (conversation.py's
+    session_store.create call), in the same default dev-mode state."""
+    victim_id = "victim-h2-http-" + uuid.uuid4().hex[:8]
+    profile_name = "victim-profile-http-" + uuid.uuid4().hex[:8]
+    profile_store.upsert(Profile(name=profile_name, owner_id=victim_id))
+
+    resp = client.post(
+        f"/v1/conversation/chat?profile={profile_name}",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.status_code == 200, resp.text
+    sid = resp.json()["data"]["session_id"]
+
+    row = asyncio.run(session_store.get(sid))
+    assert row is not None
+    assert row["user_id"] is None

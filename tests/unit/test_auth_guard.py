@@ -118,8 +118,37 @@ def test_guard_allows_auth_routes_without_login(client, _with_password):
 
 
 def test_guard_allows_options_preflight_without_login(client, _with_password):
-    resp = client.options("/v1/system/status")
+    # A GENUINE CORS preflight carries BOTH Origin and
+    # Access-Control-Request-Method (Fetch spec). It is answered by
+    # CORSMiddleware (outside the guard) before the guard ever runs, so the
+    # browser can complete the handshake before login.
+    resp = client.options(
+        "/v1/system/status",
+        headers={
+            "Origin": "https://app.example.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
     assert resp.status_code != 401
+
+
+def test_guard_blocks_plain_options_without_preflight_header(client, _with_password):
+    # M2: a plain OPTIONS (no preflight header) must be classified like any other
+    # method, not exempted -- otherwise it enumerates the admin surface via the
+    # router's auto `405/200 Allow:` with no credentials.
+    resp = client.options("/v1/system/status")
+    assert resp.status_code in (401, 403)
+
+
+def test_guard_blocks_options_with_acrm_but_no_origin(client, _with_password):
+    # The M2 re-open the reviewer found: ACRM without Origin is NOT a genuine
+    # preflight -- CORSMiddleware ignores it (no Origin) and passes it through,
+    # so the guard must still classify and deny it. Otherwise this single header
+    # re-opens the enumeration oracle.
+    resp = client.options(
+        "/v1/system/status", headers={"Access-Control-Request-Method": "GET"}
+    )
+    assert resp.status_code in (401, 403)
 
 
 def test_guard_enforces_when_only_bootstrap_password_set(client, monkeypatch):

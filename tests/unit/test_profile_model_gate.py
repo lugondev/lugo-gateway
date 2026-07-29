@@ -103,6 +103,46 @@ def test_profile_create_allows_testing_stage_llm_for_tester(client, _with_passwo
     assert resp.status_code == 200
 
 
+def test_profile_clone_rejects_model_disabled_after_template_was_created(client, _with_password):
+    """Clone copies stt/llm straight from the source profile without going
+    through the model-registry gate that create/update run -- a user denied
+    a model could otherwise still get it onto their own profile by cloning
+    an admin template pinned to it (created back when the model was still
+    enabled). Cloning must be gated the same as create/update."""
+    import asyncio
+
+    # The route's check_model_allowed reads through the module-level
+    # model_registry_store singleton, which caches rows in memory (see
+    # store.py) -- a second, freshly-instantiated ModelRegistryStore() here
+    # would write through to the same DB but leave the singleton's cache
+    # stale after the create-profile API call below has already primed it.
+    # Use the singleton directly so this test's create/disable is visible to
+    # the same instance the clone route reads.
+    from app.services.auth.users import user_store as _users
+    from app.services.model_registry.store import model_registry_store as store
+
+    asyncio.run(store.create("llm", "openrouter", "qwen3-asr-flash", "Qwen3 ASR Flash"))
+
+    client.post("/api/auth/signup", json={"username": "root", "password": "pw"})
+    admin = asyncio.run(_users.get_by_username("root"))
+    asyncio.run(_users.set_fields(admin.id, role="admin"))
+    client.post("/api/auth/login", json={"username": "root", "password": "pw"})
+
+    resp = client.post("/v1/profiles", json={
+        "name": "template-a",
+        "llm": {"engine": "openrouter", "model": "qwen3-asr-flash", "base_url": "https://x", "api_key": ""},
+    })
+    assert resp.status_code == 200
+
+    entry = asyncio.run(store.find("llm", "openrouter", "qwen3-asr-flash"))
+    asyncio.run(store.set_fields(entry["id"], enabled=False))
+
+    _signup_login(client, "toan")
+    resp = client.post("/v1/profiles/template-a/clone", json={"new_name": "toan-copy"})
+    # Same error create/update would give for this now-disabled model.
+    assert resp.status_code == 403
+
+
 def test_profile_create_accepts_enabled_stt_model_for_engine_without_variant_catalog(client, _with_password):
     """qwen3_asr_or (OpenRouter-backed remote STT) has no entry in
     STT_MODEL_CATALOGS -- it's not a local engine with selectable sizes/repos

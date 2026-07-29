@@ -4,7 +4,17 @@ from app.services.artifacts import artifact_store
 
 
 class TTSRequest(BaseModel):
-    text: str = Field(..., min_length=1)
+    # 10,000 chars (~1,500-2,000 words, roughly 10-15 minutes of spoken audio)
+    # comfortably covers any legitimate synthesize/stream call -- /v1/tts/stream
+    # segments this into ~200-char chunks (segmenter.py's default max_chars) for
+    # pseudo-streaming playback, so even a full-length narration script fits.
+    # Without a cap, a single request hands one provider call (or, for
+    # /v1/tts/stream, dozens of segment calls run back-to-back inside one
+    # fire-and-forget task) an unbounded payload -- M5, see
+    # docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md. Shared
+    # by both routes on purpose: /v1/tts/stream needs the same ceiling, just
+    # applied before segmentation instead of per-provider-call.
+    text: str = Field(..., min_length=1, max_length=10_000)
     engine: str = "omnivoice"
     # Registry row selector: multiple rows can share an engine (e.g. three
     # http_tts rows pointing at different service base_urls), so the engine
@@ -26,8 +36,17 @@ class TTSRequest(BaseModel):
         the gateway (e.g. `/app/.env`) or hang a worker on a device node.
         `POST /v1/tts/reference-audio` legitimately returns absolute paths
         under the artifacts dir, so this accepts those -- it only rejects
-        paths that resolve outside `artifact_store.base_dir`."""
-        if v is None:
+        paths that resolve outside `artifact_store.base_dir`.
+
+        Falsy (None or "") short-circuits as "not set": `TtsProfile` uses ""
+        as its not-set sentinel (see routes/tts_profiles.py's
+        `_require_ref_audio_path_contained`), and an API client that echoes
+        a profile's fields straight into /v1/tts/synthesize would otherwise
+        get a spurious 422 here -- `contains("")` resolves "" to the
+        artifacts dir itself, which isn't even a readable file, let alone
+        one outside it. A real (non-empty) path still runs the full
+        containment check below."""
+        if not v:
             return v
         if not artifact_store.contains(v):
             raise ValueError("ref_audio_path must be inside the artifacts directory")

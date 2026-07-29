@@ -5,7 +5,9 @@ from app.services.auth.pairing import PendingPairingRegistry
 def test_create_returns_code_and_poll_token():
     registry = PendingPairingRegistry()
     entry = registry.create("AA:BB:CC")
-    assert len(entry.code) == 6 and entry.code.isdigit()
+    # C3 hardening widened the code from 6 to 8 digits -- see pairing.py's
+    # module docstring for why (defense #2, entropy).
+    assert len(entry.code) == 8 and entry.code.isdigit()
     assert entry.poll_token
     assert entry.serial == "AA:BB:CC"
     assert entry.claimed is False

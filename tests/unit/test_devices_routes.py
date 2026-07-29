@@ -20,7 +20,8 @@ def test_pair_init_returns_code_and_poll_token(client):
     resp = client.post("/v1/devices/pair/init", json={"serial": "AA:BB:CC"})
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert len(data["code"]) == 6
+    # C3 hardening widened the code from 6 to 8 digits (pairing.py).
+    assert len(data["code"]) == 8
     assert data["poll_token"]
 
 

@@ -162,3 +162,39 @@ def test_create_speech_without_ref_audio_leaves_ref_audio_path_unset():
     provider = _FakeTTS()
     _client(provider).post("/v1/audio/speech", headers=_AUTH, json={"input": "hi"})
     assert provider.calls[0].ref_audio_path is None
+
+
+def test_create_speech_rejects_oversized_ref_audio_base64():
+    """LOW: ref_audio_base64 was decoded fully into memory before any size
+    check -- gated behind the service bearer token, so LOW severity, but an
+    unbounded decode is still worth bounding. The check must reject before
+    base64.b64decode ever runs (not after), so build a string well past the
+    cap without needing it to be valid base64."""
+    from model_service.app.routes_tts import _REF_AUDIO_BASE64_MAX_CHARS
+
+    provider = _FakeTTS()
+    oversized = "A" * (_REF_AUDIO_BASE64_MAX_CHARS + 1)
+    r = _client(provider).post(
+        "/v1/audio/speech",
+        headers=_AUTH,
+        json={"input": "xin chào", "ref_audio_base64": oversized},
+    )
+    assert r.status_code == 413
+    assert provider.calls == []  # rejected before render_wav ever ran
+
+
+def test_create_speech_accepts_ref_audio_base64_at_the_cap():
+    from model_service.app.routes_tts import _REF_AUDIO_BASE64_MAX_CHARS
+
+    provider = _FakeTTS()
+    # Real base64 (not a bare repeated char) sized just under the cap.
+    ref_bytes = b"x" * (_REF_AUDIO_BASE64_MAX_CHARS // 2)
+    encoded = base64.b64encode(ref_bytes).decode("ascii")
+    assert len(encoded) <= _REF_AUDIO_BASE64_MAX_CHARS
+    r = _client(provider).post(
+        "/v1/audio/speech",
+        headers=_AUTH,
+        json={"input": "xin chào", "ref_audio_base64": encoded},
+    )
+    assert r.status_code == 200
+    assert len(provider.calls) == 1

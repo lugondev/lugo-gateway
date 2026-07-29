@@ -7,6 +7,7 @@ from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFil
 
 from app.core.actor import current_user_id
 from app.core.audio import wav_duration_seconds
+from app.core.upload_limits import REFERENCE_AUDIO_MAX_BYTES
 from app.schemas.common import StreamEvent
 from app.schemas.tts import TTSRequest
 from app.services.artifacts import artifact_store
@@ -17,6 +18,15 @@ from app.streaming.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/tts", tags=["tts"])
+
+# Size number + reasoning live in upload_limits.py (shared with main.py's
+# UploadSizeLimitMiddleware, which enforces the same cap at the ASGI layer,
+# before Starlette's multipart parser ever runs -- see that middleware's
+# docstring for why this route can't rely on the chunked read below alone).
+# Kept as a module attribute here (not inlined) so it stays monkeypatchable
+# by tests without reaching into main.py's middleware stack.
+_MAX_REFERENCE_AUDIO_BYTES = REFERENCE_AUDIO_MAX_BYTES
+_UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 
 # Strong references to running stream jobs: asyncio only keeps a weak ref to
 # tasks, so a fire-and-forget create_task can be GC'd mid-synthesis.
@@ -60,8 +70,37 @@ async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
     """Save a voice-clone reference clip; the returned ref_audio_path is what
     a TtsProfile's voice_mode="clone" stores (see profile_models.py). Persists
     like OmniVoice's pinned reference -- not swept by artifact prune, see
-    ArtifactStore.save_reference_audio."""
-    data = await audio.read()
+    ArtifactStore.save_reference_audio.
+
+    The real ceiling for this route lives one layer up: main.py's
+    UploadSizeLimitMiddleware caps the body at the ASGI level, before
+    Starlette's multipart parser (which drives `audio: UploadFile`) ever
+    runs -- because by the time THIS function starts executing, the whole
+    multipart body has already been received and spooled by that parser
+    regardless of anything done here. Read in bounded chunks (not a single
+    `await audio.read()`) and the running total checked against
+    _MAX_REFERENCE_AUDIO_BYTES as a defense-in-depth backstop -- it still
+    guards against a single unbounded in-memory `bytes` blowup for whatever
+    made it through the middleware. See H3 in
+    docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md and
+    upload_size_limit.py's module docstring for the full reasoning."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await audio.read(_UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > _MAX_REFERENCE_AUDIO_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "reference audio exceeds the "
+                    f"{_MAX_REFERENCE_AUDIO_BYTES // (1024 * 1024)}MB limit"
+                ),
+            )
+        chunks.append(chunk)
+    data = b"".join(chunks)
     ref_id, _url = artifact_store.save_reference_audio(data)
     return {"success": True, "data": {"ref_audio_path": str(artifact_store.path_for(ref_id))}}
 

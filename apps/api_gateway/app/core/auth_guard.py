@@ -1,6 +1,7 @@
 import hmac
 from dataclasses import dataclass
 
+from starlette._utils import get_route_path
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
@@ -32,7 +33,12 @@ _NO_AUTH_PREFIXES = (
     "/v1/devices/pair/init",
     "/v1/devices/pair/status",
 )
-# Any logged-in session (admin or user).
+# Any logged-in session (admin or user). Matched with _matches() (segment
+# boundary). NONE of these may overlap an _ADMIN_PREFIXES entry: the classifier
+# checks admin BEFORE these broad user prefixes (see _classify), so an overlap
+# would be silently upgraded to admin. The user carve-outs that DO sit inside an
+# admin prefix live in _USER_EXACT below instead, precisely so they can be
+# matched exactly (and by method) rather than as a swallow-everything prefix.
 _USER_PREFIXES = (
     "/ui",
     "/static/",
@@ -51,26 +57,34 @@ _USER_PREFIXES = (
     "/v1/stt",
     "/v1/tts",
     "/v1/sessions",
-    "/v1/devices/mine",
-    "/v1/devices/pair/claim",
-    # User-facing read of an otherwise admin-only prefix: /v1/model_registry/options
-    # is THE feed every user's profile-editor dropdowns read. _USER_PREFIXES is
-    # matched before _ADMIN_PREFIXES, so this carve-out wins over the
-    # "/v1/model_registry" admin rule below while the rest of the CRUD surface
-    # stays admin-only.
-    "/v1/model_registry/options",
-    # Same carve-out, for the resolved server defaults: /v1/model_registry/defaults
-    # is what the conversation UI reads to show the actual model behind "server
-    # default" (read-only, no CRUD surface). Checked before the admin
-    # "/v1/model_registry" rule below, same as /options.
-    "/v1/model_registry/defaults",
-    # Same carve-out, for the caller's own usage totals: /v1/usage/me is
-    # every logged-in user's "my usage" view, out of the otherwise
-    # admin-only /v1/usage prefix (see _ADMIN_PREFIXES below). Checked
-    # first, so this wins over the admin rule while /v1/usage/summary stays
-    # admin-only.
-    "/v1/usage/me",
 )
+# User carve-outs that sit INSIDE an admin prefix. Matched EXACTLY (never as a
+# prefix) and BY METHOD, checked BEFORE _ADMIN_PREFIXES. Both properties are
+# load-bearing against M1 (path-param shadowing of admin handlers):
+#
+#  - EXACT, not prefix: `/v1/devices/mine` as a bare prefix also admits
+#    `POST /v1/devices/mine/revoke`, which the ROUTER dispatches to the admin
+#    `revoke_any_device(device_id="mine")` -- the user carve-out would smuggle a
+#    non-admin into an admin handler. The one legitimate subpath under it,
+#    `POST /v1/devices/mine/{device_id}/revoke`, is handled by
+#    _is_own_device_revoke() below, whose shape check `/mine/revoke` cannot match.
+#
+#  - BY METHOD: `/v1/model_registry/options` is the user dropdown feed for GET,
+#    but PATCH/DELETE on that exact string dispatch to the admin
+#    `update/delete_entry(entry_id="options")` (the `/{entry_id}` route). The
+#    carve-out therefore only covers the safe read methods; every other method
+#    falls through to the `/v1/model_registry` admin rule. Same reasoning for
+#    `/v1/model_registry/defaults` and `/v1/usage/me`.
+#
+# `/v1/devices/pair/claim` is a POST user route with no admin route sharing its
+# exact path, so its carve-out is {"POST"}.
+_USER_EXACT: dict[str, frozenset[str]] = {
+    "/v1/usage/me": frozenset({"GET", "HEAD"}),
+    "/v1/model_registry/options": frozenset({"GET", "HEAD"}),
+    "/v1/model_registry/defaults": frozenset({"GET", "HEAD"}),
+    "/v1/devices/mine": frozenset({"GET", "HEAD"}),
+    "/v1/devices/pair/claim": frozenset({"POST"}),
+}
 # role == "admin" required.
 _ADMIN_PREFIXES = (
     "/v1/system",
@@ -101,6 +115,78 @@ def _matches(path: str, prefixes: tuple[str, ...]) -> bool:
     return any(path == prefix or path.startswith(prefix.rstrip("/") + "/") for prefix in prefixes)
 
 
+def _is_own_device_revoke(path: str) -> bool:
+    """True ONLY for `/v1/devices/mine/{device_id}/revoke` -- the user's
+    own-device revoke (a legitimate user subpath under the exact `/v1/devices/mine`
+    carve-out). Deliberately shape-precise so it does NOT match the M1 attack
+    `/v1/devices/mine/revoke` (which the router dispatches to the admin
+    `revoke_any_device(device_id="mine")`): that string has an empty middle
+    segment and is rejected by the `device_id` non-empty check."""
+    parts = path.split("/")
+    return (
+        len(parts) == 6
+        and parts[:4] == ["", "v1", "devices", "mine"]
+        and parts[4] != ""
+        and parts[5] == "revoke"
+    )
+
+
+def _hostile_target(request: Request) -> bool:
+    """Defense in depth (fix #2): a request whose raw target needs `#`, `%23`,
+    or a `.`/`..` path segment to classify one way while the router dispatches it
+    another is hostile -- reject BEFORE classification. This is the H1 root cause
+    (request.url.path truncates at `#`; uvicorn decodes `%23`->`#` before
+    routing) plus encoded/literal dot-segment traversal, caught regardless of how
+    any particular server populates scope["path"]."""
+    raw = request.scope.get("raw_path")
+    raw_str = raw.decode("latin-1", "replace") if isinstance(raw, (bytes, bytearray)) else ""
+    for text in (request.url.path, raw_str):
+        lowered = text.lower()
+        if "#" in text or "%23" in lowered or "%2e" in lowered:
+            return True
+    # Literal dot-segments in either the decoded route path or url.path.
+    for candidate in (get_route_path(request.scope), request.url.path):
+        if any(seg in (".", "..") for seg in candidate.split("/")):
+            return True
+    return False
+
+
+def _classify(path: str, method: str) -> str | None:
+    """Classify the ROUTER's dispatch path into public/user/admin, or None for
+    the default-deny floor. `path` MUST be get_route_path(scope) (root_path
+    stripped, no `#` truncation) so the guard sees exactly what the router
+    dispatches -- this is the R1 fix for H1 and M3.
+
+    Ordering is the whole security contract:
+      1. public allowlists;
+      2. exact, method-scoped user carve-outs that sit inside admin prefixes
+         (_USER_EXACT + the own-device-revoke subpath) -- exact+method so a
+         crafted subpath/method cannot ride them into an admin handler (M1);
+      3. _ADMIN_PREFIXES BEFORE the broad _USER_PREFIXES, so the more-restrictive
+         admin rule always wins any overlap (fix #4). No broad user prefix
+         overlaps an admin prefix (asserted by
+         test_no_admin_prefix_is_shadowed_by_a_user_prefix), so step 3 only ever
+         resolves the carve-out overlaps deterministically;
+      4. broad user prefixes;
+      5. default-deny (None) -> caller still needs a login (user floor)."""
+    if path in _PUBLIC_PATHS:
+        return "public"
+    if path in _STATIC_ALLOWLIST:
+        return "public"
+    if _matches(path, _NO_AUTH_PREFIXES):
+        return "public"
+    allowed = _USER_EXACT.get(path)
+    if allowed is not None and method in allowed:
+        return "user"
+    if method == "POST" and _is_own_device_revoke(path):
+        return "user"
+    if _matches(path, _ADMIN_PREFIXES):
+        return "admin"
+    if _matches(path, _USER_PREFIXES):
+        return "user"
+    return None
+
+
 async def _bearer_actor(request: Request) -> "Actor | None":
     """Phân giải danh tính từ Authorization: Bearer. LUÔN trả role="user" --
     role trong token không được đọc, vì không tồn tại. Đây là lý do web client
@@ -124,16 +210,27 @@ async def _bearer_actor(request: Request) -> "Actor | None":
 
 class AuthGuardMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if request.method == "OPTIONS":
-            return await call_next(request)
-
+        # Fix #5 (M2): the guard has NO OPTIONS exemption. A genuine CORS
+        # preflight (Origin + Access-Control-Request-Method, per the Fetch spec)
+        # is answered by CORSMiddleware, which is registered OUTSIDE this guard
+        # (main.py) and consumes the preflight before it ever reaches here -- so
+        # an exemption would only ever apply to a NON-genuine OPTIONS (an
+        # Origin-less request CORS ignores and passes through), which is exactly
+        # the admin-surface method-enumeration oracle M2 describes (the router's
+        # auto `405/200 Allow:` served with no credentials). OPTIONS is therefore
+        # classified like any other method.
         if not settings.auth_enabled:
             return await call_next(request)
 
-        path = request.url.path
-        if path in _PUBLIC_PATHS:
-            return await call_next(request)
-        if path in _STATIC_ALLOWLIST or _matches(path, _NO_AUTH_PREFIXES):
+        # Fix #2: reject hostile targets before we trust any classification.
+        if _hostile_target(request):
+            return self._unauthenticated(request)
+
+        # Fix #1 (H1, M3): classify on the SAME string the router dispatches on
+        # (root_path stripped, no `#` truncation), never request.url.path.
+        path = get_route_path(request.scope)
+        kind = _classify(path, request.method)
+        if kind == "public":
             return await call_next(request)
 
         # "authentication chỉ dùng 1, không fallback" -- nếu request chào
@@ -151,12 +248,12 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
             actor = None
             user_id = request.session.get("user_id")
 
-        if _matches(path, _USER_PREFIXES):
+        if kind == "user":
             if not user_id:
                 return self._unauthenticated(request)
             return await call_next(request)
 
-        if _matches(path, _ADMIN_PREFIXES):
+        if kind == "admin":
             if not user_id:
                 return self._unauthenticated(request)
             role = actor.role if actor is not None else request.session.get("role")
@@ -164,11 +261,11 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
                 return JSONResponse({"success": False, "error": "admin only"}, status_code=403)
             return await call_next(request)
 
-        # Default-DENY. Anything not classified above is treated as at least
-        # user-level rather than public, so a newly mounted router that nobody
-        # remembered to classify fails closed instead of being served to the
-        # internet (which is exactly how /v1/events, /agents-docs, /artifacts
-        # and /openapi.json ended up unauthenticated).
+        # Default-DENY (kind is None). Anything not classified above is treated
+        # as at least user-level rather than public, so a newly mounted router
+        # that nobody remembered to classify fails closed instead of being
+        # served to the internet (which is exactly how /v1/events, /agents-docs,
+        # /artifacts and /openapi.json ended up unauthenticated).
         if not user_id:
             return self._unauthenticated(request)
         return await call_next(request)

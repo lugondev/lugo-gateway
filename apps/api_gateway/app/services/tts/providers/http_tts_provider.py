@@ -10,6 +10,7 @@ which all produce WAV.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import time
@@ -44,6 +45,13 @@ def _looks_like_wav(data: bytes) -> bool:
     ProviderError wrapping.
     """
     return len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WAVE"
+
+
+def _read_ref_audio_base64(path: str) -> str:
+    """Blocking read + base64 encode of a reference-audio clip. Run via
+    ``asyncio.to_thread`` -- never call directly from a coroutine, see
+    ``_render_wav``."""
+    return base64.b64encode(Path(path).read_bytes()).decode("ascii")
 
 
 class HttpTtsProvider(RenderingTTSProvider):
@@ -165,8 +173,16 @@ class HttpTtsProvider(RenderingTTSProvider):
             # this HTTP call -- send the actual bytes instead, the same way
             # model_service's /v1/voices tells us whether this engine even
             # supports cloning before we bother.
-            ref_bytes = Path(payload.ref_audio_path).read_bytes()
-            body["ref_audio_base64"] = base64.b64encode(ref_bytes).decode("ascii")
+            #
+            # Both the disk read and the base64 encode are blocking calls that
+            # can run long enough (a large ref clip) to freeze the single
+            # asyncio event loop for the whole gateway process -- offload them
+            # to a worker thread, matching the asyncio.to_thread pattern the
+            # other five providers already use for their blocking synthesis
+            # work (see vieneu_provider._render_wav).
+            body["ref_audio_base64"] = await asyncio.to_thread(
+                _read_ref_audio_base64, payload.ref_audio_path
+            )
             body["ref_text"] = payload.ref_text
 
         try:

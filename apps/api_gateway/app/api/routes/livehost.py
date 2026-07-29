@@ -4,11 +4,12 @@ import logging
 import uuid
 from contextlib import aclosing
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
+from app.core.actor import current_role, current_user_id
 from app.core.audio import pcm16_to_wav_bytes, wav_duration_seconds, wav_file_to_pcm16
-from app.core.auth_guard import resolve_ws_identity, ws_subprotocol
+from app.core.auth_guard import resolve_ws_identity, ws_session_owner_denied, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
@@ -21,6 +22,7 @@ from app.services.livehost.orchestrator import LiveHostOrchestrator
 from app.services.livehost.registry import LivehostSession, livehost_registry
 from app.services.livehost.scheduler import EventScheduler
 from app.services.model_registry.store import model_registry_store
+from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
 from app.services.profiles.store import profile_store
 from app.services.quota.gate import QuotaExceededError, quota_gate
 from app.services.stt.model_catalog import resolve_default_stt_model
@@ -94,29 +96,45 @@ class TikTokConnectRequest(BaseModel):
     unique_id: str
 
 
-@router.post("/{session_id}/connect")
-async def connect_tiktok(session_id: str, payload: TikTokConnectRequest) -> dict:
+def _scope_user_id(request: Request) -> str | None:
+    """None for admins, or when auth is fully disabled (dev mode -- see
+    app.core.actor.current_role), which is unfiltered/unchanged from today's
+    behavior; the caller's own id otherwise. Same pattern as sessions.py's
+    identically-named helper."""
+    return None if current_role(request) == "admin" else current_user_id(request)
+
+
+def _get_owned_session(session_id: str, request: Request) -> LivehostSession:
+    """H5: connect/disconnect/status previously did only
+    `livehost_registry.get(session_id)`, with no owner check at all -- any
+    logged-in user could drive/stop/inspect another user's live TikTok
+    session by id. 404s uniformly for "doesn't exist" and "exists but isn't
+    yours", same as get_session/_scope_user_id in sessions.py, so this isn't
+    a new existence oracle."""
     session = livehost_registry.get(session_id)
-    if session is None:
+    scope = _scope_user_id(request)
+    if session is None or (scope is not None and session.user_id != scope):
         raise HTTPException(status_code=404, detail=f"livehost session '{session_id}' not found")
+    return session
+
+
+@router.post("/{session_id}/connect")
+async def connect_tiktok(session_id: str, payload: TikTokConnectRequest, request: Request) -> dict:
+    session = _get_owned_session(session_id, request)
     await session.ingestor.start(payload.unique_id)
     return {"success": True, "data": {"state": session.ingestor.state.value, "unique_id": payload.unique_id}}
 
 
 @router.post("/{session_id}/disconnect")
-async def disconnect_tiktok(session_id: str) -> dict:
-    session = livehost_registry.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail=f"livehost session '{session_id}' not found")
+async def disconnect_tiktok(session_id: str, request: Request) -> dict:
+    session = _get_owned_session(session_id, request)
     await session.ingestor.stop()
     return {"success": True, "data": {"state": session.ingestor.state.value}}
 
 
 @router.get("/{session_id}/status")
-async def livehost_status(session_id: str) -> dict:
-    session = livehost_registry.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail=f"livehost session '{session_id}' not found")
+async def livehost_status(session_id: str, request: Request) -> dict:
+    session = _get_owned_session(session_id, request)
     return {
         "success": True,
         "data": {
@@ -135,10 +153,37 @@ async def livehost_stream(websocket: WebSocket) -> None:
         return
     await websocket.accept(subprotocol=ws_subprotocol(websocket))
     session_id = websocket.query_params.get("session_id") or str(uuid.uuid4())
+    # H5: mirrors conversation.py's/lugo.py's WS resume-ownership check.
+    # Without this, a caller-supplied ?session_id= flowed straight into
+    # livehost_registry.register() below, which unconditionally OVERWRITES
+    # any existing entry for that key -- so any logged-in user could hijack
+    # (overwrite the ingestor/scheduler of) another user's already-live
+    # session, and unregister() on close would then orphan it. Checked
+    # before session_id is used for anything. session_store (consulted by
+    # ws_session_owner_denied) is the shared ownership source of truth this
+    # route's own session_store.create() call below populates for a
+    # legitimate first connect under this id.
+    if await ws_session_owner_denied(session_id, identity):
+        # livehost's own wire error shape ({"event": "error", ...}), same as
+        # every other error send in this handler (see the AppError except
+        # branch below) -- NOT lugo.py's {"type": "error", ...}.
+        await websocket.send_json({
+            "event": "error",
+            "message": f"Session '{session_id}' not found",
+        })
+        await websocket.close()
+        return
     q = websocket.query_params
 
     profile_name = q.get("profile")
-    profile = profile_store.get(profile_name) if profile_name else None
+    # C2 fix: same rule as conversation.py -- "exists but not yours" must
+    # behave identically to "doesn't exist" (silent fallback to defaults,
+    # same as today's not-found path -- no distinct warning here to leak).
+    profile = visible_profile_or_none(
+        profile_store.get(profile_name) if profile_name else None,
+        identity.user_id,
+        bypass=identity.unauthenticated,
+    )
     llm_base_url = (profile.llm.base_url or None) if (profile and profile.llm.base_url) else None
     llm_api_key = profile.llm.api_key if (profile and profile.llm.base_url) else None
     llm_model = (profile.llm.model or None) if (profile and profile.llm.model) else None
@@ -156,7 +201,11 @@ async def livehost_stream(websocket: WebSocket) -> None:
     # TTS profile resolution: ?tts_profile= (explicit pin) > the active LLM
     # profile's linked TTS profile > server default.
     tts_profile_name = q.get("tts_profile") or (profile.tts.profile_name if profile else "") or None
-    tts_profile = tts_profile_store.get(tts_profile_name) if tts_profile_name else None
+    tts_profile = visible_tts_profile_or_none(
+        tts_profile_store.get(tts_profile_name) if tts_profile_name else None,
+        identity.user_id,
+        bypass=identity.unauthenticated,
+    )
     if tts_profile and tts_profile.engine:
         tts_engine = tts_profile.engine
         tts_model = tts_profile.model_id or ""
@@ -233,7 +282,10 @@ async def livehost_stream(websocket: WebSocket) -> None:
         await session_store.create(
             session_id, profile_id=profile_name or "",
             meta={"stt_engine": stt_engine, "tts_engine": tts_engine, "livehost": True},
-            user_id=identity.user_id or (profile.owner_id if profile else None),
+            # No `or profile.owner_id` fallback (H2): an identity with no
+            # user_id (fleet/dev caller) must create an ownerless row, not one
+            # attributed to the named profile's owner.
+            user_id=identity.user_id,
         )
     except Exception as exc:  # noqa: BLE001 - session setup must not drop the connection
         logger.warning("livehost session setup failed for %s: %s", session_id, exc)
@@ -255,7 +307,9 @@ async def livehost_stream(websocket: WebSocket) -> None:
         offline_poll_interval=settings.livehost_offline_poll_interval_seconds,
         watchdog_idle_seconds=settings.livehost_watchdog_idle_seconds,
     )
-    livehost_registry.register(session_id, LivehostSession(scheduler=scheduler, ingestor=ingestor))
+    livehost_registry.register(
+        session_id, LivehostSession(scheduler=scheduler, ingestor=ingestor, user_id=identity.user_id)
+    )
     orchestrator = LiveHostOrchestrator(scheduler)
     try:
         current_turn: asyncio.Task | None = None

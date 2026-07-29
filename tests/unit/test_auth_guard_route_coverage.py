@@ -19,10 +19,8 @@ from starlette.routing import Mount, WebSocketRoute
 
 from app.core.auth_guard import (
     _ADMIN_PREFIXES,
-    _NO_AUTH_PREFIXES,
-    _PUBLIC_PATHS,
-    _STATIC_ALLOWLIST,
     _USER_PREFIXES,
+    _classify,
     _matches,
 )
 from app.main import app
@@ -79,19 +77,14 @@ def _mounted_http_paths() -> list[tuple[str, str]]:
     return found
 
 
-def _classify(path: str) -> str | None:
-    """Mirrors the branch order of AuthGuardMiddleware.dispatch."""
-    if path in _PUBLIC_PATHS:
-        return "public"
-    if path in _STATIC_ALLOWLIST:
-        return "public"
-    if _matches(path, _NO_AUTH_PREFIXES):
-        return "public"
-    if _matches(path, _USER_PREFIXES):
-        return "user"
-    if _matches(path, _ADMIN_PREFIXES):
-        return "admin"
-    return None
+def _classify_get(path: str) -> str | None:
+    """Coverage/classification is asserted against the real, single-source-of-
+    truth classifier in auth_guard (no local mirror to drift). The guard is
+    method-aware; GET is the right lens here -- it is the read method every
+    mounted path either serves or is admin-gated for, and it is the method under
+    which the user carve-outs (`/v1/model_registry/options`, `/v1/usage/me`,
+    `/v1/devices/mine`) resolve to their user side."""
+    return _classify(path, "GET")
 
 
 def test_the_route_walker_actually_finds_the_app():
@@ -113,7 +106,7 @@ def test_every_mounted_path_is_classified():
     unclassified = sorted(
         f"{path}  (from {source})"
         for path, source in _mounted_http_paths()
-        if _classify(path) is None
+        if _classify_get(path) is None
     )
     assert not unclassified, (
         "These HTTP paths are mounted but no auth_guard tuple covers them, so "
@@ -167,7 +160,7 @@ def test_no_admin_prefix_is_shadowed_by_a_user_prefix():
     ],
 )
 def test_spot_check_classifications(path, expected):
-    assert _classify(path) == expected
+    assert _classify_get(path) == expected
 
 
 @pytest.mark.parametrize(
@@ -182,5 +175,5 @@ def test_api_auth_carve_out_stops_at_a_segment_boundary(path):
     """Regression: the /api/auth bypass used to be a bare
     `path.startswith("/api/auth")`, so anything mounted at a sibling path with
     the same textual prefix would have been served anonymously."""
-    assert _classify(path) is None, f"{path} must not inherit the /api/auth carve-out"
-    assert _classify("/api/auth/login") == "public"
+    assert _classify_get(path) is None, f"{path} must not inherit the /api/auth carve-out"
+    assert _classify_get("/api/auth/login") == "public"

@@ -61,7 +61,11 @@ async def list_servers(request: Request) -> dict:
 @router.post("/servers")
 async def add_server(payload: McpServerRequest, request: Request) -> dict:
     _require_admin(request)
-    if mcp_server_store.get(payload.name) is not None:
+    # H4-class (carried from Task 4): get(name) is None is ambiguous between
+    # "name is free" and "name's row failed to parse" (e.g. a preset a
+    # validator newly rejects). exists() catches both readable AND
+    # unreadable rows, so an unreadable name 409s instead of being claimed.
+    if mcp_server_store.exists(payload.name):
         raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
     # _require_admin above guarantees role == "admin" here, so this always
     # creates a template (owner_id=None, visible to everyone) -- the old
@@ -100,6 +104,12 @@ async def update_server(name: str, payload: McpServerRequest, request: Request) 
 
 @router.patch("/servers/{name}/enabled")
 async def set_server_enabled(name: str, payload: McpServerEnabledRequest, request: Request) -> dict:
+    # M4: this was the one mutating MCP route Task 6 missed -- it only ran
+    # `_can_write`, so a user-owned row's own owner could re-enable it, and
+    # `_build_tool_registry` reads mcp_server_store.list() unfiltered,
+    # injecting that row's tools into EVERY user's conversation. Admin-gated
+    # first, matching create/update/delete/clone.
+    _require_admin(request)
     entry = mcp_server_store.get(name)
     if not entry or not _can_write(entry, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
@@ -141,7 +151,8 @@ async def clone_server(name: str, payload: CloneRequest, request: Request) -> di
     source = mcp_server_store.get(name)
     if not source or not _visible(source, user_id):
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
-    if mcp_server_store.get(payload.new_name) is not None:
+    # Same H4-class fix as add_server above.
+    if mcp_server_store.exists(payload.new_name):
         raise HTTPException(status_code=409, detail=f"'{payload.new_name}' already exists")
     clone = McpServer(
         name=payload.new_name, url=source.url, headers=source.headers,

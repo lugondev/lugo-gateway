@@ -10,12 +10,20 @@ from app.services.mcp.client import McpConnectionError, McpHttpClient
 logger = logging.getLogger(__name__)
 
 
-class McpConnectionPool:
-    """Lazy-connecting pool of MCP HTTP clients, one per URL.
+_PoolKey = tuple[str, frozenset[tuple[str, str]]]
 
-    Tool definitions are cached per URL with a configurable TTL to avoid
-    re-fetching on every session. Call ``invalidate(url)`` when a server's
-    config changes to force a fresh fetch.
+
+class McpConnectionPool:
+    """Lazy-connecting pool of MCP HTTP clients, one per (URL, headers).
+
+    Two server rows can share a URL but carry different headers (e.g.
+    different bearer tokens) -- keying on URL alone would hand the second
+    caller's request the first caller's client, silently reusing its
+    headers/credentials. Clients and the tool cache are therefore keyed on
+    ``(url, frozenset(headers.items()))`` so distinct header sets never
+    collide. Call ``invalidate(url)`` when a server's config changes to
+    force a fresh fetch -- it clears every header-variant cached for that
+    URL, since the caller may not know which headers were previously used.
     """
 
     def __init__(
@@ -24,23 +32,29 @@ class McpConnectionPool:
         connect_timeout: float = 10.0,
         tool_timeout: float = 30.0,
     ) -> None:
-        self._clients: dict[str, McpHttpClient] = {}
-        self._cache: dict[str, tuple[float, list[dict]]] = {}  # url -> (timestamp, tools)
+        self._clients: dict[_PoolKey, McpHttpClient] = {}
+        self._cache: dict[_PoolKey, tuple[float, list[dict]]] = {}  # key -> (timestamp, tools)
         self._ttl = cache_ttl
         self._connect_timeout = connect_timeout
         self._tool_timeout = tool_timeout
         self._lock = asyncio.Lock()
 
+    @staticmethod
+    def _key(url: str, headers: dict[str, str] | None) -> _PoolKey:
+        return (url, frozenset((headers or {}).items()))
+
     def _get_client(self, url: str, headers: dict[str, str] | None = None) -> McpHttpClient:
-        if url not in self._clients:
-            self._clients[url] = McpHttpClient(
+        key = self._key(url, headers)
+        if key not in self._clients:
+            self._clients[key] = McpHttpClient(
                 url, self._connect_timeout, self._tool_timeout, headers=headers
             )
-        return self._clients[url]
+        return self._clients[key]
 
     async def get_tools(self, url: str, headers: dict[str, str] | None = None) -> list[dict]:
+        key = self._key(url, headers)
         async with self._lock:
-            cached = self._cache.get(url)
+            cached = self._cache.get(key)
             if cached and (time.monotonic() - cached[0]) < self._ttl:
                 return cached[1]
             client = self._get_client(url, headers)
@@ -53,8 +67,8 @@ class McpConnectionPool:
 
         async with self._lock:
             # Skip cache write if invalidate() ran during the await
-            if url in self._clients:
-                self._cache[url] = (time.monotonic(), tools)
+            if key in self._clients:
+                self._cache[key] = (time.monotonic(), tools)
         return tools
 
     async def invoke(
@@ -65,8 +79,10 @@ class McpConnectionPool:
         return await client.invoke(tool_name, args)
 
     def invalidate(self, url: str) -> None:
-        self._cache.pop(url, None)
-        self._clients.pop(url, None)
+        for key in [k for k in self._cache if k[0] == url]:
+            self._cache.pop(key, None)
+        for key in [k for k in self._clients if k[0] == url]:
+            self._clients.pop(key, None)
 
 
 mcp_pool = McpConnectionPool(

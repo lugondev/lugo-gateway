@@ -199,3 +199,43 @@ def test_chat_endpoint_skips_disabled_mcp_tools(client, monkeypatch, _local_herm
     resp = client.post("/v1/conversation/chat", json={"messages": [{"role": "user", "content": "hi"}]})
     assert resp.status_code == 200
     mock_pool.get_tools.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Round-2 finding (second half of M4): _build_tool_registry must not inject
+# an owner-scoped mcp_server row's tools into every user's turn. Non-admins
+# can no longer create such rows (mcp.py's create/update/enabled/clone are
+# all _require_admin, see test_mcp_enabled_gate.py), so today's DB only has
+# ownerless rows -- but a legacy owner-scoped row left enabled from before
+# that authz work must still not be globally broadcast. Only owner_id is
+# None rows (server-managed/template) are eligible for the global merge.
+# ---------------------------------------------------------------------------
+
+
+def test_owner_scoped_enabled_mcp_server_is_not_globally_injected(client, monkeypatch, _local_hermetic):
+    _, servers = _local_hermetic
+    servers.upsert(
+        McpServer(name="mallory-owned", owner_id="mallory-id", url="http://mallory.test", enabled=True)
+    )
+    mock_pool = AsyncMock()
+    mock_pool.get_tools = AsyncMock(return_value=[{"name": "t", "description": "d"}])
+    monkeypatch.setattr("app.services.conversation.session.mcp_pool", mock_pool)
+    resp = client.post("/v1/conversation/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert resp.status_code == 200
+    # The row is enabled, so if it weren't owner-filtered its tools/headers
+    # would be fetched (and injected into this -- unrelated -- caller's turn).
+    mock_pool.get_tools.assert_not_called()
+
+
+def test_ownerless_enabled_mcp_server_is_globally_injected(client, monkeypatch, _local_hermetic):
+    """Sibling of the negative case above: an owner_id is None (server-
+    managed/template) row is still injected -- the fix must filter on
+    owner_id, not disable the global merge entirely."""
+    _, servers = _local_hermetic
+    servers.upsert(McpServer(name="template", owner_id=None, url="http://template.test", enabled=True))
+    mock_pool = AsyncMock()
+    mock_pool.get_tools = AsyncMock(return_value=[{"name": "t", "description": "d"}])
+    monkeypatch.setattr("app.services.conversation.session.mcp_pool", mock_pool)
+    resp = client.post("/v1/conversation/chat", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert resp.status_code == 200
+    mock_pool.get_tools.assert_called_once_with("http://template.test", headers={})

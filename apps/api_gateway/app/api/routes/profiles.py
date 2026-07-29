@@ -7,6 +7,7 @@ from app.services.auth.users import user_store
 from app.services.mcp.models import McpServer
 from app.services.model_registry.gate import check_model_allowed
 from app.services.model_registry.store import model_registry_store
+from app.services.profile_visibility import profile_visible
 from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, SessionConfig, SttConfig, TtsConfig
 from app.services.profiles.store import profile_store
 from app.services.stt.model_catalog import STT_MODEL_CATALOGS
@@ -95,7 +96,13 @@ async def _resolve_acting_user(request: Request):
 
 
 def _visible(profile: Profile, user_id: str | None) -> bool:
-    return profile.owner_id is None or profile.owner_id == user_id
+    # Delegates to the shared predicate (app/services/profile_visibility.py)
+    # so every consumer of a ?profile= name -- not just this CRUD router --
+    # applies the exact same owner_id rule. Kept as a thin wrapper (rather
+    # than switching every call site here to profile_visible directly) so
+    # memories.py's existing `from app.api.routes.profiles import _visible`
+    # keeps working unchanged.
+    return profile_visible(profile, user_id)
 
 
 def _can_write(profile: Profile, user_id: str | None, role: str) -> bool:
@@ -138,10 +145,26 @@ async def list_profiles(request: Request) -> dict:
 
 @router.post("")
 async def create_profile(payload: ProfileRequest, request: Request) -> dict:
-    if profile_store.get(payload.name) is not None:
+    # exists(), not `get() is not None`: a name whose row failed to parse
+    # (H4) still occupies it -- get() returns None for that name too, and
+    # treating that as "free" would let this create silently overwrite the
+    # row and hand its ownership to the caller.
+    if profile_store.exists(payload.name):
         raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
-    owner_id = None if current_role(request) == "admin" else current_user_id(request)
-    profile = Profile(**payload.model_dump(), owner_id=owner_id)
+    is_admin = current_role(request) == "admin"
+    owner_id = None if is_admin else current_user_id(request)
+    data = payload.model_dump()
+    if not is_admin:
+        # C1: mcp_servers carries an arbitrary url+headers that
+        # _build_tool_registry fetches and reflects into the LLM turn -- the
+        # same SSRF-with-reflection primitive Task 6 gated on /v1/mcp/servers
+        # for admins only. A non-admin setting it here would fully bypass that
+        # gate. Silently drop rather than 403: matches how templates already
+        # behave for a non-admin (mcp_servers is simply not theirs to set),
+        # and doesn't need a special error path in the profile editor UI --
+        # the field just doesn't take, same as owner_id below.
+        data["mcp_servers"] = []
+    profile = Profile(**data, owner_id=owner_id)
     acting_user = await _resolve_acting_user(request)
     await _validate_profile_models(profile, acting_user)
     profile_store.upsert(profile)
@@ -159,12 +182,23 @@ async def get_profile(name: str, request: Request) -> dict:
 @router.put("/{name}")
 async def update_profile(name: str, payload: ProfileRequest, request: Request) -> dict:
     existing = profile_store.get(name)
+    # H4: existing is None both when the name is genuinely free AND when its
+    # row failed to parse. PUT is upsert-or-create, so falling through in the
+    # latter case would skip _can_write entirely (nothing to check ownership
+    # against) and silently overwrite the row via the create branch below --
+    # must be rejected before that upsert-or-create logic ever runs.
+    if existing is None and profile_store.exists(name):
+        raise HTTPException(
+            status_code=409,
+            detail=f"'{name}' exists but its stored data is unreadable; contact an admin",
+        )
     # PUT is upsert-or-create (test_update_uses_path_name relies on creating via
     # PUT to a name that doesn't exist yet); ownership scoping only applies when
     # a row already exists and the caller is not authorized to write to it (not
     # merely able to see it -- see _can_write for the template/admin distinction).
     if existing and not _can_write(existing, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
+    is_admin = current_role(request) == "admin"
     data = payload.model_dump()
     data["name"] = name
     if existing:
@@ -174,8 +208,17 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
         # that doesn't re-enter the key must NOT wipe it.
         if not data.get("llm", {}).get("api_key") and existing.llm.api_key:
             data.setdefault("llm", {})["api_key"] = existing.llm.api_key
+        if not is_admin:
+            # C1: a non-admin PUT must not be able to add/change mcp_servers
+            # (same SSRF-with-reflection gate as create_profile below). Silently
+            # preserve whatever was already stored rather than 403 -- the request
+            # body's mcp_servers just doesn't take, mirroring create's drop-to-[]
+            # and requiring no special client-side error handling.
+            data["mcp_servers"] = [s.model_dump() for s in existing.mcp_servers]
     else:
-        data["owner_id"] = None if current_role(request) == "admin" else current_user_id(request)
+        data["owner_id"] = None if is_admin else current_user_id(request)
+        if not is_admin:
+            data["mcp_servers"] = []
     profile = Profile(**data)
     acting_user = await _resolve_acting_user(request)
     await _validate_profile_models(profile, acting_user)
@@ -186,6 +229,14 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
 @router.delete("/{name}")
 async def delete_profile(name: str, request: Request) -> dict:
     existing = profile_store.get(name)
+    # H4: distinguish "no such row" (404) from "row exists but is unreadable"
+    # (409) -- both leave `existing` None, but only the former is a genuine
+    # not-found.
+    if existing is None and profile_store.exists(name):
+        raise HTTPException(
+            status_code=409,
+            detail=f"'{name}' exists but its stored data is unreadable; contact an admin",
+        )
     if not existing or not _can_write(existing, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     profile_store.delete(name)
@@ -198,12 +249,26 @@ async def clone_profile(name: str, payload: CloneRequest, request: Request) -> d
     source = profile_store.get(name)
     if not source or not _visible(source, user_id):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
-    if profile_store.get(payload.new_name) is not None:
+    # H4: same claim-a-free-name gap as create_profile -- exists(), not
+    # `get() is not None`.
+    if profile_store.exists(payload.new_name):
         raise HTTPException(status_code=409, detail=f"'{payload.new_name}' already exists")
     data = source.model_dump()
     data["name"] = payload.new_name
     data["owner_id"] = user_id
+    if current_role(request) != "admin":
+        # C1: cloning an admin template that has mcp_servers must not hand the
+        # cloning user a live copy of servers they couldn't have set
+        # themselves via create/update -- the clone is user-owned from here
+        # on, so its mcp_servers must go through the same non-admin gate.
+        data["mcp_servers"] = []
     clone = Profile(**data)
+    # Clone copies stt/llm engine+model straight from the source without
+    # going through create/update's model-registry gate -- without this, a
+    # user denied a model could still get it by cloning an admin template
+    # pinned to it. Same gate, same call shape as create_profile/update_profile.
+    acting_user = await _resolve_acting_user(request)
+    await _validate_profile_models(clone, acting_user)
     profile_store.upsert(clone)
     return {"success": True, "data": await _with_labels(clone)}
 
@@ -221,8 +286,9 @@ async def profile_health(name: str, request: Request) -> dict:
     """
     from app.services.health import check_profile_health
 
+    caller_id = current_user_id(request)
     profile = profile_store.get(name)
-    if not profile or not _visible(profile, current_user_id(request)):
+    if not profile or not _visible(profile, caller_id):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
 
-    return {"success": True, "data": (await check_profile_health(name)).model_dump()}
+    return {"success": True, "data": (await check_profile_health(name, caller_id)).model_dump()}

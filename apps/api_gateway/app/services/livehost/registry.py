@@ -15,6 +15,12 @@ from app.services.livehost.scheduler import EventScheduler
 class LivehostSession:
     scheduler: EventScheduler
     ingestor: TikTokLiveIngestor
+    # H5: the WS caller that registered this session (identity.user_id from
+    # resolve_ws_identity -- None for an unauthenticated/dev-mode/fleet-token
+    # caller, matching session_store's ownership convention elsewhere). The
+    # 3 HTTP control routes in api/routes/livehost.py use this to deny any
+    # OTHER user's connect/disconnect/status calls.
+    user_id: str | None = None
 
 
 class LivehostSessionRegistry:
