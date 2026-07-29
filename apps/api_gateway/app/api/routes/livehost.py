@@ -16,15 +16,15 @@ from app.schemas.livehost import TikTokConnectRequest
 from app.schemas.tts import TTSRequest
 from app.services.conversation.endpointer import VadEndpointer
 from app.services.conversation.responder import build_responder_ex, resolve_llm_override_from_registry
+from app.services.conversation.turn_quota import llm_turn_quota_blocked_for_pins
 from app.services.history.store import session_store
 from app.services.livehost.ingestor import TikTokLiveIngestor
 from app.services.livehost.orchestrator import LiveHostOrchestrator
 from app.services.livehost.registry import LivehostSession, livehost_registry
 from app.services.livehost.scheduler import EventScheduler
-from app.services.model_registry.store import model_registry_store
 from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
 from app.services.profiles.store import profile_store
-from app.services.quota.gate import QuotaExceededError, quota_gate
+from app.services.quota.gate import quota_gate
 from app.services.stt.model_catalog import resolve_default_stt_model
 from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
@@ -32,7 +32,7 @@ from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
-from app.services.usage.attribution import resolve_llm_pair, resolve_usage_model
+from app.services.usage.attribution import resolve_llm_pair
 from app.services.usage.recorder import record_usage
 from app.services.warmup import is_ready, warm_providers
 
@@ -49,38 +49,18 @@ async def _quota_blocked_for(
     the pairing rule below has to see whether a model was pinned at all, so
     resolving before the call would hide exactly the fact it needs.
 
-    Returns the message rather than raising so each turn path can report it the
-    way that path reports its own failures. Fail-open: only a genuine
-    QuotaExceededError blocks; anything else logs and allows, matching
-    quota_gate's own contract.
+    Thin wrapper (Task 6 dedup) over the shared
+    services/conversation/turn_quota helper -- kept here, with this exact
+    signature, because test_livehost_quota_gate.py drives it directly and
+    monkeypatches THIS module's `quota_gate` name. Passing `quota_gate=`
+    below is a late-bound reference to livehost.py's own module global, so
+    that reassignment is still honored (see turn_quota.py's docstring).
     """
-    try:
-        pinned_model = pinned_model or ""
-        # Only pair the profile's engine with a model the profile actually
-        # pinned. With no pin, build_responder_ex() runs the registry default --
-        # whose engine is usually a different row -- so passing this engine
-        # would make the gate check one provider while metering bills another
-        # (see resolve_llm_pair, which applies the same rule to the usage row).
-        # Both blank -> resolve_usage_model() returns the active default pair,
-        # which is what actually runs.
-        pinned_engine = (pinned_engine or "") if pinned_model else ""
-        usage_engine, usage_model = await resolve_usage_model("llm", pinned_engine, pinned_model)
-        provider_id = ""
-        try:
-            entry = await model_registry_store.find("llm", usage_engine, usage_model)
-            provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
-        except Exception:  # noqa: BLE001 - a registry hiccup must never block a turn
-            provider_id = ""
-        await quota_gate(
-            user_id=user_id or "", provider_id=provider_id,
-            kind="llm", engine=usage_engine, model_id=usage_model,
-            profile_id=profile_name or "",
-        )
-    except QuotaExceededError as exc:
-        return True, str(exc)
-    except Exception as exc:  # noqa: BLE001 - fail-open
-        logger.warning("livehost quota check failed open: %s", exc)
-    return False, ""
+    return await llm_turn_quota_blocked_for_pins(
+        user_id=user_id, profile_name=profile_name,
+        pinned_engine=pinned_engine, pinned_model=pinned_model,
+        quota_gate=quota_gate,
+    )
 
 
 # How often the disabled/revoked re-check wakes (test-tunable, same pattern as

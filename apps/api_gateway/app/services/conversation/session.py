@@ -39,6 +39,7 @@ from app.services.conversation.responder import (
 from app.services.conversation.tools.base import ToolContext, ToolRegistry, ToolSource
 from app.services.conversation.tools.local import LocalToolSource
 from app.services.conversation.tools.mcp import McpToolSource
+from app.services.conversation.turn_quota import llm_turn_quota_blocked
 from app.services.history.store import session_store
 from app.services.mcp.pool import mcp_pool
 from app.services.mcp.server_store import mcp_server_store
@@ -540,41 +541,16 @@ class ConversationSession:
 
         # Best-effort quota gate: ONCE per turn, before anything else (STT/LLM/TTS).
         # quota_gate() itself is fail-open (internal errors log + allow), so only a
-        # genuine over-limit quota raises here. Resolving the LLM provider_id is
-        # wrapped separately so a registry lookup issue can never block the turn --
-        # it just falls back to "" (user/global scope quotas still apply).
-        provider_id = ""
-        try:
-            pinned_model = (self.profile.llm.model if self.profile else "") or ""
-            # Only pair the profile's engine with a model the profile actually
-            # pinned. With no pin, build_responder_ex() runs the registry
-            # default -- whose engine is usually a different row -- so passing
-            # this engine would make the gate check one provider while metering
-            # bills another (see resolve_llm_pair, which applies the same rule
-            # to the usage row). Both blank -> resolve_usage_model() returns the
-            # active default pair, which is what actually runs.
-            pinned_engine = ((self.profile.llm.engine if self.profile else "") or "") if pinned_model else ""
-            llm_engine, llm_model = await resolve_usage_model("llm", pinned_engine, pinned_model)
-            entry = await model_registry_store.find("llm", llm_engine, llm_model)
-            provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
-        except Exception:  # noqa: BLE001 - provider_id resolution must never block the turn
-            llm_engine, llm_model, provider_id = "", "", ""
-        try:
-            # function-local: tests monkeypatch app.services.quota.gate.quota_gate by
-            # reassigning the module attribute (see test_stt_stream_metering.py's
-            # counting_gate); a top-level `from ... import quota_gate` binds the
-            # name once at import time and never observes that reassignment.
-            from app.services.quota.gate import QuotaExceededError, quota_gate
-
-            await quota_gate(
-                user_id=cfg.identity_user_id or "", provider_id=provider_id,
-                kind="llm", engine=llm_engine, model_id=llm_model,
-                profile_id=cfg.profile_name or "",
-            )
-        except QuotaExceededError as exc:
+        # genuine over-limit quota raises here. Shared with livehost's/chat()'s own
+        # preflight (Task 6 dedup) -- see turn_quota.py's docstring for the pairing
+        # rule and fail-open contract.
+        blocked, quota_message = await llm_turn_quota_blocked(
+            identity_user_id=cfg.identity_user_id, profile=self.profile, profile_name=cfg.profile_name,
+        )
+        if blocked:
             # Mirror the existing STT-failure pattern: a plain "error" notice,
             # then return without running the turn at all.
-            await self.emit("error", message=str(exc))
+            await self.emit("error", message=quota_message)
             return
 
         self.turn += 1

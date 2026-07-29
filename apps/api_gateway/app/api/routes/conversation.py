@@ -31,11 +31,11 @@ from app.services.conversation.session import (
     _build_tool_registry,
     _spawn_background,
 )
+from app.services.conversation.turn_quota import llm_turn_quota_blocked
 from app.services.health import check_resolved_engines
 from app.services.history.store import session_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
-from app.services.model_registry.store import model_registry_store
 from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
@@ -43,7 +43,7 @@ from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
-from app.services.usage.attribution import resolve_llm_pair, resolve_usage_model
+from app.services.usage.attribution import resolve_llm_pair
 from app.services.usage.recorder import record_usage
 
 logger = logging.getLogger(__name__)
@@ -149,51 +149,16 @@ async def chat(
             llm_model = active_profile.llm.model
     system_prompt = (active_profile.system_prompt or None) if (active_profile and active_profile.system_prompt) else None
 
-    # Quota pre-flight: block BEFORE the responder does any work. Same
-    # engine/model resolution as the record_usage calls below.
-
-    # The responder doesn't exist yet, so this pre-flight only knows the
-    # profile. Route it through the same resolver the usage rows use, so the
-    # provider whose quota we check is the provider that will actually be
-    # billed -- a raw (profile engine, unpinned model) pair would look up a
-    # row that pairs a model with an engine it doesn't belong to.
-    pinned_model = (active_profile.llm.model if active_profile else "") or ""
-    # Only pair the profile's engine with a model the profile actually pinned.
-    # With no pin, build_responder_ex() runs the registry default -- whose
-    # engine is usually a different row -- so passing this engine would make the
-    # gate check one provider while metering bills another (see resolve_llm_pair,
-    # which applies the same rule to the usage row). Both blank ->
-    # resolve_usage_model() returns the active default pair, which is what runs.
-    quota_engine, quota_model_id = "", ""
-    provider_id = ""
-    try:
-        # Inside the guard, not before it: resolve_usage_model() never raises
-        # from its own logic, but its function-level import of the registry
-        # store sits outside that promise, and an ImportError there would 500 a
-        # request this gate is required to fail open on.
-        quota_engine, quota_model_id = await resolve_usage_model(
-            "llm",
-            (active_profile.llm.engine if active_profile and pinned_model else "") or "",
-            pinned_model,
-        )
-        entry = await model_registry_store.find("llm", quota_engine, quota_model_id)
-        provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
-    except Exception:  # noqa: BLE001 - a lookup failure must never block the request
-        quota_engine, quota_model_id, provider_id = "", "", ""
-    try:
-        # function-local: tests monkeypatch app.services.quota.gate.quota_gate by
-        # reassigning the module attribute (see test_stt_stream_metering.py's
-        # counting_gate); a top-level `from ... import quota_gate` binds the name
-        # once at import time and never observes that reassignment.
-        from app.services.quota.gate import QuotaExceededError, quota_gate
-
-        await quota_gate(
-            user_id=caller_id or "", provider_id=provider_id,
-            kind="llm", engine=quota_engine, model_id=quota_model_id,
-            profile_id=profile or "",
-        )
-    except QuotaExceededError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    # Quota pre-flight: block BEFORE the responder does any work. Shared with
+    # livehost's/session.py's own preflight (Task 6 dedup) -- see
+    # turn_quota.py's docstring for the pairing rule (same resolver the
+    # record_usage calls below use) and fail-open contract. The responder
+    # doesn't exist yet, so this pre-flight only knows the profile.
+    blocked, quota_message = await llm_turn_quota_blocked(
+        identity_user_id=caller_id, profile=active_profile, profile_name=profile or "",
+    )
+    if blocked:
+        raise HTTPException(status_code=429, detail=quota_message)
 
     # Session: resume when session_id given (stored messages prefix the context).
     sid = session_id or str(uuid.uuid4())
