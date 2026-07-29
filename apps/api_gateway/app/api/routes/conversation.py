@@ -35,6 +35,7 @@ from app.services.health import check_resolved_engines
 from app.services.history.store import session_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
+from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
@@ -145,7 +146,11 @@ async def chat(
             if scope is not None and existing_sess.get("user_id") != scope:
                 raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
 
-    active_profile = profile_store.get(profile) if profile else None
+    # C2 fix: visible_profile_or_none() collapses "doesn't exist" and "exists
+    # but belongs to someone else" to the same None -- caller must never run
+    # on another user's llm.api_key/system_prompt/mcp_servers (see
+    # docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md).
+    active_profile = visible_profile_or_none(profile_store.get(profile) if profile else None, caller_id)
     llm_base_url = (active_profile.llm.base_url or None) if (active_profile and active_profile.llm.base_url) else None
     llm_api_key = active_profile.llm.api_key if (active_profile and active_profile.llm.base_url) else None
     llm_model = (active_profile.llm.model or None) if (active_profile and active_profile.llm.model) else None
@@ -351,7 +356,17 @@ async def conversation_stream(websocket: WebSocket) -> None:
 
     # --- Profile resolution ---
     profile_name = q.get("profile")
-    profile = profile_store.get(profile_name) if profile_name else None
+    # C2 fix: same rule as HTTP /chat above -- "exists but not yours" must
+    # fall into the exact same not-found warning as "doesn't exist" (no new
+    # enumeration oracle). bypass=identity.unauthenticated preserves the
+    # pre-existing dev-mode fallback (settings.auth_enabled False -- see
+    # WsIdentity.unauthenticated's docstring in auth_guard.py and
+    # ws_session_owner_denied, which applies the identical bypass).
+    profile = visible_profile_or_none(
+        profile_store.get(profile_name) if profile_name else None,
+        identity.user_id,
+        bypass=identity.unauthenticated,
+    )
     if profile_name and not profile:
         await websocket.send_json({
             "event": "warning",
@@ -367,7 +382,13 @@ async def conversation_stream(websocket: WebSocket) -> None:
     # TTS profile resolution: ?tts_profile= (explicit pin) > the active LLM
     # profile's linked TTS profile > server default.
     tts_profile_name = q.get("tts_profile") or (profile.tts.profile_name if profile else "") or None
-    tts_profile = tts_profile_store.get(tts_profile_name) if tts_profile_name else None
+    # C2 fix: identical rule for ?tts_profile= (and the profile's own linked
+    # tts profile_name, in case it points at a row the caller can't see).
+    tts_profile = visible_tts_profile_or_none(
+        tts_profile_store.get(tts_profile_name) if tts_profile_name else None,
+        identity.user_id,
+        bypass=identity.unauthenticated,
+    )
     if tts_profile and tts_profile.engine:
         tts_engine = tts_profile.engine
         tts_model = tts_profile.model_id or ""
@@ -446,6 +467,7 @@ async def conversation_stream(websocket: WebSocket) -> None:
         denoise=denoise, resume_sid=requested_sid, stt_model=stt_model,
         tts_model=tts_model,
         identity_user_id=identity.user_id,
+        identity_unauthenticated=identity.unauthenticated,
         opus_pace=opus_pace,
     )
 

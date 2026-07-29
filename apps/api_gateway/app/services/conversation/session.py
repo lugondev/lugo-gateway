@@ -45,6 +45,7 @@ from app.services.mcp.server_store import mcp_server_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
 from app.services.model_registry.store import model_registry_store
+from app.services.profile_visibility import visible_profile_or_none
 from app.services.profiles.store import profile_store
 from app.services.stt.model_catalog import resolve_default_stt_model
 from app.services.stt.routing import select_stt_engine
@@ -127,6 +128,15 @@ class SessionRuntimeConfig:
     # None when auth is disabled (dev mode) or the caller used the legacy shared
     # device_auth_token; in that case the front-end falls back to profile.owner_id.
     identity_user_id: str | None = None
+    # True ONLY for the dev-mode short-circuit (WsIdentity.unauthenticated,
+    # auth_guard.py -- settings.auth_enabled is False). start() below uses it
+    # the same way ws_session_owner_denied does: fully unscoped, since there
+    # is no way to prove ownership of anything in that mode. False (the
+    # default) for the legacy shared device_auth_token, which also has
+    # identity_user_id=None but IS a real, auth-enabled deployment -- that
+    # case must still only ever resolve a template profile (owner_id=None),
+    # never someone else's private one.
+    identity_unauthenticated: bool = False
     # Per-connection override of Opus playback pacing. None (the default, and
     # the only value api/routes/lugo.py ever produces) means "not specified,
     # inherit system_config.conversation.conversation_opus_pace" -- so
@@ -206,7 +216,25 @@ class ConversationSession:
         # Re-resolve the profile object + LLM config from the profile name. This is
         # deterministic from profile_name (the front-end already emitted any
         # "profile not found" warning during its own query-param resolution).
-        profile = profile_store.get(cfg.profile_name) if cfg.profile_name else None
+        #
+        # This is the actual choke point for C2 (profile IDOR --
+        # docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md):
+        # llm_api_key, system_prompt and the tool_registry (-> session_started's
+        # active_tools) below are ALL derived from `profile`, so this resolution
+        # -- not the route-level one -- is what must not hand back a profile the
+        # caller doesn't own. The route (conversation.py/lugo.py/livehost.py)
+        # also gates its own connect-time use of the profile (STT/TTS
+        # resolution, health check), but does not need to additionally null out
+        # `cfg.profile_name` for this to be safe: visible_profile_or_none here
+        # re-checks visibility against cfg.identity_user_id independently.
+        # bypass=cfg.identity_unauthenticated preserves the pre-existing
+        # dev-mode fallback (identity.unauthenticated -> fully unscoped, see
+        # SessionRuntimeConfig.identity_unauthenticated's docstring).
+        profile = visible_profile_or_none(
+            profile_store.get(cfg.profile_name) if cfg.profile_name else None,
+            cfg.identity_user_id,
+            bypass=cfg.identity_unauthenticated,
+        )
         self.profile = profile
         llm_base_url = (profile.llm.base_url or None) if (profile and profile.llm.base_url) else None
         llm_api_key = profile.llm.api_key if (profile and profile.llm.base_url) else None

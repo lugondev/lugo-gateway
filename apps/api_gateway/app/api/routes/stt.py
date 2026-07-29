@@ -154,7 +154,9 @@ async def list_stt_models(engine: str) -> dict:
 
 
 @router.post("/warm")
-async def warm_engine(engine: str | None = None, profile: str | None = None, model: str | None = None) -> dict:
+async def warm_engine(
+    request: Request, engine: str | None = None, profile: str | None = None, model: str | None = None
+) -> dict:
     """Load a heavy STT model into memory ahead of use (e.g. Whisper large ~20s).
 
     Lets the UI preload before the first conversation turn so it isn't a cold wait.
@@ -167,12 +169,18 @@ async def warm_engine(engine: str | None = None, profile: str | None = None, mod
     """
     import asyncio
 
+    from app.services.profile_visibility import visible_profile_or_none
     from app.services.profiles.store import profile_store
     from app.services.stt.model_catalog import apply_stt_model
     from app.services.stt.profile import resolve_stt
 
     if not engine:
-        prof = profile_store.get(profile) if profile else None
+        # C2 fix: a profile name the caller can't see must resolve exactly
+        # like an unknown one (fall through to the server default engine),
+        # not leak which STT engine/model another user's private profile pins.
+        prof = visible_profile_or_none(
+            profile_store.get(profile) if profile else None, current_user_id(request)
+        )
         engine, _, resolved_model = resolve_stt(prof)
         model = model or resolved_model
     if model:

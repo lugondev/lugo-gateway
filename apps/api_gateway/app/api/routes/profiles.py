@@ -7,6 +7,7 @@ from app.services.auth.users import user_store
 from app.services.mcp.models import McpServer
 from app.services.model_registry.gate import check_model_allowed
 from app.services.model_registry.store import model_registry_store
+from app.services.profile_visibility import profile_visible
 from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, SessionConfig, SttConfig, TtsConfig
 from app.services.profiles.store import profile_store
 from app.services.stt.model_catalog import STT_MODEL_CATALOGS
@@ -95,7 +96,13 @@ async def _resolve_acting_user(request: Request):
 
 
 def _visible(profile: Profile, user_id: str | None) -> bool:
-    return profile.owner_id is None or profile.owner_id == user_id
+    # Delegates to the shared predicate (app/services/profile_visibility.py)
+    # so every consumer of a ?profile= name -- not just this CRUD router --
+    # applies the exact same owner_id rule. Kept as a thin wrapper (rather
+    # than switching every call site here to profile_visible directly) so
+    # memories.py's existing `from app.api.routes.profiles import _visible`
+    # keeps working unchanged.
+    return profile_visible(profile, user_id)
 
 
 def _can_write(profile: Profile, user_id: str | None, role: str) -> bool:
@@ -221,8 +228,9 @@ async def profile_health(name: str, request: Request) -> dict:
     """
     from app.services.health import check_profile_health
 
+    caller_id = current_user_id(request)
     profile = profile_store.get(name)
-    if not profile or not _visible(profile, current_user_id(request)):
+    if not profile or not _visible(profile, caller_id):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
 
-    return {"success": True, "data": (await check_profile_health(name)).model_dump()}
+    return {"success": True, "data": (await check_profile_health(name, caller_id)).model_dump()}

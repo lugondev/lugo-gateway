@@ -21,6 +21,7 @@ from app.services.livehost.orchestrator import LiveHostOrchestrator
 from app.services.livehost.registry import LivehostSession, livehost_registry
 from app.services.livehost.scheduler import EventScheduler
 from app.services.model_registry.store import model_registry_store
+from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
 from app.services.profiles.store import profile_store
 from app.services.quota.gate import QuotaExceededError, quota_gate
 from app.services.stt.model_catalog import resolve_default_stt_model
@@ -138,7 +139,14 @@ async def livehost_stream(websocket: WebSocket) -> None:
     q = websocket.query_params
 
     profile_name = q.get("profile")
-    profile = profile_store.get(profile_name) if profile_name else None
+    # C2 fix: same rule as conversation.py -- "exists but not yours" must
+    # behave identically to "doesn't exist" (silent fallback to defaults,
+    # same as today's not-found path -- no distinct warning here to leak).
+    profile = visible_profile_or_none(
+        profile_store.get(profile_name) if profile_name else None,
+        identity.user_id,
+        bypass=identity.unauthenticated,
+    )
     llm_base_url = (profile.llm.base_url or None) if (profile and profile.llm.base_url) else None
     llm_api_key = profile.llm.api_key if (profile and profile.llm.base_url) else None
     llm_model = (profile.llm.model or None) if (profile and profile.llm.model) else None
@@ -156,7 +164,11 @@ async def livehost_stream(websocket: WebSocket) -> None:
     # TTS profile resolution: ?tts_profile= (explicit pin) > the active LLM
     # profile's linked TTS profile > server default.
     tts_profile_name = q.get("tts_profile") or (profile.tts.profile_name if profile else "") or None
-    tts_profile = tts_profile_store.get(tts_profile_name) if tts_profile_name else None
+    tts_profile = visible_tts_profile_or_none(
+        tts_profile_store.get(tts_profile_name) if tts_profile_name else None,
+        identity.user_id,
+        bypass=identity.unauthenticated,
+    )
     if tts_profile and tts_profile.engine:
         tts_engine = tts_profile.engine
         tts_model = tts_profile.model_id or ""

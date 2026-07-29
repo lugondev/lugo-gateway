@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 
 from app.schemas.health import EngineHealth, ProfileHealth
+from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
@@ -31,12 +32,25 @@ async def check_resolved_engines(
     )
 
 
-async def check_profile_health(profile_name: str | None) -> ProfileHealth:
-    profile = profile_store.get(profile_name) if profile_name else None
+async def check_profile_health(profile_name: str | None, caller_id: str | None = None) -> ProfileHealth:
+    """`caller_id` gates the profile the same way every other consumer of a
+    client-supplied ?profile= name must (C2 --
+    docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md): a
+    profile that exists but isn't visible to `caller_id` resolves exactly
+    like a nonexistent one (falls through to server defaults), so this never
+    discloses another user's resolved engine/model or base_url. The one
+    caller today (api/routes/profiles.py's GET /{name}/health) already
+    404s before calling in here, so passing caller_id is defense-in-depth,
+    not the only gate."""
+    profile = visible_profile_or_none(
+        profile_store.get(profile_name) if profile_name else None, caller_id
+    )
     stt_engine, _language, stt_model = resolve_stt(profile)
 
     tts_name = (profile.tts.profile_name if profile else "") or None
-    tts_profile = tts_profile_store.get(tts_name) if tts_name else None
+    tts_profile = visible_tts_profile_or_none(
+        tts_profile_store.get(tts_name) if tts_name else None, caller_id
+    )
     if tts_profile and tts_profile.engine:
         tts_engine, tts_model = tts_profile.engine, tts_profile.model_id or ""
     else:

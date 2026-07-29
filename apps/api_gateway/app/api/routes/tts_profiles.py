@@ -5,6 +5,7 @@ from app.core.actor import current_role, current_user_id
 from app.services.artifacts import artifact_store
 from app.services.auth.users import user_store
 from app.services.model_registry.gate import check_model_allowed
+from app.services.profile_visibility import tts_profile_visible
 from app.services.tts.profile_models import TtsProfile
 from app.services.tts.profile_store import tts_profile_store
 
@@ -36,7 +37,10 @@ def _require_ref_audio_path_contained(ref_audio_path: str) -> None:
 
 
 def _visible(profile: TtsProfile, user_id: str | None) -> bool:
-    return profile.owner_id is None or profile.owner_id == user_id
+    # Delegates to the shared predicate (app/services/profile_visibility.py)
+    # so every consumer of a ?tts_profile= name applies the same owner_id
+    # rule as this CRUD router.
+    return tts_profile_visible(profile, user_id)
 
 
 def _can_write(profile: TtsProfile, user_id: str | None, role: str) -> bool:

@@ -26,6 +26,7 @@ from app.services.conversation.tools.device_mcp import (
     DeviceMcpToolSource, DeviceMcpTransport, discover_device_tools,
 )
 from app.services.health import check_resolved_engines
+from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
 from app.services.system_config import system_config_store
@@ -42,16 +43,31 @@ _IDLE_TICK_S = 1.0
 # is cut off even mid-turn.
 _IDENTITY_RECHECK_INTERVAL_S = 30.0
 
-def _resolve(profile_name: str | None):
-    """Resolve engines/tts params from a profile (server owns everything)."""
-    profile = profile_store.get(profile_name) if profile_name else None
+def _resolve(profile_name: str | None, caller_id: str | None = None, *, bypass: bool = False):
+    """Resolve engines/tts params from a profile (server owns everything).
+
+    C2 fix: visible_profile_or_none()/visible_tts_profile_or_none() collapse
+    "doesn't exist" and "exists but belongs to someone else" to the same
+    None, so a device authenticated as `caller_id` can never stream against
+    another user's private profile (its llm.api_key/system_prompt) or tts
+    profile (voice/ref_audio_path) -- see finding C2 in
+    docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md.
+    `bypass` is for the pre-existing dev-mode fallback only (see
+    resolve_visible_profile's docstring / WsIdentity.unauthenticated);
+    callers not resolving a real WS identity leave it False.
+    """
+    profile = visible_profile_or_none(
+        profile_store.get(profile_name) if profile_name else None, caller_id, bypass=bypass
+    )
     # Resolve STT from the profile's SttConfig (engine/language or a language
     # preset), falling back to server defaults — same single source of truth the
     # conversation stream uses, so a device that sends only a profile id streams
     # against that profile's STT. No query params on the Lugo wire.
     stt_engine, language, stt_model = resolve_stt(profile)
     tts_name = (profile.tts.profile_name if profile else "") or None
-    tts_profile = tts_profile_store.get(tts_name) if tts_name else None
+    tts_profile = visible_tts_profile_or_none(
+        tts_profile_store.get(tts_name) if tts_name else None, caller_id, bypass=bypass
+    )
     if tts_profile and tts_profile.engine:
         tts = dict(engine=tts_profile.engine, model_id=tts_profile.model_id or "", voice=tts_profile.voice or None,
                    ref_audio_path=tts_profile.ref_audio_path or None, ref_text=tts_profile.ref_text or None,
@@ -96,7 +112,9 @@ async def lugo_stream(websocket: WebSocket) -> None:
         return
 
     profile_name = hello.get("profile")
-    profile, stt_engine, language, stt_model, tts, idle = _resolve(profile_name)
+    profile, stt_engine, language, stt_model, tts, idle = _resolve(
+        profile_name, identity.user_id, bypass=identity.unauthenticated
+    )
     if profile_name and not profile:
         await websocket.send_json({"type": "error", "message": f"profile '{profile_name}' not found"})
         await websocket.close()
@@ -140,6 +158,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
         audio_codec="opus", want_audio=True, want_text=True, audio_out="opus",
         denoise=False, resume_sid=requested_sid, stt_model=stt_model, tts_model=tts["model_id"],
         identity_user_id=identity.user_id,
+        identity_unauthenticated=identity.unauthenticated,
     )
 
     speaking = False  # one tts{start} on first response/audio, one tts{stop} at turn end/abort
