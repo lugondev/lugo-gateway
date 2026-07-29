@@ -81,54 +81,54 @@ _IMPLEMENTATIONS = (
 _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
     ("api/routes/conversation.py", "reply_stream"): (
         1, "metered+gated", "POST /v1/conversation/chat, tool-enabled path",
-        "tests/unit/test_routes_usage_metering.py",
+        "tests/unit/usage/test_routes_usage_metering.py",
     ),
     ("api/routes/conversation.py", "reply"): (
         1, "metered+gated", "POST /v1/conversation/chat, plain path",
-        "tests/unit/test_routes_usage_metering.py",
+        "tests/unit/usage/test_routes_usage_metering.py",
     ),
     ("api/routes/stt.py", "transcribe_bytes"): (
         1, "metered+gated", "POST /v1/stt/transcribe",
-        "tests/unit/test_routes_usage_metering.py",
+        "tests/unit/usage/test_routes_usage_metering.py",
     ),
     ("api/routes/stt.py", "open_stream"): (
         1, "metered+gated", "WS /v1/stt/stream: gated at connect and each flush",
-        "tests/unit/test_stt_stream_metering.py",
+        "tests/unit/stt/test_stt_stream_metering.py",
     ),
     ("api/routes/tts.py", "synthesize"): (
         1, "metered+gated", "the /v1/tts/stream job (POST /v1/tts/synthesize moved "
         "to render_audio in Task 7, see the row below)",
-        "tests/unit/test_tts_stream_metering.py",
+        "tests/unit/tts/test_tts_stream_metering.py",
     ),
     ("api/routes/tts.py", "render_audio"): (
         1, "metered+gated",
         "POST /v1/tts/synthesize -- Task 7 made this endpoint return audio bytes "
         "directly instead of an artifact URL, so it calls the bytes-returning "
         "seam instead of synthesize()",
-        "tests/unit/test_routes_usage_metering.py",
+        "tests/unit/usage/test_routes_usage_metering.py",
     ),
     ("api/routes/livehost.py", "transcribe_bytes"): (
         1, "metered+gated", "livehost voice turn STT",
-        "tests/unit/test_livehost_quota_gate.py",
+        "tests/unit/livehost/test_livehost_quota_gate.py",
     ),
     ("api/routes/livehost.py", "synthesize"): (
         1, "metered+gated", "livehost TTS per sentence",
-        "tests/unit/test_livehost_quota_gate.py",
+        "tests/unit/livehost/test_livehost_quota_gate.py",
     ),
     ("api/routes/livehost.py", "reply_stream"): (
         2, "metered+gated", "livehost voice and social turns",
-        "tests/unit/test_livehost_quota_gate.py",
+        "tests/unit/livehost/test_livehost_quota_gate.py",
     ),
     ("services/conversation/session.py", "transcribe_bytes"): (
         1, "metered+gated", "conversation core STT, incl. the fast-path engine switch",
-        "tests/unit/test_session_usage_metering.py",
+        "tests/unit/conversation/test_session_usage_metering.py",
     ),
     ("services/conversation/session.py", "synthesize"): (
         2, "metered+gated",
         "conversation core TTS: the per-sentence prefetch path (gated by the turn "
         "it runs in) and speak()'s farewell (metered, and gated as a silent skip "
         "-- nobody is waiting on a goodbye, so over quota it is dropped, not refused)",
-        "tests/unit/test_session_usage_metering.py",
+        "tests/unit/conversation/test_session_usage_metering.py",
     ),
     ("services/conversation/session.py", "render_wav"): (
         2, "metered+gated",
@@ -136,7 +136,7 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "seam taken when the engine is a RenderingTTSProvider: prefetch and the "
         "farewell. One row per utterance, not per branch -- render_wav and "
         "synthesize are alternatives for producing one utterance, never both",
-        "tests/unit/test_session_usage_metering.py",
+        "tests/unit/conversation/test_session_usage_metering.py",
     ),
     ("services/tts/base.py", "render_wav"): (
         2, "covered-by-caller",
@@ -144,61 +144,61 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "RenderingTTSProvider.render_audio() (Task 7's bytes-returning seam); "
         "every caller of synthesize()/render_audio() records a row for that "
         "call, so metering here would double-count",
-        "tests/unit/test_tts_render_seam.py",
+        "tests/unit/tts/test_tts_render_seam.py",
     ),
     ("services/conversation/session.py", "reply_stream"): (
         2, "metered+gated", "conversation core LLM, tool and plain paths",
-        "tests/unit/test_session_usage_metering.py",
+        "tests/unit/conversation/test_session_usage_metering.py",
     ),
     ("services/memory/extractor.py", "embed_texts_with_usage"): (
         1, "metered+gated", "memory fact embedding at session teardown",
-        "tests/unit/test_memory_usage_metering.py",
+        "tests/unit/memory/test_memory_usage_metering.py",
     ),
     ("services/memory/retriever.py", "embed_texts_with_usage"): (
         1, "metered+gated", "per-turn query embedding; gated by the turn it runs in",
-        "tests/unit/test_memory_usage_metering.py",
+        "tests/unit/memory/test_memory_usage_metering.py",
     ),
     ("services/stt/segmented.py", "transcribe_bytes"): (
         2, "covered-by-caller",
         "long-clip segments; the route records one row for the whole clip, so "
         "metering here would double-count",
-        "tests/unit/test_routes_usage_metering.py",
+        "tests/unit/usage/test_routes_usage_metering.py",
     ),
     ("services/stt/base.py", "transcribe_bytes"): (
         1, "covered-by-caller",
         "streaming adapter reached only from WS /v1/stt/stream, which meters per flush",
-        "tests/unit/test_stt_stream_metering.py",
+        "tests/unit/stt/test_stt_stream_metering.py",
     ),
     ("services/stt/streaming_chunked.py", "transcribe_bytes"): (
         1, "covered-by-caller",
         "ChunkedStreamTranscriber is not constructed by any route -- only from "
         "its own module and a unit test with a local stub -- so it is dead code "
         "with no live metering exposure, not a route sharing base.py's coverage",
-        "tests/unit/test_stt_streaming_chunked.py",
+        "tests/unit/stt/test_stt_streaming_chunked.py",
     ),
     ("api/routes/model_registry.py", "transcribe_bytes"): (
         1, "exempt",
         "add-time credential test; metered but never gated, or an admin over "
         "quota could not validate the provider needed to fix it",
-        "tests/unit/test_model_registry_test_call_metering.py",
+        "tests/unit/model_registry/test_model_registry_test_call_metering.py",
     ),
     ("api/routes/model_registry.py", "synthesize"): (
         1, "exempt",
         "add-time credential test; metered but never gated, same as "
         "transcribe_bytes above",
-        "tests/unit/test_model_registry_test_call_metering.py",
+        "tests/unit/model_registry/test_model_registry_test_call_metering.py",
     ),
     ("api/routes/model_registry.py", "reply"): (
         1, "exempt",
         "add-time credential test; metered but never gated, same as "
         "transcribe_bytes above",
-        "tests/unit/test_model_registry_test_call_metering.py",
+        "tests/unit/model_registry/test_model_registry_test_call_metering.py",
     ),
     ("api/routes/model_registry.py", "embed_texts"): (
         1, "exempt",
         "add-time credential test; metered but never gated, same as "
         "transcribe_bytes above",
-        "tests/unit/test_model_registry_test_call_metering.py",
+        "tests/unit/model_registry/test_model_registry_test_call_metering.py",
     ),
 }
 
