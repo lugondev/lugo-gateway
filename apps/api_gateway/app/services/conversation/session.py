@@ -488,10 +488,6 @@ class ConversationSession:
         registry hiccup degrades to user/global-scope enforcement instead of
         blocking or crashing; anything other than QuotaExceededError fails open.
         """
-        from app.services.model_registry.store import model_registry_store
-        from app.services.quota.gate import QuotaExceededError, quota_gate
-        from app.services.usage.attribution import resolve_usage_model
-
         cfg = self.cfg
         usage_engine, usage_model, provider_id = "", "", ""
         try:
@@ -503,6 +499,12 @@ class ConversationSession:
         except Exception:  # noqa: BLE001 - never block on a lookup
             provider_id = ""
         try:
+            # function-local: tests monkeypatch app.services.quota.gate.quota_gate by
+            # reassigning the module attribute (see test_stt_stream_metering.py's
+            # counting_gate); a top-level `from ... import quota_gate` binds the
+            # name once at import time and never observes that reassignment.
+            from app.services.quota.gate import QuotaExceededError, quota_gate
+
             await quota_gate(
                 user_id=cfg.identity_user_id or "", provider_id=provider_id,
                 kind="tts", engine=usage_engine, model_id=usage_model,
@@ -558,6 +560,10 @@ class ConversationSession:
         except Exception:  # noqa: BLE001 - provider_id resolution must never block the turn
             llm_engine, llm_model, provider_id = "", "", ""
         try:
+            # function-local: tests monkeypatch app.services.quota.gate.quota_gate by
+            # reassigning the module attribute (see test_stt_stream_metering.py's
+            # counting_gate); a top-level `from ... import quota_gate` binds the
+            # name once at import time and never observes that reassignment.
             from app.services.quota.gate import QuotaExceededError, quota_gate
 
             await quota_gate(

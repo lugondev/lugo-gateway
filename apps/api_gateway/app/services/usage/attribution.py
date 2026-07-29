@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 
+from app.services.model_registry.store import model_registry_store
 from app.services.stt.model_catalog import resolve_default_stt_model
 
 logger = logging.getLogger(__name__)
@@ -94,8 +95,6 @@ async def resolve_usage_model(kind: str, engine: str, model_id: str) -> tuple[st
     model_id = model_id or ""
     if engine and model_id:
         return engine, model_id
-
-    from app.services.model_registry.store import model_registry_store
 
     try:
         if not model_id and kind == "stt" and engine:

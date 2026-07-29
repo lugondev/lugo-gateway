@@ -87,6 +87,11 @@ async def _reject_duplicate(scope: str, scope_id: str, period: str, exclude_id: 
 async def list_quotas() -> dict:
     """Each row carries the spend already counted against it -- a limit without
     its spend cannot be judged."""
+    # function-local: tests monkeypatch app.services.quota.gate.current_spend by
+    # reassigning the module attribute (see test_usage_routes.py's flaky_spend
+    # for the sibling /v1/usage/me route); a top-level `from ... import
+    # current_spend` binds the name once at import time and never observes
+    # that reassignment.
     from app.services.quota.gate import current_spend
 
     rows = await quota_store.list_all()

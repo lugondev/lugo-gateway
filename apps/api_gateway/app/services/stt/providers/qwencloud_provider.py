@@ -25,7 +25,7 @@ import websockets
 from app.schemas.stt import STTResult
 from app.services.http_errors import translate_httpx_error
 from app.services.model_registry.store import model_registry_store
-from app.services.providers.resolve import resolve_credentials
+from app.services.providers.resolve import resolve_credentials, resolve_credentials_sync
 from app.services.stt.base import BufferingStream, STTProvider, STTStream
 
 _DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com"
@@ -487,8 +487,6 @@ class QwenCloudSttProvider(STTProvider):
         return STTResult(engine=self.name, text=_mm_text(payload), is_final=True, confidence=None)
 
     def open_stream(self, sample_rate: int, language: str | None = None, model: str | None = None):
-        from app.services.providers.resolve import resolve_credentials_sync
-
         entry = (
             self._entry_override
             or (model and model_registry_store.find_sync("stt", self.name, model))

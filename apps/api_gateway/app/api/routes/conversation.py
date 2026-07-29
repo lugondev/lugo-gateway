@@ -35,6 +35,7 @@ from app.services.health import check_resolved_engines
 from app.services.history.store import session_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
+from app.services.model_registry.store import model_registry_store
 from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
@@ -165,8 +166,6 @@ async def chat(
 
     # Quota pre-flight: block BEFORE the responder does any work. Same
     # engine/model resolution as the record_usage calls below.
-    from app.services.model_registry.store import model_registry_store
-    from app.services.quota.gate import quota_gate, QuotaExceededError
 
     # The responder doesn't exist yet, so this pre-flight only knows the
     # profile. Route it through the same resolver the usage rows use, so the
@@ -197,6 +196,12 @@ async def chat(
     except Exception:  # noqa: BLE001 - a lookup failure must never block the request
         quota_engine, quota_model_id, provider_id = "", "", ""
     try:
+        # function-local: tests monkeypatch app.services.quota.gate.quota_gate by
+        # reassigning the module attribute (see test_stt_stream_metering.py's
+        # counting_gate); a top-level `from ... import quota_gate` binds the name
+        # once at import time and never observes that reassignment.
+        from app.services.quota.gate import QuotaExceededError, quota_gate
+
         await quota_gate(
             user_id=caller_id or "", provider_id=provider_id,
             kind="llm", engine=quota_engine, model_id=quota_model_id,

@@ -7,6 +7,8 @@ from app.core.errors import EngineNotFoundError
 from app.schemas.health import EngineHealth
 from app.services.model_registry.health_probe import check_remote_engine_health, probe_service_health
 from app.services.model_registry.resolve import resolve_remote_stt_config
+from app.services.model_registry.store import model_registry_store
+from app.services.providers.resolve import resolve_credentials
 from app.services.stt.base import STTProvider
 from app.services.stt.providers.http_stt_provider import HttpSttProvider
 from app.services.stt.providers.openrouter_provider import OpenRouterSttProvider
@@ -157,8 +159,6 @@ class STTService:
         return EngineHealth(engine=engine, status="ok")
 
     async def list_engines(self) -> list[dict]:
-        # Lazy import to avoid any module load-order coupling.
-        from app.services.model_registry.store import model_registry_store
         from app.services.stt.providers.vosk_provider import get_active_vosk_path
         from app.services.whisper_models import whisper_manager
 
@@ -222,8 +222,6 @@ class STTService:
                 # so a provider-linked entry (blank own key, creds on the linked
                 # provider) would wrongly report unconfigured -- resolve each
                 # enabled entry for this engine instead.
-                from app.services.providers.resolve import resolve_credentials
-
                 configured = False
                 for candidate in await model_registry_store.list_all():
                     if candidate["kind"] != "stt" or candidate["engine"] != engine or not candidate["enabled"]:
@@ -240,8 +238,6 @@ class STTService:
                 base_url = (row or {}).get("base_url", "")
                 entry = {"mode": "remote", "available": bool(base_url), "detail": base_url or None}
             elif engine == "qwencloud":
-                from app.services.providers.resolve import resolve_credentials
-
                 configured = False
                 models: list[str] = []
                 for candidate in await model_registry_store.list_all():

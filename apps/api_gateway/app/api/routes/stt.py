@@ -18,10 +18,12 @@ from app.core.identity_watch import build_identity_watchdog, receive_with_watchd
 from app.core.settings import settings
 from app.schemas.common import StreamEvent
 from app.schemas.stt import STTRequest, STTResult
+from app.services.model_registry.store import model_registry_store
 from app.services.stt.base import STTStream
 from app.services.stt.segmented import transcribe_long
 from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
+from app.services.usage.attribution import resolve_usage_model
 from app.services.usage.recorder import record_usage
 from app.services.vad import apply_vad
 from app.streaming.event_bus import event_bus
@@ -64,10 +66,6 @@ async def transcribe(
     # the engine and maybe a model; resolve_usage_model turns that into the pair
     # the registry actually holds, so a provider-scoped quota can match. A blank
     # result still leaves user/global quotas enforced.
-    from app.services.model_registry.store import model_registry_store
-    from app.services.quota.gate import quota_gate, QuotaExceededError
-    from app.services.usage.attribution import resolve_usage_model
-
     provider_id = ""
     try:
         # Inside the guard, not before it: resolve_usage_model() never raises
@@ -80,6 +78,12 @@ async def transcribe(
     except Exception:  # noqa: BLE001 - a registry hiccup must never block a request
         usage_engine, usage_model_id, provider_id = "", "", ""
     try:
+        # function-local: tests monkeypatch app.services.quota.gate.quota_gate by
+        # reassigning the module attribute (see test_stt_stream_metering.py's
+        # counting_gate); a top-level `from ... import quota_gate` binds the name
+        # once at import time and never observes that reassignment.
+        from app.services.quota.gate import QuotaExceededError, quota_gate
+
         await quota_gate(
             user_id=current_user_id(request) or "", provider_id=provider_id,
             kind="stt", engine=usage_engine, model_id=usage_model_id,
@@ -241,13 +245,15 @@ async def stt_stream(websocket: WebSocket) -> None:
         _parse_bool(websocket.query_params.get("vad")), preprocessing.stt_vad_enabled
     )
 
-    from app.services.model_registry.store import model_registry_store
-    from app.services.quota.gate import QuotaExceededError, quota_gate
-    from app.services.usage.attribution import resolve_usage_model
-
     async def _quota_message(user_id: str) -> str:
         """Return "" when the socket may proceed, else the refusal to send. Resolving the
         pair first is what lets a provider-scoped quota match (see the STT route)."""
+        # function-local: tests monkeypatch app.services.quota.gate.quota_gate by
+        # reassigning the module attribute (see test_stt_stream_metering.py's
+        # counting_gate); a top-level `from ... import quota_gate` binds the name
+        # once at import time and never observes that reassignment.
+        from app.services.quota.gate import QuotaExceededError, quota_gate
+
         try:
             usage_engine, usage_model = await resolve_usage_model("stt", engine, model or "")
             provider_id = ""

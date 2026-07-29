@@ -25,6 +25,7 @@ from app.services.conversation.responder import (
     get_active_llm_model,
     set_active_llm_config,
 )
+from app.services.providers.resolve import resolve_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,6 @@ LLM_SUGGESTIONS = [
 
 
 async def _active_llm_base_url() -> str:
-    from app.services.providers.resolve import resolve_credentials
-
     entry = await _active_llm_entry()
     if not entry:
         return ""
@@ -82,8 +81,6 @@ class LlmManager:
 
     async def available(self) -> bool:
         if await _is_remote_endpoint():
-            from app.services.providers.resolve import resolve_credentials
-
             entry = await _active_llm_entry()
             if not entry:
                 return False

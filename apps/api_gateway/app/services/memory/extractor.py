@@ -16,8 +16,10 @@ from app.services.history.store import session_store
 from app.services.memory.compactor import memory_compactor
 from app.services.memory.embedder import cosine, embed_texts_with_usage
 from app.services.memory.store import memory_store
+from app.services.model_registry.store import model_registry_store
 from app.services.profiles.models import Profile
 from app.services.system_config import system_config_store
+from app.services.usage.attribution import resolve_usage_model
 from app.services.usage.recorder import record_usage
 
 logger = logging.getLogger(__name__)
@@ -139,10 +141,6 @@ class MemoryExtractor:
         """True when an applicable quota is already over its limit. Resolving
         provider_id is wrapped separately so a registry hiccup degrades to
         user/global-scope enforcement rather than blocking or crashing."""
-        from app.services.model_registry.store import model_registry_store
-        from app.services.quota.gate import QuotaExceededError, quota_gate
-        from app.services.usage.attribution import resolve_usage_model
-
         usage_engine, usage_model = "", ""
         provider_id = ""
         try:
@@ -154,6 +152,12 @@ class MemoryExtractor:
         except Exception:  # noqa: BLE001 - never block memory on a lookup
             provider_id = ""
         try:
+            # function-local: tests monkeypatch app.services.quota.gate.quota_gate by
+            # reassigning the module attribute (see test_stt_stream_metering.py's
+            # counting_gate); a top-level `from ... import quota_gate` binds the
+            # name once at import time and never observes that reassignment.
+            from app.services.quota.gate import QuotaExceededError, quota_gate
+
             await quota_gate(
                 user_id=user_id or "", provider_id=provider_id,
                 kind="llm", engine=usage_engine, model_id=usage_model,

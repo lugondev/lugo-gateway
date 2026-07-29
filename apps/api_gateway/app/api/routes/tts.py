@@ -11,8 +11,10 @@ from app.core.upload_limits import REFERENCE_AUDIO_MAX_BYTES
 from app.schemas.common import StreamEvent
 from app.schemas.tts import TTSRequest
 from app.services.artifacts import artifact_store
+from app.services.model_registry.store import model_registry_store
 from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
+from app.services.usage.attribution import resolve_usage_model
 from app.services.usage.recorder import record_usage
 from app.streaming.event_bus import event_bus
 
@@ -109,9 +111,6 @@ async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
 async def synthesize(payload: TTSRequest, request: Request, profile: str | None = None) -> Response:
     # Quota pre-flight: block BEFORE the provider does any work. See the STT
     # route for why the model is resolved before the provider lookup.
-    from app.services.model_registry.store import model_registry_store
-    from app.services.quota.gate import quota_gate, QuotaExceededError
-    from app.services.usage.attribution import resolve_usage_model
 
     provider_id = ""
     try:
@@ -125,6 +124,12 @@ async def synthesize(payload: TTSRequest, request: Request, profile: str | None 
     except Exception:  # noqa: BLE001 - a registry hiccup must never block a request
         usage_engine, usage_model_id, provider_id = "", "", ""
     try:
+        # function-local: tests monkeypatch app.services.quota.gate.quota_gate by
+        # reassigning the module attribute (see test_stt_stream_metering.py's
+        # counting_gate); a top-level `from ... import quota_gate` binds the name
+        # once at import time and never observes that reassignment.
+        from app.services.quota.gate import QuotaExceededError, quota_gate
+
         await quota_gate(
             user_id=current_user_id(request) or "", provider_id=provider_id,
             kind="tts", engine=usage_engine, model_id=usage_model_id,
@@ -167,9 +172,6 @@ async def create_stream_job(payload: TTSRequest, request: Request, profile: str 
     # over SSE, so a refusal has to happen here -- reporting it through the event
     # channel would make every client learn a second failure path. Same 429
     # contract as /v1/tts/synthesize.
-    from app.services.model_registry.store import model_registry_store
-    from app.services.quota.gate import quota_gate, QuotaExceededError
-    from app.services.usage.attribution import resolve_usage_model
 
     usage_engine, usage_model_id = "", ""
     provider_id = ""
@@ -186,6 +188,10 @@ async def create_stream_job(payload: TTSRequest, request: Request, profile: str 
     caller_id = current_user_id(request) or ""
     profile_id = profile or ""
     try:
+        # function-local: see the /synthesize route above for why quota_gate
+        # can't be a module-level name here (test monkeypatch semantics).
+        from app.services.quota.gate import QuotaExceededError, quota_gate
+
         await quota_gate(
             user_id=caller_id, provider_id=provider_id,
             kind="tts", engine=usage_engine, model_id=usage_model_id,

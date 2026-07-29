@@ -14,6 +14,8 @@ from typing import Awaitable, Callable
 import httpx
 
 from app.schemas.health import EngineHealth
+from app.services.model_registry.store import model_registry_store
+from app.services.providers.resolve import resolve_credentials
 
 DEFAULT_PROBE_TIMEOUT = 3.0
 
@@ -70,9 +72,6 @@ async def check_remote_engine_health(
     makes the patched version actually take effect instead of this module's
     unpatched original.
     """
-    from app.services.model_registry.store import model_registry_store
-    from app.services.providers.resolve import resolve_credentials
-
     entry = (
         await model_registry_store.find(kind, engine, model_id)
         if model_id
