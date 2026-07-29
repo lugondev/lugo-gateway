@@ -129,6 +129,13 @@ it, and SSE cannot carry binary. Delete the route, its job-owner bookkeeping,
 the `index.html:547-562` panel, and `static/js/tts-stream.js`.
 `POST /v1/tts/synthesize` (bytes) covers the same "try this engine" need.
 
+`GET /v1/events/jobs/{job_id}` goes with it. That endpoint exists solely to
+subscribe to a TTS stream job — `/v1/stt/stream` publishes to `session:`
+channels (`api/routes/stt.py:215`), never `job:` — so with the producer gone,
+it, `_job_owners`, `get_job_owner`, `_record_job_owner` and `_stream_jobs` are
+unreachable. `GET /v1/events/sessions/{session_id}` is unaffected.
+`segment_text` also stays: `services/conversation/responder.py:149` uses it.
+
 This is a deliberate removal of a metered, quota-gated call site, so the
 anti-omission harnesses must be updated with it, not left to fail:
 `tests/unit/test_paid_call_site_inventory.py`,
