@@ -119,7 +119,7 @@ Platform (auth, devices, profiles, registry, memory):
 - POST /api/auth/{signup,login,logout} — session cookie or bearer token
 - GET/POST/PATCH/DELETE /v1/users (admin) — user + role management
 - WS /v1/lugo/stream — the **lugo** binary protocol for RPi / ESP32 clients
-- POST /v1/devices/pair/{init,status,claim} — 6-digit device pairing
+- POST /v1/devices/pair/{init,status,claim} — 8-digit device pairing
 - GET /v1/devices, /v1/devices/mine — paired-device management + revoke
 - GET/POST/PUT/DELETE /v1/profiles + /v1/profiles/{name}/memories — per-profile
   config (LLM, STT/TTS, MCP servers, memory) and per-user chat memory
