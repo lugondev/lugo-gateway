@@ -191,13 +191,18 @@ def test_tts_start_and_stop_bracket_a_turn():
 
 
 def test_tts_bracket_without_opus_encoder(monkeypatch):
-    # When the opus encoder is unavailable the core emits audio_chunk instead of
-    # audio_start; the device must still get a turn-level start/stop bracket.
-    # session.py imports `opus_available` locally (`from app.core.opus import
-    # ... opus_available`) inside ConversationSession.start(), so patching the
-    # function on its defining module (app.core.opus) is what actually takes
-    # effect at call time -- patching a same-named attribute on the session
-    # module would be a no-op since session.py never binds it at module scope.
+    # lugo.py itself gates want_audio on opus_available() before the session is
+    # even built (the device wire protocol has no non-Opus audio frame -- see
+    # test_lugo_falls_back_to_text_only_without_libopus below), so this turn
+    # runs text-only: the "tts" start/sentence_start/stop bracket in lugo.py's
+    # emit() is driven by response_text/turn_done regardless of whether any
+    # audio was ever produced, and must still bracket the turn correctly here.
+    # session.py/lugo.py both import `opus_available` locally (`from
+    # app.core.opus import ... opus_available`), not at module scope, so
+    # patching the function on its defining module (app.core.opus) is what
+    # actually takes effect at call time -- patching a same-named attribute on
+    # the session/lugo module would be a no-op since neither binds it at
+    # module scope.
     monkeypatch.setattr("app.core.opus.opus_available", lambda: False)
     with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
         ws.send_json({"type": "wakeup", "profile": "dev",
@@ -219,6 +224,37 @@ def test_tts_bracket_without_opus_encoder(monkeypatch):
         assert states.count("start") == 1
         assert states.count("stop") == 1
         assert "sentence_start" in states
+
+
+def test_lugo_falls_back_to_text_only_without_libopus(monkeypatch):
+    """Without libopus, the device wire protocol (lugo_frame.py) has no frame
+    type for anything but Opus -- pushing raw WAV bytes through emit_audio
+    would have them decoded as a corrupt Opus packet on the device. lugo.py
+    must ask for a text-only session (want_audio=False) instead of letting
+    session.start()'s opus->wav downgrade produce audio bytes at all: no
+    binary frame may ever reach the client, while the turn's text (tts
+    start/sentence_start/stop, driven by response_text/turn_done) still does."""
+    monkeypatch.setattr("app.core.opus.opus_available", lambda: False)
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "text", "text": "hi"})
+        binary_frames = 0
+        saw_tts_start = saw_tts_stop = False
+        for _ in range(30):
+            message = ws.receive()
+            if message.get("bytes") is not None:
+                binary_frames += 1
+                continue
+            m = json.loads(message["text"])
+            if m["type"] == "tts" and m.get("state") == "start":
+                saw_tts_start = True
+            if m["type"] == "tts" and m.get("state") == "stop":
+                saw_tts_stop = True
+                break
+        assert binary_frames == 0, "no libopus -- the device must receive no binary frame at all"
+        assert saw_tts_start and saw_tts_stop
 
 
 def test_welcome_honors_requested_output_sample_rate():
