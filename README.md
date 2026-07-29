@@ -1,6 +1,11 @@
-# speech-text-transformer
+# LUGO
 
-Local gateway unifying Speech-to-Text, Text-to-Speech, and a voice Conversation loop
+**LUGO** is a self-hosted **AI Companion platform** — it turns AI models into a
+companion that remembers, talks, acts, and grows with you across every device, from
+the browser to ESP32 and Raspberry Pi ([lugo.vn](https://lugo.vn/)).
+
+This repository (`speech-text-transformer`) is LUGO's **gateway**: a local service
+unifying Speech-to-Text, Text-to-Speech, and a voice Conversation loop
 over REST / WebSocket / SSE, with a browser playground. STT: Vosk, faster-whisper,
 Qwen3-ASR (Vietnamese), Apple-GPU MLX (`whisper_mlx`), remote Whisper. TTS:
 OmniVoice, VieNeu, and more. Conversation: VAD turn-taking + barge-in, local/online
