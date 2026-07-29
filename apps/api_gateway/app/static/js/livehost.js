@@ -3,7 +3,7 @@ import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
 
 export const lh = {
   ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null,
-  opusMode: false, opusDec: null, opusTs: 0, outRate: 24000,
+  opusMode: false, opusDec: null, opusTs: 0, outRate: 24000, outCodec: "wav",
   sessionId: null, statusPollTimer: null, assistantBubble: null, pendingReplyIsSocial: false,
 };
 
@@ -61,23 +61,13 @@ function lhStopAudio() {
   lh.chain = Promise.resolve();
   lhResetOpus();
 }
-function lhEnqueueAudio(url) {
+function lhEnqueueAudioBytes(bytes) {
   lh.chain = (lh.chain || Promise.resolve())
     .then(async () => {
       const ctx = lhAudioCtx();
       if (ctx.state === "suspended") await ctx.resume();
-      const data = await (await fetch(url)).arrayBuffer();
-      const buf = await ctx.decodeAudioData(data);
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      src.connect(ctx.destination);
-      const start = Math.max(ctx.currentTime + 0.05, lh.nextTime || 0);
-      src.start(start);
-      lh.nextTime = start + buf.duration;
-      lh.sources.push(src);
-      src.onended = () => {
-        lh.sources = lh.sources.filter((s) => s !== src);
-      };
+      const buf = await ctx.decodeAudioData(bytes);
+      lhScheduleBuffer(buf);
     })
     .catch((e) => lhLog("audio error: " + e));
 }
@@ -210,6 +200,7 @@ export async function loadLivehostEngines() {
 export async function startLhSession() {
   setLhSessionUI("starting");
   lhStopAudio();
+  lh.outCodec = "wav"; // re-announced by the first audio_start of the new session
   el("lh-dialogue").innerHTML = "";
   lh.log = [];
   el("lh-log").textContent = "";
@@ -250,7 +241,7 @@ export async function startLhSession() {
 
   lh.opusMode = !!el("lh-opus")?.checked && lhOpusSupported();
   if (el("lh-opus")?.checked && !lh.opusMode) {
-    lhLog("Opus downlink unsupported in this browser — using WAV/URL.");
+    lhLog("Opus downlink unsupported in this browser — using WAV.");
   }
   if (lh.opusMode) {
     lh.outRate = 24000;
@@ -280,7 +271,7 @@ export async function startLhSession() {
 
   const ws = new WebSocket(wsUrl(`/v1/livehost/stream?${params}`));
   lh.ws = ws;
-  if (lh.opusMode) ws.binaryType = "arraybuffer";
+  ws.binaryType = "arraybuffer";
 
   ws.onopen = async () => {
     if (soloMode) {
@@ -300,8 +291,12 @@ export async function startLhSession() {
   };
 
   ws.onmessage = (event) => {
+    // Binary frames are reply audio: Opus packets when audio_out=opus, else a
+    // complete WAV/MP3 per sentence -- routed by the codec the server
+    // announced in the preceding audio_start event.
     if (typeof event.data !== "string") {
-      lhFeedOpus(event.data);
+      if (lh.outCodec === "opus") lhFeedOpus(event.data);
+      else lhEnqueueAudioBytes(event.data);
       return;
     }
     let d;
@@ -359,10 +354,8 @@ export async function startLhSession() {
         break;
       }
       case "audio_start":
+        lh.outCodec = d.codec || "wav";
         if (d.codec === "opus" && d.sample_rate) lh.outRate = d.sample_rate;
-        break;
-      case "audio_chunk":
-        if (d.audio_url) lhEnqueueAudio(d.audio_url);
         break;
       case "turn_done":
         lh.assistantBubble = null;

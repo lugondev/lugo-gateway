@@ -111,8 +111,11 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         1, "metered+gated", "livehost voice turn STT",
         "tests/unit/livehost/test_livehost_quota_gate.py",
     ),
-    ("api/routes/livehost.py", "synthesize"): (
-        1, "metered+gated", "livehost TTS per sentence",
+    ("api/routes/livehost.py", "render_audio"): (
+        1, "metered+gated",
+        "livehost TTS per sentence -- Task 2 (drop-audio-artifacts) moved this "
+        "off synthesize() onto the bytes-returning seam so reply audio is "
+        "pushed as a binary WAV/Opus frame instead of an artifact URL",
         "tests/unit/livehost/test_livehost_quota_gate.py",
     ),
     ("api/routes/livehost.py", "reply_stream"): (

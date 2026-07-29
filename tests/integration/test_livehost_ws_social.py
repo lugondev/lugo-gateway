@@ -1,12 +1,13 @@
 import asyncio
+import json
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.audio import pcm16_to_wav_bytes
 from app.core.settings import settings
 from app.main import app
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
 from app.services.livehost.registry import livehost_registry
 from app.services.livehost.schemas import SocialEvent
 from app.services.profiles.models import Profile, SttConfig
@@ -15,6 +16,11 @@ from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
 from app.services.tts.base import TTSProvider
 from app.services.tts.service import tts_service
+
+
+def _silence_wav(ms: int = 100, sr: int = 24000) -> bytes:
+    n = int(sr * ms / 1000)
+    return pcm16_to_wav_bytes(b"\x00\x00" * n, sample_rate=sr)
 
 
 class _StubSTT(STTProvider):
@@ -30,12 +36,12 @@ class _StubTTS(TTSProvider):
     def __init__(self) -> None:
         self.calls: list = []
 
-    async def synthesize(self, payload) -> TTSResult:
+    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
+        raise NotImplementedError("this stub only exercises render_audio()")
+
+    async def render_audio(self, payload) -> tuple[bytes, str]:
         self.calls.append(payload)
-        return TTSResult(
-            engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
-            duration_seconds=0.05, text=payload.text,
-        )
+        return _silence_wav(), "audio/wav"
 
 
 @pytest.fixture(autouse=True)
@@ -95,15 +101,26 @@ def test_social_event_triggers_reply_when_streamer_silent(_register_stub):
         )
 
         events = []
-        for _ in range(20):
-            ev = ws.receive_json()
+        frames = []
+        # 20 bounds JSON events only -- a skipped binary WAV frame must not
+        # burn out of the same budget as the JSON events this loop is
+        # actually waiting on (mirrors test_livehost_ws_voice.py's
+        # _drive_voice_turn).
+        while len(events) < 20:
+            msg = ws.receive()
+            if msg.get("bytes") is not None:
+                frames.append(msg["bytes"])
+                continue
+            ev = json.loads(msg["text"])
             events.append(ev)
             if ev["event"] == "turn_done":
                 break
 
         kinds = [e["event"] for e in events]
         assert "social_reply" in kinds
-        assert "audio_chunk" in kinds
+        assert "audio_start" in kinds
+        assert "audio_end" in kinds
+        assert frames and frames[0][:4] == b"RIFF"
 
     # Prove this actually exercised the registered stub, not the real
     # ambient default_tts_engine (omnivoice) -- the exact regression this
