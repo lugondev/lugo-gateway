@@ -36,6 +36,8 @@ from app.core.auth_guard import AuthGuardMiddleware
 from app.core.errors import AppError
 from app.core.logging import setup_logging
 from app.core.settings import settings
+from app.core.upload_limits import REFERENCE_AUDIO_MAX_BYTES
+from app.core.upload_size_limit import UploadSizeLimitMiddleware
 from app.services.artifacts import artifact_store
 
 setup_logging(settings.log_level)
@@ -203,26 +205,36 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 # outermost, wrapping everything added before it.
 #
 # We need this request chain, outermost to innermost:
-#   CORS -> Session -> AuthGuard -> routes
+#   CORS -> UploadSizeLimit -> Session -> AuthGuard -> routes
 # which means registration (call) order must be the exact reverse:
-#   AuthGuard added first, then Session, then CORS added last.
+#   AuthGuard added first, then Session, then UploadSizeLimit, then CORS
+#   added last.
 #
 #   - Session must wrap AuthGuard (added after it) because
 #     AuthGuardMiddleware.dispatch() reads `request.session`, which
 #     SessionMiddleware.dispatch() populates before calling `call_next` --
 #     so Session's pre-handler code must run before AuthGuard's, which
 #     requires Session to be the outer one of the pair.
-#   - CORS must wrap both (added last / outermost) so it also applies to
-#     AuthGuard's short-circuit responses (401 unauthenticated, 403 wrong
-#     role). If CORS is inside AuthGuard instead, those short-circuits ship
-#     with no Access-Control-Allow-Origin header, and a cross-origin browser
-#     client can't even read the status code -- it sees an opaque network
-#     failure instead of a 401/403, so client-side logic that reacts to auth
-#     failures (re-login, token refresh) never fires. This exact regression
-#     is pinned by tests/integration/test_cors_ordering.py and
-#     test_cors_bearer.py -- they assert on real HTTP responses, not on
-#     `app.user_middleware` list order, so they catch this even if
-#     Starlette's internal insertion behavior changes.
+#   - UploadSizeLimit's position relative to Session/AuthGuard doesn't
+#     affect correctness -- neither of those reads or buffers the request
+#     body (Session only touches cookies; AuthGuard only touches
+#     headers/session, see auth_guard.py's dispatch()) -- but it must still
+#     run for every request regardless of auth outcome, so it wraps
+#     (is added after) both rather than sitting inside the router where an
+#     un-authenticated caller for a public route could exercise the upload
+#     path without ever passing through it.
+#   - CORS must wrap everything (added last / outermost) so it also applies
+#     to AuthGuard's short-circuit responses (401 unauthenticated, 403 wrong
+#     role) AND UploadSizeLimit's 413. If CORS is inside either instead,
+#     those short-circuits ship with no Access-Control-Allow-Origin header,
+#     and a cross-origin browser client can't even read the status code --
+#     it sees an opaque network failure instead of a real status, so
+#     client-side logic that reacts to these failures (re-login, "file too
+#     large" messaging) never fires. This exact regression is pinned by
+#     tests/integration/test_cors_ordering.py and test_cors_bearer.py --
+#     they assert on real HTTP responses, not on `app.user_middleware` list
+#     order, so they catch this even if Starlette's internal insertion
+#     behavior changes.
 app.add_middleware(AuthGuardMiddleware)
 _session_secret = settings.effective_session_secret
 app.add_middleware(
@@ -230,6 +242,15 @@ app.add_middleware(
     secret_key=_session_secret,
     same_site="lax",
     https_only=settings.app_env != "dev",
+)
+# H3 (docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md): caps
+# the reference-audio upload's body BEFORE Starlette's multipart parser ever
+# runs -- see upload_size_limit.py's module docstring for why the route
+# handler's own chunked-read counter (routes/tts.py) can't do this alone.
+app.add_middleware(
+    UploadSizeLimitMiddleware,
+    paths={"/v1/tts/reference-audio"},
+    max_bytes=REFERENCE_AUDIO_MAX_BYTES,
 )
 app.add_middleware(
     CORSMiddleware,

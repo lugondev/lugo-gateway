@@ -154,6 +154,12 @@ def test_reference_audio_upload_within_limit_succeeds(client, tmp_path, monkeypa
 
 
 def test_reference_audio_upload_over_limit_is_rejected(client, tmp_path, monkeypatch):
+    """Handler-level backstop: with the ASGI-layer cap raised out of the way
+    (a tiny body never trips the real 10MB middleware cap below), the
+    in-handler chunked-read counter is still the thing that catches an
+    oversized body -- defense in depth, see
+    test_upload_size_limit_middleware.py for the ASGI-layer enforcement this
+    now primarily relies on."""
     from app.api.routes import tts as tts_route
     from app.services.artifacts import ArtifactStore
 
@@ -163,6 +169,26 @@ def test_reference_audio_upload_over_limit_is_rejected(client, tmp_path, monkeyp
     monkeypatch.setattr(tts_route, "_MAX_REFERENCE_AUDIO_BYTES", 1024)
 
     oversized = b"x" * (1024 * 4)
+    resp = client.post(
+        "/v1/tts/reference-audio",
+        files={"audio": ("ref.wav", oversized, "audio/wav")},
+    )
+    assert resp.status_code == 413
+
+
+def test_reference_audio_upload_over_real_cap_is_rejected_end_to_end(client):
+    """End-to-end regression for the fix-round-1 finding: FastAPI's
+    `UploadFile = File(...)` makes routing call `await request.form()`
+    (driving Starlette's MultiPartParser, which has no size limit on file
+    parts) BEFORE `upload_reference_audio` ever runs -- so a handler-only
+    chunked-read counter alone lets an oversized body be fully received and
+    spooled to disk first. This hits the REAL registered app (main.py's
+    UploadSizeLimitMiddleware, at the actual 10MB production cap -- not
+    monkeypatched) with a body over that cap and expects 413 from the
+    middleware layer, not merely from the handler's backstop counter."""
+    from app.core.upload_limits import REFERENCE_AUDIO_MAX_BYTES
+
+    oversized = b"x" * (REFERENCE_AUDIO_MAX_BYTES + (1024 * 1024))  # +1MB over
     resp = client.post(
         "/v1/tts/reference-audio",
         files={"audio": ("ref.wav", oversized, "audio/wav")},
