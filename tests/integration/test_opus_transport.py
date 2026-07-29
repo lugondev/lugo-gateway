@@ -122,10 +122,14 @@ def test_conversation_opus_transport_turn(_stub):
             ws.send_bytes(f)
 
         events = []
-        for _ in range(40):
+        # 40 bounds JSON events only -- a skipped binary WAV frame (audio_out
+        # defaults to wav here; this test only pins audio_codec=opus for the
+        # UPLINK) must not burn out of the same budget as the JSON events
+        # this loop is actually waiting on.
+        while len(events) < 40:
             msg = ws.receive()
-            if "bytes" in msg:
-                continue  # reply audio binary frame (audio_out defaults to wav)
+            if msg.get("bytes") is not None:
+                continue  # reply audio binary frame
             ev = json.loads(msg["text"])
             events.append(ev["event"])
             if ev["event"] == "turn_done":

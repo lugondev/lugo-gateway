@@ -98,10 +98,15 @@ def _run_one_turn(ws):
     ws.send_bytes(_loud(500))
     ws.send_bytes(_silence(500))
     ws.send_bytes(_silence(500))
-    for _ in range(30):
+    # 30 bounds JSON events only -- a skipped binary WAV frame (audio_out
+    # defaults to wav now) must not burn out of the same budget as the
+    # JSON events this loop is actually waiting on.
+    json_count = 0
+    while json_count < 30:
         msg = ws.receive()
-        if "bytes" in msg:
-            continue  # reply audio binary frame (audio_out defaults to wav now)
+        if msg.get("bytes") is not None:
+            continue  # reply audio binary frame
+        json_count += 1
         ev = json.loads(msg["text"])
         if ev["event"] == "turn_done":
             return

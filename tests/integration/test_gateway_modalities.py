@@ -79,17 +79,25 @@ def _drain(ws, stop="turn_done", n=40):
     """Read JSON events, transparently skipping binary reply-audio frames
     (audio_out defaults to wav now, so a WAV frame rides between audio_start
     and audio_end for any test that requests audio output without pinning
-    audio_out=opus)."""
+    audio_out=opus) -- but COUNTING them and returning the count, so a stray
+    binary frame in a text-only turn isn't invisible to the caller's
+    assertions. `n` bounds JSON events only: a skipped binary frame must not
+    burn out of the same budget, or an audio-heavy turn could exhaust it
+    before the JSON event this is actually waiting for arrives."""
     evs = []
-    for _ in range(n):
+    binary_frames = 0
+    json_count = 0
+    while json_count < n:
         msg = ws.receive()
-        if "bytes" in msg:
+        if msg.get("bytes") is not None:
+            binary_frames += 1
             continue
+        json_count += 1
         e = json.loads(msg["text"])
         evs.append(e)
         if e["event"] == stop:
             break
-    return evs
+    return evs, binary_frames
 
 
 def test_text_to_text():
@@ -98,10 +106,11 @@ def test_text_to_text():
         started = ws.receive_json()
         assert started["event"] == "session_started" and started["output"] == ["text"]
         ws.send_json({"type": "text", "text": "xin chào"})
-        evs = _drain(ws)
+        evs, binary_frames = _drain(ws)
         types = [e["event"] for e in evs]
         assert "user_transcript" in types and "response_text" in types
-        assert "audio_chunk" not in types  # text-only -> no TTS
+        assert "audio_start" not in types and "audio_end" not in types  # text-only -> no TTS
+        assert binary_frames == 0  # and no stray WAV frame either
         assert next(e for e in evs if e["event"] == "user_transcript")["text"] == "xin chào"
 
 
@@ -110,10 +119,11 @@ def test_text_to_audio_wav():
     with c.websocket_connect("/v1/conversation/stream?profile=p-gw&output=audio") as ws:
         assert ws.receive_json()["event"] == "session_started"
         ws.send_json({"type": "text", "text": "xin chào"})
-        evs = _drain(ws)
+        evs, binary_frames = _drain(ws)
         types = [e["event"] for e in evs]
         assert "audio_start" in types and "audio_end" in types
         assert next(e for e in evs if e["event"] == "audio_start")["codec"] == "wav"
+        assert binary_frames >= 1  # the WAV frame itself actually arrived
         assert "response_text" not in types  # audio-only -> no text events
 
 
@@ -189,7 +199,8 @@ def test_audio_to_text():
         assert ws.receive_json()["event"] == "speech_start"
         ws.send_bytes(_loud(400))
         ws.send_bytes((b"\x00\x00") * int(SR * 1.0))  # silence -> endpoint
-        evs = _drain(ws)
+        evs, binary_frames = _drain(ws)
         types = [e["event"] for e in evs]
         assert "user_transcript" in types and "response_text" in types
-        assert "audio_chunk" not in types
+        assert "audio_start" not in types and "audio_end" not in types
+        assert binary_frames == 0

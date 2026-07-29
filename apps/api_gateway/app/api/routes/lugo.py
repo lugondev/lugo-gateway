@@ -191,8 +191,9 @@ async def lugo_stream(websocket: WebSocket) -> None:
         elif event in ("response_text", "audio_start"):
             # First sign the bot is responding (text or audio) opens the turn.
             # response_text always precedes audio_start in the core, so tts{start}
-            # is the first tts frame; this also works in the no-opus fallback
-            # path where audio_start never fires (only response_text/audio_chunk).
+            # is the first tts frame; this also works in the no-libopus,
+            # text-only path (want_audio=False, see above) where audio_start
+            # never fires at all -- only response_text does.
             if not speaking:
                 speaking = True
                 await websocket.send_json({"type": "tts", "state": "start"})

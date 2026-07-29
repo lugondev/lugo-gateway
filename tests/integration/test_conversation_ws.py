@@ -88,7 +88,7 @@ def _next_event(ws) -> dict:
     and audio_end)."""
     while True:
         msg = ws.receive()
-        if "bytes" in msg:
+        if msg.get("bytes") is not None:
             continue
         ev = json.loads(msg["text"])
         if ev["event"] != "engines_ready":
@@ -124,9 +124,12 @@ def test_conversation_turn_end_to_end(_register_stub, monkeypatch, tmp_path):
 
         events = []
         audio_frames = []
-        for _ in range(30):
+        # 30 bounds JSON events only -- a skipped binary WAV frame must not
+        # burn out of the same budget as the JSON events this loop is
+        # actually waiting on.
+        while len(events) < 30:
             msg = ws.receive()
-            if "bytes" in msg:
+            if msg.get("bytes") is not None:
                 audio_frames.append(msg["bytes"])
                 continue
             ev = json.loads(msg["text"])
@@ -166,9 +169,11 @@ def test_conversation_barge_in_aborts_turn(_register_stub, monkeypatch, tmp_path
         ws.send_bytes(_loud(500))  # barge-in while assistant is synthesizing
 
         seen = []
-        for _ in range(12):
+        # 12 bounds JSON events only -- reply-audio binary frames from the
+        # slow TTS must not crowd out `aborted` and make this flaky.
+        while len(seen) < 12:
             msg = ws.receive()
-            if "bytes" in msg:
+            if msg.get("bytes") is not None:
                 continue
             ev = json.loads(msg["text"])["event"]
             if ev == "engines_ready":

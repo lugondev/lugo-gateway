@@ -1,12 +1,18 @@
-"""Pins the no-disk seam for Opus-mode TTS in ConversationSession.
+"""Pins the no-disk seam for TTS in ConversationSession, in BOTH downlink modes.
 
-In Opus mode (devices), _synth()/speak() used to call synthesize() (which
-writes a WAV to the artifact store) and then immediately read the file back
-to decode it for Opus encoding -- the artifact URL is never used once packets
-exist. render_wav() (RenderingTTSProvider's public seam: real synthesis, WAV
-bytes, no artifact side effect) replaces that round-trip. URL mode (browser)
-is untouched: it still needs the artifact file, since the client fetches it
-by URL.
+_synth()/speak() used to call synthesize() (which writes a WAV to the artifact
+store) and then, for Opus mode, immediately read the file back to decode it for
+Opus encoding -- the artifact URL was never used once packets existed. A
+separate "url" transport mode existed purely to hand that same artifact URL to
+the browser to fetch.
+
+Both are gone. `TTSProvider.render_audio(payload) -> (audio_bytes, media_type)`
+is now the ONLY seam the session core calls: RenderingTTSProvider implements it
+via render_wav() (real synthesis, WAV bytes, no artifact side effect); a plain
+TTSProvider (e.g. edge_tts) implements it directly. Opus mode decodes those
+bytes to PCM16 and encodes Opus packets; wav mode (the new default) pushes them
+straight over the wire as one binary frame per sentence. Neither path ever
+writes to or reads from the artifact store.
 
 Follows the harness pattern established by test_conversation_session_core.py
 (ConversationSession driven directly with stub providers, no WS transport).
@@ -187,9 +193,14 @@ async def test_wav_mode_pushes_one_binary_frame_per_sentence():
     starts = [p for n, p in events if n == "audio_start"]
     ends = [p for n, p in events if n == "audio_end"]
     # EchoResponder (the default no-LLM responder driving _drive_text_turn)
-    # replies with 3 sentences, so 3 audio_start/audio_end pairs are expected
-    # here -- one binary WAV frame per sentence, never batched/split.
-    assert starts and len(starts) == len(ends) == len(audio_frames)
+    # always replies with exactly 3 sentences (see its fixed reply string in
+    # responder.py) -- pinned literally, not just relationally, so a
+    # regression that only emits audio for e.g. 1 of the 3 sentences still
+    # fails here. `want_text=False` in `_cfg` means there's no `response_text`
+    # to anchor the sentence count against instead.
+    assert len(starts) == 3
+    assert len(ends) == 3
+    assert len(audio_frames) == 3  # one binary WAV frame per sentence
     assert all(s["codec"] == "wav" for s in starts)
     assert all(frame[:4] == b"RIFF" for frame in audio_frames)
 

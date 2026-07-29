@@ -3,7 +3,7 @@ import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
 import { currentSessionId, setCurrentSessionId, chatMode } from "./chat.js";
 import { profileData } from "./profiles.js";
 
-export const conv = { ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null, assistantBubble: null, opusMode: false, opusDec: null, opusTs: 0, outRate: 24000, outCodec: "wav" };
+export const conv = { ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null, assistantBubble: null, opusMode: false, opusDec: null, opusTs: 0, outRate: 24000, outCodec: "wav", audioGen: 0 };
 
 export function setConvStatus(text, state) {
   const node = el("conv-status");
@@ -32,6 +32,7 @@ export function convIsSpeaking() {
   return !!conv.ctx && (conv.nextTime || 0) > conv.ctx.currentTime + 0.15;
 }
 export function convStopAudio() {
+  conv.audioGen = (conv.audioGen || 0) + 1; // invalidate any in-flight convEnqueueAudioBytes decode
   (conv.sources || []).forEach((s) => {
     try {
       s.stop();
@@ -58,12 +59,19 @@ export function convScheduleBuffer(buf) {
   };
 }
 // Reply audio arrives as one complete WAV/MP3 per sentence on a binary frame.
+// A decode can still be in flight when convStopAudio() runs (barge-in);
+// conv.audioGen (bumped there) is checked after the awaited decode so a
+// stale sentence never gets scheduled after the interrupt -- the Opus path
+// gets the same guarantee for free from convResetOpus() tearing down the
+// decoder outright.
 export function convEnqueueAudioBytes(bytes) {
+  const gen = conv.audioGen;
   conv.chain = (conv.chain || Promise.resolve())
     .then(async () => {
       const ctx = convAudioCtx();
       if (ctx.state === "suspended") await ctx.resume();
       const buf = await ctx.decodeAudioData(bytes);
+      if (gen !== conv.audioGen) return; // superseded by a barge-in/reset while decoding
       convScheduleBuffer(buf);
     })
     .catch((e) => convLog("audio error: " + e));
@@ -301,7 +309,7 @@ export async function startConversation() {
   // Falls back to one-WAV-per-sentence binary frames if unchecked or unsupported.
   conv.opusMode = !!el("conv-opus")?.checked && convOpusSupported();
   if (el("conv-opus")?.checked && !conv.opusMode) {
-    convLog("Opus downlink unsupported in this browser — using WAV/URL.");
+    convLog("Opus downlink unsupported in this browser — using WAV.");
   }
   if (conv.opusMode) {
     conv.outRate = 24000;

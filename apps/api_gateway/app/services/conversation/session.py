@@ -674,11 +674,11 @@ class ConversationSession:
                         # burst accumulation).
                         #
                         # Frame duration is read HERE, not before the loop: a
-                        # session that negotiated no Opus (browser PCM /
-                        # audio_url mode) has self.opus_encoder is None for the
-                        # whole turn, and touching it eagerly crashed every such
-                        # turn. Inside this branch the encoder is guaranteed --
-                        # packets only exist when it does -- same as speak().
+                        # session that negotiated no Opus (wav mode) has
+                        # self.opus_encoder is None for the whole turn, and
+                        # touching it eagerly crashed every such turn. Inside
+                        # this branch the encoder is guaranteed -- packets
+                        # only exist when it does -- same as speak().
                         _frame_s = self.opus_encoder.frame / self.opus_encoder.sample_rate
                         for pkt in packets:
                             if _do_pace:
