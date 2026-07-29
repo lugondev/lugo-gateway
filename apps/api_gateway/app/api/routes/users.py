@@ -1,17 +1,11 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
+from app.schemas.users import CreateUserRequest, ResetPasswordRequest, UpdateUserRequest
 from app.services.auth.users import user_store
 
 router = APIRouter(prefix="/v1/users", tags=["users"])
 
 _VALID_ROLES = ("admin", "user")
-
-
-class CreateUserRequest(BaseModel):
-    username: str
-    password: str
-    role: str = "user"
 
 
 @router.post("")
@@ -25,12 +19,6 @@ async def create_user(payload: CreateUserRequest) -> dict:
 @router.get("")
 async def list_users() -> dict:
     return {"success": True, "data": await user_store.list()}
-
-
-class UpdateUserRequest(BaseModel):
-    disabled: bool | None = None
-    role: str | None = None
-    can_use_testing: bool | None = None
 
 
 @router.patch("/{user_id}")
@@ -51,10 +39,6 @@ async def update_user(user_id: str, payload: UpdateUserRequest) -> dict:
     if updated is None:
         raise HTTPException(status_code=404, detail=f"user '{user_id}' not found")
     return {"success": True, "data": updated}
-
-
-class ResetPasswordRequest(BaseModel):
-    new_password: str
 
 
 @router.post("/{user_id}/reset_password")

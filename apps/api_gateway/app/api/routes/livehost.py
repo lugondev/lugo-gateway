@@ -5,7 +5,6 @@ import uuid
 from contextlib import aclosing
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
 
 from app.core.actor import current_role, current_user_id
 from app.core.audio import pcm16_to_wav_bytes, wav_duration_seconds, wav_file_to_pcm16
@@ -13,6 +12,7 @@ from app.core.auth_guard import resolve_ws_identity, ws_session_owner_denied, ws
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
+from app.schemas.livehost import TikTokConnectRequest
 from app.schemas.tts import TTSRequest
 from app.services.conversation.endpointer import VadEndpointer
 from app.services.conversation.responder import build_responder_ex, resolve_llm_override_from_registry
@@ -90,10 +90,6 @@ _IDENTITY_RECHECK_INTERVAL_S = 30.0
 
 def _mention_keywords() -> list[str]:
     return [k.strip() for k in settings.livehost_mention_keywords.split(",") if k.strip()]
-
-
-class TikTokConnectRequest(BaseModel):
-    unique_id: str
 
 
 def _scope_user_id(request: Request) -> str | None:

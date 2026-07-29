@@ -3,7 +3,6 @@ import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
 
 from app.api.routes.sessions import _scope_user_id
 from app.core.actor import current_role, current_user_id
@@ -15,6 +14,7 @@ from app.core.auth_guard import (
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
+from app.schemas.conversation import ChatRequest, LlmConfig
 from app.services.conversation.responder import (
     build_responder,
     build_responder_ex,
@@ -70,21 +70,6 @@ def _require_admin(request: Request) -> None:
     static/js/model-recommender.js already calls."""
     if current_role(request) != "admin":
         raise HTTPException(status_code=403, detail="admin only")
-
-
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-
-
-class ChatRequest(BaseModel):
-    messages: list[ChatMessage] = Field(default_factory=list)
-
-
-class LlmConfig(BaseModel):
-    base_url: str = ""
-    api_key: str = ""
-    model: str = ""
 
 
 async def _llm_config_view() -> dict:

@@ -1,14 +1,14 @@
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 
 from app.core.actor import current_role, current_user_id
 from app.core.errors import AppError
+from app.schemas.common import CloneRequest
+from app.schemas.profiles import ProfileRequest
 from app.services.auth.users import user_store
-from app.services.mcp.models import McpServer
 from app.services.model_registry.gate import check_model_allowed
 from app.services.model_registry.store import model_registry_store
 from app.services.profile_visibility import profile_visible
-from app.services.profiles.models import LlmConfig, MemoryConfig, Profile, SessionConfig, SttConfig, TtsConfig
+from app.services.profiles.models import Profile
 from app.services.profiles.store import profile_store
 from app.services.stt.model_catalog import STT_MODEL_CATALOGS
 
@@ -113,23 +113,6 @@ def _can_write(profile: Profile, user_id: str | None, role: str) -> bool:
     if profile.owner_id is None:
         return role == "admin"
     return profile.owner_id == user_id
-
-
-class ProfileRequest(BaseModel):
-    name: str
-    nickname: str = ""
-    llm: LlmConfig = LlmConfig()
-    system_prompt: str = ""
-    voice_optimized: bool = False
-    stt: SttConfig = SttConfig()
-    tts: TtsConfig = TtsConfig()
-    mcp_servers: list[McpServer] = []
-    memory: MemoryConfig = MemoryConfig()
-    session: SessionConfig = SessionConfig()
-
-
-class CloneRequest(BaseModel):
-    new_name: str
 
 
 @router.get("")

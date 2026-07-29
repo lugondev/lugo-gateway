@@ -1,5 +1,15 @@
 from pydantic import BaseModel, Field, field_validator
 
+# Deliberate exception to the "schemas don't import services" layering rule
+# (A7 in the structure-refactor audit): `artifact_store.contains()` below is
+# the path-traversal containment check for `ref_audio_path`, the security
+# boundary from two authz-hardening rounds (see the field_validator's
+# docstring). It MUST run on this REQUEST model, not a persisted one and not
+# a route handler, so a bad/host-mismatched stored row can't skip it and one
+# provider's synth call can't read arbitrary files off the gateway. Moving
+# this check to break the schemas->services import would either weaken it or
+# relocate it somewhere that runs at the wrong time -- not worth it for
+# layering purity alone. Left as-is on purpose; A7 stays open/documented.
 from app.services.artifacts import artifact_store
 
 

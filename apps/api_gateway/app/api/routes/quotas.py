@@ -1,28 +1,12 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
+from app.schemas.quotas import CreateQuotaRequest, UpdateQuotaRequest
 from app.services.quota.store import quota_store
 
 router = APIRouter(prefix="/v1/quotas", tags=["quotas"])
 
 _VALID_SCOPES = {"user", "provider", "global"}
 _VALID_PERIODS = {"monthly", "total"}
-
-
-class CreateQuotaRequest(BaseModel):
-    scope: str
-    scope_id: str = ""
-    limit_usd: float
-    period: str = "monthly"
-    enabled: bool = True
-
-
-class UpdateQuotaRequest(BaseModel):
-    scope: str | None = None
-    scope_id: str | None = None
-    limit_usd: float | None = None
-    period: str | None = None
-    enabled: bool | None = None
 
 
 def _validate_scope(scope: str) -> None:
