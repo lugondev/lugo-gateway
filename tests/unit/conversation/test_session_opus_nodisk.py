@@ -69,22 +69,19 @@ class _FakeRenderingTTS(RenderingTTSProvider):
 
 class _NonRenderingTTS(TTSProvider):
     """Stands in for edge_tts: a plain TTSProvider (not a RenderingTTSProvider),
-    so it has no render_wav() at all -- the Opus path must fall back to
-    synthesize() for it rather than crash on a missing seam."""
+    so it has no render_wav() at all -- only render_audio(), same as every
+    other engine now that the artifact-backed synthesize() fallback is gone."""
 
     name = "stub-opus-nodisk-nonrender-tts"
 
     def __init__(self, wav: bytes):
         self._wav = wav
-        self.synthesize_calls = 0
 
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:
-        self.synthesize_calls += 1
-        _, audio_url = artifact_store.save_wav(self._wav)
-        return TTSResult(
-            engine=self.name, sample_rate=OUT_SR, audio_url=audio_url,
-            duration_seconds=0.1, text=payload.text,
-        )
+    async def synthesize(self, payload: TTSRequest) -> TTSResult:  # pragma: no cover - unused seam
+        raise NotImplementedError("this stub only exercises render_audio()")
+
+    async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
+        return self._wav, "audio/mpeg"
 
 
 @pytest.fixture(autouse=True)
@@ -177,36 +174,39 @@ async def test_opus_encoder_receives_exactly_the_bytes_render_wav_returned(monke
 
 
 @pytest.mark.asyncio
-async def test_url_mode_still_calls_synthesize_and_emits_audio_url():
+async def test_wav_mode_pushes_one_binary_frame_per_sentence():
     fake_wav = _silence_wav()
     provider = _FakeRenderingTTS(fake_wav)
     tts_service.providers["stub-opus-nodisk-render-tts"] = provider
 
-    sess, events, audio_pkts = await _drive_text_turn(_cfg(audio_out="url"))
+    _session, events, audio_frames = await _drive_text_turn(
+        _cfg(audio_out="wav", tts_engine="stub-opus-nodisk-render-tts")
+    )
 
-    assert sess.opus_encoder is None  # url mode never builds an encoder
-    assert provider.synthesize_calls >= 1
-    assert not audio_pkts  # no binary opus frames in url mode
-    audio_chunks = [p for n, p in events if n == "audio_chunk"]
-    assert audio_chunks
-    assert all(c.get("audio_url") for c in audio_chunks)
+    assert not [p for n, p in events if n == "audio_chunk"]  # event is gone
+    starts = [p for n, p in events if n == "audio_start"]
+    ends = [p for n, p in events if n == "audio_end"]
+    # EchoResponder (the default no-LLM responder driving _drive_text_turn)
+    # replies with 3 sentences, so 3 audio_start/audio_end pairs are expected
+    # here -- one binary WAV frame per sentence, never batched/split.
+    assert starts and len(starts) == len(ends) == len(audio_frames)
+    assert all(s["codec"] == "wav" for s in starts)
+    assert all(frame[:4] == b"RIFF" for frame in audio_frames)
 
 
 @pytest.mark.asyncio
-async def test_opus_mode_falls_back_to_synthesize_for_non_rendering_provider():
-    """edge_tts-shaped engines (no render_wav()) must keep working in Opus mode,
-    not crash -- they still go through the old artifact-backed path."""
+async def test_opus_mode_encodes_non_rendering_provider_bytes_without_touching_disk():
+    """edge_tts-shaped engines (no render_wav(), MP3 bytes) must keep working in
+    Opus mode without ever touching the artifact store -- render_audio() is the
+    only seam now, and wav_bytes_to_pcm16's soundfile fallback decodes the
+    non-WAV container in memory."""
     fake_wav = _silence_wav()
     provider = _NonRenderingTTS(fake_wav)
     tts_service.providers["stub-opus-nodisk-nonrender-tts"] = provider
 
-    sess, events, audio_pkts = await _drive_text_turn(
-        _cfg(tts_engine="stub-opus-nodisk-nonrender-tts")
+    before = set(artifact_store.base_dir.iterdir())
+    _session, _events, audio_frames = await _drive_text_turn(
+        _cfg(audio_out="opus", tts_engine="stub-opus-nodisk-nonrender-tts")
     )
-
-    assert sess.opus_encoder is not None
-    assert provider.synthesize_calls >= 1
-    assert audio_pkts
-    names = [n for n, _ in events]
-    assert "audio_start" in names
-    assert "audio_end" in names
+    assert audio_frames  # opus packets were produced
+    assert set(artifact_store.base_dir.iterdir()) == before

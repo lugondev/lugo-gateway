@@ -25,7 +25,6 @@ from app.core.audio import (
     preprocess_pcm16,
     wav_bytes_to_pcm16,
     wav_duration_seconds,
-    wav_file_to_pcm16,
 )
 from app.core.errors import AppError
 from app.core.settings import settings
@@ -54,7 +53,6 @@ from app.services.stt.model_catalog import resolve_default_stt_model
 from app.services.stt.routing import select_stt_engine
 from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
-from app.services.tts.base import RenderingTTSProvider
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
 from app.services.usage.attribution import resolve_usage_model
@@ -132,7 +130,7 @@ class SessionRuntimeConfig:
     audio_codec: str  # "pcm16" | "opus" (input)
     want_audio: bool
     want_text: bool
-    audio_out: str  # "url" | "opus"
+    audio_out: str  # "wav" | "opus"
     denoise: bool
     resume_sid: str | None  # requested_sid, for history resume
     stt_model: str = ""  # optional model-variant override (SttConfig.model, resolve_stt's 3rd value)
@@ -224,8 +222,8 @@ class ConversationSession:
 
     @property
     def output_sample_rate_effective(self) -> int | None:
-        """The output sample rate advertised in session_started (None for url mode)."""
-        return self.cfg.output_sample_rate if self.cfg.want_audio and self.audio_out != "url" else None
+        """The output sample rate advertised in session_started (None for wav mode)."""
+        return self.cfg.output_sample_rate if self.cfg.want_audio and self.audio_out == "opus" else None
 
     async def start(self) -> None:
         cfg = self.cfg
@@ -286,8 +284,8 @@ class ConversationSession:
             if opus_available():
                 self.opus_encoder = OpusFrameEncoder(sample_rate=cfg.output_sample_rate, channels=1)
             else:
-                self.audio_out = "url"
-                logger.warning("client requested opus output but server has no libopus; using url")
+                self.audio_out = "wav"
+                logger.warning("client requested opus output but server has no libopus; using wav")
 
         self.responder = await build_responder_ex(
             base_url=llm_base_url,
@@ -607,31 +605,13 @@ class ConversationSession:
                     logger.warning("TTS synth failed (engine=%s) for %r: %s", cfg.tts_engine, sentence, build_exc)
                     return None, None, build_exc
                 try:
-                    if self.opus_encoder is not None and isinstance(self.tts_provider, RenderingTTSProvider):
-                        # Nothing downstream reads `result` once we have Opus packets (see
-                        # the `packets is not None` branch below), so synthesize()'s
-                        # write-then-immediately-read-back through the artifact store is
-                        # pure overhead on this latency-critical path. render_wav() is the
-                        # same real synthesis with no artifact side effect.
-                        wav = await self.tts_provider.render_wav(request)
-                        logger.info("DEBUG_HANG _synth: got result for sentence=%r", sentence)
-                        await self._record_tts_usage(sentence)
-                        pcm = await asyncio.to_thread(wav_bytes_to_pcm16, wav, cfg.output_sample_rate)
-                        packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
-                        return None, packets, None
-                    result = await self.tts_provider.synthesize(request)
-                    logger.info("DEBUG_HANG _synth: got result for sentence=%r", sentence)
+                    audio, media_type = await self.tts_provider.render_audio(request)
                     await self._record_tts_usage(sentence)
                     if self.opus_encoder is not None:
-                        # Fallback for engines that aren't a RenderingTTSProvider (e.g.
-                        # edge_tts, which is test-UI/batch only and produces MP3) -- keep
-                        # the artifact-backed path rather than crashing on a missing
-                        # render_wav().
-                        path = result.audio_url.lstrip("/")
-                        pcm = await asyncio.to_thread(wav_file_to_pcm16, path, cfg.output_sample_rate)
+                        pcm = await asyncio.to_thread(wav_bytes_to_pcm16, audio, cfg.output_sample_rate)
                         packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
-                        return result, packets, None
-                    return result, None, None
+                        return None, packets, None
+                    return (audio, media_type), None, None
                 except asyncio.CancelledError:
                     raise  # barge-in / turn supersede -- must propagate to unwind the turn
                 except Exception as exc:  # noqa: BLE001 - degrade to text-only, don't lose the reply
@@ -657,7 +637,7 @@ class ConversationSession:
                 _pace_t0 = None
                 _pace_n = 0
                 tts_error_reported = False
-                async for index, sentence, (result, packets, tts_error) in pipeline:
+                async for index, sentence, (audio, packets, tts_error) in pipeline:
                     logger.info("DEBUG_HANG _stream_to_tts: pipeline yielded index=%d", index)
                     _log_first_chunk()
                     parts.append(sentence)
@@ -713,10 +693,16 @@ class ConversationSession:
                             await self.emit_audio(pkt)
                         await self.emit("audio_end", turn=turn, chunk_index=index)
                     else:
+                        audio_bytes, media_type = audio
+                        if self._speaking_since is None:
+                            self._speaking_since = time.monotonic()
                         await self.emit(
-                            "audio_chunk", turn=turn, chunk_index=index, text=sentence,
-                            audio_url=result.audio_url, sample_rate=result.sample_rate,
+                            "audio_start", turn=turn, chunk_index=index,
+                            text=sentence if want_text else None,
+                            codec="mp3" if media_type == "audio/mpeg" else "wav",
                         )
+                        await self.emit_audio(audio_bytes)
+                        await self.emit("audio_end", turn=turn, chunk_index=index)
             return parts
 
         # Text input: skip STT, reply via the text responder (text→text / text→audio).
@@ -893,25 +879,16 @@ class ConversationSession:
                 ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
                 instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
             )
-            result = None
+            audio, media_type = await self.tts_provider.render_audio(request)
             packets = None
-            if self.opus_encoder is not None and isinstance(self.tts_provider, RenderingTTSProvider):
-                # Same no-disk seam as _synth() above -- no artifact URL is ever
-                # read once we're producing Opus packets.
-                wav = await self.tts_provider.render_wav(request)
-                pcm = await asyncio.to_thread(wav_bytes_to_pcm16, wav, cfg.output_sample_rate)
+            if self.opus_encoder is not None:
+                pcm = await asyncio.to_thread(wav_bytes_to_pcm16, audio, cfg.output_sample_rate)
                 packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
-            else:
-                result = await self.tts_provider.synthesize(request)
-                if self.opus_encoder is not None:
-                    # Fallback for non-RenderingTTSProvider engines (see _synth()).
-                    pcm = await asyncio.to_thread(wav_file_to_pcm16, result.audio_url.lstrip("/"), cfg.output_sample_rate)
-                    packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
 
             # ONE row for the utterance, here rather than in each branch above:
-            # render_wav and synthesize are the two ways of producing this single
-            # utterance of `text`, never both, so a row per call site would just
-            # be the same charge written twice on the day someone reorders them.
+            # render_audio is the single way of producing this utterance of
+            # `text`, so a row per call site would just be the same charge
+            # written twice on the day someone reorders things.
             await self._record_tts_usage(text)
 
             if packets is not None:
@@ -929,8 +906,12 @@ class ConversationSession:
                     await self.emit_audio(pkt)
                 await self.emit("audio_end", turn=self.turn, chunk_index=0)
             else:
-                await self.emit("audio_chunk", turn=self.turn, chunk_index=0, text=text,
-                                audio_url=result.audio_url, sample_rate=result.sample_rate)
+                await self.emit(
+                    "audio_start", turn=self.turn, chunk_index=0,
+                    codec="mp3" if media_type == "audio/mpeg" else "wav",
+                )
+                await self.emit_audio(audio)
+                await self.emit("audio_end", turn=self.turn, chunk_index=0)
             await self.emit("turn_done", turn=self.turn)
         except Exception as exc:  # noqa: BLE001 - farewell is best-effort
             logger.warning("speak() failed: %s", exc)

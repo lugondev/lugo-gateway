@@ -101,19 +101,19 @@ def test_idle_countdown_starts_after_the_bot_finishes(monkeypatch):
     import json as _json
     import time as _time
     from app.core.audio import pcm16_to_wav_bytes
-    from app.schemas.tts import TTSResult
-    from app.services.artifacts import artifact_store
     from app.services.tts.base import TTSProvider
     from app.services.tts.service import tts_service
 
     class _SlowTTS(TTSProvider):
         name = "stub-slow-tts"
-        async def synthesize(self, payload) -> TTSResult:
+
+        async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
+            raise NotImplementedError("this stub only exercises render_audio()")
+
+        async def render_audio(self, payload) -> tuple[bytes, str]:
             await asyncio.sleep(1.5)  # turn takes longer than idle_timeout_s=1
             wav = pcm16_to_wav_bytes(b"\x00\x00" * 2400, sample_rate=24000)
-            _, url = artifact_store.save_wav(wav)
-            return TTSResult(engine=self.name, sample_rate=24000, audio_url=url,
-                             duration_seconds=0.1, text=payload.text)
+            return wav, "audio/wav"
 
     _patch_conversation(monkeypatch, tts_engine="stub-slow-tts")
     tts_service.providers["stub-slow-tts"] = _SlowTTS()
@@ -153,18 +153,18 @@ def test_idle_speaks_farewell_before_goodbye(monkeypatch):
     goodbye/disconnect."""
     import json as _json
     from app.core.audio import pcm16_to_wav_bytes
-    from app.schemas.tts import TTSResult
-    from app.services.artifacts import artifact_store
     from app.services.tts.base import TTSProvider
     from app.services.tts.service import tts_service
 
     class _FarewellTTS(TTSProvider):
         name = "stub-fw-tts"
-        async def synthesize(self, payload) -> TTSResult:
+
+        async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
+            raise NotImplementedError("this stub only exercises render_audio()")
+
+        async def render_audio(self, payload) -> tuple[bytes, str]:
             wav = pcm16_to_wav_bytes(b"\x00\x00" * 2400, sample_rate=24000)
-            _, url = artifact_store.save_wav(wav)
-            return TTSResult(engine=self.name, sample_rate=24000, audio_url=url,
-                             duration_seconds=0.1, text=payload.text)
+            return wav, "audio/wav"
 
     _patch_conversation(monkeypatch, tts_engine="stub-fw-tts", conversation_goodbye_text="Tạm biệt nha")
     tts_service.providers["stub-fw-tts"] = _FarewellTTS()

@@ -1,10 +1,12 @@
+import json
+
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.audio import pcm16_to_wav_bytes
 from app.main import app
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
 from app.services.profiles.models import Profile, SttConfig, TtsConfig
 from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
@@ -15,6 +17,11 @@ from app.services.tts.profile_store import TtsProfileStore
 from app.services.tts.service import tts_service
 
 SR = 16000
+
+
+def _silence_wav(ms: int = 100, sr: int = 24000) -> bytes:
+    n = int(sr * ms / 1000)
+    return pcm16_to_wav_bytes(b"\x00\x00" * n, sample_rate=sr)
 
 
 class _StubSTT(STTProvider):
@@ -30,12 +37,12 @@ class _RecordingTTS(TTSProvider):
     def __init__(self) -> None:
         self.calls: list = []
 
-    async def synthesize(self, payload) -> TTSResult:
+    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
+        raise NotImplementedError("this stub only exercises render_audio()")
+
+    async def render_audio(self, payload) -> tuple[bytes, str]:
         self.calls.append(payload)
-        return TTSResult(
-            engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
-            duration_seconds=0.1, text=payload.text,
-        )
+        return _silence_wav(), "audio/wav"
 
 
 @pytest.fixture(autouse=True)
@@ -92,7 +99,10 @@ def _run_one_turn(ws):
     ws.send_bytes(_silence(500))
     ws.send_bytes(_silence(500))
     for _ in range(30):
-        ev = ws.receive_json()
+        msg = ws.receive()
+        if "bytes" in msg:
+            continue  # reply audio binary frame (audio_out defaults to wav now)
+        ev = json.loads(msg["text"])
         if ev["event"] == "turn_done":
             return
 

@@ -1,5 +1,7 @@
 """Unified gateway over /v1/conversation/stream: text/audio in -> text/audio out."""
 
+import json
+
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
@@ -74,9 +76,16 @@ def _loud(ms):
 
 
 def _drain(ws, stop="turn_done", n=40):
+    """Read JSON events, transparently skipping binary reply-audio frames
+    (audio_out defaults to wav now, so a WAV frame rides between audio_start
+    and audio_end for any test that requests audio output without pinning
+    audio_out=opus)."""
     evs = []
     for _ in range(n):
-        e = ws.receive_json()
+        msg = ws.receive()
+        if "bytes" in msg:
+            continue
+        e = json.loads(msg["text"])
         evs.append(e)
         if e["event"] == stop:
             break
@@ -96,14 +105,15 @@ def test_text_to_text():
         assert next(e for e in evs if e["event"] == "user_transcript")["text"] == "xin chào"
 
 
-def test_text_to_audio_url():
+def test_text_to_audio_wav():
     c = TestClient(app)
     with c.websocket_connect("/v1/conversation/stream?profile=p-gw&output=audio") as ws:
         assert ws.receive_json()["event"] == "session_started"
         ws.send_json({"type": "text", "text": "xin chào"})
         evs = _drain(ws)
         types = [e["event"] for e in evs]
-        assert "audio_chunk" in types
+        assert "audio_start" in types and "audio_end" in types
+        assert next(e for e in evs if e["event"] == "audio_start")["codec"] == "wav"
         assert "response_text" not in types  # audio-only -> no text events
 
 
@@ -160,8 +170,6 @@ def test_text_to_opus_frames(_stub):
             if "bytes" in msg and msg["bytes"] is not None:
                 binary_frames += 1
                 continue
-            import json
-
             ev = json.loads(msg["text"])["event"]
             if ev == "audio_start":
                 saw_start = True

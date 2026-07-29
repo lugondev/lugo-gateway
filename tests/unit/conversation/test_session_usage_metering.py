@@ -13,8 +13,8 @@ which is the case here (STT/TTS stubs + EchoResponder are all in-process).
 
 from sqlalchemy import select
 
+from app.core.audio import pcm16_to_wav_bytes
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
 from app.services.db.engine import db_session
 from app.services.db.models import UsageEvent
@@ -27,6 +27,11 @@ from app.services.stt.service import stt_service
 from app.services.tts.service import tts_service
 
 SR = 16000
+
+
+def _silence_wav(ms: int = 100, sr: int = 24000) -> bytes:
+    n = int(sr * ms / 1000)
+    return pcm16_to_wav_bytes(b"\x00\x00" * n, sample_rate=sr)
 
 
 class _StubSTT(STTProvider):
@@ -45,10 +50,12 @@ class _StubTTS(TTSProvider):
         # call that happened and went unrecorded is the bug being closed.
         self.calls: list[str] = []
 
-    async def synthesize(self, payload) -> TTSResult:
+    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
+        raise NotImplementedError("this stub only exercises render_audio()")
+
+    async def render_audio(self, payload) -> tuple[bytes, str]:
         self.calls.append(payload.text)
-        return TTSResult(engine=self.name, sample_rate=24000,
-                         audio_url="/artifacts/x.wav", duration_seconds=0.1, text=payload.text)
+        return _silence_wav(), "audio/wav"
 
 
 def _cfg(**over):
@@ -57,7 +64,7 @@ def _cfg(**over):
         tts_engine="stub-meter-tts", voice=None, ref_audio_path=None, ref_text=None,
         tts_instruct=None, tts_speed=None, tts_language=None, sample_rate=SR,
         output_sample_rate=24000, audio_codec="pcm16", want_audio=True, want_text=True,
-        audio_out="url", denoise=False, resume_sid=None, identity_user_id="user-42",
+        audio_out="wav", denoise=False, resume_sid=None, identity_user_id="user-42",
     )
     base.update(over)
     return SessionRuntimeConfig(**base)

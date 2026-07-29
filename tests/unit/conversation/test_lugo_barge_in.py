@@ -6,8 +6,6 @@ from fastapi.testclient import TestClient
 from app.core.audio import pcm16_to_wav_bytes
 from app.main import app
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
-from app.services.artifacts import artifact_store
 from app.services.profiles.models import Profile, SessionConfig
 from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
@@ -15,6 +13,11 @@ from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
 from app.services.tts.base import TTSProvider
 from app.services.tts.service import tts_service
+
+
+def _silence_wav(ms: int = 100, sr: int = 24000) -> bytes:
+    n = int(sr * ms / 1000)
+    return pcm16_to_wav_bytes(b"\x00\x00" * n, sample_rate=sr)
 
 
 class _StubSTT(STTProvider):
@@ -25,11 +28,12 @@ class _StubSTT(STTProvider):
 
 class _StubTTS(TTSProvider):
     name = "stub-bi-tts"
-    async def synthesize(self, payload) -> TTSResult:
-        wav = pcm16_to_wav_bytes(b"\x00\x00" * 2400, sample_rate=24000)  # 100ms silence
-        _, audio_url = artifact_store.save_wav(wav)
-        return TTSResult(engine=self.name, sample_rate=24000,
-                         audio_url=audio_url, duration_seconds=0.1, text=payload.text)
+
+    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
+        raise NotImplementedError("this stub only exercises render_audio()")
+
+    async def render_audio(self, payload) -> tuple[bytes, str]:
+        return _silence_wav(), "audio/wav"
 
 
 @pytest.fixture(autouse=True)
@@ -96,11 +100,11 @@ def test_abort_emits_tts_stop(monkeypatch):
     # Make TTS slow so the turn is still in-flight when we send abort, so the
     # abort (not the natural turn_done) is what produces the tts stop.
     slow = tts_service.providers["stub-bi-tts"]
-    orig = slow.synthesize
-    async def slow_synth(payload):
+    orig = slow.render_audio
+    async def slow_render_audio(payload):
         await asyncio.sleep(0.3)
         return await orig(payload)
-    monkeypatch.setattr(slow, "synthesize", slow_synth)
+    monkeypatch.setattr(slow, "render_audio", slow_render_audio)
 
     with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
         ws.send_json({"type": "wakeup", "profile": "dev",

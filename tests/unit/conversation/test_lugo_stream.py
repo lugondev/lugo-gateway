@@ -7,8 +7,6 @@ from app.core.audio import pcm16_to_wav_bytes
 from app.core.opus import OpusFrameEncoder, opus_available
 from app.main import app
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
-from app.services.artifacts import artifact_store
 from app.services.profiles.models import Profile, SessionConfig
 from app.services.profiles.store import ProfileStore
 from app.services.conversation.lugo_frame import LUGO_FRAME_OPUS
@@ -56,19 +54,20 @@ class _StubSTT(STTProvider):
 
 
 class _StubTTS(TTSProvider):
-    # Lugo forces want_audio=True, so the core actually decodes audio_url to
-    # PCM for Opus encoding (unlike the Task-3 core test's want_audio=False
-    # stub, which never touches the file). A fake/nonexistent path here would
-    # raise FileNotFoundError mid-turn on any machine with real opuslib/libopus
-    # available (this dev env has both) and the turn would never reach
-    # audio_start/audio_end, hanging the test's receive loop. Persist a real
-    # (silent) WAV via the artifact store so the encode path actually succeeds.
+    # Lugo forces want_audio=True, so the core actually decodes the rendered
+    # WAV to PCM for Opus encoding (unlike the Task-3 core test's
+    # want_audio=False stub, which never touches it). render_audio() is the
+    # only seam the session core calls now -- a missing implementation would
+    # raise ProviderError mid-turn and the turn would never reach
+    # audio_start/audio_end, hanging the test's receive loop.
     name = "stub-lugo-tts"
-    async def synthesize(self, payload) -> TTSResult:
+
+    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
+        raise NotImplementedError("this stub only exercises render_audio()")
+
+    async def render_audio(self, payload) -> tuple[bytes, str]:
         wav = pcm16_to_wav_bytes(b"\x00\x00" * 2400, sample_rate=24000)  # 100ms silence
-        _, audio_url = artifact_store.save_wav(wav)
-        return TTSResult(engine=self.name, sample_rate=24000,
-                         audio_url=audio_url, duration_seconds=0.1, text=payload.text)
+        return wav, "audio/wav"
 
 
 @pytest.fixture(autouse=True)

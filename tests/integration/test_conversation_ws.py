@@ -1,12 +1,13 @@
 import asyncio
+import json
 
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.audio import pcm16_to_wav_bytes
 from app.main import app
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
 from app.services.profiles.models import Profile, SttConfig
 from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
@@ -15,6 +16,11 @@ from app.services.tts.base import TTSProvider
 from app.services.tts.service import tts_service
 
 SR = 16000
+
+
+def _silence_wav(ms: int = 100, sr: int = 24000) -> bytes:
+    n = int(sr * ms / 1000)
+    return pcm16_to_wav_bytes(b"\x00\x00" * n, sample_rate=sr)
 
 
 class _StubSTT(STTProvider):
@@ -27,22 +33,22 @@ class _StubSTT(STTProvider):
 class _StubTTS(TTSProvider):
     name = "stub-conv-tts"
 
-    async def synthesize(self, payload) -> TTSResult:
-        return TTSResult(
-            engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
-            duration_seconds=0.1, text=payload.text,
-        )
+    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
+        raise NotImplementedError("this stub only exercises render_audio()")
+
+    async def render_audio(self, payload) -> tuple[bytes, str]:
+        return _silence_wav(), "audio/wav"
 
 
 class _SlowTTS(TTSProvider):
     name = "slow-conv-tts"
 
-    async def synthesize(self, payload) -> TTSResult:
+    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
+        raise NotImplementedError("this stub only exercises render_audio()")
+
+    async def render_audio(self, payload) -> tuple[bytes, str]:
         await asyncio.sleep(0.5)  # window for barge-in
-        return TTSResult(
-            engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
-            duration_seconds=0.1, text=payload.text,
-        )
+        return _silence_wav(), "audio/wav"
 
 
 @pytest.fixture(autouse=True)
@@ -74,12 +80,17 @@ def _silence(ms: int) -> bytes:
 
 
 def _next_event(ws) -> dict:
-    """Read the next event, transparently skipping "engines_ready" — it fires
-    asynchronously whenever the engine finishes cold-loading and can land at any
-    point in the stream, same as a real client (which handles it by name, not
-    by position) would treat it."""
+    """Read the next JSON event, transparently skipping "engines_ready" (fires
+    asynchronously whenever the engine finishes cold-loading and can land at
+    any point in the stream, same as a real client -- which handles it by
+    name, not by position -- would treat it) and binary reply-audio frames
+    (audio_out defaults to wav now, so a WAV frame rides between audio_start
+    and audio_end)."""
     while True:
-        ev = ws.receive_json()
+        msg = ws.receive()
+        if "bytes" in msg:
+            continue
+        ev = json.loads(msg["text"])
         if ev["event"] != "engines_ready":
             return ev
 
@@ -112,8 +123,13 @@ def test_conversation_turn_end_to_end(_register_stub, monkeypatch, tmp_path):
         ws.send_bytes(_silence(500))  # crosses 700ms silence -> endpoint
 
         events = []
+        audio_frames = []
         for _ in range(30):
-            ev = ws.receive_json()
+            msg = ws.receive()
+            if "bytes" in msg:
+                audio_frames.append(msg["bytes"])
+                continue
+            ev = json.loads(msg["text"])
             if ev["event"] == "engines_ready":
                 continue
             events.append(ev)
@@ -124,13 +140,15 @@ def test_conversation_turn_end_to_end(_register_stub, monkeypatch, tmp_path):
         assert "speech_end" in types
         assert "user_transcript" in types
         assert "response_text" in types
-        assert "audio_chunk" in types
+        assert "audio_start" in types
+        assert "audio_end" in types
         assert types[-1] == "turn_done"
 
         transcript = next(e for e in events if e["event"] == "user_transcript")
         assert transcript["text"] == "xin chào trợ lý"
-        chunk = next(e for e in events if e["event"] == "audio_chunk")
-        assert chunk["audio_url"].startswith("/artifacts/")
+        start = next(e for e in events if e["event"] == "audio_start")
+        assert start["codec"] == "wav"
+        assert audio_frames and audio_frames[0][:4] == b"RIFF"
 
 
 def test_conversation_barge_in_aborts_turn(_register_stub, monkeypatch, tmp_path):
@@ -149,7 +167,10 @@ def test_conversation_barge_in_aborts_turn(_register_stub, monkeypatch, tmp_path
 
         seen = []
         for _ in range(12):
-            ev = ws.receive_json()["event"]
+            msg = ws.receive()
+            if "bytes" in msg:
+                continue
+            ev = json.loads(msg["text"])["event"]
             if ev == "engines_ready":
                 continue
             seen.append(ev)

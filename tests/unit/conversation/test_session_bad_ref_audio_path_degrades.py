@@ -16,8 +16,8 @@ different validation failure entirely) still degrades rather than erroring
 out the turn. Mirrors tests/unit/conversation/test_session_tts_failure.py's harness."""
 
 import pytest
+from app.core.audio import pcm16_to_wav_bytes
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
@@ -25,6 +25,11 @@ from app.services.tts.base import TTSProvider
 from app.services.tts.service import tts_service
 
 SR = 16000
+
+
+def _silence_wav(ms: int = 100, sr: int = 24000) -> bytes:
+    n = int(sr * ms / 1000)
+    return pcm16_to_wav_bytes(b"\x00\x00" * n, sample_rate=sr)
 
 
 class _StubSTT(STTProvider):
@@ -36,13 +41,16 @@ class _StubSTT(STTProvider):
 
 class _WouldSucceedTTS(TTSProvider):
     """Never actually reached: TTSRequest(...) construction fails first (bad
-    ref_audio_path), before this provider's synthesize() is ever called. If
+    ref_audio_path), before this provider's render_audio() is ever called. If
     this WERE called, it would succeed -- proving any observed failure is
     from validation, not from the (working) provider."""
     name = "stub-badref-tts"
 
-    async def synthesize(self, payload) -> TTSResult:
-        return TTSResult(engine=self.name, sample_rate=24000, audio_url="/artifacts/should-not-be-reached.wav")
+    async def synthesize(self, payload):  # pragma: no cover - unused; render_audio is the seam now
+        raise NotImplementedError("this stub only exercises render_audio()")
+
+    async def render_audio(self, payload) -> tuple[bytes, str]:
+        return _silence_wav(), "audio/wav"
 
 
 class _FakeResponder:
@@ -82,7 +90,7 @@ def _cfg(**over):
         ref_audio_path="/etc/passwd", ref_text=None,
         tts_instruct=None, tts_speed=None, tts_language=None, sample_rate=SR,
         output_sample_rate=24000, audio_codec="pcm16", want_audio=True, want_text=True,
-        audio_out="url", denoise=False, resume_sid=None,
+        audio_out="wav", denoise=False, resume_sid=None,
     )
     base.update(over)
     return SessionRuntimeConfig(**base)
