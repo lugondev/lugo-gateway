@@ -3,7 +3,7 @@ import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
 
 export const lh = {
   ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null,
-  opusMode: false, opusDec: null, opusTs: 0, outRate: 24000, outCodec: "wav",
+  opusMode: false, opusDec: null, opusTs: 0, outRate: 24000, outCodec: "wav", audioGen: 0,
   sessionId: null, statusPollTimer: null, assistantBubble: null, pendingReplyIsSocial: false,
 };
 
@@ -51,6 +51,7 @@ function lhIsSpeaking() {
   return !!lh.ctx && (lh.nextTime || 0) > lh.ctx.currentTime + 0.15;
 }
 function lhStopAudio() {
+  lh.audioGen = (lh.audioGen || 0) + 1; // invalidate any in-flight lhEnqueueAudioBytes decode
   (lh.sources || []).forEach((s) => {
     try {
       s.stop();
@@ -62,11 +63,13 @@ function lhStopAudio() {
   lhResetOpus();
 }
 function lhEnqueueAudioBytes(bytes) {
+  const gen = lh.audioGen;
   lh.chain = (lh.chain || Promise.resolve())
     .then(async () => {
       const ctx = lhAudioCtx();
       if (ctx.state === "suspended") await ctx.resume();
       const buf = await ctx.decodeAudioData(bytes);
+      if (gen !== lh.audioGen) return; // superseded by a barge-in/reset while decoding
       lhScheduleBuffer(buf);
     })
     .catch((e) => lhLog("audio error: " + e));

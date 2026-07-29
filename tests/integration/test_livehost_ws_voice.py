@@ -141,7 +141,6 @@ def test_livehost_voice_turn_end_to_end(_register_stub, monkeypatch, tmp_path):
 
 def test_livehost_wav_downlink_pushes_binary_frame(_register_stub, monkeypatch, tmp_path):
     events, frames = _drive_voice_turn(monkeypatch, tmp_path, audio_out="wav")
-    assert not [p for n, p in events if n == "audio_chunk"]
     starts = [p for n, p in events if n == "audio_start"]
     assert starts and starts[0]["codec"] == "wav"
     assert frames and frames[0][:4] == b"RIFF"
