@@ -145,7 +145,11 @@ async def list_profiles(request: Request) -> dict:
 
 @router.post("")
 async def create_profile(payload: ProfileRequest, request: Request) -> dict:
-    if profile_store.get(payload.name) is not None:
+    # exists(), not `get() is not None`: a name whose row failed to parse
+    # (H4) still occupies it -- get() returns None for that name too, and
+    # treating that as "free" would let this create silently overwrite the
+    # row and hand its ownership to the caller.
+    if profile_store.exists(payload.name):
         raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
     is_admin = current_role(request) == "admin"
     owner_id = None if is_admin else current_user_id(request)
@@ -178,6 +182,16 @@ async def get_profile(name: str, request: Request) -> dict:
 @router.put("/{name}")
 async def update_profile(name: str, payload: ProfileRequest, request: Request) -> dict:
     existing = profile_store.get(name)
+    # H4: existing is None both when the name is genuinely free AND when its
+    # row failed to parse. PUT is upsert-or-create, so falling through in the
+    # latter case would skip _can_write entirely (nothing to check ownership
+    # against) and silently overwrite the row via the create branch below --
+    # must be rejected before that upsert-or-create logic ever runs.
+    if existing is None and profile_store.exists(name):
+        raise HTTPException(
+            status_code=409,
+            detail=f"'{name}' exists but its stored data is unreadable; contact an admin",
+        )
     # PUT is upsert-or-create (test_update_uses_path_name relies on creating via
     # PUT to a name that doesn't exist yet); ownership scoping only applies when
     # a row already exists and the caller is not authorized to write to it (not
@@ -215,6 +229,14 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
 @router.delete("/{name}")
 async def delete_profile(name: str, request: Request) -> dict:
     existing = profile_store.get(name)
+    # H4: distinguish "no such row" (404) from "row exists but is unreadable"
+    # (409) -- both leave `existing` None, but only the former is a genuine
+    # not-found.
+    if existing is None and profile_store.exists(name):
+        raise HTTPException(
+            status_code=409,
+            detail=f"'{name}' exists but its stored data is unreadable; contact an admin",
+        )
     if not existing or not _can_write(existing, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     profile_store.delete(name)
@@ -227,7 +249,9 @@ async def clone_profile(name: str, payload: CloneRequest, request: Request) -> d
     source = profile_store.get(name)
     if not source or not _visible(source, user_id):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
-    if profile_store.get(payload.new_name) is not None:
+    # H4: same claim-a-free-name gap as create_profile -- exists(), not
+    # `get() is not None`.
+    if profile_store.exists(payload.new_name):
         raise HTTPException(status_code=409, detail=f"'{payload.new_name}' already exists")
     data = source.model_dump()
     data["name"] = payload.new_name

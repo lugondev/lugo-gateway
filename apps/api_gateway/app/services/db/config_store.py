@@ -54,6 +54,14 @@ class SqliteBackedStore(Generic[M]):
         self._legacy_parse = legacy_parse
         self._lock = threading.Lock()
         self._cache: dict[str, M] | None = None
+        # Names whose row exists in the DB (holds the PK) but failed
+        # model_validate_json on the last _ensure() rebuild -- see _ensure()'s
+        # except branch. A name here must be treated as EXISTING (occupied),
+        # never as free, even though get()/list() can't return its content.
+        # Rebuilt from scratch alongside self._cache on every _ensure() reload
+        # (see _ensure()), so a row that's since been fixed on disk stops
+        # being flagged the next time the cache is invalidated and reloaded.
+        self._unreadable: set[str] = set()
 
     def _resolve_path(self) -> str | None:
         if self._path:
@@ -78,6 +86,7 @@ class SqliteBackedStore(Generic[M]):
             # already-correct per-record skip-and-log below.
             had_rows = bool(rows)
             cache: dict[str, M] = {}
+            unreadable: set[str] = set()
             for r in rows:
                 try:
                     cache[r.name] = self._model.model_validate_json(r.data)
@@ -86,7 +95,12 @@ class SqliteBackedStore(Generic[M]):
                         "%s: skipping malformed stored row %r: %s",
                         self._row.__tablename__, r.name, exc,
                     )
+                    # H4: record the name as occupied-but-unreadable so
+                    # get(name) returning None is never mistaken by a caller
+                    # for "name is free" -- see exists().
+                    unreadable.add(r.name)
             self._cache = cache
+            self._unreadable = unreadable
         # Gate the one-time legacy-JSON import on whether the DB table was
         # genuinely empty (had_rows is False), NOT on whether the resulting
         # cache ended up empty. Those are different conditions: a table whose
@@ -141,6 +155,11 @@ class SqliteBackedStore(Generic[M]):
             else:
                 row.data = model.model_dump_json()
         self._cache[name] = model
+        # Defensive: if a name previously flagged unreadable is written
+        # through here (e.g. an admin repair path added later), it's now
+        # readable again -- don't leave it stuck in _unreadable until the
+        # next full _ensure() reload.
+        self._unreadable.discard(name)
 
     def invalidate(self) -> None:
         """Drop the in-memory cache so the next access re-reads (and re-creates
@@ -161,6 +180,19 @@ class SqliteBackedStore(Generic[M]):
             self._ensure()
             return self._cache.get(name)
 
+    def exists(self, name: str) -> bool:
+        """True if `name` occupies a row -- readable or not.
+
+        H4: get(name) is None is ambiguous between "name is free" and "name's
+        row failed to parse". Callers that decide new-vs-existing (create's
+        409 check, update's ownership gate, seed's don't-overwrite check)
+        must use this instead of `get(name) is not None`, or an unreadable
+        row's name can be claimed/overwritten by anyone.
+        """
+        with self._lock:
+            self._ensure()
+            return name in self._cache or name in self._unreadable
+
     def upsert(self, model: M) -> None:
         with self._lock:
             self._ensure()
@@ -172,3 +204,4 @@ class SqliteBackedStore(Generic[M]):
             with session_scope() as s:
                 s.execute(sa_delete(self._row).where(self._row.name == name))
             self._cache.pop(name, None)
+            self._unreadable.discard(name)
