@@ -29,14 +29,25 @@ independent layers close this:
    Round 2 fixes that by scoping collateral charging to a rolling
    `_BURST_WINDOW_SECONDS` window (`_recent_misses`): a pairing created
    *while a miss streak is already sustained* (>= `_BURST_MISS_THRESHOLD`
-   misses within the window) is exempt from collateral strikes for its
-   entire lifetime -- an attacker's ongoing trickle can never reach it, so a
-   device that re-inits mid-attack always gets a pairing its owner can
-   still claim. A pairing that already existed *before* any streak started
-   remains fully protected by the burn (an attacker who happens to already
-   know a pairing is live still can't out-guess it). See defense #2 below
-   for the (small, bounded) hijack exposure this trade accepts for
-   mid-attack pairings.
+   misses within the window) is exempt from collateral strikes -- but only
+   for a **bounded ~15-22s grace window**, NOT its entire lifetime (that
+   was round-2's own doc bug, corrected here in round 3). `streak_start` is
+   recomputed on every miss from the *sliding* window, so once the misses
+   that predate the pairing's birth age out of that window (~15s after
+   birth), `streak_start` advances past `created_at` and the pairing
+   becomes chargeable again -- a continuous trickle then burns it a handful
+   of misses later (~22-23s after birth, confirmed by simulation). That
+   ~15-22s is deliberately enough for a human who's already looking at the
+   device's screen to type an 8-digit code; it is not, and was never
+   intended to be, permanent immunity. A device that re-inits after being
+   burned gets a *fresh* grace window from its own new `created_at`, so
+   pairing stays *eventually* possible as long as the human keeps retrying
+   promptly -- it does not stay indefinitely blocked, which is what the
+   round-1 regression actually was. A pairing that already existed *before*
+   any streak started remains fully protected by the burn for as long as
+   the streak persists (an attacker who happens to already know a pairing
+   is live still can't out-guess it). See defense #2 below for the hijack
+   exposure this trade accepts during a pairing's grace window.
 
    An attacker who tries to dodge the burn entirely by keeping several decoy
    pairings of their own alive (so any one guess only partially "spends" any
@@ -55,13 +66,20 @@ independent layers close this:
    kind of code keeps that flow identical while cutting brute-force odds by
    100x on top of defense #1.
 
-   Worst case for a mid-attack pairing (no burn protection, defense #3's
-   claim_rate_limiter is the only cap): 20 claims/30s per (ip, user_id) ->
-   at most ~400 guesses land within any one pairing's 600s TTL even if an
-   attacker saturates the limiter the whole time -> hijack probability
-   <= 400 / 1e8 = 4e-6 per pairing. Negligible, and a deliberate, documented
-   trade against the round-1 DoS (see task-5-report.md for the full
-   before/after numbers). A pre-streak pairing keeps the much tighter
+   During a mid-attack pairing's grace window (no burn protection there,
+   defense #3's claim_rate_limiter is the only cap), exposure is bounded by
+   the ~15-22s grace window itself, not the full 600s TTL (round 3
+   corrected this -- see defense #1's note on the grace window being
+   bounded, not lifetime). At 20 claims/30s per (ip, user_id), that's on
+   the order of ~15 guesses landing within the window even if an attacker
+   saturates the limiter throughout -> hijack probability on the order of
+   ~15 / 1e8 = 1.5e-7 per grace window; re-review's fuller simulation
+   (accounting for the limiter's actual burst shape) puts the practical
+   worst-case single-account bound at ~2e-7. The ~4e-6 figure in the
+   original round-2 report assumed exposure for the *entire* 600s TTL,
+   which was conservative once the exemption is understood to be bounded
+   rather than lifetime -- see task-5-report.md for the full history. A
+   pre-streak (or post-grace-window) pairing keeps the much tighter
    ~6e-8-class bound defense #1 provides.
 
    MUST-VERIFY-BEFORE-DEPLOY: the ESP32/RPi/web-client firmware/UI that
@@ -153,15 +171,22 @@ class PendingPairingRegistry:
 
     def record_failed_attempt(self) -> None:
         """A pair/claim was made with a code that matched no live pairing.
-        Charge the strike against every pairing that already existed
-        *before the current miss streak became sustained* (see module
-        docstring, defense #1) and burn any that crosses the limit --
-        deleting it from both lookup tables so even its real code stops
-        working. A pairing created *during* an already-sustained streak is
-        exempt for its whole lifetime -- that's what stops a low-cost
-        trickle from indefinitely holding the pairing feature down (round-1
-        regression); its only protection is then entropy + the claim rate
-        limiter (defenses #2/#3)."""
+        Charge the strike against every pairing whose `created_at` predates
+        the oldest miss still inside the current sliding
+        `_BURST_WINDOW_SECONDS` window (see module docstring, defense #1)
+        and burn any that crosses the limit -- deleting it from both lookup
+        tables so even its real code stops working. A pairing created
+        *during* an already-sustained streak is exempt from collateral
+        strikes only for a **bounded ~15-22s grace window** -- NOT its
+        lifetime (that was a round-2 doc bug; the window is recomputed from
+        a sliding deque, so it necessarily ends once the pre-birth misses
+        age out and `streak_start` catches up to `created_at`). That grace
+        window is what stops a low-cost trickle from *indefinitely* holding
+        the pairing feature down (round-1 regression) -- it gives a human
+        who's already looking at the code enough time to claim it, and a
+        fresh `pair_init` after a burn gets its own fresh window. During the
+        window, protection is entropy + the claim rate limiter only
+        (defenses #2/#3)."""
         self._sweep_expired()
         now = time.monotonic()
         self._recent_misses.append(now)

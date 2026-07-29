@@ -3,6 +3,17 @@ hijack -> cross-user conversation read). See docs/superpowers/specs/
 2026-07-29-adversarial-audit-findings.md and
 app/services/auth/pairing.py's module docstring for the vulnerability and
 the three-layer fix (burn-after-N, widened entropy, rate limiting).
+
+Round 3 note: the round-2 fix's collateral-charge exemption for a pairing
+born mid-streak is a *bounded* ~15-22s grace window (the sliding
+`_BURST_WINDOW_SECONDS` duration), not a lifetime exemption -- see
+`test_grace_window_allows_prompt_claim_during_sustained_streak` and
+`test_grace_window_expires_and_pairing_burns_if_not_claimed_promptly`
+below, which advance a fake monotonic clock to pin the real, elapsed-time
+behavior (the fast-burst `test_sustained_wrong_claim_stream_cannot_
+indefinitely_block_pairing` test above never advances time, so it can only
+prove the DoS is closed *within* the grace window, not what happens after
+it expires).
 """
 
 import pytest
@@ -150,6 +161,111 @@ def test_sustained_wrong_claim_stream_cannot_indefinitely_block_pairing(client):
         "/v1/devices/pair/claim", json={"code": real_code, "name": "survived"}
     )
     assert claim.status_code == 200
+
+
+def _fake_clock(monkeypatch):
+    """Install a controllable monotonic clock for pairing.py -- lets a test
+    simulate a continuous wrong-claim stream spanning real elapsed seconds
+    (crossing `_BURST_WINDOW_SECONDS`) without actually sleeping. Returns a
+    single-element list; mutate `clock[0]` to advance time.
+
+    `pairing.py` calls `time.monotonic()` via its own `import time`, which
+    is the same process-wide `time` module every other caller uses, so this
+    patches that module's `monotonic` attribute globally for the duration
+    of the test (undone automatically by `monkeypatch` at teardown) -- fine
+    here since these are synchronous TestClient calls with no background
+    timers in flight (see conftest's `_hermetic` fixture)."""
+    clock = [0.0]
+    monkeypatch.setattr(pairing_module.time, "monotonic", lambda: clock[0])
+    return clock
+
+
+def test_grace_window_allows_prompt_claim_during_sustained_streak(client, monkeypatch):
+    """Pins the DoS-closed guarantee with real elapsed time (not just a
+    fast burst): a pairing born mid-streak, claimed promptly (well inside
+    the ~15-22s grace window), succeeds."""
+    clock = _fake_clock(monkeypatch)
+    _login(client, "grace-window-prompt")
+
+    def miss():
+        resp = client.post("/v1/devices/pair/claim", json={"code": "00000000", "name": "x"})
+        assert resp.status_code == 400
+
+    # Spacing: dense enough to keep the streak "sustained" continuously
+    # (< _BURST_WINDOW_SECONDS / _BURST_MISS_THRESHOLD == 2.5s), sparse
+    # enough to stay under claim_rate_limiter's 20-events/30s budget.
+    interval = 2.0
+
+    # Build a sustained streak before any pairing exists -- nothing to burn
+    # yet.
+    for _ in range(pairing_module._BURST_MISS_THRESHOLD):
+        miss()
+        clock[0] += interval
+
+    # A device inits mid-streak.
+    init = client.post(
+        "/v1/devices/pair/init", json={"serial": "GRACE:PROMPT:01"}
+    ).json()["data"]
+
+    # Claimed immediately -- well inside the grace window -- must succeed.
+    claim = client.post(
+        "/v1/devices/pair/claim", json={"code": init["code"], "name": "prompt-human"}
+    )
+    assert claim.status_code == 200
+
+
+def test_grace_window_expires_and_pairing_burns_if_not_claimed_promptly(client, monkeypatch):
+    """Pins the other half of the real behavior: the mid-streak exemption
+    is bounded, not a lifetime exemption. If the pairing is left unclaimed
+    while the wrong-claim stream continues, the misses that pre-date its
+    birth eventually age out of the sliding `_BURST_WINDOW_SECONDS` window,
+    `streak_start` advances past `created_at`, and the pairing becomes
+    collateral-chargeable again -- a continuing stream then burns it (the
+    reviewer's simulation observed this around ~22-23s after birth).
+
+    If this test starts failing because the claim below now succeeds, the
+    exemption has become a true lifetime exemption -- update pairing.py's
+    module docstring (which explicitly documents this as bounded) rather
+    than treating that as a silent regression to ignore."""
+    clock = _fake_clock(monkeypatch)
+    _login(client, "grace-window-late")
+
+    def miss():
+        resp = client.post("/v1/devices/pair/claim", json={"code": "00000000", "name": "x"})
+        assert resp.status_code == 400
+
+    interval = 2.0  # see test above for why this spacing
+
+    for _ in range(pairing_module._BURST_MISS_THRESHOLD):
+        miss()
+        clock[0] += interval
+
+    init = client.post(
+        "/v1/devices/pair/init", json={"serial": "GRACE:LATE:01"}
+    ).json()["data"]
+    real_code = init["code"]
+    born_at = clock[0]
+
+    # Confirm it's genuinely still alive partway through the grace window
+    # (not already burned by the pre-birth streak).
+    while clock[0] - born_at < pairing_module._BURST_WINDOW_SECONDS - interval:
+        miss()
+        clock[0] += interval
+    status = client.get(f"/v1/devices/pair/status?poll_token={init['poll_token']}")
+    assert status.status_code == 200
+    assert status.json()["data"]["claimed"] is False
+
+    # Let the same continuous stream run well past the window.
+    while clock[0] - born_at < 25.0:
+        miss()
+        clock[0] += interval
+
+    # The window has expired and the continuing stream has had enough
+    # misses since to burn it -- the real code now fails.
+    resp = client.post(
+        "/v1/devices/pair/claim", json={"code": real_code, "name": "too-late"}
+    )
+    assert resp.status_code == 400
 
 
 def test_claim_burst_is_rate_limited(client):
