@@ -40,6 +40,7 @@ from app.services.conversation.tools.base import ToolContext, ToolRegistry, Tool
 from app.services.conversation.tools.local import LocalToolSource
 from app.services.conversation.tools.mcp import McpToolSource
 from app.services.conversation.turn_quota import llm_turn_quota_blocked
+from app.services.conversation.turn_usage import record_llm_turn_usage
 from app.services.history.store import session_store
 from app.services.mcp.pool import mcp_pool
 from app.services.mcp.server_store import mcp_server_store
@@ -55,7 +56,7 @@ from app.services.system_config import system_config_store
 from app.services.tts.base import RenderingTTSProvider
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
-from app.services.usage.attribution import resolve_llm_pair, resolve_usage_model
+from app.services.usage.attribution import resolve_usage_model
 from app.services.usage.recorder import record_usage
 from app.services.warmup import is_ready, warm_providers
 
@@ -438,27 +439,15 @@ class ConversationSession:
 
         Called AFTER the responder's reply_stream has been fully consumed (only
         then is `.last_usage` -- set as the stream reads its final SSE chunk --
-        populated). Must never raise into the turn: record_usage itself already
-        swallows its own errors, but building the args (profile may be None,
-        last_usage may be None or missing keys) must not raise either.
+        populated). Thin wrapper (Task 6 dedup) over the shared
+        services/conversation/turn_usage helper -- kept as a method since
+        test_session_usage_metering.py drives it directly via
+        `sess._record_llm_usage()`.
         """
-        try:
-            last_usage = getattr(self.responder, "last_usage", None) or {}
-            prompt_tokens = last_usage.get("prompt_tokens")
-            completion_tokens = last_usage.get("completion_tokens")
-            native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
-            engine, model_id = resolve_llm_pair(
-                self.responder,
-                (self.profile.llm.engine if self.profile else "") or "",
-                (self.profile.llm.model if self.profile else "") or "",
-            )
-            await record_usage(
-                user_id=self.cfg.identity_user_id or "", profile_id=self.cfg.profile_name or "",
-                kind="llm", engine=engine, model_id=model_id, unit="tokens",
-                native_amount=native_amount, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-            )
-        except Exception as exc:  # noqa: BLE001 - metering must never break a turn
-            logger.warning("llm usage metering failed: %s", exc)
+        await record_llm_turn_usage(
+            self.responder, identity_user_id=self.cfg.identity_user_id,
+            profile=self.profile, profile_name=self.cfg.profile_name,
+        )
 
     async def _record_tts_usage(self, text: str) -> None:
         """Best-effort usage row for one synthesized utterance (billed per char).

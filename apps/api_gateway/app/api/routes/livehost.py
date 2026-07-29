@@ -17,6 +17,7 @@ from app.schemas.tts import TTSRequest
 from app.services.conversation.endpointer import VadEndpointer
 from app.services.conversation.responder import build_responder_ex, resolve_llm_override_from_registry
 from app.services.conversation.turn_quota import llm_turn_quota_blocked_for_pins
+from app.services.conversation.turn_usage import record_llm_turn_usage
 from app.services.history.store import session_store
 from app.services.livehost.ingestor import TikTokLiveIngestor
 from app.services.livehost.orchestrator import LiveHostOrchestrator
@@ -32,7 +33,6 @@ from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
-from app.services.usage.attribution import resolve_llm_pair
 from app.services.usage.recorder import record_usage
 from app.services.warmup import is_ready, warm_providers
 
@@ -333,23 +333,15 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 logger.warning("livehost history persist failed: %s", exc)
 
         async def _record_llm_usage(responder_obj) -> None:
-            try:
-                last_usage = getattr(responder_obj, "last_usage", None) or {}
-                prompt_tokens = last_usage.get("prompt_tokens")
-                completion_tokens = last_usage.get("completion_tokens")
-                native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
-                usage_engine, usage_model_id = resolve_llm_pair(
-                    responder_obj,
-                    (profile.llm.engine if profile else "") or "",
-                    llm_model or (profile.llm.model if profile else "") or "",
-                )
-                await record_usage(
-                    user_id=identity.user_id or "", profile_id=profile_name or "",
-                    kind="llm", engine=usage_engine, model_id=usage_model_id, unit="tokens",
-                    native_amount=native_amount, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                )
-            except Exception as exc:  # noqa: BLE001 - metering must never break the turn
-                logger.warning("livehost llm usage metering failed: %s", exc)
+            # Thin wrapper (Task 6 dedup) over the shared
+            # services/conversation/turn_usage helper -- closure keeps the
+            # local `responder_obj` param shape both call sites below already
+            # use, and reads profile/llm_model/profile_name/identity off the
+            # enclosing livehost_stream() scope, same as before this refactor.
+            await record_llm_turn_usage(
+                responder_obj, identity_user_id=identity.user_id,
+                profile=profile, profile_name=profile_name, llm_model=llm_model,
+            )
 
         async def _stream_to_tts(sentence_aiter, responder_name: str) -> list[str]:
             parts: list[str] = []
