@@ -118,14 +118,6 @@ def test_edge_tts_rate_str():
     assert EdgeTTSProvider._rate_str(0.8) == "-20%"
 
 
-def test_edge_tts_estimate_duration():
-    from app.services.tts.providers.edge_tts_provider import _estimate_duration_seconds
-
-    # 48000 bits/s CBR -> 6000 bytes/s
-    assert _estimate_duration_seconds(b"x" * 6000) == pytest.approx(1.0)
-    assert _estimate_duration_seconds(b"") == 0.0
-
-
 def _install_fake_edge_tts(monkeypatch, communicate_cls):
     """edge_tts is an optional dependency not installed in this test env, so
     `import edge_tts` inside synthesize() needs a stub module injected into

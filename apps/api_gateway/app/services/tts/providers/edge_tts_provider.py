@@ -14,18 +14,10 @@ from app.schemas.tts import TTSRequest
 from app.services.tts.base import TTSProvider
 
 _SAMPLE_RATE = 24000
-_BITRATE_BPS = 48000  # fixed edge-tts output format: audio-24khz-48kbitrate-mono-mp3
 _MAX_ATTEMPTS = 3  # edge-tts's unofficial API intermittently drops the audio stream; retry before failing
 # Back-to-back retries with no gap were observed to fail in a row (likely brief
 # throttling); a short pause between attempts made the very next call succeed.
 _RETRY_DELAY_SECONDS = 0.6
-
-
-def _estimate_duration_seconds(mp3_bytes: bytes) -> float:
-    """Approximate duration from the known constant bitrate (no decode step)."""
-    if not mp3_bytes:
-        return 0.0
-    return len(mp3_bytes) * 8 / _BITRATE_BPS
 
 
 class EdgeTTSProvider(TTSProvider):

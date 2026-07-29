@@ -1,10 +1,7 @@
-import logging
 from abc import ABC, abstractmethod
 
 from app.core.errors import ProviderError
 from app.schemas.tts import TTSRequest
-
-logger = logging.getLogger(__name__)
 
 
 class TTSProvider(ABC):

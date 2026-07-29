@@ -55,23 +55,6 @@ def test_metadata_travels_in_headers(client):
     assert float(resp.headers["x-tts-duration-seconds"]) > 0
 
 
-def test_no_artifact_file_is_written(client, monkeypatch):
-    """The whole point: this path must stop creating temp files."""
-    calls = {"n": 0}
-    from app.services import artifacts as artifacts_mod
-
-    def spy(*args, **kwargs):
-        calls["n"] += 1
-        raise AssertionError("synthesize must not write an artifact")
-
-    monkeypatch.setattr(artifacts_mod.artifact_store, "save_wav", spy, raising=False)
-    monkeypatch.setattr(artifacts_mod.artifact_store, "save_mp3", spy, raising=False)
-
-    resp = client.post("/v1/tts/synthesize", json={"text": "xin chao", "engine": _StubTTS.name})
-    assert resp.status_code == 200
-    assert calls["n"] == 0
-
-
 def test_metadata_headers_are_cors_exposed():
     """A cross-origin client (lugo-web-client) reads these headers; without
     expose_headers the browser hides them and the client sees null."""
@@ -110,16 +93,6 @@ def _patch_edge_tts_render(monkeypatch):
 def test_edge_tts_synthesize_returns_mp3_with_no_duration_header(monkeypatch):
     _patch_edge_tts_render(monkeypatch)
 
-    from app.services import artifacts as artifacts_mod
-
-    calls = {"n": 0}
-
-    def spy(*args, **kwargs):
-        calls["n"] += 1
-        raise AssertionError("render_audio must not write an artifact")
-
-    monkeypatch.setattr(artifacts_mod.artifact_store, "save_mp3", spy, raising=False)
-
     client = TestClient(app)
     resp = client.post("/v1/tts/synthesize", json={"text": "xin chao", "engine": "edge_tts"})
 
@@ -130,4 +103,6 @@ def test_edge_tts_synthesize_returns_mp3_with_no_duration_header(monkeypatch):
     # it is omitted rather than guessed (edge_tts's old bitrate-estimate was
     # deliberately dropped) -- a wrong number would be worse than no header.
     assert "x-tts-duration-seconds" not in resp.headers
-    assert calls["n"] == 0, "the one-shot /v1/tts/synthesize path must not save an artifact"
+    # No-artifact-written guarantee is a structural property now, proven by
+    # tests/unit/artifacts/test_no_audio_persistence.py (ArtifactStore has no
+    # save_wav/save_mp3 method left to spy on at all) -- not re-asserted here.

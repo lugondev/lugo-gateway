@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import AsyncMock
 
 from app.core.errors import ProviderError
 from app.schemas.tts import TTSRequest
@@ -33,10 +34,20 @@ async def test_render_wav_wraps_failures_as_provider_error():
 
 @pytest.mark.asyncio
 async def test_render_audio_delegates_to_render_wav():
-    """render_audio() must go through render_wav() (which wraps errors as
-    ProviderError), not call _render_wav() directly."""
+    """Verify that render_audio() goes through render_wav(), not _render_wav()
+    directly -- render_wav() is the single real rendering entry point (it
+    wraps errors as ProviderError), and render_audio() must call it rather
+    than reaching around it to _render_wav()."""
     provider = _FakeProvider(wav=b"RIFF_test_wav_data")
-    audio_bytes, media_type = await provider.render_audio(TTSRequest(text="xin chào", engine="fake"))
+
+    # Spy on render_wav by patching it with an AsyncMock that calls the original.
+    original_render_wav = provider.render_wav
+    provider.render_wav = AsyncMock(side_effect=original_render_wav)
+
+    request = TTSRequest(text="xin chào", engine="fake")
+    audio_bytes, media_type = await provider.render_audio(request)
+
+    provider.render_wav.assert_called_once_with(request)
     assert audio_bytes == b"RIFF_test_wav_data"
     assert media_type == "audio/wav"
 

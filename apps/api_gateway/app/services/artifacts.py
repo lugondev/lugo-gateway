@@ -50,10 +50,9 @@ class ArtifactStore:
 
     def path_for(self, artifact_id: str) -> Path:
         """Resolve an id from save_reference_audio back to its file on disk."""
-        for ext in ("wav", "mp3"):
-            path = self.base_dir / f"{artifact_id}.{ext}"
-            if path.exists():
-                return path
+        path = self.base_dir / f"{artifact_id}.wav"
+        if path.exists():
+            return path
         raise FileNotFoundError(artifact_id)
 
 
