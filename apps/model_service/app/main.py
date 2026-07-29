@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -21,7 +22,19 @@ from model_service.app.config import ConfigError, ServiceConfig, load_config
 
 logger = logging.getLogger(__name__)
 
-_TMP_REF_FILENAME = re.compile(r"^[0-9a-f]{32}\.wav$")
+_TMP_REF_FILENAME = re.compile(r"^[0-9a-f]{32}\.wav\Z")
+
+# The four local TTS engines run as separate native processes sharing the same
+# repo-root artifacts directory (not one process per container), so a bare-hex
+# .wav can be a sibling process's in-flight temp file, not just this process's
+# own leftovers -- "one process, one file, one call" is not a safe assumption
+# here. Anything younger than this is left alone; anything older cannot belong
+# to a live request in any process, since routes_tts.py holds its own file for
+# only the duration of a single call. A leak that's fresher than the threshold
+# just waits for the next restart to be collected -- restarts are rare and a
+# leaked file is cheap, whereas deleting a live request's reference audio out
+# from under an open read breaks that request's synthesis.
+_STALE_AGE_SECONDS = 3600
 
 
 def sweep_stale_ref_audio(base_dir: Path) -> int:
@@ -32,17 +45,29 @@ def sweep_stale_ref_audio(base_dir: Path) -> int:
     unlinks it in a finally. A crash in between used to be mopped up by the
     gateway's artifact janitor, which no longer exists -- synthesized audio is
     never persisted, so there was nothing else left for it to prune. At
-    startup any such file can only be leftovers: a live request holds its own
-    file for the duration of a single call. `ref_*.wav` never matches this
+    startup, a bare-hex `.wav` older than `_STALE_AGE_SECONDS` cannot belong to
+    any live request, in this process or a sibling one sharing the same
+    directory -- see the module comment above. `ref_*.wav` never matches this
     pattern and is never touched.
     """
     if not base_dir.is_dir():
         return 0
+    try:
+        candidates = list(base_dir.iterdir())
+    except OSError:
+        # The directory exists (is_dir() above didn't raise -- stat-ing a path
+        # doesn't require list permission on it) but can't be listed, e.g. a
+        # permissions error. Degrade to "skip the sweep" rather than crashing
+        # app startup over a cleanup nicety.
+        return 0
     removed = 0
-    for path in base_dir.iterdir():
+    now = time.time()
+    for path in candidates:
         if not _TMP_REF_FILENAME.match(path.name):
             continue
         try:
+            if now - path.stat().st_mtime < _STALE_AGE_SECONDS:
+                continue
             path.unlink()
             removed += 1
         except OSError:
