@@ -46,10 +46,6 @@ _USER_PREFIXES = (
     # a session (partial + final transcripts, synthesized audio urls); they were
     # unauthenticated purely because nobody had listed them anywhere.
     "/v1/events",
-    # Generated audio artifacts (StaticFiles mount, not a router). The ids are
-    # unguessable uuid4s, but "unguessable" is not "authenticated" -- a logged-in
-    # session is now the floor.
-    "/artifacts",
     "/v1/conversation",
     "/v1/livehost",
     "/v1/profiles",

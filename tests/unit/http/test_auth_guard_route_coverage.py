@@ -91,15 +91,15 @@ def test_the_route_walker_actually_finds_the_app():
     """Guard against the walker silently returning nothing (which would make
     the coverage test below vacuously pass forever)."""
     paths = {p for p, _ in _mounted_http_paths()}
-    # 97 distinct HTTP paths at the time of writing (125 route entries, minus
-    # the 4 WebSocket routes, deduped across methods, plus the 2 mount probes).
+    # 94 distinct HTTP paths at the time of writing (125 route entries, minus
+    # the 4 WebSocket routes, deduped across methods, plus the 1 mount probe).
     # A broken walker returns a handful, not ~90.
     assert len(paths) > 90, f"walker found only {len(paths)} paths -- it is broken"
-    # Spot-check one path from each of the four shapes that are easy to miss.
+    # Spot-check one path from each of the three shapes that are easy to miss.
     assert "/v1/system/status" in paths  # router declaring prefix="/v1"
     assert "/v1/models/recommend" in paths  # second router declaring prefix="/v1"
     assert "/agents-docs" in paths  # router declaring no prefix at all
-    assert f"/artifacts/{_MOUNT_PROBE}" in paths  # StaticFiles mount
+    assert f"/static/{_MOUNT_PROBE}" in paths  # StaticFiles mount
 
 
 def test_every_mounted_path_is_classified():
@@ -135,10 +135,9 @@ def test_no_admin_prefix_is_shadowed_by_a_user_prefix():
 @pytest.mark.parametrize(
     ("path", "expected"),
     [
-        # The four surfaces this task closed.
+        # Surfaces a past task closed.
         ("/v1/events/sessions/abc", "user"),
         ("/v1/events/jobs/abc", "user"),
-        ("/artifacts/deadbeef.wav", "user"),
         ("/agents-docs", "admin"),
         ("/openapi.json", "admin"),
         ("/docs", "admin"),
