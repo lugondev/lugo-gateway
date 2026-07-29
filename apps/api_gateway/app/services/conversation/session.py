@@ -40,6 +40,7 @@ from app.services.conversation.tools.base import ToolContext, ToolRegistry, Tool
 from app.services.conversation.tools.local import LocalToolSource
 from app.services.conversation.tools.mcp import McpToolSource
 from app.services.conversation.turn_quota import llm_turn_quota_blocked
+from app.services.conversation.turn_tts import build_tts_request_or_degrade
 from app.services.conversation.turn_usage import record_llm_turn_usage
 from app.services.history.store import session_store
 from app.services.mcp.pool import mcp_pool
@@ -587,20 +588,25 @@ class ConversationSession:
                 # keeps the turn going. Raising instead would unwind the whole turn to
                 # the generic `error` handler and swallow the already-generated text.
                 logger.info("DEBUG_HANG _synth: starting engine=%s sentence=%r", cfg.tts_engine, sentence)
+                # Built INSIDE the guard, not before it: cfg.ref_audio_path comes
+                # from a stored TtsProfile, which now validates this at save time
+                # too -- but constructing TTSRequest here as well means any future
+                # validation error (or any other TTSRequest construction failure)
+                # still degrades to tts_error below instead of raising and
+                # unwinding the whole turn, swallowing already-generated text the
+                # comment above warns against losing. Shared with livehost.py's
+                # _synth via turn_tts.py (Task 6 dedup); the provider call,
+                # metering, encode, and this route's own global-clock pacing
+                # loop below stay here.
+                request, build_exc = build_tts_request_or_degrade(
+                    text=sentence, engine=cfg.tts_engine, model_id=cfg.tts_model, voice=cfg.voice,
+                    ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
+                    instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
+                )
+                if build_exc is not None:
+                    logger.warning("TTS synth failed (engine=%s) for %r: %s", cfg.tts_engine, sentence, build_exc)
+                    return None, None, build_exc
                 try:
-                    # Built INSIDE the guard: cfg.ref_audio_path comes from a
-                    # stored TtsProfile, which now validates this at save
-                    # time too -- but constructing TTSRequest here as well
-                    # means any future validation error (or any other
-                    # TTSRequest construction failure) still degrades to
-                    # tts_error below instead of raising outside this try and
-                    # unwinding the whole turn, swallowing already-generated
-                    # text the comment above warns against losing.
-                    request = TTSRequest(
-                        text=sentence, engine=cfg.tts_engine, model_id=cfg.tts_model, voice=cfg.voice,
-                        ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
-                        instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
-                    )
                     if self.opus_encoder is not None and isinstance(self.tts_provider, RenderingTTSProvider):
                         # Nothing downstream reads `result` once we have Opus packets (see
                         # the `packets is not None` branch below), so synthesize()'s

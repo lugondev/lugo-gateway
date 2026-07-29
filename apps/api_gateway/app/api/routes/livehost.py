@@ -13,10 +13,10 @@ from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
 from app.schemas.livehost import TikTokConnectRequest
-from app.schemas.tts import TTSRequest
 from app.services.conversation.endpointer import VadEndpointer
 from app.services.conversation.responder import build_responder_ex, resolve_llm_override_from_registry
 from app.services.conversation.turn_quota import llm_turn_quota_blocked_for_pins
+from app.services.conversation.turn_tts import build_tts_request_or_degrade
 from app.services.conversation.turn_usage import record_llm_turn_usage
 from app.services.history.store import session_store
 from app.services.livehost.ingestor import TikTokLiveIngestor
@@ -366,12 +366,21 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 # would drop every not-yet-sent sentence's response_text
                 # along with it. The consumer below emits this sentence's
                 # response_text regardless, then a `tts_error` for audio only.
-                try:
-                    request = TTSRequest(
-                        text=sentence, engine=tts_engine, model_id=tts_model, voice=voice,
-                        ref_audio_path=ref_audio_path, ref_text=ref_text,
-                        instruct=tts_instruct, speed=tts_speed, language=tts_language,
+                #
+                # Request construction + its degrade decision (Task 6 dedup)
+                # is shared with session.py's _synth via turn_tts.py; the
+                # provider call, metering, encode, and pacing below stay here.
+                request, build_exc = build_tts_request_or_degrade(
+                    text=sentence, engine=tts_engine, model_id=tts_model, voice=voice,
+                    ref_audio_path=ref_audio_path, ref_text=ref_text,
+                    instruct=tts_instruct, speed=tts_speed, language=tts_language,
+                )
+                if build_exc is not None:
+                    logger.warning(
+                        "livehost TTS synth failed (engine=%s) for %r: %s", tts_engine, sentence, build_exc
                     )
+                    return None, None, build_exc
+                try:
                     result = await tts_provider.synthesize(request)
                     try:
                         await record_usage(
