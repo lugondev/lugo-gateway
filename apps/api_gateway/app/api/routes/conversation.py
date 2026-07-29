@@ -213,20 +213,18 @@ async def chat(
         if session_id and await session_store.exists(session_id):
             stored = await session_store.get_messages(session_id)
         elif not await session_store.exists(sid):
-            # Caller first, profile owner as fallback -- mirrors session.py:312's
-            # WS session creation. Recording the PROFILE owner instead of the
-            # caller here was round-1's Critical: it 404'd every authenticated
-            # non-admin out of their own session on the very next turn, since
-            # the ownership check above compares against the caller, not the
-            # profile. `caller_id` is None (and this falls back to the profile
-            # owner, itself often None) only for the dev-mode/no-auth caller or
-            # an unauthenticated device -- those rows are created ownerless by
-            # construction, same as the pre-fix legacy rows; they are
-            # intentionally admin-only to resume (sessions.py's get_session),
-            # since there is no real owner to derive.
+            # Always the caller -- never a fallback to the named profile's
+            # owner (H2: `caller_id or profile.owner_id` let an unauthenticated
+            # caller create a row attributed to whatever profile owner they
+            # named, an attacker-chosen victim). `caller_id` is None only for
+            # the dev-mode/no-auth caller or an unauthenticated device -- those
+            # rows are created ownerless by construction, same as the pre-fix
+            # legacy rows; they are intentionally admin-only to resume
+            # (sessions.py's get_session), since there is no real owner to
+            # derive.
             await session_store.create(
                 sid, profile_id=profile or "",
-                user_id=caller_id or (active_profile.owner_id if active_profile else None),
+                user_id=caller_id,
             )
     except Exception as exc:  # noqa: BLE001 - session setup must not block the reply
         logger.warning("session setup failed for %s: %s", sid, exc)

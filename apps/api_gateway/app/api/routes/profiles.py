@@ -147,8 +147,20 @@ async def list_profiles(request: Request) -> dict:
 async def create_profile(payload: ProfileRequest, request: Request) -> dict:
     if profile_store.get(payload.name) is not None:
         raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
-    owner_id = None if current_role(request) == "admin" else current_user_id(request)
-    profile = Profile(**payload.model_dump(), owner_id=owner_id)
+    is_admin = current_role(request) == "admin"
+    owner_id = None if is_admin else current_user_id(request)
+    data = payload.model_dump()
+    if not is_admin:
+        # C1: mcp_servers carries an arbitrary url+headers that
+        # _build_tool_registry fetches and reflects into the LLM turn -- the
+        # same SSRF-with-reflection primitive Task 6 gated on /v1/mcp/servers
+        # for admins only. A non-admin setting it here would fully bypass that
+        # gate. Silently drop rather than 403: matches how templates already
+        # behave for a non-admin (mcp_servers is simply not theirs to set),
+        # and doesn't need a special error path in the profile editor UI --
+        # the field just doesn't take, same as owner_id below.
+        data["mcp_servers"] = []
+    profile = Profile(**data, owner_id=owner_id)
     acting_user = await _resolve_acting_user(request)
     await _validate_profile_models(profile, acting_user)
     profile_store.upsert(profile)
@@ -172,6 +184,7 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
     # merely able to see it -- see _can_write for the template/admin distinction).
     if existing and not _can_write(existing, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
+    is_admin = current_role(request) == "admin"
     data = payload.model_dump()
     data["name"] = name
     if existing:
@@ -181,8 +194,17 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
         # that doesn't re-enter the key must NOT wipe it.
         if not data.get("llm", {}).get("api_key") and existing.llm.api_key:
             data.setdefault("llm", {})["api_key"] = existing.llm.api_key
+        if not is_admin:
+            # C1: a non-admin PUT must not be able to add/change mcp_servers
+            # (same SSRF-with-reflection gate as create_profile below). Silently
+            # preserve whatever was already stored rather than 403 -- the request
+            # body's mcp_servers just doesn't take, mirroring create's drop-to-[]
+            # and requiring no special client-side error handling.
+            data["mcp_servers"] = [s.model_dump() for s in existing.mcp_servers]
     else:
-        data["owner_id"] = None if current_role(request) == "admin" else current_user_id(request)
+        data["owner_id"] = None if is_admin else current_user_id(request)
+        if not is_admin:
+            data["mcp_servers"] = []
     profile = Profile(**data)
     acting_user = await _resolve_acting_user(request)
     await _validate_profile_models(profile, acting_user)
@@ -210,6 +232,12 @@ async def clone_profile(name: str, payload: CloneRequest, request: Request) -> d
     data = source.model_dump()
     data["name"] = payload.new_name
     data["owner_id"] = user_id
+    if current_role(request) != "admin":
+        # C1: cloning an admin template that has mcp_servers must not hand the
+        # cloning user a live copy of servers they couldn't have set
+        # themselves via create/update -- the clone is user-owned from here
+        # on, so its mcp_servers must go through the same non-admin gate.
+        data["mcp_servers"] = []
     clone = Profile(**data)
     profile_store.upsert(clone)
     return {"success": True, "data": await _with_labels(clone)}

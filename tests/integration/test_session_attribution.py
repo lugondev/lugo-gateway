@@ -8,9 +8,15 @@ GET /v1/sessions (which scopes by the caller's own user id) could never find
 sessions the caller had just created themselves -- the History screen shipped
 as a permanently empty screen.
 
-The fix: prefer the authenticated speaker's id, falling back to the existing
-profile-owner behavior only when there is no identity (auth disabled / dev
-mode, or the legacy shared device_auth_token).
+The fix: prefer the authenticated speaker's id. When there is no identity
+(auth disabled / dev mode, or the legacy shared device_auth_token) the
+session is created OWNERLESS -- it must NOT fall back to the named profile's
+owner_id. An earlier version of this fix used `identity.user_id or
+profile.owner_id` as that fallback; round-2 of the adversarial audit
+(docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md, H2) found
+that let a null-identity caller (fleet token / dev mode) create a row
+attributed to an arbitrary victim by simply naming their profile. See
+task-3-report.md for the fix.
 """
 
 import pytest
@@ -142,10 +148,12 @@ def test_ws_livehost_session_owned_by_authenticated_speaker(client, _with_passwo
     assert session_id in ids
 
 
-async def test_ws_conversation_no_identity_falls_back_to_profile_owner(client, _clean_profile_store):
-    """Dev mode (auth disabled): identity.user_id is legitimately None. The
-    fallback to profile.owner_id must be preserved -- this pins today's
-    behavior for that path so the fix doesn't silently change it."""
+async def test_ws_conversation_no_identity_naming_a_profile_stays_ownerless(client, _clean_profile_store):
+    """Dev mode (auth disabled): identity.user_id is legitimately None. H2
+    regression guard -- the session must be created OWNERLESS, never falling
+    back to the named profile's owner_id (that let a null-identity caller
+    create a row attributed to an arbitrary victim by naming their profile).
+    See docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md, H2."""
     _clean_profile_store.upsert(Profile(name="attrib-fallback-profile", owner_id="owner-abc-123"))
 
     with client.websocket_connect(
@@ -157,7 +165,7 @@ async def test_ws_conversation_no_identity_falls_back_to_profile_owner(client, _
 
     row = await session_store.get(session_id)
     assert row is not None
-    assert row["user_id"] == "owner-abc-123"
+    assert row["user_id"] is None
 
 
 async def test_ws_conversation_no_identity_no_profile_stays_unowned(client):

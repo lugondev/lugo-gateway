@@ -245,7 +245,10 @@ async def livehost_stream(websocket: WebSocket) -> None:
         await session_store.create(
             session_id, profile_id=profile_name or "",
             meta={"stt_engine": stt_engine, "tts_engine": tts_engine, "livehost": True},
-            user_id=identity.user_id or (profile.owner_id if profile else None),
+            # No `or profile.owner_id` fallback (H2): an identity with no
+            # user_id (fleet/dev caller) must create an ownerless row, not one
+            # attributed to the named profile's owner.
+            user_id=identity.user_id,
         )
     except Exception as exc:  # noqa: BLE001 - session setup must not drop the connection
         logger.warning("livehost session setup failed for %s: %s", session_id, exc)

@@ -123,10 +123,12 @@ class SessionRuntimeConfig:
     stt_model: str = ""  # optional model-variant override (SttConfig.model, resolve_stt's 3rd value)
     tts_model: str = ""  # optional registry-row selector within tts_engine (TTSRequest.model_id)
     # The authenticated WS caller's user id (resolve_ws_identity's identity.user_id),
-    # if any. Preferred over profile.owner_id when recording the session -- the
-    # session belongs to whoever is actually speaking, not the profile's owner.
-    # None when auth is disabled (dev mode) or the caller used the legacy shared
-    # device_auth_token; in that case the front-end falls back to profile.owner_id.
+    # if any. This -- never profile.owner_id -- is what a created session is
+    # recorded under: the session belongs to whoever is actually speaking, not
+    # the profile's owner. None when auth is disabled (dev mode) or the caller
+    # used the legacy shared device_auth_token; in that case the session is
+    # created ownerless (there is no real owner to attribute it to), not
+    # attributed to the named profile's owner.
     identity_user_id: str | None = None
     # True ONLY for the dev-mode short-circuit (WsIdentity.unauthenticated,
     # auth_guard.py -- settings.auth_enabled is False). start() below uses it
@@ -337,7 +339,12 @@ class ConversationSession:
                     cfg.session_id,
                     profile_id=cfg.profile_name or "",
                     meta={"stt_engine": cfg.stt_engine, "tts_engine": cfg.tts_engine},
-                    user_id=cfg.identity_user_id or (profile.owner_id if profile else None),
+                    # No `or profile.owner_id` fallback: a fleet/dev-mode caller
+                    # (identity_user_id is None) must create an ownerless row, not
+                    # one silently attributed to the owner of whatever profile
+                    # name was passed in (H2 -- that let a named profile's owner
+                    # be billed for / attributed a session they never touched).
+                    user_id=cfg.identity_user_id,
                 )
         except Exception as exc:  # noqa: BLE001 - session setup must not drop the connection
             logger.warning("session setup failed for %s: %s", cfg.session_id, exc)
