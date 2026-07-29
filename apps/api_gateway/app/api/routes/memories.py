@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, field_validator
 
 from app.api.routes.profiles import _visible
 from app.core.actor import current_user_id
+from app.schemas.memories import MemoryRequest
 from app.services.memory.store import memory_store
 from app.services.profiles.store import profile_store
 
@@ -21,18 +21,6 @@ def _require_visible(name: str, request: Request) -> str:
     if profile is None or not _visible(profile, user_id):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     return user_id or ""
-
-
-class MemoryRequest(BaseModel):
-    content: str
-
-    @field_validator("content")
-    @classmethod
-    def _not_blank(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("content must not be blank")
-        return v
 
 
 @router.get("")

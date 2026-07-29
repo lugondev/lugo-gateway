@@ -6,9 +6,9 @@ proves the classification is true where a client can reach it. Both are needed:
 the first catches an omission, the second catches a lie.
 
 Deliberately NOT covered here (each has its own dedicated suite, named so a
-reader can check): the conversation core (tests/unit/test_session_usage_metering.py),
-livehost (tests/unit/test_livehost_quota_gate.py), and the memory subsystem
-(tests/unit/test_memory_usage_metering.py). Those run over a WebSocket or a
+reader can check): the conversation core (tests/unit/conversation/test_session_usage_metering.py),
+livehost (tests/unit/livehost/test_livehost_quota_gate.py), and the memory subsystem
+(tests/unit/memory/test_memory_usage_metering.py). Those run over a WebSocket or a
 session teardown that this file's harness cannot drive.
 
 Harness notes (adaptations to the brief, made for reasons already root-caused
@@ -17,7 +17,7 @@ on this branch):
 - STTRequest.engine is regex-restricted to known engine ids (see
   app/schemas/stt.py), so the REST /transcribe path below registers the STT
   stub under the real "vosk" key (swapped back after the test), the same
-  pattern tests/unit/test_routes_usage_metering.py already uses. The
+  pattern tests/unit/usage/test_routes_usage_metering.py already uses. The
   WebSocket /stream path builds no STTRequest (engine is a raw query param),
   so it keeps a made-up engine id.
 - STTResult requires an `engine` field; the brief's stub text omits it, added
@@ -30,7 +30,7 @@ on this branch):
 - The STT WS test drains until "done", not "final": the usage row is written
   between the "final" and "done" events on the end path, so stopping at
   "final" would race the server's pending write against the test client's
-  teardown (see tests/unit/test_stt_stream_metering.py).
+  teardown (see tests/unit/stt/test_stt_stream_metering.py).
 """
 
 import asyncio

@@ -1,14 +1,10 @@
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 
 from app.core.actor import current_role, current_user_id
+from app.schemas.sessions import BulkDeleteRequest
 from app.services.history.store import session_store
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
-
-
-class BulkDeleteRequest(BaseModel):
-    ids: list[str] = []
 
 
 def _scope_user_id(request: Request) -> str | None:

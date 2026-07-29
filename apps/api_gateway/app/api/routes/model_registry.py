@@ -2,11 +2,11 @@ import difflib
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 
 from app.core.actor import current_user_id
 from app.core.audio import pcm16_to_wav_bytes
 from app.services.auth.users import user_store
+from app.schemas.model_registry import BulkPriceRequest, CreateEntryRequest, UpdateEntryRequest
 from app.schemas.tts import TTSRequest
 from app.services.conversation.responder import OpenAICompatResponder
 from app.services.model_registry.availability import is_artifact_installed
@@ -133,28 +133,6 @@ def _validate_known_engine(kind: str, engine: str) -> None:
     )
 
 
-class CreateEntryRequest(BaseModel):
-    kind: str
-    engine: str
-    model_id: str
-    label: str
-    stage: str = "stable"
-    base_url: str = ""
-    api_key: str = ""
-    config: dict = {}
-    sample_text: str = "xin chào"
-    is_default: bool = False
-
-
-class UpdateEntryRequest(BaseModel):
-    enabled: bool | None = None
-    stage: str | None = None
-    api_key: str | None = None
-    base_url: str | None = None
-    config: dict | None = None
-    is_default: bool | None = None
-
-
 def _engine_config_available(kind: str, engine: str, model_id: str) -> bool | None:
     """Whether the underlying package/binary/model is actually present, for a
     model_id="" engine-config sentinel row -- None for everything else (real
@@ -207,15 +185,6 @@ async def get_config_schema(kind: str, engine: str) -> dict:
     schema, not a stored entry -- never reads the DB. Empty for engines with no
     known config shape (the UI falls back to raw JSON)."""
     return {"fields": config_schema_for(kind, engine)}
-
-
-class PriceItem(BaseModel):
-    id: str
-    price: dict | None = None
-
-
-class BulkPriceRequest(BaseModel):
-    prices: list[PriceItem]
 
 
 # NOTE: /prices must stay ABOVE the "/{entry_id}" routes -- FastAPI matches in

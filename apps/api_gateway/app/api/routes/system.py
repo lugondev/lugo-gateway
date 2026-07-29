@@ -5,6 +5,13 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 
 from app.core.settings import settings
+from app.schemas.system import (
+    DownloadRequest,
+    LlmModelRequest,
+    OmniModelRequest,
+    VieneuModeRequest,
+    WhisperRequest,
+)
 from app.services.artifacts import artifact_store
 from app.services.model_registry.autosync import disable_registry_entry, ensure_registry_entry
 from app.services.model_registry.engine_map import registry_ref
@@ -24,26 +31,6 @@ from app.services.vad import available_backends
 from app.services.whisper_models import whisper_manager
 
 router = APIRouter(prefix="/v1", tags=["system"])
-
-
-class DownloadRequest(BaseModel):
-    name: str
-
-
-class WhisperRequest(BaseModel):
-    size: str
-
-
-class OmniModelRequest(BaseModel):
-    id: str
-
-
-class VieneuModeRequest(BaseModel):
-    mode: str
-
-
-class LlmModelRequest(BaseModel):
-    model: str
 
 
 def _artifacts_stats() -> dict:

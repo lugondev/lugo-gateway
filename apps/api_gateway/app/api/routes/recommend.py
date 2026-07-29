@@ -1,14 +1,10 @@
 from fastapi import APIRouter, BackgroundTasks
-from pydantic import BaseModel
 
+from app.schemas.recommend import InstallRequest
 from app.services.install_manager import install_manager
 from app.services.recommend.service import recommend_all
 
 router = APIRouter(prefix="/v1", tags=["recommend"])
-
-
-class InstallRequest(BaseModel):
-    package: str
 
 
 @router.get("/models/recommend")

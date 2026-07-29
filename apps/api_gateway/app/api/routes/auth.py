@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
 
 from app.core.errors import AuthError
+from app.schemas.auth import LoginRequest, RefreshRequest, SignupRequest, TokenRequest
 from app.services.auth.tokens import (
     ACCESS_TTL_SECONDS,
     issue_access_token,
@@ -13,20 +13,10 @@ from app.services.auth.users import user_store
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-class SignupRequest(BaseModel):
-    username: str
-    password: str
-
-
 @router.post("/signup")
 async def signup(body: SignupRequest) -> dict:
     created = await user_store.create(body.username, body.password, role="user")
     return {"success": True, "data": {"username": created["username"]}}
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
 
 
 @router.post("/login")
@@ -63,11 +53,6 @@ async def status(request: Request) -> dict:
     }
 
 
-class TokenRequest(BaseModel):
-    username: str
-    password: str
-
-
 @router.post("/token")
 async def token(body: TokenRequest) -> dict:
     """Phát hành bearer token cho Lugo web client. Cố ý KHÔNG set session
@@ -83,10 +68,6 @@ async def token(body: TokenRequest) -> dict:
             "expires_in": ACCESS_TTL_SECONDS,
         },
     }
-
-
-class RefreshRequest(BaseModel):
-    refresh_token: str
 
 
 @router.post("/refresh")

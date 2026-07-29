@@ -47,7 +47,7 @@ def configure(url: str | None = None) -> None:
         except RuntimeError:
             # Already inside a running loop somehow -- best-effort fallback.
             _engine.sync_engine.dispose()
-    url = url or settings.database_url
+    url = url or settings.database_url_resolved
     engine_kwargs: dict = {}
     if url.startswith("sqlite"):
         db_file = url.split("///", 1)[-1]

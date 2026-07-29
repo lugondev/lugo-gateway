@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 
 from app.core.actor import current_role, current_user_id
+from app.schemas.common import CloneRequest
+from app.schemas.mcp import McpServerEnabledRequest, McpServerRequest
 from app.services.mcp.models import McpServer
 from app.services.mcp.pool import mcp_pool
 from app.services.mcp.presets import PRESET_NAMES
@@ -33,21 +34,6 @@ def _require_admin(request: Request) -> None:
     gated. See docs/superpowers/sdd/2026-07-28-critical-authz-fixes/task-6-brief.md."""
     if current_role(request) != "admin":
         raise HTTPException(status_code=403, detail="admin only")
-
-
-class McpServerRequest(BaseModel):
-    name: str
-    url: str
-    headers: dict[str, str] = {}
-    enabled: bool = True
-
-
-class McpServerEnabledRequest(BaseModel):
-    enabled: bool
-
-
-class CloneRequest(BaseModel):
-    new_name: str
 
 
 @router.get("/servers")

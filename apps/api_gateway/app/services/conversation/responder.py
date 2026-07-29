@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 import httpx
 
 from app.core.errors import LLMUnavailableError
+from app.services.model_registry.store import model_registry_store
+from app.services.providers.resolve import resolve_credentials
 from app.services.system_config import system_config_store
 from app.services.tts.segmenter import SentenceAggregator, segment_text
 
@@ -34,8 +36,6 @@ logger = logging.getLogger(__name__)
 
 
 async def _active_llm_entry() -> dict | None:
-    from app.services.model_registry.store import model_registry_store
-
     entry = await model_registry_store.find_default(kind="llm")
     return entry if entry and entry["enabled"] else None
 
@@ -46,8 +46,6 @@ async def get_active_llm_model() -> str:
 
 
 async def get_active_llm_base_url() -> str:
-    from app.services.providers.resolve import resolve_credentials
-
     entry = await _active_llm_entry()
     if not entry:
         return ""
@@ -56,8 +54,6 @@ async def get_active_llm_base_url() -> str:
 
 
 async def get_active_llm_api_key() -> str:
-    from app.services.providers.resolve import resolve_credentials
-
     entry = await _active_llm_entry()
     if not entry:
         return ""
@@ -70,8 +66,6 @@ async def set_active_llm_config(base_url: str, api_key: str, model: str, engine:
     creates the registry entry if none is the default yet, else updates the
     currently-default one in place (so re-pointing the same "slot" doesn't
     pile up rows)."""
-    from app.services.model_registry.store import model_registry_store
-
     base_url = (base_url or "").strip()
     api_key = (api_key or "").strip()
     model = (model or "").strip()
@@ -99,8 +93,6 @@ async def set_active_llm_config(base_url: str, api_key: str, model: str, engine:
 async def reset_active_llm_config() -> None:
     """Turn off the conversation LLM (disables the current is_default entry --
     conversation falls back to the built-in echo responder)."""
-    from app.services.model_registry.store import model_registry_store
-
     entry = await _active_llm_entry()
     if entry:
         await model_registry_store.set_fields(entry["id"], enabled=False)
@@ -118,9 +110,6 @@ async def resolve_llm_override_from_registry(engine: str, model: str) -> tuple[s
     callers should fall back to their prior behavior."""
     if not engine or not model:
         return None
-    from app.services.model_registry.store import model_registry_store
-    from app.services.providers.resolve import resolve_credentials
-
     entry = await model_registry_store.find(kind="llm", engine=engine, model_id=model)
     if entry:
         base_url, api_key = await resolve_credentials(entry)

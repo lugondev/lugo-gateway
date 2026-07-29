@@ -76,6 +76,7 @@ models/
 *.ogg
 *.webm
 data/
+artifacts/
 tmp/
 .cache/
 

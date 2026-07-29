@@ -2,8 +2,8 @@ import logging
 
 import httpx
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
+from app.schemas.providers import CreateProviderRequest, UpdateProviderRequest
 from app.services.providers.resolve import PROVIDER_PRESETS
 from app.services.providers.store import provider_store
 
@@ -26,24 +26,6 @@ def _masked(entry: dict) -> dict:
     entry = dict(entry)
     entry["api_key"] = _mask_api_key(entry["api_key"])
     return entry
-
-
-class CreateProviderRequest(BaseModel):
-    name: str
-    label: str = ""
-    base_url: str = ""
-    api_key: str = ""
-    enabled: bool = True
-    config: dict = {}
-
-
-class UpdateProviderRequest(BaseModel):
-    name: str | None = None
-    label: str | None = None
-    base_url: str | None = None
-    api_key: str | None = None
-    enabled: bool | None = None
-    config: dict | None = None
 
 
 @router.get("")

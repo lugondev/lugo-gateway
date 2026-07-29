@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 
 from app.core.actor import current_user_id
 from app.core.errors import AuthError, DeviceSerialConflictError, PairingCodeInvalidError
+from app.schemas.devices import PairClaimRequest, PairInitRequest
 from app.services.auth.devices import device_store
 from app.services.auth.pairing import claim_rate_limiter, init_rate_limiter, pending_pairings
 
@@ -11,10 +11,6 @@ router = APIRouter(prefix="/v1/devices", tags=["devices"])
 
 def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
-
-
-class PairInitRequest(BaseModel):
-    serial: str
 
 
 @router.post("/pair/init")
@@ -40,11 +36,6 @@ async def pair_status(poll_token: str) -> dict:
         "success": True,
         "data": {"claimed": True, "device_id": entry.device_id, "token": entry.token},
     }
-
-
-class PairClaimRequest(BaseModel):
-    code: str
-    name: str
 
 
 @router.post("/pair/claim")

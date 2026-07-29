@@ -6,6 +6,8 @@ category rather than failing the whole endpoint.
 """
 
 from app.core.settings import settings
+from app.services.model_registry.store import model_registry_store
+from app.services.providers.resolve import resolve_credentials
 from app.services.recommend.capabilities import Capabilities, detect_capabilities
 from app.services.recommend.catalog import CANDIDATES
 from app.services.recommend.recommender import rank
@@ -91,8 +93,6 @@ async def _collect_state() -> tuple[set, set]:
 async def _augment_config_flags(caps: Capabilities) -> None:
     """Remote/online entries are 'available' when their endpoint is configured."""
     from app.services.model_registry.resolve import resolve_remote_stt_config
-    from app.services.model_registry.store import model_registry_store
-    from app.services.providers.resolve import resolve_credentials
 
     remote_stt = resolve_remote_stt_config()
     caps.modules["whisper_service"] = bool(remote_stt.whisper_service_base_url)

@@ -53,6 +53,10 @@ async def _limits_for(user_id: str) -> list[dict]:
     global one. Never another user's, and never a provider quota -- its spend is
     cross-tenant information, and this endpoint is open to every logged-in user.
     """
+    # function-local: tests monkeypatch app.services.quota.gate.current_spend by
+    # reassigning the module attribute (see test_usage_routes.py's flaky_spend);
+    # a top-level `from ... import current_spend` binds the name once at import
+    # time and never observes that reassignment.
     from app.services.quota.gate import current_spend
     from app.services.quota.store import quota_store
 

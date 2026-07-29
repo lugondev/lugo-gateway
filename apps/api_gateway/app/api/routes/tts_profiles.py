@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
 
 from app.core.actor import current_role, current_user_id
+from app.schemas.common import CloneRequest
 from app.services.artifacts import artifact_store
 from app.services.auth.users import user_store
 from app.services.model_registry.gate import check_model_allowed
@@ -47,10 +47,6 @@ def _can_write(profile: TtsProfile, user_id: str | None, role: str) -> bool:
     if profile.owner_id is None:
         return role == "admin"
     return profile.owner_id == user_id
-
-
-class CloneRequest(BaseModel):
-    new_name: str
 
 
 @router.get("")

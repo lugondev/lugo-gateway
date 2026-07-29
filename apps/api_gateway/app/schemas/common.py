@@ -25,3 +25,11 @@ class StreamEvent(BaseModel):
 
 # Terminal events close their channel so subscribers (SSE) can stop cleanly.
 TERMINAL_EVENT_TYPES = frozenset({"done"})
+
+
+class CloneRequest(BaseModel):
+    """Shared by /v1/mcp/servers/{name}/clone, /v1/profiles/{name}/clone, and
+    /v1/tts/profiles/{name}/clone -- all three routes defined this identically
+    before being deduped here."""
+
+    new_name: str

@@ -5,7 +5,6 @@ import uuid
 from contextlib import aclosing
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
 
 from app.core.actor import current_role, current_user_id
 from app.core.audio import pcm16_to_wav_bytes, wav_duration_seconds, wav_file_to_pcm16
@@ -13,18 +12,20 @@ from app.core.auth_guard import resolve_ws_identity, ws_session_owner_denied, ws
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
-from app.schemas.tts import TTSRequest
+from app.schemas.livehost import TikTokConnectRequest
 from app.services.conversation.endpointer import VadEndpointer
 from app.services.conversation.responder import build_responder_ex, resolve_llm_override_from_registry
+from app.services.conversation.turn_quota import llm_turn_quota_blocked_for_pins
+from app.services.conversation.turn_tts import build_tts_request_or_degrade
+from app.services.conversation.turn_usage import record_llm_turn_usage
 from app.services.history.store import session_store
 from app.services.livehost.ingestor import TikTokLiveIngestor
 from app.services.livehost.orchestrator import LiveHostOrchestrator
 from app.services.livehost.registry import LivehostSession, livehost_registry
 from app.services.livehost.scheduler import EventScheduler
-from app.services.model_registry.store import model_registry_store
 from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
 from app.services.profiles.store import profile_store
-from app.services.quota.gate import QuotaExceededError, quota_gate
+from app.services.quota.gate import quota_gate
 from app.services.stt.model_catalog import resolve_default_stt_model
 from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
@@ -32,7 +33,6 @@ from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
-from app.services.usage.attribution import resolve_llm_pair, resolve_usage_model
 from app.services.usage.recorder import record_usage
 from app.services.warmup import is_ready, warm_providers
 
@@ -49,38 +49,18 @@ async def _quota_blocked_for(
     the pairing rule below has to see whether a model was pinned at all, so
     resolving before the call would hide exactly the fact it needs.
 
-    Returns the message rather than raising so each turn path can report it the
-    way that path reports its own failures. Fail-open: only a genuine
-    QuotaExceededError blocks; anything else logs and allows, matching
-    quota_gate's own contract.
+    Thin wrapper (Task 6 dedup) over the shared
+    services/conversation/turn_quota helper -- kept here, with this exact
+    signature, because test_livehost_quota_gate.py drives it directly and
+    monkeypatches THIS module's `quota_gate` name. Passing `quota_gate=`
+    below is a late-bound reference to livehost.py's own module global, so
+    that reassignment is still honored (see turn_quota.py's docstring).
     """
-    try:
-        pinned_model = pinned_model or ""
-        # Only pair the profile's engine with a model the profile actually
-        # pinned. With no pin, build_responder_ex() runs the registry default --
-        # whose engine is usually a different row -- so passing this engine
-        # would make the gate check one provider while metering bills another
-        # (see resolve_llm_pair, which applies the same rule to the usage row).
-        # Both blank -> resolve_usage_model() returns the active default pair,
-        # which is what actually runs.
-        pinned_engine = (pinned_engine or "") if pinned_model else ""
-        usage_engine, usage_model = await resolve_usage_model("llm", pinned_engine, pinned_model)
-        provider_id = ""
-        try:
-            entry = await model_registry_store.find("llm", usage_engine, usage_model)
-            provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
-        except Exception:  # noqa: BLE001 - a registry hiccup must never block a turn
-            provider_id = ""
-        await quota_gate(
-            user_id=user_id or "", provider_id=provider_id,
-            kind="llm", engine=usage_engine, model_id=usage_model,
-            profile_id=profile_name or "",
-        )
-    except QuotaExceededError as exc:
-        return True, str(exc)
-    except Exception as exc:  # noqa: BLE001 - fail-open
-        logger.warning("livehost quota check failed open: %s", exc)
-    return False, ""
+    return await llm_turn_quota_blocked_for_pins(
+        user_id=user_id, profile_name=profile_name,
+        pinned_engine=pinned_engine, pinned_model=pinned_model,
+        quota_gate=quota_gate,
+    )
 
 
 # How often the disabled/revoked re-check wakes (test-tunable, same pattern as
@@ -90,10 +70,6 @@ _IDENTITY_RECHECK_INTERVAL_S = 30.0
 
 def _mention_keywords() -> list[str]:
     return [k.strip() for k in settings.livehost_mention_keywords.split(",") if k.strip()]
-
-
-class TikTokConnectRequest(BaseModel):
-    unique_id: str
 
 
 def _scope_user_id(request: Request) -> str | None:
@@ -357,23 +333,15 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 logger.warning("livehost history persist failed: %s", exc)
 
         async def _record_llm_usage(responder_obj) -> None:
-            try:
-                last_usage = getattr(responder_obj, "last_usage", None) or {}
-                prompt_tokens = last_usage.get("prompt_tokens")
-                completion_tokens = last_usage.get("completion_tokens")
-                native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
-                usage_engine, usage_model_id = resolve_llm_pair(
-                    responder_obj,
-                    (profile.llm.engine if profile else "") or "",
-                    llm_model or (profile.llm.model if profile else "") or "",
-                )
-                await record_usage(
-                    user_id=identity.user_id or "", profile_id=profile_name or "",
-                    kind="llm", engine=usage_engine, model_id=usage_model_id, unit="tokens",
-                    native_amount=native_amount, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                )
-            except Exception as exc:  # noqa: BLE001 - metering must never break the turn
-                logger.warning("livehost llm usage metering failed: %s", exc)
+            # Thin wrapper (Task 6 dedup) over the shared
+            # services/conversation/turn_usage helper -- closure keeps the
+            # local `responder_obj` param shape both call sites below already
+            # use, and reads profile/llm_model/profile_name/identity off the
+            # enclosing livehost_stream() scope, same as before this refactor.
+            await record_llm_turn_usage(
+                responder_obj, identity_user_id=identity.user_id,
+                profile=profile, profile_name=profile_name, llm_model=llm_model,
+            )
 
         async def _stream_to_tts(sentence_aiter, responder_name: str) -> list[str]:
             parts: list[str] = []
@@ -398,12 +366,21 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 # would drop every not-yet-sent sentence's response_text
                 # along with it. The consumer below emits this sentence's
                 # response_text regardless, then a `tts_error` for audio only.
-                try:
-                    request = TTSRequest(
-                        text=sentence, engine=tts_engine, model_id=tts_model, voice=voice,
-                        ref_audio_path=ref_audio_path, ref_text=ref_text,
-                        instruct=tts_instruct, speed=tts_speed, language=tts_language,
+                #
+                # Request construction + its degrade decision (Task 6 dedup)
+                # is shared with session.py's _synth via turn_tts.py; the
+                # provider call, metering, encode, and pacing below stay here.
+                request, build_exc = build_tts_request_or_degrade(
+                    text=sentence, engine=tts_engine, model_id=tts_model, voice=voice,
+                    ref_audio_path=ref_audio_path, ref_text=ref_text,
+                    instruct=tts_instruct, speed=tts_speed, language=tts_language,
+                )
+                if build_exc is not None:
+                    logger.warning(
+                        "livehost TTS synth failed (engine=%s) for %r: %s", tts_engine, sentence, build_exc
                     )
+                    return None, None, build_exc
+                try:
                     result = await tts_provider.synthesize(request)
                     try:
                         await record_usage(

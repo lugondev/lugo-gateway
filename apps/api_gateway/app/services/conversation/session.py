@@ -39,6 +39,9 @@ from app.services.conversation.responder import (
 from app.services.conversation.tools.base import ToolContext, ToolRegistry, ToolSource
 from app.services.conversation.tools.local import LocalToolSource
 from app.services.conversation.tools.mcp import McpToolSource
+from app.services.conversation.turn_quota import llm_turn_quota_blocked
+from app.services.conversation.turn_tts import build_tts_request_or_degrade
+from app.services.conversation.turn_usage import record_llm_turn_usage
 from app.services.history.store import session_store
 from app.services.mcp.pool import mcp_pool
 from app.services.mcp.server_store import mcp_server_store
@@ -54,7 +57,7 @@ from app.services.system_config import system_config_store
 from app.services.tts.base import RenderingTTSProvider
 from app.services.tts.service import tts_service
 from app.services.tts.streaming import pacing_delays, prefetch_synthesis
-from app.services.usage.attribution import resolve_llm_pair, resolve_usage_model
+from app.services.usage.attribution import resolve_usage_model
 from app.services.usage.recorder import record_usage
 from app.services.warmup import is_ready, warm_providers
 
@@ -437,27 +440,15 @@ class ConversationSession:
 
         Called AFTER the responder's reply_stream has been fully consumed (only
         then is `.last_usage` -- set as the stream reads its final SSE chunk --
-        populated). Must never raise into the turn: record_usage itself already
-        swallows its own errors, but building the args (profile may be None,
-        last_usage may be None or missing keys) must not raise either.
+        populated). Thin wrapper (Task 6 dedup) over the shared
+        services/conversation/turn_usage helper -- kept as a method since
+        test_session_usage_metering.py drives it directly via
+        `sess._record_llm_usage()`.
         """
-        try:
-            last_usage = getattr(self.responder, "last_usage", None) or {}
-            prompt_tokens = last_usage.get("prompt_tokens")
-            completion_tokens = last_usage.get("completion_tokens")
-            native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
-            engine, model_id = resolve_llm_pair(
-                self.responder,
-                (self.profile.llm.engine if self.profile else "") or "",
-                (self.profile.llm.model if self.profile else "") or "",
-            )
-            await record_usage(
-                user_id=self.cfg.identity_user_id or "", profile_id=self.cfg.profile_name or "",
-                kind="llm", engine=engine, model_id=model_id, unit="tokens",
-                native_amount=native_amount, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-            )
-        except Exception as exc:  # noqa: BLE001 - metering must never break a turn
-            logger.warning("llm usage metering failed: %s", exc)
+        await record_llm_turn_usage(
+            self.responder, identity_user_id=self.cfg.identity_user_id,
+            profile=self.profile, profile_name=self.cfg.profile_name,
+        )
 
     async def _record_tts_usage(self, text: str) -> None:
         """Best-effort usage row for one synthesized utterance (billed per char).
@@ -488,10 +479,6 @@ class ConversationSession:
         registry hiccup degrades to user/global-scope enforcement instead of
         blocking or crashing; anything other than QuotaExceededError fails open.
         """
-        from app.services.model_registry.store import model_registry_store
-        from app.services.quota.gate import QuotaExceededError, quota_gate
-        from app.services.usage.attribution import resolve_usage_model
-
         cfg = self.cfg
         usage_engine, usage_model, provider_id = "", "", ""
         try:
@@ -503,6 +490,12 @@ class ConversationSession:
         except Exception:  # noqa: BLE001 - never block on a lookup
             provider_id = ""
         try:
+            # function-local: tests monkeypatch app.services.quota.gate.quota_gate by
+            # reassigning the module attribute (see test_stt_stream_metering.py's
+            # counting_gate); a top-level `from ... import quota_gate` binds the
+            # name once at import time and never observes that reassignment.
+            from app.services.quota.gate import QuotaExceededError, quota_gate
+
             await quota_gate(
                 user_id=cfg.identity_user_id or "", provider_id=provider_id,
                 kind="tts", engine=usage_engine, model_id=usage_model,
@@ -538,37 +531,16 @@ class ConversationSession:
 
         # Best-effort quota gate: ONCE per turn, before anything else (STT/LLM/TTS).
         # quota_gate() itself is fail-open (internal errors log + allow), so only a
-        # genuine over-limit quota raises here. Resolving the LLM provider_id is
-        # wrapped separately so a registry lookup issue can never block the turn --
-        # it just falls back to "" (user/global scope quotas still apply).
-        provider_id = ""
-        try:
-            pinned_model = (self.profile.llm.model if self.profile else "") or ""
-            # Only pair the profile's engine with a model the profile actually
-            # pinned. With no pin, build_responder_ex() runs the registry
-            # default -- whose engine is usually a different row -- so passing
-            # this engine would make the gate check one provider while metering
-            # bills another (see resolve_llm_pair, which applies the same rule
-            # to the usage row). Both blank -> resolve_usage_model() returns the
-            # active default pair, which is what actually runs.
-            pinned_engine = ((self.profile.llm.engine if self.profile else "") or "") if pinned_model else ""
-            llm_engine, llm_model = await resolve_usage_model("llm", pinned_engine, pinned_model)
-            entry = await model_registry_store.find("llm", llm_engine, llm_model)
-            provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
-        except Exception:  # noqa: BLE001 - provider_id resolution must never block the turn
-            llm_engine, llm_model, provider_id = "", "", ""
-        try:
-            from app.services.quota.gate import QuotaExceededError, quota_gate
-
-            await quota_gate(
-                user_id=cfg.identity_user_id or "", provider_id=provider_id,
-                kind="llm", engine=llm_engine, model_id=llm_model,
-                profile_id=cfg.profile_name or "",
-            )
-        except QuotaExceededError as exc:
+        # genuine over-limit quota raises here. Shared with livehost's/chat()'s own
+        # preflight (Task 6 dedup) -- see turn_quota.py's docstring for the pairing
+        # rule and fail-open contract.
+        blocked, quota_message = await llm_turn_quota_blocked(
+            identity_user_id=cfg.identity_user_id, profile=self.profile, profile_name=cfg.profile_name,
+        )
+        if blocked:
             # Mirror the existing STT-failure pattern: a plain "error" notice,
             # then return without running the turn at all.
-            await self.emit("error", message=str(exc))
+            await self.emit("error", message=quota_message)
             return
 
         self.turn += 1
@@ -616,20 +588,25 @@ class ConversationSession:
                 # keeps the turn going. Raising instead would unwind the whole turn to
                 # the generic `error` handler and swallow the already-generated text.
                 logger.info("DEBUG_HANG _synth: starting engine=%s sentence=%r", cfg.tts_engine, sentence)
+                # Built INSIDE the guard, not before it: cfg.ref_audio_path comes
+                # from a stored TtsProfile, which now validates this at save time
+                # too -- but constructing TTSRequest here as well means any future
+                # validation error (or any other TTSRequest construction failure)
+                # still degrades to tts_error below instead of raising and
+                # unwinding the whole turn, swallowing already-generated text the
+                # comment above warns against losing. Shared with livehost.py's
+                # _synth via turn_tts.py (Task 6 dedup); the provider call,
+                # metering, encode, and this route's own global-clock pacing
+                # loop below stay here.
+                request, build_exc = build_tts_request_or_degrade(
+                    text=sentence, engine=cfg.tts_engine, model_id=cfg.tts_model, voice=cfg.voice,
+                    ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
+                    instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
+                )
+                if build_exc is not None:
+                    logger.warning("TTS synth failed (engine=%s) for %r: %s", cfg.tts_engine, sentence, build_exc)
+                    return None, None, build_exc
                 try:
-                    # Built INSIDE the guard: cfg.ref_audio_path comes from a
-                    # stored TtsProfile, which now validates this at save
-                    # time too -- but constructing TTSRequest here as well
-                    # means any future validation error (or any other
-                    # TTSRequest construction failure) still degrades to
-                    # tts_error below instead of raising outside this try and
-                    # unwinding the whole turn, swallowing already-generated
-                    # text the comment above warns against losing.
-                    request = TTSRequest(
-                        text=sentence, engine=cfg.tts_engine, model_id=cfg.tts_model, voice=cfg.voice,
-                        ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
-                        instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
-                    )
                     if self.opus_encoder is not None and isinstance(self.tts_provider, RenderingTTSProvider):
                         # Nothing downstream reads `result` once we have Opus packets (see
                         # the `packets is not None` branch below), so synthesize()'s
