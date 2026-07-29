@@ -18,6 +18,16 @@ from app.streaming.event_bus import event_bus
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/tts", tags=["tts"])
 
+# Reference-audio clips are short voice-clone utterances (a handful of seconds
+# up to maybe a minute of speech), not full recordings. At the highest
+# realistic bitrate this route accepts (48kHz/16-bit stereo WAV, ~192KB/s) a
+# full minute is ~11.5MB, so 10MB comfortably covers legitimate clips while
+# still bounding how long the blocking read in http_tts_provider._render_wav
+# (now off the event loop, but still O(size)) and this upload itself can run.
+# See H3 in docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md.
+_MAX_REFERENCE_AUDIO_BYTES = 10 * 1024 * 1024
+_UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
+
 # Strong references to running stream jobs: asyncio only keeps a weak ref to
 # tasks, so a fire-and-forget create_task can be GC'd mid-synthesis.
 _stream_jobs: set[asyncio.Task] = set()
@@ -60,8 +70,31 @@ async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
     """Save a voice-clone reference clip; the returned ref_audio_path is what
     a TtsProfile's voice_mode="clone" stores (see profile_models.py). Persists
     like OmniVoice's pinned reference -- not swept by artifact prune, see
-    ArtifactStore.save_reference_audio."""
-    data = await audio.read()
+    ArtifactStore.save_reference_audio.
+
+    Read in bounded chunks (not a single `await audio.read()`) and the running
+    total checked against _MAX_REFERENCE_AUDIO_BYTES as it grows, rather than
+    trusting the client's Content-Length header -- a lying/absent
+    Content-Length must not be able to force an unbounded in-memory buffer
+    before this route gets a chance to reject the upload (H3, see
+    docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md)."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await audio.read(_UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > _MAX_REFERENCE_AUDIO_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "reference audio exceeds the "
+                    f"{_MAX_REFERENCE_AUDIO_BYTES // (1024 * 1024)}MB limit"
+                ),
+            )
+        chunks.append(chunk)
+    data = b"".join(chunks)
     ref_id, _url = artifact_store.save_reference_audio(data)
     return {"success": True, "data": {"ref_audio_path": str(artifact_store.path_for(ref_id))}}
 
