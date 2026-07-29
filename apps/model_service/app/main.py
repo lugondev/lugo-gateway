@@ -8,6 +8,8 @@ of loading the model in-process.
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -18,6 +20,34 @@ from app.core.errors import EngineNotFoundError, ProviderError
 from model_service.app.config import ConfigError, ServiceConfig, load_config
 
 logger = logging.getLogger(__name__)
+
+_TMP_REF_FILENAME = re.compile(r"^[0-9a-f]{32}\.wav$")
+
+
+def sweep_stale_ref_audio(base_dir: Path) -> int:
+    """Delete temp reference clips left behind by a previous run.
+
+    routes_tts.py writes `<uuid4 hex>.wav` into the artifacts dir (it has to
+    live there to pass TTSRequest's ref_audio_path containment check) and
+    unlinks it in a finally. A crash in between used to be mopped up by the
+    gateway's artifact janitor, which no longer exists -- synthesized audio is
+    never persisted, so there was nothing else left for it to prune. At
+    startup any such file can only be leftovers: a live request holds its own
+    file for the duration of a single call. `ref_*.wav` never matches this
+    pattern and is never touched.
+    """
+    if not base_dir.is_dir():
+        return 0
+    removed = 0
+    for path in base_dir.iterdir():
+        if not _TMP_REF_FILENAME.match(path.name):
+            continue
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def _resolve_provider(config: ServiceConfig):
@@ -46,6 +76,12 @@ def create_app(config: ServiceConfig | None = None, provider=None) -> FastAPI:
         provider = _resolve_provider(config)
 
     app = FastAPI(title=f"model-service ({config.kind}:{config.engine})")
+
+    from app.services.artifacts import artifact_store
+
+    swept = sweep_stale_ref_audio(artifact_store.base_dir)
+    if swept:
+        logger.info("swept %d stale temp reference clip(s) from artifacts dir", swept)
 
     @app.get("/health")
     async def health() -> dict:
