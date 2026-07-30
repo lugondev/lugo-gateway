@@ -63,6 +63,13 @@ curl -X POST http://<server-host>:8000/v1/profiles \
 ```
 
 Then point the device's WS URL at `?profile=kitchen`. Precedence:
+- **Which profile**: a *paired* device (one that completed `/v1/devices/pair/*` and
+  connects with its own `device_token`) can be assigned a profile server-side, from the
+  control panel or `POST /v1/devices/mine/{device_id}/profile`. That assignment WINS: the
+  `?profile=` / wakeup `profile` the device sends is ignored, and the server emits a
+  `warning` naming both so a stale config file on the device is visible rather than
+  silently void. A device with no assignment keeps using the profile it declares itself,
+  exactly as before — nothing changes for fleets deployed before assignments existed.
 - **LLM (model/base_url/api_key/system_prompt) and MCP tool servers**: always come from
   the profile when set — there's no device-side query param for these.
 - **TTS**: the profile's `tts.engine`/`tts.voice` are used if set; otherwise the server-wide
@@ -119,7 +126,16 @@ Manage profiles with `GET /v1/profiles`, `GET/PUT/DELETE /v1/profiles/{name}` �
   - `{"type":"text","text":"…"}` — text input turn (no mic).
   - `{"type":"flush"}` — force end-of-turn now (push-to-talk: send audio, then flush).
   - `{"type":"abort"}` — cancel the current reply.
-  - `{"type":"reset"}` — clear conversation history.
+  - `{"type":"new_session"}` — end this conversation and start a fresh one on the
+    same socket. The server replies with the new `session_id` (see below). Use this,
+    not `reset`, whenever the user asks to start over: a device that keeps one socket
+    open for days otherwise accumulates its entire life into a single conversation —
+    one History entry, an ever-growing LLM context, and memory extraction that never
+    runs (it only runs when a conversation ends).
+  - `{"type":"reset"}` — clear the in-memory conversation context. **Caveat:** it does
+    NOT end the stored session, so messages from before and after a reset stay in the
+    same row with a continuous turn counter. Kept as-is for compatibility; prefer
+    `new_session`.
   - `{"type":"end"}` — finalize and close.
 
 ### Server → device (JSON `{"event": …}`, plus binary frames)

@@ -91,10 +91,13 @@ independent layers close this:
        a code at all. Now sized from `AA_PAIR_CODE_MAX`
        (esp32-assistant/components/pairing/include/pairing.h), pinned by
        test_pairing_logic.c::test_code_buffer_fits_server_code.
-     * Web client (lugo-web-client Devices.tsx) had `6` hardcoded in three
-       places -- the input truncated to 6 digits and the submit button's
-       `code.length !== 6` guard kept it permanently disabled. Now one
-       `PAIR_CODE_LENGTH` const, pinned by Devices.test.tsx.
+     * Web client had `6` hardcoded in three places -- the input truncated
+       to 6 digits and the submit button's `code.length !== 6` guard kept it
+       permanently disabled. Now one `PAIR_CODE_LENGTH` const, exported from
+       lugo-web-client src/api/devices.ts and pinned by
+       src/screens/devices/PairWizard.test.tsx. (The standalone Devices screen
+       that first carried these was replaced by the per-assistant pairing
+       wizard; the const and its regression tests moved with it.)
      * RPi client (rpi-assistant/a2a_client/pairing.py) is length-agnostic
        (passes the string through), no change needed.
    If `_CODE_DIGITS` ever changes again, update `AA_PAIR_CODE_MAX` and

@@ -38,7 +38,9 @@ Identity comes from exactly one of two sources, never both for a single request:
 
 **Requires a logged-in user (any role):** everything under `/ui`, `/static/`,
 `/v1/events`, `/v1/conversation`, `/v1/livehost`, `/v1/profiles`,
-`/v1/mcp`, `/v1/stt`, `/v1/tts`, `/v1/sessions`, `/v1/devices/mine`,
+`/v1/mcp`, `/v1/stt`, `/v1/tts`, `/v1/sessions`, `/v1/devices/mine`
+(including the own-device subresources `POST /v1/devices/mine/{device_id}/revoke`
+and `POST /v1/devices/mine/{device_id}/profile`),
 `/v1/devices/pair/claim`, plus the read-only carve-outs `/v1/model_registry/options`,
 `/v1/model_registry/defaults`, and `/v1/usage/me`.
 
@@ -206,7 +208,15 @@ to defaults (the connection still proceeds).
 Client → server:
 - binary frames — audio input (PCM16, or Opus packets when `audio_codec=opus`).
 - `{"type":"text","text":"…"}` — a text-input turn (no mic).
-- `{"type":"reset"}` clear history · `{"type":"abort"}` cancel turn · `{"type":"end"}` finalize+close.
+- `{"type":"abort"}` cancel turn · `{"type":"end"}` finalize+close.
+- `{"type":"new_session"}` — end this conversation and start a fresh one on the same
+  socket; the server answers `{"event":"session_rotated","session_id":…,"previous_session_id":…}`
+  (`{"type":"session_new", …}` on the Lugo protocol). The old session is marked ended
+  and its memories extracted, exactly as if the socket had closed.
+- `{"type":"reset"}` — clear the in-memory context only. It keeps writing to the SAME
+  stored session, so a reset does not produce a separate History entry and does not
+  trigger memory extraction. Left unchanged for compatibility; new clients should use
+  `new_session`.
 
 **Input audio** (`audio_codec`): `pcm16` (raw 16-bit mono) or `opus` (raw packets, ~10×
 less bandwidth — native for ESP32/RPi firmware + browser WebCodecs; server decodes via
@@ -350,6 +360,7 @@ Client → server:
 | `text` | `{text}` | text-input turn (no mic) |
 | `abort` | `{reason}` | **barge-in** — cancel the bot's in-flight turn; the connection stays open |
 | `listen` | `{state, mode}` | turn/listen control; Phase 1 no-op — server VAD drives turn segmentation in `auto` mode |
+| `new_session` | *(none)* | end this conversation and start a fresh one **without dropping the socket**; answered with `session_new` |
 | *(binary)* | Opus packets | mic audio up (v3 wrapping optional on uplink) |
 
 Server → client:
@@ -361,6 +372,7 @@ Server → client:
 | `tts` | `{state:"start"\|"sentence_start"\|"stop", text?}` | brackets the reply; `sentence_start` carries the sentence text as it's synthesized |
 | `mcp` | `{...}` | tool/command output |
 | `error` | `{message}` | handshake failure or mid-session error |
+| `session_new` | `{session_id, previous_session_id}` | reply to `new_session` — the old conversation is ended and its memories extracted; **persist the new id**, or a reconnect resumes the conversation you just left |
 | `goodbye` | `{reason:"idle_timeout"}` | server-initiated idle disconnect; the socket closes right after |
 | *(binary)* | v3 `type=0` Opus packets | reply audio down |
 
@@ -368,6 +380,15 @@ Server → client:
 (stops the `tts`/audio stream) without dropping the connection — the device can
 immediately start a new turn (`text` or mic audio). `abort` with no active turn is
 a safe no-op.
+
+**New session:** `new_session` ends the current conversation (marks it ended and runs
+memory extraction on it, exactly as a disconnect would) and opens a fresh one under the
+same profile and owner, then replies `session_new`. The audio pipeline is untouched — no
+re-handshake, no engine reload. It is a no-op that returns the same id when the current
+conversation has no turns yet, so pressing a "start over" button twice cannot litter the
+history with empty rows. This matters most for a mains-powered device: it never
+disconnects, so without `new_session` its whole life is one conversation and memory
+extraction (which only runs when a conversation ends) never runs at all.
 
 **Idle timeout:** the server tracks last activity (speech, a turn, or audio
 playing) and, once `idle_timeout_s` elapses with the connection otherwise idle,
