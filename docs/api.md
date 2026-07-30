@@ -407,6 +407,21 @@ sends `goodbye{reason:"idle_timeout"}` and closes the WebSocket. Setting a
 profile's `session.idle_timeout_s` to `0` disables this (the connection is only
 closed by the client or a transport drop).
 
+**Spoken announcements:** two server-initiated moments say so out loud, in the
+profile's own voice, with the tail of the conversation as context — the line is
+written by the profile's LLM per event, not stored anywhere:
+
+- after a rotation nobody has spoken for (a button or a bare `new_session`; the
+  voice-tool path is skipped because the turn that asked already confirmed it), and
+- just before an idle `goodbye`.
+
+Both arrive as an ordinary speaking turn (`tts` start → audio → stop) and are stored
+in the conversation they belong to — the fresh one for a rotation, the one being
+closed for a goodbye. Neither happens when nothing was ever said: an empty
+conversation has no fresh start to announce and no goodbye to say. If the LLM or the
+TTS engine fails, the server stays silent and sends `error` naming the stage, so a
+device can show *why* it said nothing.
+
 **Not yet implemented (Phase 2):** on-device wake-word detection (the `wakeup`
 trigger is button/local-command only in Phase 1), a live `listen{detect}` mode,
 and remote-call (server-initiated wake over an always-on channel). The `listen`

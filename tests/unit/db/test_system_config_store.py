@@ -98,7 +98,9 @@ def test_conversation_tuning_config_has_expected_defaults(tmp_path):
     assert c.conversation_rms_threshold == 0.015
     assert c.conversation_preroll_ms == 600
     assert c.conversation_max_utterance_ms == 30000
-    assert c.conversation_goodbye_text == "Hẹn gặp lại nha!"
+    # The pre-idle farewell is written by the profile's LLM now
+    # (ConversationSession.announce), so the one-phrase-for-everyone setting is gone.
+    assert not hasattr(c, "conversation_goodbye_text")
     assert not hasattr(c, "conversation_stt_engine")
     assert not hasattr(c, "conversation_tts_engine")
     assert c.conversation_fast_stt_engine == ""

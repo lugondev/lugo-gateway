@@ -30,6 +30,7 @@ from app.core.audio import (
 from app.core.errors import AppError
 from app.core.settings import settings
 from app.schemas.tts import TTSRequest
+from app.services.conversation.announce import generate_line
 from app.services.conversation.endpointer import VadEndpointer, barge_in_suppressed
 from app.services.conversation.responder import (
     build_responder_ex,
@@ -866,11 +867,17 @@ class ConversationSession:
     async def abort(self, reason: str) -> None:
         await self._abort_turn(reason)
 
-    async def speak(self, text: str) -> None:
+    async def speak(self, text: str) -> str | None:
         """One-off spoken utterance with no STT/LLM (e.g. an idle farewell):
         synthesize `text` and stream it as a normal speaking turn
         (tts start -> audio -> stop). Best-effort; never raises. Paced in
         real time so a device's small jitter buffer doesn't overflow.
+
+        Returns None when the utterance was spoken OR deliberately skipped (empty
+        text, a session with no audio downlink, over quota), and a short reason
+        string when synthesis genuinely broke. announce() turns that reason into
+        an `error` the client can show: a device that goes quiet because its TTS
+        engine is down should say so on its panel rather than look asleep.
 
         Real provider spend, so it is metered and gated -- but as a SKIP, not a
         refusal: the server initiates this at teardown and nobody is waiting on
@@ -880,10 +887,10 @@ class ConversationSession:
         text = (text or "").strip()
         cfg = self.cfg
         if not text or not cfg.want_audio:
-            return
+            return None
         try:
             if await self._farewell_quota_blocked():
-                return
+                return None
             if cfg.want_text:
                 await self.emit("response_text", turn=self.turn, chunk_index=0, text=text, responder="system")
             request = TTSRequest(
@@ -927,6 +934,64 @@ class ConversationSession:
             await self.emit("turn_done", turn=self.turn)
         except Exception as exc:  # noqa: BLE001 - farewell is best-effort
             logger.warning("speak() failed: %s", exc)
+            return f"tts: {exc}"
+        return None
+
+    async def announce(self, event: str) -> None:
+        """Say one line, in this profile's voice, about something the SERVER just did.
+
+        `new_session` (a conversation was rotated away) and `idle_goodbye` (the
+        connection is about to be dropped) used to be silent or a single phrase from
+        admin config, identical for every profile. The line is written by the
+        profile's own LLM with the tail of the conversation as context -- see
+        announce.py for the prompt.
+
+        On failure it stays silent and emits `error` naming the stage that broke, so a
+        device shows WHY it went quiet (its panel renders `error` already) instead of
+        looking asleep. No built-in phrase to fall back on: that would be the
+        hardcoded sentence this replaces, one layer down."""
+        if self.responder is None or self.tts_provider is None or not self.cfg.want_audio:
+            return  # nothing to speak with, or nothing to speak into
+
+        # Real LLM spend on a line nobody asked for, so: gated before, metered after.
+        # Over quota it SKIPS silently rather than erroring, exactly as speak() does
+        # for the TTS half -- reporting a failure for work the user never requested
+        # would be noise on their display.
+        blocked, _message = await llm_turn_quota_blocked(
+            identity_user_id=self.cfg.identity_user_id,
+            profile=self.profile,
+            profile_name=self.cfg.profile_name,
+        )
+        if blocked:
+            logger.warning("announce %s skipped: llm quota", event)
+            return
+        try:
+            line = await generate_line(
+                responder=self.responder,
+                persona=self.base_system_prompt,
+                history=self.history,
+                language=self.cfg.language,
+                event=event,
+            )
+        except Exception as exc:  # noqa: BLE001 - self-initiated; report, never raise
+            logger.warning("announce %s: line generation failed: %s", event, exc)
+            await self.emit("error", message=f"llm: could not write the {event} line: {exc}")
+            return
+        finally:
+            # In the finally, not after: a call that spent tokens and then failed on
+            # a malformed answer still spent them.
+            if getattr(self.responder, "last_usage", None):
+                await self._record_llm_usage()
+
+        # Persisted BEFORE speaking, and to whichever session is current: for
+        # new_session that is the fresh row (this is its first utterance), for
+        # idle_goodbye the row about to be ended.
+        self.history.append({"role": "assistant", "content": line})
+        await self._persist("assistant", line)
+
+        failure = await self.speak(line)
+        if failure:
+            await self.emit("error", message=f"{failure} (the {event} line went unspoken)")
 
     async def reset(self) -> None:
         """Clear the in-memory conversation context, keeping the SAME session row.
@@ -967,7 +1032,10 @@ class ConversationSession:
             # conversation they asked for rather than silently back in the old.
             self.current_turn.add_done_callback(self._rotate_when_turn_ends)
             return
-        await self.rotate(reason)
+        # announce: nobody has said anything about this rotation. The deferred
+        # branch above is the voice path, where the turn that asked confirmed it
+        # already -- see _rotate_when_turn_ends.
+        await self.rotate(reason, announce=True)
 
     def _rotate_when_turn_ends(self, task: asyncio.Task) -> None:
         """done-callback for the turn a rotation is parked behind.
@@ -998,7 +1066,7 @@ class ConversationSession:
         except Exception as exc:  # noqa: BLE001 - detached; must not vanish silently
             logger.warning("deferred rotate failed for %s: %s", self.cfg.session_id, exc)
 
-    async def rotate(self, reason: str = "client") -> None:
+    async def rotate(self, reason: str = "client", announce: bool = False) -> None:
         """End the current conversation and start a fresh one on the same connection.
 
         session_id is otherwise fixed for the lifetime of a WebSocket, which is
@@ -1014,11 +1082,23 @@ class ConversationSession:
 
         A session with nothing in it rotates to itself: pressing the button twice
         must not litter the History with empty rows.
+
+        `announce` speaks a line about the fresh start (see announce()). Off by
+        default: the caller decides, because on the voice path the model has already
+        said it and saying it twice is worse than not saying it at all. It is also
+        ignored when this rotation was the empty-session no-op -- nothing ended, so
+        there is nothing to announce.
         """
         async with self._rotate_lock:
-            await self._rotate_locked(reason)
+            rotated = await self._rotate_locked(reason)
+        if announce and rotated:
+            # Outside the lock and after session_rotated: the line belongs to the new
+            # conversation, and a slow LLM must not hold up a second rotation.
+            await self.announce("new_session")
 
-    async def _rotate_locked(self, reason: str) -> None:
+    async def _rotate_locked(self, reason: str) -> bool:
+        """Returns whether a new session was actually minted (False for the
+        empty-session no-op)."""
         await self._abort_turn("rotate")
 
         previous_id = self.cfg.session_id
@@ -1026,7 +1106,8 @@ class ConversationSession:
         # persisted under this id. session_ready False means the row does not
         # exist at all (its creation failed in start()), and minting a second one
         # would just fail the same way.
-        if self.turn > 0 and self.session_ready:
+        rotated = self.turn > 0 and self.session_ready
+        if rotated:
             try:
                 await session_store.mark_ended(previous_id)
             except Exception as exc:  # noqa: BLE001 - rotation must not kill the connection
@@ -1068,6 +1149,7 @@ class ConversationSession:
             previous_session_id=previous_id,
             reason=reason,
         )
+        return rotated
 
     async def flush(self) -> None:
         audio = self.endpointer.flush()

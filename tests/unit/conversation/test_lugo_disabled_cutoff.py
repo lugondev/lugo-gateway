@@ -26,18 +26,16 @@ class _StubSTT(STTProvider):
 
 @pytest.fixture(autouse=True)
 def _hermetic(monkeypatch, tmp_path):
-    # default_stt_engine lives on system_config_store's `engines` group;
-    # conversation_goodbye_text lives on its `conversation` group -- neither is
-    # on Settings. Patch the shared singleton's .get() (not .set()) so this
-    # never writes through to the shared config_system DB row (see
-    # conftest.py's _hermetic for why).
+    # default_stt_engine lives on system_config_store's `engines` group, not on
+    # Settings. Patch the shared singleton's .get() (not .set()) so this never
+    # writes through to the shared config_system DB row (see conftest.py's
+    # _hermetic for why).
     _real_get = system_config_store.get
 
     def _get_with_stub_conversation():
         cfg = _real_get()
         return cfg.model_copy(update={
             "engines": cfg.engines.model_copy(update={"default_stt_engine": "stub-lugo-cutoff-stt"}),
-            "conversation": cfg.conversation.model_copy(update={"conversation_goodbye_text": ""}),
         })
 
     monkeypatch.setattr(system_config_store, "get", _get_with_stub_conversation)

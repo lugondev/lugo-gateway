@@ -193,12 +193,12 @@ class ConversationTuningConfig(BaseModel):
         description="Number of Opus frames buffered client-side before playback starts.",
         json_schema_extra={"subgroup": "TTS & Audio"},
     )
-    conversation_goodbye_text: str = Field(
-        default="Hẹn gặp lại nha!",
-        title="Goodbye phrase",
-        description="Spoken when a conversation ends gracefully (e.g. user says goodbye).",
-        json_schema_extra={"subgroup": "Language & Prompt"},
-    )
+    # No goodbye phrase here any more: the pre-idle farewell is written by the
+    # profile's own LLM from the conversation that is ending
+    # (ConversationSession.announce), so one shared sentence for every persona was
+    # the wrong shape. Rows stored before this was removed keep loading -- unknown
+    # keys are ignored (see ConversationSettings' extra policy and
+    # test_system_config_store).
     conversation_language: str = Field(
         default="vi",
         title="Conversation language",

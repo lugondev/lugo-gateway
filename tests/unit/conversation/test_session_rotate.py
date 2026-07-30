@@ -100,6 +100,21 @@ def _await_type(ws, wanted: str) -> dict:
     raise AssertionError(f"never saw {wanted}")
 
 
+def _drain_announcement(ws) -> None:
+    """A rotation nobody spoke for is followed by a spoken "fresh start" line
+    (ConversationSession.announce). Drain its tts start/stop, or the next turn's
+    drain loop returns on THIS utterance's stop and closes the socket while that
+    turn is still running."""
+    for _ in range(40):
+        message = ws.receive()
+        if message.get("bytes") is not None:
+            continue
+        m = json.loads(message["text"])
+        if m["type"] == "tts" and m.get("state") == "stop":
+            return
+    raise AssertionError("the rotation announcement never finished")
+
+
 def _row(session_id: str) -> dict | None:
     return asyncio.run(session_store.get(session_id))
 
@@ -150,6 +165,7 @@ def test_conversations_do_not_bleed_across_a_rotation():
         _one_turn(ws, "first conversation")
         ws.send_json({"type": "new_session"})
         second = _await_type(ws, "session_new")["session_id"]
+        _drain_announcement(ws)
         _one_turn(ws, "second conversation")
 
     before = _messages(first)
@@ -158,8 +174,12 @@ def test_conversations_do_not_bleed_across_a_rotation():
     assert "first conversation" in json.dumps(before)
     assert "first conversation" not in json.dumps(after)
     # Turn numbering restarts, so the new conversation reads as turn 1 rather
-    # than continuing a counter the user has no way to see.
-    assert min(m["turn"] for m in after) == 1
+    # than continuing a counter the user has no way to see. The spoken "fresh
+    # start" line (ConversationSession.announce) sits at turn 0: it belongs to no
+    # exchange, having been said before the user's first word.
+    exchanges = [m for m in after if m["turn"] > 0]
+    assert exchanges, f"only the announcement was stored: {after}"
+    assert min(m["turn"] for m in exchanges) == 1
 
 
 def test_rotating_an_empty_session_is_a_no_op():

@@ -17,7 +17,7 @@ class _StubSTT(STTProvider):
 
 def _patch_conversation(monkeypatch, *, stt_engine=None, tts_engine=None, **overrides):
     """default_stt_engine/default_tts_engine live on system_config_store's
-    `engines` group; everything else here (e.g. conversation_goodbye_text)
+    `engines` group; everything else here (e.g. conversation_silence_ms)
     lives on its `conversation` group -- neither is on Settings. Patch the
     shared singleton's .get() (not .set()) so this never writes through to the
     shared config_system DB row (see conftest.py's _hermetic for why). Wraps
@@ -52,9 +52,10 @@ def _local_hermetic(monkeypatch, tmp_path):
     # Named distinctly from conftest.py's `_hermetic` so both autouse fixtures
     # run (a same-named fixture here would shadow, not compose with, the
     # global one -- see conftest.py's _hermetic for what that one handles).
-    # Default: no spoken farewell (tests that want it opt in). Keeps the plain
-    # idle tests from depending on a TTS provider.
-    _patch_conversation(monkeypatch, stt_engine="stub-idle-stt", conversation_goodbye_text="")
+    # No TTS engine is patched in here, so ConversationSession.announce finds no
+    # provider and the pre-idle farewell is skipped: the plain idle tests stay about
+    # timing, not about speech. The test that wants the farewell opts in below.
+    _patch_conversation(monkeypatch, stt_engine="stub-idle-stt")
     stt_service.providers["stub-idle-stt"] = _StubSTT()
     fresh = ProfileStore(str(tmp_path / "profiles.json"))
     fresh.upsert(Profile(name="fast", session=SessionConfig(idle_timeout_s=1)))
@@ -147,7 +148,10 @@ def test_idle_countdown_starts_after_the_bot_finishes(monkeypatch):
 
 def test_idle_speaks_farewell_before_goodbye(monkeypatch):
     """On idle timeout the bot says a spoken farewell (TTS) right before the
-    goodbye/disconnect."""
+    goodbye/disconnect -- and the words come from the profile's LLM, not from a
+    phrase stored in config. generate_line is stubbed so the assertion is about the
+    wiring (announce -> speak -> wire) rather than about what a model felt like
+    saying."""
     import json as _json
     from app.core.audio import pcm16_to_wav_bytes
     from app.services.tts.base import TTSProvider
@@ -160,13 +164,30 @@ def test_idle_speaks_farewell_before_goodbye(monkeypatch):
             wav = pcm16_to_wav_bytes(b"\x00\x00" * 2400, sample_rate=24000)
             return wav, "audio/wav"
 
-    _patch_conversation(monkeypatch, tts_engine="stub-fw-tts", conversation_goodbye_text="Tạm biệt nha")
+    seen_events: list[str] = []
+
+    async def _fake_generate_line(*, responder, persona, history, language, event):
+        seen_events.append(event)
+        return "Tạm biệt nha, hẹn gặp lại"
+
+    _patch_conversation(monkeypatch, tts_engine="stub-fw-tts")
+    monkeypatch.setattr("app.services.conversation.session.generate_line", _fake_generate_line)
     tts_service.providers["stub-fw-tts"] = _FarewellTTS()
     try:
         with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
             ws.send_json({"type": "wakeup", "profile": "fast",
                           "audio_params": {"format": "opus", "sample_rate": 16000}})
             assert ws.receive_json()["type"] == "welcome"
+            # One real exchange first: there is no farewell for a conversation that
+            # never happened (see the watchdog's session.turn check).
+            ws.send_json({"type": "text", "text": "chào Lugo"})
+            for _ in range(60):
+                m = ws.receive()
+                if m.get("bytes") is not None:
+                    continue
+                d = _json.loads(m["text"])
+                if d.get("type") == "tts" and d.get("state") == "stop":
+                    break
             saw_farewell = False
             for _ in range(60):
                 m = ws.receive()
@@ -179,5 +200,6 @@ def test_idle_speaks_farewell_before_goodbye(monkeypatch):
                     break
             assert d["type"] == "goodbye" and d["reason"] == "idle_timeout"
             assert saw_farewell, "no spoken farewell was sent before the idle goodbye"
+            assert seen_events == ["idle_goodbye"]
     finally:
         tts_service.providers.pop("stub-fw-tts", None)

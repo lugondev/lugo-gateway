@@ -145,6 +145,14 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         2, "metered+gated", "conversation core LLM, tool and plain paths",
         "tests/unit/conversation/test_session_usage_metering.py",
     ),
+    ("services/conversation/announce.py", "reply"): (
+        1, "metered+gated",
+        "the server-initiated spoken line for a rotation or a pre-idle goodbye; "
+        "ConversationSession.announce gates on llm_turn_quota_blocked before "
+        "calling it and records the row from responder.last_usage after, "
+        "including when the call spent tokens and then failed",
+        "tests/unit/conversation/test_session_announce.py",
+    ),
     ("services/memory/extractor.py", "embed_texts_with_usage"): (
         1, "metered+gated", "memory fact embedding at session teardown",
         "tests/unit/memory/test_memory_usage_metering.py",
