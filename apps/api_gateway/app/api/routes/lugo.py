@@ -26,6 +26,7 @@ from app.services.conversation.tools.device_mcp import (
     DeviceMcpToolSource, DeviceMcpTransport, discover_device_tools,
 )
 from app.services.health import check_resolved_engines
+from app.services.auth.device_profile import resolve_bound_profile
 from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
@@ -112,13 +113,33 @@ async def lugo_stream(websocket: WebSocket) -> None:
         return
 
     profile_name = hello.get("profile")
+    # Same rule as conversation.py's stream: a paired device's server-side
+    # binding outranks the profile its own config declared in the wakeup, and an
+    # unbound device is left exactly as it was so existing fleets keep working.
+    profile_name, binding_warning, from_binding = await resolve_bound_profile(
+        identity, profile_name
+    )
+    if binding_warning:
+        await websocket.send_json({"type": "warning", "message": binding_warning})
     profile, stt_engine, language, stt_model, tts, idle = _resolve(
         profile_name, identity.user_id, bypass=identity.unauthenticated
     )
     if profile_name and not profile:
-        await websocket.send_json({"type": "error", "message": f"profile '{profile_name}' not found"})
-        await websocket.close()
-        return
+        if from_binding:
+            # The SERVER chose this name, so an unresolvable one is our stale
+            # state, not the caller's mistake -- closing here would brick a
+            # speaker over a soft setting. Warn and run on defaults instead.
+            await websocket.send_json({
+                "type": "warning",
+                "message": f"assigned profile '{profile_name}' is unavailable, using defaults",
+            })
+            profile_name = None
+        else:
+            await websocket.send_json(
+                {"type": "error", "message": f"profile '{profile_name}' not found"}
+            )
+            await websocket.close()
+            return
 
     requested_sid = hello.get("session_id")
     if not isinstance(requested_sid, str) or not requested_sid:

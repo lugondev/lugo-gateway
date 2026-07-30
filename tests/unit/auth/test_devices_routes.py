@@ -115,3 +115,143 @@ def test_list_my_devices_without_session_returns_401_not_500(client):
 def test_revoke_my_device_without_session_returns_401_not_500(client):
     resp = client.post("/v1/devices/mine/some-id/revoke")
     assert resp.status_code == 401
+
+
+@pytest.fixture
+def profiles(tmp_path, monkeypatch):
+    """Fresh ProfileStore for binding tests.
+
+    Same shape as tests/unit/memory/test_memory_ownership.py: profile_store is a
+    module-level singleton whose in-memory cache would otherwise ignore the
+    per-test file, and devices.py binds the name at import time, so patching the
+    services module alone would leave the route holding the stale singleton."""
+    from app.services.profiles.models import Profile
+    from app.services.profiles.store import ProfileStore
+
+    fresh = ProfileStore(str(tmp_path / "profiles.json"))
+    monkeypatch.setattr("app.api.routes.devices.profile_store", fresh)
+    monkeypatch.setattr("app.api.routes.profiles.profile_store", fresh)
+    monkeypatch.setattr("app.services.profiles.store.profile_store", fresh)
+
+    def make(name: str, owner_id: str | None) -> Profile:
+        profile = Profile(name=name, owner_id=owner_id)
+        fresh.upsert(profile)
+        return profile
+
+    fresh.make = make
+    return fresh
+
+
+def _pair(client, serial: str, name: str, profile_id: str | None = None):
+    init = client.post("/v1/devices/pair/init", json={"serial": serial}).json()["data"]
+    body = {"code": init["code"], "name": name}
+    if profile_id is not None:
+        body["profile_id"] = profile_id
+    return client.post("/v1/devices/pair/claim", json=body)
+
+
+async def _user_id(username: str) -> str:
+    from app.services.auth.users import user_store
+
+    user = await user_store.get_by_username(username)
+    return user.id
+
+
+def test_pair_claim_binds_the_profile_in_one_step(client, _logged_in_user, profiles):
+    import asyncio
+
+    profiles.make("kitchen", asyncio.run(_user_id("toan")))
+    resp = _pair(client, "S1", "kitchen speaker", profile_id="kitchen")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["profile_id"] == "kitchen"
+    assert client.get("/v1/devices/mine").json()["data"][0]["profile_id"] == "kitchen"
+
+
+def test_pair_claim_without_a_profile_stays_unassigned(client, _logged_in_user, profiles):
+    """Older clients don't send the field at all; they must keep working."""
+    resp = _pair(client, "S1", "loose speaker")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["profile_id"] == ""
+
+
+def test_pair_claim_refuses_a_profile_the_user_cannot_see(client, _logged_in_user, profiles):
+    """C2: binding to someone else's private profile would hand this user that
+    profile's llm.api_key and system_prompt on the device's next connect."""
+    profiles.make("victim-private", "someone-else-id")
+    hidden = _pair(client, "S1", "sneaky", profile_id="victim-private")
+    missing = _pair(client, "S2", "sneaky", profile_id="no-such")
+    assert hidden.status_code == 404
+    # No enumeration oracle: "exists but is someone else's" and "doesn't exist"
+    # produce the same status and the same message shape. The names differ only
+    # because each response echoes the name the CALLER sent, which tells them
+    # nothing they didn't already know.
+    assert hidden.status_code == missing.status_code
+    assert hidden.json()["detail"] == "profile 'victim-private' not found"
+    assert missing.json()["detail"] == "profile 'no-such' not found"
+
+
+def test_assign_moves_a_device_between_profiles_without_repairing(client, _logged_in_user, profiles):
+    import asyncio
+
+    owner = asyncio.run(_user_id("toan"))
+    profiles.make("kitchen", owner)
+    profiles.make("study", owner)
+    device_id = _pair(client, "S1", "speaker", profile_id="kitchen").json()["data"]["id"]
+
+    resp = client.post(f"/v1/devices/mine/{device_id}/profile", json={"profile_id": "study"})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["profile_id"] == "study"
+    assert client.get("/v1/devices/mine").json()["data"][0]["profile_id"] == "study"
+
+    # Unassign.
+    resp = client.post(f"/v1/devices/mine/{device_id}/profile", json={"profile_id": ""})
+    assert resp.status_code == 200
+    assert client.get("/v1/devices/mine").json()["data"][0]["profile_id"] == ""
+
+
+def test_assign_refuses_another_users_device(client, profiles):
+    client.post("/api/auth/signup", json={"username": "a", "password": "pw"})
+    client.post("/api/auth/signup", json={"username": "b", "password": "pw"})
+    client.post("/api/auth/login", json={"username": "a", "password": "pw"})
+    profiles.make("shared-template", None)
+    device_id = _pair(client, "S1", "a-speaker").json()["data"]["id"]
+
+    client.post("/api/auth/login", json={"username": "b", "password": "pw"})
+    resp = client.post(
+        f"/v1/devices/mine/{device_id}/profile", json={"profile_id": "shared-template"}
+    )
+    assert resp.status_code == 404
+
+
+def test_assign_refuses_a_profile_the_user_cannot_see(client, _logged_in_user, profiles):
+    profiles.make("victim-private", "someone-else-id")
+    device_id = _pair(client, "S1", "speaker").json()["data"]["id"]
+    resp = client.post(
+        f"/v1/devices/mine/{device_id}/profile", json={"profile_id": "victim-private"}
+    )
+    assert resp.status_code == 404
+    assert client.get("/v1/devices/mine").json()["data"][0]["profile_id"] == ""
+
+
+def test_assign_without_session_returns_401_not_500(client):
+    resp = client.post("/v1/devices/mine/some-id/profile", json={"profile_id": "x"})
+    assert resp.status_code == 401
+
+
+def test_deleting_a_profile_unassigns_its_devices_without_revoking_them(
+    client, _logged_in_user, profiles
+):
+    import asyncio
+
+    profiles.make("kitchen", asyncio.run(_user_id("toan")))
+    _pair(client, "S1", "speaker", profile_id="kitchen")
+
+    resp = client.delete("/v1/profiles/kitchen")
+    assert resp.status_code == 200
+    assert resp.json()["data"]["devices_unassigned"] == 1
+
+    device = client.get("/v1/devices/mine").json()["data"][0]
+    assert device["profile_id"] == ""
+    # The pairing token is hardware identity: losing an assistant must not cost
+    # the user a trip to the device.
+    assert device["revoked"] is False

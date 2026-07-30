@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 from starlette._utils import get_route_path
 from starlette.requests import Request
 
-from app.core.auth_guard import _classify, _hostile_target, _is_own_device_revoke
+from app.core.auth_guard import _classify, _hostile_target, _is_own_device_action
 from app.core.settings import settings
 from app.main import app
 
@@ -120,12 +120,30 @@ def test_own_device_revoke_subpath_stays_user():
     assert _classify("/v1/devices", "GET") == "admin"
 
 
-def test_is_own_device_revoke_shape():
-    assert _is_own_device_revoke("/v1/devices/mine/abc/revoke") is True
-    assert _is_own_device_revoke("/v1/devices/mine/revoke") is False  # the attack
-    assert _is_own_device_revoke("/v1/devices/mine") is False
-    assert _is_own_device_revoke("/v1/devices/x/revoke") is False
-    assert _is_own_device_revoke("/v1/devices/mine//revoke") is False
+def test_is_own_device_action_shape():
+    assert _is_own_device_action("/v1/devices/mine/abc/revoke") is True
+    assert _is_own_device_action("/v1/devices/mine/abc/profile") is True
+    assert _is_own_device_action("/v1/devices/mine/revoke") is False  # the attack
+    assert _is_own_device_action("/v1/devices/mine/profile") is False  # same attack shape
+    assert _is_own_device_action("/v1/devices/mine") is False
+    assert _is_own_device_action("/v1/devices/x/revoke") is False
+    assert _is_own_device_action("/v1/devices/mine//revoke") is False
+
+
+def test_own_device_action_list_is_an_allowlist():
+    """An action NOT named in _OWN_DEVICE_ACTIONS gets no carve-out, so a future
+    route under /v1/devices/mine/{id}/ cannot inherit user access by accident --
+    it has to be added deliberately. Unmatched paths fall through to the
+    /v1/devices ADMIN prefix, which is the safe direction to fail."""
+    assert _is_own_device_action("/v1/devices/mine/abc/rename") is False
+    assert _classify("/v1/devices/mine/abc/rename", "POST") == "admin"
+
+
+def test_own_device_profile_subpath_is_user_and_post_only():
+    assert _classify("/v1/devices/mine/dev-123/profile", "POST") == "user"
+    # Any other method on that path is not carved out; /v1/devices is an admin
+    # prefix, so it must land on the admin rule rather than sliding through.
+    assert _classify("/v1/devices/mine/dev-123/profile", "DELETE") == "admin"
 
 
 def test_model_registry_options_is_method_aware():
