@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
@@ -186,6 +187,81 @@ def test_idle_countdown_starts_after_the_bot_finishes(monkeypatch):
             assert gap >= 0.6, f"idle fired {gap:.2f}s after the bot finished (think time was counted)"
     finally:
         tts_service.providers.pop("stub-slow-tts", None)
+
+
+def test_the_farewell_survives_a_device_that_keeps_streaming(monkeypatch):
+    """The failure the speaker actually had: goodbye never heard, idle straight away.
+
+    `closing` is set BEFORE the farewell is written and spoken. The receive loop
+    treated that flag as "tear down now", and an always-listening device streams
+    mic frames continuously -- so `recv` completed the instant the flag was set and
+    the socket closed mid-farewell. With nothing uplinking (a test client, a browser
+    on mute) the loop stayed parked in asyncio.wait and the farewell was audible,
+    which is exactly why this hid from every check that did not stream.
+    """
+    import json as _json
+    import time as _time
+    from app.core.audio import pcm16_to_wav_bytes
+    from app.services.tts.base import TTSProvider
+    from app.services.tts.service import tts_service
+
+    class _FarewellTTS(TTSProvider):
+        name = "stub-stream-fw-tts"
+
+        async def render_audio(self, payload) -> tuple[bytes, str]:
+            return pcm16_to_wav_bytes(b"\x00\x00" * 2400, sample_rate=24000), "audio/wav"
+
+    async def _fake_generate_line(*, responder, persona, history, language, event):
+        await asyncio.sleep(0.3)   # an LLM call is not instant; that is the window
+        return "Bạn im lặng rồi, mình tạm biệt nhé"
+
+    _patch_conversation(monkeypatch, tts_engine="stub-stream-fw-tts",
+                        conversation_farewell_drain_s=0.2)
+    monkeypatch.setattr("app.services.conversation.session.generate_line", _fake_generate_line)
+    tts_service.providers["stub-stream-fw-tts"] = _FarewellTTS()
+    silence = b"\x00" * 40
+    try:
+        with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+            ws.send_json({"type": "wakeup", "profile": "fast",
+                          "audio_params": {"format": "opus", "sample_rate": 16000}})
+            assert ws.receive_json()["type"] == "welcome"
+            ws.send_json({"type": "text", "text": "chào Lugo"})
+            for _ in range(60):
+                m = ws.receive()
+                if m.get("bytes") is not None:
+                    continue
+                d = _json.loads(m["text"])
+                if d.get("type") == "tts" and d.get("state") == "stop":
+                    break
+
+            # Keep the uplink alive across the idle mark (profile idle is 1s), the
+            # way a device with an open mic does.
+            deadline = _time.monotonic() + 2.0
+            while _time.monotonic() < deadline:
+                ws.send_bytes(silence)
+                _time.sleep(0.05)
+
+            saw_farewell = False
+            saw_goodbye = False
+            for _ in range(80):
+                m = ws.receive()
+                if m.get("bytes") is not None:
+                    continue
+                if "text" not in m:
+                    break            # socket closed on us; assertions below say why
+                d = _json.loads(m["text"])
+                if d.get("type") == "tts" and d.get("text") and "tạm biệt" in d["text"]:
+                    saw_farewell = True
+                if d.get("type") == "goodbye":
+                    saw_goodbye = d["reason"] == "idle_timeout"
+                    break
+            assert saw_farewell, (
+                "the connection closed before the farewell was spoken -- a streaming "
+                "device tore the socket down through the `closing` flag"
+            )
+            assert saw_goodbye, "no idle goodbye followed the farewell"
+    finally:
+        tts_service.providers.pop("stub-stream-fw-tts", None)
 
 
 def test_idle_speaks_farewell_before_goodbye(monkeypatch):

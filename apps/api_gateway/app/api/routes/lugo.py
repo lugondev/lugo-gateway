@@ -44,6 +44,12 @@ _IDLE_TICK_S = 1.0
 # is cut off even mid-turn.
 _IDENTITY_RECHECK_INTERVAL_S = 30.0
 
+# Ceiling on how long the receive loop waits for the watchdog's farewell (LLM +
+# synthesis + paced audio + drain) before closing regardless. Generous, because
+# cutting the goodbye off is the bug being fixed; bounded, because a hung engine
+# must not pin the socket open.
+_FAREWELL_BUDGET_S = 45.0
+
 def _resolve(profile_name: str | None, caller_id: str | None = None, *, bypass: bool = False):
     """Resolve engines/tts params from a profile (server owns everything).
 
@@ -391,12 +397,27 @@ async def lugo_stream(websocket: WebSocket) -> None:
             waitables = {recv, wd} if wd is not None else {recv}
             done, _pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED)
             if closing:
-                # Watchdog has already committed to (or sent) goodbye; do not
-                # process or emit on this connection even if `recv` also
-                # completed concurrently with the goodbye send.
+                # Watchdog has committed to closing; stop reading this connection.
                 recv.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await recv
+                # ...but do NOT tear the socket down yet: `closing` is set BEFORE
+                # the farewell is written and spoken (an LLM call, synthesis, and
+                # seconds of paced audio). Breaking straight to the `finally`
+                # closed the WebSocket mid-sentence, and on an always-listening
+                # device it did so instantly -- a device streams mic frames
+                # continuously, so `recv` completes the moment this flag is set.
+                # That is why the farewell was audible when nothing was uplinking
+                # and never audible from the speaker.
+                if wd is not None and not wd.done():
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(wd), timeout=_FAREWELL_BUDGET_S
+                        )
+                    except asyncio.TimeoutError:
+                        # A hung LLM/TTS must not hold the socket open forever.
+                        logger.warning("farewell did not finish in %ss; closing anyway",
+                                       _FAREWELL_BUDGET_S)
                 break
             if wd is not None and wd in done:
                 recv.cancel()
