@@ -3,13 +3,15 @@
 Skipped when libopus/opuslib is unavailable (e.g. CI without the system lib).
 """
 
+import json
+
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.audio import pcm16_to_wav_bytes
 from app.main import app
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
 from app.services.profiles.models import Profile, SttConfig
 from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
@@ -50,11 +52,9 @@ class _StubSTT(STTProvider):
 class _StubTTS(TTSProvider):
     name = "stub-opus-tts"
 
-    async def synthesize(self, payload) -> TTSResult:
-        return TTSResult(
-            engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
-            duration_seconds=0.1, text=payload.text,
-        )
+    async def render_audio(self, payload) -> tuple[bytes, str]:
+        n = int(24000 * 100 / 1000)  # 100ms of silence
+        return pcm16_to_wav_bytes(b"\x00\x00" * n, sample_rate=24000), "audio/wav"
 
 
 @pytest.fixture(autouse=True)
@@ -119,8 +119,15 @@ def test_conversation_opus_transport_turn(_stub):
             ws.send_bytes(f)
 
         events = []
-        for _ in range(40):
-            ev = ws.receive_json()
+        # 40 bounds JSON events only -- a skipped binary WAV frame (audio_out
+        # defaults to wav here; this test only pins audio_codec=opus for the
+        # UPLINK) must not burn out of the same budget as the JSON events
+        # this loop is actually waiting on.
+        while len(events) < 40:
+            msg = ws.receive()
+            if msg.get("bytes") is not None:
+                continue  # reply audio binary frame
+            ev = json.loads(msg["text"])
             events.append(ev["event"])
             if ev["event"] == "turn_done":
                 break

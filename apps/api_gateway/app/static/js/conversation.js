@@ -3,7 +3,7 @@ import { STREAM_SAMPLE_RATE, createMicCapture } from "./audio-capture.js";
 import { currentSessionId, setCurrentSessionId, chatMode } from "./chat.js";
 import { profileData } from "./profiles.js";
 
-export const conv = { ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null, assistantBubble: null, opusMode: false, opusDec: null, opusTs: 0, outRate: 24000 };
+export const conv = { ws: null, capture: null, log: [], ctx: null, nextTime: 0, sources: [], chain: null, assistantBubble: null, opusMode: false, opusDec: null, opusTs: 0, outRate: 24000, outCodec: "wav", audioGen: 0 };
 
 export function setConvStatus(text, state) {
   const node = el("conv-status");
@@ -32,6 +32,7 @@ export function convIsSpeaking() {
   return !!conv.ctx && (conv.nextTime || 0) > conv.ctx.currentTime + 0.15;
 }
 export function convStopAudio() {
+  conv.audioGen = (conv.audioGen || 0) + 1; // invalidate any in-flight convEnqueueAudioBytes decode
   (conv.sources || []).forEach((s) => {
     try {
       s.stop();
@@ -44,33 +45,6 @@ export function convStopAudio() {
 }
 // Gapless playback: decode each chunk and schedule it back-to-back on the audio
 // timeline (no <audio> src-swap gaps, no queue underrun between sentences).
-export function convEnqueueAudio(url) {
-  conv.chain = (conv.chain || Promise.resolve())
-    .then(async () => {
-      const ctx = convAudioCtx();
-      if (ctx.state === "suspended") await ctx.resume();
-      const data = await (await fetch(url)).arrayBuffer();
-      const buf = await ctx.decodeAudioData(data);
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      src.connect(ctx.destination);
-      const start = Math.max(ctx.currentTime + 0.05, conv.nextTime || 0);
-      src.start(start);
-      conv.nextTime = start + buf.duration;
-      conv.sources.push(src);
-      src.onended = () => {
-        conv.sources = conv.sources.filter((s) => s !== src);
-      };
-    })
-    .catch((e) => convLog("audio error: " + e));
-}
-
-// ---- Opus downlink (WebCodecs): decode streamed Opus frames in-browser ----
-// Same gapless scheduling as convEnqueueAudio, but the audio arrives as raw 60ms
-// Opus packets (binary WS frames) decoded by AudioDecoder instead of fetched WAVs.
-export function convOpusSupported() {
-  return typeof window.AudioDecoder === "function" && typeof window.EncodedAudioChunk === "function";
-}
 export function convScheduleBuffer(buf) {
   const ctx = convAudioCtx();
   const src = ctx.createBufferSource();
@@ -83,6 +57,32 @@ export function convScheduleBuffer(buf) {
   src.onended = () => {
     conv.sources = conv.sources.filter((s) => s !== src);
   };
+}
+// Reply audio arrives as one complete WAV/MP3 per sentence on a binary frame.
+// A decode can still be in flight when convStopAudio() runs (barge-in);
+// conv.audioGen (bumped there) is checked after the awaited decode so a
+// stale sentence never gets scheduled after the interrupt -- the Opus path
+// gets the same guarantee for free from convResetOpus() tearing down the
+// decoder outright.
+export function convEnqueueAudioBytes(bytes) {
+  const gen = conv.audioGen;
+  conv.chain = (conv.chain || Promise.resolve())
+    .then(async () => {
+      const ctx = convAudioCtx();
+      if (ctx.state === "suspended") await ctx.resume();
+      const buf = await ctx.decodeAudioData(bytes);
+      if (gen !== conv.audioGen) return; // superseded by a barge-in/reset while decoding
+      convScheduleBuffer(buf);
+    })
+    .catch((e) => convLog("audio error: " + e));
+}
+
+// ---- Opus downlink (WebCodecs): decode streamed Opus frames in-browser ----
+// Same gapless scheduling as convEnqueueAudioBytes, but the audio arrives as
+// raw 60ms Opus packets (binary WS frames) decoded by AudioDecoder instead of
+// a full WAV/MP3 container.
+export function convOpusSupported() {
+  return typeof window.AudioDecoder === "function" && typeof window.EncodedAudioChunk === "function";
 }
 export function convInitOpusDecoder() {
   if (conv.opusDec) {
@@ -272,6 +272,7 @@ export async function startConversation() {
   setConvUI("starting");
   convStopAudio();
   conv.assistantBubble = null;
+  conv.outCodec = "wav"; // re-announced by the first audio_start of the new session
   el("chat-dialogue").innerHTML = "";
   conv.log = [];
   el("conv-log").textContent = "";
@@ -305,10 +306,10 @@ export async function startConversation() {
   if (currentSessionId) params += `&session_id=${encodeURIComponent(currentSessionId)}`;
 
   // Opus downlink: stream reply audio as Opus frames decoded in-browser (WebCodecs).
-  // Falls back to the default URL/WAV path if unchecked or unsupported.
+  // Falls back to one-WAV-per-sentence binary frames if unchecked or unsupported.
   conv.opusMode = !!el("conv-opus")?.checked && convOpusSupported();
   if (el("conv-opus")?.checked && !conv.opusMode) {
-    convLog("Opus downlink unsupported in this browser — using WAV/URL.");
+    convLog("Opus downlink unsupported in this browser — using WAV.");
   }
   if (conv.opusMode) {
     conv.outRate = 24000;
@@ -336,7 +337,7 @@ export async function startConversation() {
 
   const ws = new WebSocket(wsUrl(`/v1/conversation/stream?${params}`));
   conv.ws = ws;
-  if (conv.opusMode) ws.binaryType = "arraybuffer";
+  ws.binaryType = "arraybuffer";
 
   ws.onopen = async () => {
     try {
@@ -351,9 +352,12 @@ export async function startConversation() {
   };
 
   ws.onmessage = (event) => {
-    // Binary frames are Opus packets (audio_out=opus) — decode + play in-browser.
+    // Binary frames are reply audio: Opus packets when audio_out=opus, else a
+    // complete WAV/MP3 per sentence -- routed by the codec the server
+    // announced in the preceding audio_start event.
     if (typeof event.data !== "string") {
-      convFeedOpus(event.data);
+      if (conv.outCodec === "opus") convFeedOpus(event.data);
+      else convEnqueueAudioBytes(event.data);
       return;
     }
     let d;
@@ -407,11 +411,8 @@ export async function startConversation() {
         }
         break;
       case "audio_start":
-        // Opus stream chunk begins; ensure the decoder matches the server's rate.
+        conv.outCodec = d.codec || "wav";
         if (d.codec === "opus" && d.sample_rate) conv.outRate = d.sample_rate;
-        break;
-      case "audio_chunk":
-        if (d.audio_url) convEnqueueAudio(d.audio_url); // URL/WAV mode (non-opus)
         break;
       case "turn_done":
         setConvStatus("● listening", "status-rec");

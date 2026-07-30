@@ -27,7 +27,7 @@ export async function loadTtsEngines() {
 
     renderTtsEnginesStatus(enginesBody.data);
 
-    [["tts-engine", "tts-engine-detail"], ["tts-stream-engine", "tts-stream-engine-detail"]].forEach(
+    [["tts-engine", "tts-engine-detail"]].forEach(
       ([selId, detId]) => {
         const select = el(selId);
         if (!select) return;

@@ -8,6 +8,10 @@ of loading the model in-process.
 from __future__ import annotations
 
 import logging
+import re
+import time
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -18,6 +22,58 @@ from app.core.errors import EngineNotFoundError, ProviderError
 from model_service.app.config import ConfigError, ServiceConfig, load_config
 
 logger = logging.getLogger(__name__)
+
+_TMP_REF_FILENAME = re.compile(r"^[0-9a-f]{32}\.wav\Z")
+
+# The four local TTS engines run as separate native processes sharing the same
+# repo-root artifacts directory (not one process per container), so a bare-hex
+# .wav can be a sibling process's in-flight temp file, not just this process's
+# own leftovers -- "one process, one file, one call" is not a safe assumption
+# here. Anything younger than this is left alone; anything older cannot belong
+# to a live request in any process, since routes_tts.py holds its own file for
+# only the duration of a single call. A leak that's fresher than the threshold
+# just waits for the next restart to be collected -- restarts are rare and a
+# leaked file is cheap, whereas deleting a live request's reference audio out
+# from under an open read breaks that request's synthesis.
+_STALE_AGE_SECONDS = 3600
+
+
+def sweep_stale_ref_audio(base_dir: Path) -> int:
+    """Delete temp reference clips left behind by a previous run.
+
+    routes_tts.py writes `<uuid4 hex>.wav` into the artifacts dir (it has to
+    live there to pass TTSRequest's ref_audio_path containment check) and
+    unlinks it in a finally. A crash in between used to be mopped up by the
+    gateway's artifact janitor, which no longer exists -- synthesized audio is
+    never persisted, so there was nothing else left for it to prune. At
+    startup, a bare-hex `.wav` older than `_STALE_AGE_SECONDS` cannot belong to
+    any live request, in this process or a sibling one sharing the same
+    directory -- see the module comment above. `ref_*.wav` never matches this
+    pattern and is never touched.
+    """
+    if not base_dir.is_dir():
+        return 0
+    try:
+        candidates = list(base_dir.iterdir())
+    except OSError:
+        # The directory exists (is_dir() above didn't raise -- stat-ing a path
+        # doesn't require list permission on it) but can't be listed, e.g. a
+        # permissions error. Degrade to "skip the sweep" rather than crashing
+        # app startup over a cleanup nicety.
+        return 0
+    removed = 0
+    now = time.time()
+    for path in candidates:
+        if not _TMP_REF_FILENAME.match(path.name):
+            continue
+        try:
+            if now - path.stat().st_mtime < _STALE_AGE_SECONDS:
+                continue
+            path.unlink()
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def _resolve_provider(config: ServiceConfig):
@@ -40,12 +96,31 @@ def _resolve_provider(config: ServiceConfig):
     return provider
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Real-boot-only: uvicorn drives the ASGI lifespan protocol (`uvicorn
+    # model_service.app.main:create_app --factory`, see
+    # infra/docker/Dockerfile.model_service), so this runs once per process
+    # start. Deliberately NOT called inline in create_app() -- unit tests
+    # construct the app via `TestClient(create_app(...))` without entering it
+    # as a context manager, so lifespan never fires there, and this sweep
+    # never touches a developer's real repo-root artifacts/ dir during the
+    # unit suite (see test_routes_tts.py/test_routes_stt.py, which don't use
+    # `with TestClient(...) as client:`).
+    from app.services.artifacts import artifact_store
+
+    swept = sweep_stale_ref_audio(artifact_store.base_dir)
+    if swept:
+        logger.info("swept %d stale temp reference clip(s) from artifacts dir", swept)
+    yield
+
+
 def create_app(config: ServiceConfig | None = None, provider=None) -> FastAPI:
     config = config or load_config()
     if provider is None:
         provider = _resolve_provider(config)
 
-    app = FastAPI(title=f"model-service ({config.kind}:{config.engine})")
+    app = FastAPI(title=f"model-service ({config.kind}:{config.engine})", lifespan=_lifespan)
 
     @app.get("/health")
     async def health() -> dict:

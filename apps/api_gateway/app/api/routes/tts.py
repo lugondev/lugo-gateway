@@ -1,22 +1,17 @@
-import asyncio
 import logging
 import time
-import uuid
 
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
 
 from app.core.actor import current_user_id
 from app.core.audio import wav_duration_seconds
 from app.core.upload_limits import REFERENCE_AUDIO_MAX_BYTES
-from app.schemas.common import StreamEvent
 from app.schemas.tts import TTSRequest
 from app.services.artifacts import artifact_store
 from app.services.model_registry.store import model_registry_store
-from app.services.tts.segmenter import segment_text
 from app.services.tts.service import tts_service
 from app.services.usage.attribution import resolve_usage_model
 from app.services.usage.recorder import record_usage
-from app.streaming.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/tts", tags=["tts"])
@@ -29,29 +24,6 @@ router = APIRouter(prefix="/v1/tts", tags=["tts"])
 # by tests without reaching into main.py's middleware stack.
 _MAX_REFERENCE_AUDIO_BYTES = REFERENCE_AUDIO_MAX_BYTES
 _UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
-
-# Strong references to running stream jobs: asyncio only keeps a weak ref to
-# tasks, so a fire-and-forget create_task can be GC'd mid-synthesis.
-_stream_jobs: set[asyncio.Task] = set()
-
-# Who created each stream job -- checked by GET /v1/events/jobs/{job_id} so one
-# user cannot subscribe to another user's TTS result stream. There is no
-# persistent job store (a job is just an asyncio task + an event-bus channel),
-# so this in-memory map is the only record of ownership. Bounded FIFO eviction,
-# same shape as InMemoryEventBus._closed, since a job's relevant lifetime is
-# about the same as its channel's.
-_job_owners: dict[str, str] = {}
-_JOB_OWNERS_LIMIT = 4096
-
-
-def _record_job_owner(job_id: str, user_id: str) -> None:
-    _job_owners[job_id] = user_id
-    while len(_job_owners) > _JOB_OWNERS_LIMIT:
-        _job_owners.pop(next(iter(_job_owners)))
-
-
-def get_job_owner(job_id: str) -> str | None:
-    return _job_owners.get(job_id)
 
 
 @router.get("/engines")
@@ -103,7 +75,7 @@ async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
             )
         chunks.append(chunk)
     data = b"".join(chunks)
-    ref_id, _url = artifact_store.save_reference_audio(data)
+    ref_id = artifact_store.save_reference_audio(data)
     return {"success": True, "data": {"ref_audio_path": str(artifact_store.path_for(ref_id))}}
 
 
@@ -164,128 +136,3 @@ async def synthesize(payload: TTSRequest, request: Request, profile: str | None 
     if media_type == "audio/wav":
         headers["X-TTS-Duration-Seconds"] = str(round(wav_duration_seconds(audio_bytes), 3))
     return Response(content=audio_bytes, media_type=media_type, headers=headers)
-
-
-@router.post("/stream")
-async def create_stream_job(payload: TTSRequest, request: Request, profile: str | None = None) -> dict:
-    # Quota pre-flight, synchronous: this endpoint returns a job_id and streams
-    # over SSE, so a refusal has to happen here -- reporting it through the event
-    # channel would make every client learn a second failure path. Same 429
-    # contract as /v1/tts/synthesize.
-
-    usage_engine, usage_model_id = "", ""
-    provider_id = ""
-    try:
-        usage_engine, usage_model_id = await resolve_usage_model(
-            "tts", payload.engine, payload.model_id or ""
-        )
-        entry = await model_registry_store.find("tts", usage_engine, usage_model_id)
-        provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
-    except Exception:  # noqa: BLE001 - a registry hiccup must never block a request
-        usage_engine, usage_model_id, provider_id = "", "", ""
-    # Read the identity HERE: the background job outlives the request, and the
-    # Request object must not be touched from inside it.
-    caller_id = current_user_id(request) or ""
-    profile_id = profile or ""
-    try:
-        # function-local: see the /synthesize route above for why quota_gate
-        # can't be a module-level name here (test monkeypatch semantics).
-        from app.services.quota.gate import QuotaExceededError, quota_gate
-
-        await quota_gate(
-            user_id=caller_id, provider_id=provider_id,
-            kind="tts", engine=usage_engine, model_id=usage_model_id,
-        )
-    except QuotaExceededError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
-
-    job_id = str(uuid.uuid4())
-    _record_job_owner(job_id, caller_id)
-    # Resolve the provider eagerly so an unknown engine returns 400 synchronously.
-    provider = tts_service.get_provider(payload.engine)
-    channel = f"job:{job_id}"
-
-    async def _run() -> None:
-        sequence = 1
-        try:
-            segments = segment_text(payload.text)
-            await event_bus.publish(
-                channel,
-                StreamEvent(
-                    event_type="queued",
-                    job_id=job_id,
-                    sequence=sequence,
-                    payload={"text": payload.text, "total_chunks": len(segments)},
-                ),
-            )
-
-            for index, segment in enumerate(segments):
-                chunk_request = payload.model_copy(update={"text": segment})
-                started = time.perf_counter()
-                result = await provider.synthesize(chunk_request)
-                process_seconds = round(time.perf_counter() - started, 3)
-                try:
-                    await record_usage(
-                        user_id=caller_id, profile_id=profile_id,
-                        kind="tts", engine=payload.engine, model_id=payload.model_id or "",
-                        unit="chars", native_amount=len(segment or ""),
-                    )
-                except Exception as exc:  # noqa: BLE001 - metering must never break the job
-                    logger.warning("tts stream usage metering failed: %s", exc)
-                sequence += 1
-                await event_bus.publish(
-                    channel,
-                    StreamEvent(
-                        event_type="audio_chunk",
-                        job_id=job_id,
-                        sequence=sequence,
-                        payload={
-                            "chunk_index": index,
-                            "text": segment,
-                            "audio_url": result.audio_url,
-                            "duration_seconds": result.duration_seconds,
-                            "process_seconds": process_seconds,
-                        },
-                    ),
-                )
-            await event_bus.publish(
-                channel,
-                StreamEvent(
-                    event_type="done",
-                    job_id=job_id,
-                    sequence=sequence + 1,
-                    payload={"message": "tts completed"},
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 - surface failure to subscriber
-            logger.exception("TTS stream job %s failed", job_id)
-            sequence += 1
-            await event_bus.publish(
-                channel,
-                StreamEvent(
-                    event_type="error",
-                    job_id=job_id,
-                    sequence=sequence,
-                    payload={"message": str(exc)},
-                ),
-            )
-            await event_bus.publish(
-                channel,
-                StreamEvent(
-                    event_type="done",
-                    job_id=job_id,
-                    sequence=sequence + 1,
-                    payload={"message": "tts failed"},
-                ),
-            )
-        finally:
-            # Idempotent backstop for paths no publish above covers --
-            # cancellation mid-synthesis, a crash inside the error handler --
-            # so the channel's replay history never leaks and late SSE
-            # subscribers always get end-of-stream instead of hanging.
-            event_bus.close(channel)
-
-    task = asyncio.create_task(_run(), name=f"tts-stream-{job_id}")
-    _stream_jobs.add(task)
-    task.add_done_callback(_stream_jobs.discard)
-    return {"success": True, "data": {"job_id": job_id}}

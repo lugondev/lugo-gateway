@@ -38,7 +38,6 @@ from app.core.logging import setup_logging
 from app.core.settings import settings
 from app.core.upload_limits import REFERENCE_AUDIO_MAX_BYTES
 from app.core.upload_size_limit import UploadSizeLimitMiddleware
-from app.services.artifacts import artifact_store
 
 setup_logging(settings.log_level)
 
@@ -178,19 +177,7 @@ async def lifespan(app: FastAPI):
                 settings.warmup_startup_timeout_s,
             )
 
-    # Hourly artifact janitor: each TTS sentence writes a wav into artifacts/
-    # and nothing else deletes them. Reference kept (and cancelled on
-    # shutdown) so the task can't be GC'd mid-flight.
-    prune_task: asyncio.Task | None = None
-    if settings.artifacts_ttl_hours > 0:
-        from app.services.artifacts import prune_loop
-
-        prune_task = asyncio.create_task(
-            prune_loop(artifact_store, max_age_s=settings.artifacts_ttl_hours * 3600, interval_s=3600)
-        )
     yield
-    if prune_task is not None:
-        prune_task.cancel()
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -310,8 +297,6 @@ app.include_router(quotas_router)
 app.include_router(usage_router)
 
 app.mount("/static", StaticFiles(directory="apps/api_gateway/app/static"), name="static")
-# Serve generated audio artifacts (foundation; swap for object storage later).
-app.mount("/artifacts", StaticFiles(directory=str(artifact_store.base_dir)), name="artifacts")
 
 
 @app.get("/")

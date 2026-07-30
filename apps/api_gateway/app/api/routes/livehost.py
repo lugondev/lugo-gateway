@@ -7,7 +7,7 @@ from contextlib import aclosing
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from app.core.actor import current_role, current_user_id
-from app.core.audio import pcm16_to_wav_bytes, wav_duration_seconds, wav_file_to_pcm16
+from app.core.audio import pcm16_to_wav_bytes, wav_bytes_to_pcm16, wav_duration_seconds
 from app.core.auth_guard import resolve_ws_identity, ws_session_owner_denied, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
@@ -202,7 +202,9 @@ async def livehost_stream(websocket: WebSocket) -> None:
     out_modalities = {m.strip() for m in (q.get("output") or "audio,text").lower().split(",") if m.strip()}
     want_audio = "audio" in out_modalities
     want_text = "text" in out_modalities
-    audio_out = (q.get("audio_out") or "url").lower()
+    audio_out = (q.get("audio_out") or "wav").lower()
+    if audio_out != "opus":
+        audio_out = "wav"
     output_sample_rate = int(q.get("output_sample_rate", 24000))
 
     resolved_stt_model = stt_model or resolve_default_stt_model(stt_engine)
@@ -232,8 +234,8 @@ async def livehost_stream(websocket: WebSocket) -> None:
         if opus_available():
             opus_encoder = OpusFrameEncoder(sample_rate=output_sample_rate, channels=1)
         else:
-            audio_out = "url"
-            logger.warning("client requested opus output but server has no libopus; using url")
+            audio_out = "wav"
+            logger.warning("client requested opus output but server has no libopus; using wav")
 
     responder = await build_responder_ex(
         base_url=llm_base_url, api_key=llm_api_key, model=llm_model, system_prompt=system_prompt,
@@ -306,7 +308,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
             "audio_codec": audio_codec,
             "output": sorted(out_modalities),
             "audio_out": audio_out,
-            "output_sample_rate": output_sample_rate if want_audio and audio_out != "url" else None,
+            "output_sample_rate": output_sample_rate if want_audio and audio_out == "opus" else None,
             "stt_ready": stt_ready,
             "tts_ready": tts_ready,
         })
@@ -381,7 +383,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
                     )
                     return None, None, build_exc
                 try:
-                    result = await tts_provider.synthesize(request)
+                    audio, media_type = await tts_provider.render_audio(request)
                     try:
                         await record_usage(
                             user_id=identity.user_id or "", profile_id=profile_name or "",
@@ -391,11 +393,10 @@ async def livehost_stream(websocket: WebSocket) -> None:
                     except Exception as exc:  # noqa: BLE001 - metering must never break the turn
                         logger.warning("livehost tts usage metering failed: %s", exc)
                     if opus_encoder is not None:
-                        path = result.audio_url.lstrip("/")
-                        pcm = await asyncio.to_thread(wav_file_to_pcm16, path, output_sample_rate)
+                        pcm = await asyncio.to_thread(wav_bytes_to_pcm16, audio, output_sample_rate)
                         packets = await asyncio.to_thread(opus_encoder.encode_pcm16, pcm)
-                        return result, packets, None
-                    return result, None, None
+                        return None, packets, None
+                    return (audio, media_type), None, None
                 except asyncio.CancelledError:
                     raise  # barge-in / turn supersede -- must propagate to unwind the turn
                 except Exception as exc:  # noqa: BLE001 - degrade to text-only, don't lose the reply
@@ -409,7 +410,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
                     lookahead=system_config_store.get().conversation.conversation_tts_lookahead,
                 )
             ) as pipeline:
-                async for index, sentence, (result, packets, tts_error) in pipeline:
+                async for index, sentence, (audio, packets, tts_error) in pipeline:
                     parts.append(sentence)
                     if want_text:
                         await send("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
@@ -446,10 +447,14 @@ async def livehost_stream(websocket: WebSocket) -> None:
                             await websocket.send_bytes(pkt)
                         await send("audio_end", turn=turn, chunk_index=index)
                     else:
+                        audio_bytes, media_type = audio
                         await send(
-                            "audio_chunk", turn=turn, chunk_index=index, text=sentence,
-                            audio_url=result.audio_url, sample_rate=result.sample_rate,
+                            "audio_start", turn=turn, chunk_index=index,
+                            text=sentence if want_text else None,
+                            codec="mp3" if media_type == "audio/mpeg" else "wav",
                         )
+                        await websocket.send_bytes(audio_bytes)
+                        await send("audio_end", turn=turn, chunk_index=index)
             await _record_llm_usage(responder)
             return parts
 

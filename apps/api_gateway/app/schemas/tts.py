@@ -15,15 +15,14 @@ from app.services.artifacts import artifact_store
 
 class TTSRequest(BaseModel):
     # 10,000 chars (~1,500-2,000 words, roughly 10-15 minutes of spoken audio)
-    # comfortably covers any legitimate synthesize/stream call -- /v1/tts/stream
-    # segments this into ~200-char chunks (segmenter.py's default max_chars) for
-    # pseudo-streaming playback, so even a full-length narration script fits.
-    # Without a cap, a single request hands one provider call (or, for
-    # /v1/tts/stream, dozens of segment calls run back-to-back inside one
-    # fire-and-forget task) an unbounded payload -- M5, see
-    # docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md. Shared
-    # by both routes on purpose: /v1/tts/stream needs the same ceiling, just
-    # applied before segmentation instead of per-provider-call.
+    # comfortably covers any legitimate synthesize call, so even a full-length
+    # narration script fits. Without a cap, a single request hands the
+    # provider an unbounded payload -- M5, see
+    # docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md. (This
+    # cap used to also bound /v1/tts/stream's per-request text before it was
+    # segmented into chunks; that route was deleted in Task 3 of
+    # drop-audio-artifacts, but the ceiling on a single /v1/tts/synthesize
+    # call is still worth keeping.)
     text: str = Field(..., min_length=1, max_length=10_000)
     engine: str = "omnivoice"
     # Registry row selector: multiple rows can share an engine (e.g. three
@@ -61,13 +60,3 @@ class TTSRequest(BaseModel):
         if not artifact_store.contains(v):
             raise ValueError("ref_audio_path must be inside the artifacts directory")
         return v
-
-
-class TTSResult(BaseModel):
-    engine: str
-    sample_rate: int
-    audio_url: str | None = None
-    duration_seconds: float | None = None  # length of the produced audio
-    process_seconds: float | None = None  # wall-clock time spent synthesizing it
-    job_id: str | None = None
-    text: str | None = None

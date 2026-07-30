@@ -8,7 +8,6 @@ Regression guard for the audio-path bug where `response_text` was emitted only
 
 import pytest
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
@@ -25,9 +24,10 @@ class _StubSTT(STTProvider):
 
 
 class _BoomTTS(TTSProvider):
-    """Every synth attempt raises -- simulates a misconfigured/down TTS engine."""
+    """Every render_audio attempt raises -- simulates a misconfigured/down TTS engine."""
     name = "stub-ttsfail-tts"
-    async def synthesize(self, payload) -> TTSResult:
+
+    async def render_audio(self, payload) -> tuple[bytes, str]:
         raise RuntimeError("tts engine exploded")
 
 
@@ -64,7 +64,7 @@ def _cfg(**over):
         tts_engine="stub-ttsfail-tts", voice=None, ref_audio_path=None, ref_text=None,
         tts_instruct=None, tts_speed=None, tts_language=None, sample_rate=SR,
         output_sample_rate=24000, audio_codec="pcm16", want_audio=True, want_text=True,
-        audio_out="url", denoise=False, resume_sid=None,
+        audio_out="wav", denoise=False, resume_sid=None,
     )
     base.update(over)
     return SessionRuntimeConfig(**base)

@@ -87,19 +87,20 @@ def build_tts_router(config: ServiceConfig, provider: RenderingTTSProvider) -> A
                 #
                 # Named `<uuid4 hex>.wav`, matching ArtifactStore's own
                 # _ARTIFACT_FILENAME pattern, rather than tempfile's
-                # `tmpXXXXXXXX.wav` -- a NamedTemporaryFile-style name is
-                # never swept by prune(), so a crash between this write and
-                # the os.unlink() below would leak the file forever (the
-                # four local engines run natively from the repo root, where
+                # `tmpXXXXXXXX.wav` -- a bare 32-hex-char `.wav` name is what
+                # model_service.app.main.sweep_stale_ref_audio looks for at
+                # startup, so a crash between this write and the os.unlink()
+                # below still gets cleaned up on the next boot (the four
+                # local engines run natively from the repo root, where
                 # artifacts_dir defaults to the real "artifacts" dir, not a
-                # container-private /tmp). A random hex name is equally
-                # unguessable if briefly fetchable at /artifacts/<name>.wav
-                # in that native deployment, but collectable.
+                # container-private /tmp). Nothing serves this directory over
+                # HTTP (the old /artifacts mount is gone), so the random hex
+                # name is just collision-avoidance, not obscurity.
                 tmp_ref_path = str(artifact_store.base_dir / f"{uuid.uuid4().hex}.wav")
                 # os.open + O_EXCL, mode 0o600: a plain open(path, "wb") creates
                 # the file at the umask default (usually 0644) -- readable by
                 # anyone on the box -- for however long it sits in this
-                # HTTP-served artifacts dir before the finally block's unlink.
+                # artifacts dir before the finally block's unlink.
                 # NamedTemporaryFile (what this replaced) always created 0600;
                 # match that instead of widening exposure. O_EXCL also means
                 # this can never silently overwrite an existing file at a

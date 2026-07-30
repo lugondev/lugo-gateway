@@ -19,7 +19,6 @@ import { loadMcpServers } from "./mcp-servers.js";
 // export nothing consumed above, so import them for their side effects.
 import "./system-config.js";
 import "./tts-batch.js";
-import "./tts-stream.js";
 import { resumeLatestSession } from "./sessions.js";
 import "./users.js";
 import "./devices.js";

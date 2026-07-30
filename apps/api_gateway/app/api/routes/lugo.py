@@ -150,12 +150,26 @@ async def lugo_stream(websocket: WebSocket) -> None:
         out_sr = int((hello.get("audio_params") or {}).get("output_sample_rate", 24000))
     except (TypeError, ValueError):
         out_sr = 24000
+    # The device wire protocol has only OPUS and JSON frames (lugo_frame.py), so a
+    # server with no libopus cannot send this client audio at all. Ask for a
+    # text-only session rather than letting session.start()'s opus->wav downgrade
+    # push WAV bytes that emit_audio would frame as Opus (LUGO_FRAME_OPUS) --
+    # corrupting the downlink instead of the old silent-audio-drop behavior.
+    # Imported locally (not at module scope) so tests can monkeypatch
+    # app.core.opus.opus_available and have it take effect here -- same reason
+    # session.py's own opus_available import lives inside start(), not at
+    # module scope (see that module's comment on the same gotcha).
+    from app.core.opus import opus_available
+
+    want_audio = opus_available()
+    if not want_audio:
+        logger.warning("lugo: no libopus on this server; device session is text-only")
     cfg = SessionRuntimeConfig(
         session_id=session_id, profile_name=profile_name, stt_engine=stt_engine, language=language,
         tts_engine=tts["engine"], voice=tts["voice"], ref_audio_path=tts["ref_audio_path"],
         ref_text=tts["ref_text"], tts_instruct=tts["instruct"], tts_speed=tts["speed"],
         tts_language=tts["language"], sample_rate=in_sr, output_sample_rate=out_sr,
-        audio_codec="opus", want_audio=True, want_text=True, audio_out="opus",
+        audio_codec="opus", want_audio=want_audio, want_text=True, audio_out="opus",
         denoise=False, resume_sid=requested_sid, stt_model=stt_model, tts_model=tts["model_id"],
         identity_user_id=identity.user_id,
         identity_unauthenticated=identity.unauthenticated,
@@ -177,8 +191,9 @@ async def lugo_stream(websocket: WebSocket) -> None:
         elif event in ("response_text", "audio_start"):
             # First sign the bot is responding (text or audio) opens the turn.
             # response_text always precedes audio_start in the core, so tts{start}
-            # is the first tts frame; this also works in the no-opus fallback
-            # path where audio_start never fires (only response_text/audio_chunk).
+            # is the first tts frame; this also works in the no-libopus,
+            # text-only path (want_audio=False, see above) where audio_start
+            # never fires at all -- only response_text does.
             if not speaking:
                 speaking = True
                 await websocket.send_json({"type": "tts", "state": "start"})

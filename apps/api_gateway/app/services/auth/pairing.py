@@ -82,11 +82,23 @@ independent layers close this:
    pre-streak (or post-grace-window) pairing keeps the much tighter
    ~6e-8-class bound defense #1 provides.
 
-   MUST-VERIFY-BEFORE-DEPLOY: the ESP32/RPi/web-client firmware/UI that
-   renders this code on-device is in separate submodules not checked out in
-   this worktree -- nobody has confirmed it displays/accepts all 8 digits
-   rather than truncating to 6 (e.g. a `%06d`-style format string). Verify
-   before shipping this change.
+   VERIFIED (2026-07-29) -- and the check was not academic: BOTH clients
+   were hard-broken by the widening and are now fixed.
+     * ESP32 firmware parsed the code into a `char code[8]`, one byte short
+       of "8 digits + NUL". Its JSON extractor stops at cap-1 chars, finds a
+       digit where the closing quote belongs, and reports a parse failure --
+       so pair/init retried every 3s forever and the device never displayed
+       a code at all. Now sized from `AA_PAIR_CODE_MAX`
+       (esp32-assistant/components/pairing/include/pairing.h), pinned by
+       test_pairing_logic.c::test_code_buffer_fits_server_code.
+     * Web client (lugo-web-client Devices.tsx) had `6` hardcoded in three
+       places -- the input truncated to 6 digits and the submit button's
+       `code.length !== 6` guard kept it permanently disabled. Now one
+       `PAIR_CODE_LENGTH` const, pinned by Devices.test.tsx.
+     * RPi client (rpi-assistant/a2a_client/pairing.py) is length-agnostic
+       (passes the string through), no change needed.
+   If `_CODE_DIGITS` ever changes again, update `AA_PAIR_CODE_MAX` and
+   `PAIR_CODE_LENGTH` in the same change.
 
 3. Rate limiting (`_RateLimiter`, `claim_rate_limiter` / `init_rate_limiter`):
    a coarse in-process sliding-window limiter on both pair/claim (keyed by

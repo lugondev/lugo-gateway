@@ -17,9 +17,9 @@ class InMemoryEventBus:
     - History (the heavy part -- up to `history_limit` events per channel) is
       purged when the last subscriber of a closed channel unsubscribes, and
       otherwise by a TTL timer armed at close() -- the common case, since
-      every /v1/stt/stream session and /v1/tts/stream job mirrors events here
-      and usually no SSE client ever subscribes. The TTL is the replay grace
-      window: a subscriber arriving later gets no replay.
+      every /v1/stt/stream session mirrors events here and usually no SSE
+      client ever subscribes. The TTL is the replay grace window: a
+      subscriber arriving later gets no replay.
     - The closed MARKER (just the channel name) deliberately outlives the
       history: subscribe() relies on it to hand late subscribers an immediate
       end-of-stream sentinel. Without it they'd be registered as live queues

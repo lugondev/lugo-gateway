@@ -66,9 +66,9 @@ async def test_history_reclaimed_after_unsubscribe():
 
 
 async def test_closed_channel_history_purged_after_ttl_when_no_subscriber_attaches():
-    """The common case for /v1/stt/stream and /v1/tts/stream is that NO SSE
-    client ever subscribes to the mirrored channel -- without a TTL purge,
-    every finished session/job leaks its full replay history forever."""
+    """The common case for /v1/stt/stream is that NO SSE client ever
+    subscribes to the mirrored channel -- without a TTL purge, every finished
+    session leaks its full replay history forever."""
     bus = InMemoryEventBus(closed_history_ttl_s=0.05)
     await bus.publish("job:1", _event("done", 1))  # terminal -> closes the channel
 

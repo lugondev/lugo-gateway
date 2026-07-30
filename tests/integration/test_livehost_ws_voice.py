@@ -1,12 +1,12 @@
-import asyncio
+import json
 
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.audio import pcm16_to_wav_bytes
 from app.main import app
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
 from app.services.profiles.models import Profile, SttConfig
 from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
@@ -15,6 +15,11 @@ from app.services.tts.base import TTSProvider
 from app.services.tts.service import tts_service
 
 SR = 16000
+
+
+def _silence_wav(ms: int = 100, sr: int = 24000) -> bytes:
+    n = int(sr * ms / 1000)
+    return pcm16_to_wav_bytes(b"\x00\x00" * n, sample_rate=sr)
 
 
 class _StubSTT(STTProvider):
@@ -34,11 +39,8 @@ class _FailingSTT(STTProvider):
 class _StubTTS(TTSProvider):
     name = "stub-livehost-tts"
 
-    async def synthesize(self, payload) -> TTSResult:
-        return TTSResult(
-            engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
-            duration_seconds=0.1, text=payload.text,
-        )
+    async def render_audio(self, payload) -> tuple[bytes, str]:
+        return _silence_wav(), "audio/wav"
 
 
 @pytest.fixture(autouse=True)
@@ -81,11 +83,24 @@ def _set_default_tts(monkeypatch, tmp_path, tts_engine):
     monkeypatch.setattr(sc_mod, "system_config_store", fresh)
 
 
-def test_livehost_voice_turn_end_to_end(_register_stub, monkeypatch, tmp_path):
-    _register_stub.upsert(Profile(name="p1", stt=SttConfig(engine="stub-livehost")))
+def _drive_voice_turn(monkeypatch, tmp_path, audio_out="wav"):
+    """Registers profile "p1", drives one voice turn end-to-end over the
+    livehost WS, and returns (events, frames): events is a list of
+    (event_name, payload) tuples in receipt order, frames is the list of raw
+    binary WS frames received (reply audio). A skipped binary frame does not
+    count against the events budget -- same reasoning as Task 1's
+    test_conversation_ws.py, where a naive receive_json()-only loop hangs
+    instead of failing cleanly once TTS output stops riding an all-JSON
+    audio_chunk event and starts interleaving binary frames.
+    """
+    import app.api.routes.livehost as livehost_route
+
+    livehost_route.profile_store.upsert(Profile(name="p1", stt=SttConfig(engine="stub-livehost")))
     _set_default_tts(monkeypatch, tmp_path, "stub-livehost-tts")
     client = TestClient(app)
-    url = "/v1/livehost/stream?profile=p1&sample_rate=16000"
+    url = f"/v1/livehost/stream?profile=p1&sample_rate=16000&audio_out={audio_out}"
+    events: list[tuple[str, dict]] = []
+    frames: list[bytes] = []
     with client.websocket_connect(url) as ws:
         started = ws.receive_json()
         assert started["event"] == "session_started"
@@ -95,20 +110,37 @@ def test_livehost_voice_turn_end_to_end(_register_stub, monkeypatch, tmp_path):
         ws.send_bytes(_silence(500))
         ws.send_bytes(_silence(500))
 
-        events = []
-        for _ in range(20):
-            ev = ws.receive_json()
-            events.append(ev)
+        while len(events) < 20:
+            msg = ws.receive()
+            if msg.get("bytes") is not None:
+                frames.append(msg["bytes"])
+                continue
+            ev = json.loads(msg["text"])
+            events.append((ev["event"], ev))
             if ev["event"] == "turn_done":
                 break
 
-        kinds = [e["event"] for e in events]
-        assert "user_transcript" in kinds
-        assert "audio_chunk" in kinds
-        assert kinds[-1] == "turn_done"
-
     from app.services.livehost.registry import livehost_registry
     assert livehost_registry.get(session_id) is None  # cleaned up on disconnect
+    return events, frames
+
+
+def test_livehost_voice_turn_end_to_end(_register_stub, monkeypatch, tmp_path):
+    events, frames = _drive_voice_turn(monkeypatch, tmp_path, audio_out="wav")
+
+    kinds = [name for name, _ in events]
+    assert "user_transcript" in kinds
+    assert "audio_start" in kinds
+    assert "audio_end" in kinds
+    assert kinds[-1] == "turn_done"
+    assert frames and frames[0][:4] == b"RIFF"
+
+
+def test_livehost_wav_downlink_pushes_binary_frame(_register_stub, monkeypatch, tmp_path):
+    events, frames = _drive_voice_turn(monkeypatch, tmp_path, audio_out="wav")
+    starts = [p for n, p in events if n == "audio_start"]
+    assert starts and starts[0]["codec"] == "wav"
+    assert frames and frames[0][:4] == b"RIFF"
 
 
 def test_livehost_session_started_send_failure_does_not_leak_registry(_register_stub, monkeypatch, tmp_path):
@@ -182,8 +214,13 @@ def test_livehost_stream_passes_resolved_model_to_stt(_register_stub, monkeypatc
             ws.send_bytes(_silence(500))
             ws.send_bytes(_silence(500))
 
-            for _ in range(20):
-                ev = ws.receive_json()
+            seen_events = 0
+            while seen_events < 20:
+                msg = ws.receive()
+                if msg.get("bytes") is not None:
+                    continue
+                ev = json.loads(msg["text"])
+                seen_events += 1
                 if ev["event"] == "turn_done":
                     break
     finally:

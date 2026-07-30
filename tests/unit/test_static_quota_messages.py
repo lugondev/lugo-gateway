@@ -5,7 +5,8 @@ $12.04 / $12.00 (monthly)"). helpers.js's quotaMessage() surfaces it verbatim;
 a client that skips the helper renders the raw error body instead, which is the
 difference between a user knowing they are out of budget and thinking the app is
 broken. This test keeps the set of quota-capable clients from drifting apart --
-tts-stream.js was the one client that had been left out.
+tts-stream.js was one such client, deleted along with POST /v1/tts/stream
+(see docs/superpowers/specs/2026-07-29-drop-audio-artifacts-design.md).
 """
 
 from pathlib import Path
@@ -13,8 +14,8 @@ from pathlib import Path
 JS = Path(__file__).resolve().parents[2] / "apps" / "api_gateway" / "app" / "static" / "js"
 
 # Static clients that POST to a route which can answer 429 from the quota gate:
-# /v1/stt/transcribe, /v1/tts/synthesize and /v1/tts/stream respectively.
-_QUOTA_CAPABLE_CLIENTS = ("stt-batch.js", "tts-batch.js", "tts-stream.js")
+# /v1/stt/transcribe and /v1/tts/synthesize respectively.
+_QUOTA_CAPABLE_CLIENTS = ("stt-batch.js", "tts-batch.js")
 
 
 def test_every_quota_capable_static_client_surfaces_the_quota_reason():

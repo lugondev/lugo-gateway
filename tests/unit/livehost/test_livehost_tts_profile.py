@@ -1,10 +1,12 @@
+import json
+
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.audio import pcm16_to_wav_bytes
 from app.main import app
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSResult
 from app.services.profiles.models import Profile, TtsConfig
 from app.services.profiles.store import ProfileStore
 from app.services.stt.base import STTProvider
@@ -15,6 +17,11 @@ from app.services.tts.profile_store import TtsProfileStore
 from app.services.tts.service import tts_service
 
 SR = 16000
+
+
+def _silence_wav(ms: int = 100, sr: int = 24000) -> bytes:
+    n = int(sr * ms / 1000)
+    return pcm16_to_wav_bytes(b"\x00\x00" * n, sample_rate=sr)
 
 
 class _StubSTT(STTProvider):
@@ -30,12 +37,9 @@ class _RecordingTTS(TTSProvider):
     def __init__(self) -> None:
         self.calls: list = []
 
-    async def synthesize(self, payload) -> TTSResult:
+    async def render_audio(self, payload) -> tuple[bytes, str]:
         self.calls.append(payload)
-        return TTSResult(
-            engine=self.name, sample_rate=24000, audio_url="/artifacts/x.wav",
-            duration_seconds=0.1, text=payload.text,
-        )
+        return _silence_wav(), "audio/wav"
 
 
 @pytest.fixture(autouse=True)
@@ -91,8 +95,16 @@ def _run_one_turn(ws):
     ws.send_bytes(_loud(500))
     ws.send_bytes(_silence(500))
     ws.send_bytes(_silence(500))
-    for _ in range(20):
-        ev = ws.receive_json()
+    seen_events = 0
+    # 20 bounds JSON events only -- a skipped binary WAV frame must not burn
+    # out of the same budget as the JSON events this loop is actually
+    # waiting on (mirrors test_livehost_ws_voice.py's _drive_voice_turn).
+    while seen_events < 20:
+        msg = ws.receive()
+        if msg.get("bytes") is not None:
+            continue
+        ev = json.loads(msg["text"])
+        seen_events += 1
         if ev["event"] == "turn_done":
             return
 

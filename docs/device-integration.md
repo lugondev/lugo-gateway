@@ -103,8 +103,13 @@ Manage profiles with `GET /v1/profiles`, `GET/PUT/DELETE /v1/profiles/{name}` �
   (fills your jitter buffer fast → low first-audio latency), then paces the rest at one
   frame (60 ms) so it emits at playback rate and a small device buffer never overflows on
   long replies. Just play packets as they arrive; keep ~100–200 ms of jitter buffer.
-- If you cannot do Opus, use `audio_codec=pcm16` (uplink) and `audio_out=url` (downlink,
-  the server returns an `audio_url` to fetch) — simpler but ~10× more bandwidth.
+- If you cannot do Opus, use `audio_codec=pcm16` (uplink) and the default
+  `audio_out=wav` (downlink) — the server pushes each sentence's audio as one
+  binary WebSocket frame (a complete WAV or MP3 file), bracketed by `audio_start`/
+  `audio_end` JSON events, instead of paced Opus packets. Simpler, but no per-frame
+  pacing and ~10× more bandwidth. This is a fallback for non-Opus clients only —
+  every real device (ESP32/RPi) always negotiates Opus and is unaffected by this
+  choice.
 
 ## 3. Protocol
 
@@ -210,7 +215,9 @@ ws.onmessage = (ev) => {
 - Each Opus packet is self-contained → use `type:"key"` for every frame.
 - On `aborted` (barge-in), close + recreate the decoder and reset `ts` so stale audio can't play.
 - Needs a WebCodecs-capable browser (Chromium, Safari 16.4+, recent Firefox); fall back to
-  `audio_out=url` (fetch the WAV and `decodeAudioData`) otherwise.
+  the default `audio_out=wav` otherwise — the server pushes the complete WAV/MP3 as one
+  binary WebSocket frame per sentence (bracketed by `audio_start`/`audio_end`), which you
+  can hand straight to `decodeAudioData` — no fetch, no URL.
 - The built-in playground (`/ui` → Conversation) has an **"Opus downlink"** checkbox that
   does exactly this — use it to verify before writing your own client.
 

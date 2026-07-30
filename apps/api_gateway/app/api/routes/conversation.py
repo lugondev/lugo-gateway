@@ -367,9 +367,12 @@ async def conversation_stream(websocket: WebSocket) -> None:
     out_modalities = {m.strip() for m in (q.get("output") or "audio,text").lower().split(",") if m.strip()}
     want_audio = "audio" in out_modalities
     want_text = "text" in out_modalities
-    # How reply audio is delivered: "url" (browser fetches /artifacts) or "opus"/"pcm"
-    # binary frames pushed over the socket (for ESP32/RPi that can't fetch mid-stream).
-    audio_out = (q.get("audio_out") or "url").lower()
+    # How reply audio is delivered: "wav" (one complete container per sentence,
+    # pushed as a binary frame) or "opus" (60ms frames, ~10x less bandwidth --
+    # ESP32/RPi and WebCodecs browsers). Nothing is ever written to disk.
+    audio_out = (q.get("audio_out") or "wav").lower()
+    if audio_out != "opus":
+        audio_out = "wav"
     output_sample_rate = int(q.get("output_sample_rate", 24000))
     # Per-connection override of Opus playback pacing (None = inherit the
     # global system_config default -- what api/routes/lugo.py always gets).

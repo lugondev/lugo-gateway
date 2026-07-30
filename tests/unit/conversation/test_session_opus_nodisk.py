@@ -1,12 +1,18 @@
-"""Pins the no-disk seam for Opus-mode TTS in ConversationSession.
+"""Pins the no-disk seam for TTS in ConversationSession, in BOTH downlink modes.
 
-In Opus mode (devices), _synth()/speak() used to call synthesize() (which
-writes a WAV to the artifact store) and then immediately read the file back
-to decode it for Opus encoding -- the artifact URL is never used once packets
-exist. render_wav() (RenderingTTSProvider's public seam: real synthesis, WAV
-bytes, no artifact side effect) replaces that round-trip. URL mode (browser)
-is untouched: it still needs the artifact file, since the client fetches it
-by URL.
+_synth()/speak() used to call synthesize() (which writes a WAV to the artifact
+store) and then, for Opus mode, immediately read the file back to decode it for
+Opus encoding -- the artifact URL was never used once packets existed. A
+separate "url" transport mode existed purely to hand that same artifact URL to
+the browser to fetch.
+
+Both are gone. `TTSProvider.render_audio(payload) -> (audio_bytes, media_type)`
+is now the ONLY seam the session core calls: RenderingTTSProvider implements it
+via render_wav() (real synthesis, WAV bytes, no artifact side effect); a plain
+TTSProvider (e.g. edge_tts) implements it directly. Opus mode decodes those
+bytes to PCM16 and encodes Opus packets; wav mode (the new default) pushes them
+straight over the wire as one binary frame per sentence. Neither path ever
+writes to or reads from the artifact store.
 
 Follows the harness pattern established by test_conversation_session_core.py
 (ConversationSession driven directly with stub providers, no WS transport).
@@ -15,9 +21,10 @@ Follows the harness pattern established by test_conversation_session_core.py
 import pytest
 
 from app.core.audio import pcm16_to_wav_bytes
+from audio_helpers import _tone_mp3
 from app.core.opus import opus_available
 from app.schemas.stt import STTResult
-from app.schemas.tts import TTSRequest, TTSResult
+from app.schemas.tts import TTSRequest
 from app.services.artifacts import artifact_store
 from app.services.conversation import session as session_module
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
@@ -47,7 +54,7 @@ class _StubSTT(STTProvider):
 
 
 class _FakeRenderingTTS(RenderingTTSProvider):
-    """A real RenderingTTSProvider: exercises the actual render_wav()/synthesize()
+    """A real RenderingTTSProvider: exercises the actual render_wav()/render_audio()
     delegation from app.services.tts.base, not a hand-rolled double."""
 
     name = "stub-opus-nodisk-render-tts"
@@ -56,35 +63,24 @@ class _FakeRenderingTTS(RenderingTTSProvider):
     def __init__(self, wav: bytes):
         self._wav = wav
         self.render_wav_calls = 0
-        self.synthesize_calls = 0
 
     async def _render_wav(self, payload: TTSRequest) -> bytes:
         self.render_wav_calls += 1
         return self._wav
 
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:
-        self.synthesize_calls += 1
-        return await super().synthesize(payload)
-
 
 class _NonRenderingTTS(TTSProvider):
     """Stands in for edge_tts: a plain TTSProvider (not a RenderingTTSProvider),
-    so it has no render_wav() at all -- the Opus path must fall back to
-    synthesize() for it rather than crash on a missing seam."""
+    so it has no render_wav() at all -- only render_audio(), the only seam
+    every engine implements now."""
 
     name = "stub-opus-nodisk-nonrender-tts"
 
     def __init__(self, wav: bytes):
         self._wav = wav
-        self.synthesize_calls = 0
 
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:
-        self.synthesize_calls += 1
-        _, audio_url = artifact_store.save_wav(self._wav)
-        return TTSResult(
-            engine=self.name, sample_rate=OUT_SR, audio_url=audio_url,
-            duration_seconds=0.1, text=payload.text,
-        )
+    async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
+        return self._wav, "audio/mpeg"
 
 
 @pytest.fixture(autouse=True)
@@ -127,26 +123,19 @@ async def _drive_text_turn(cfg) -> tuple[ConversationSession, list, list]:
 
 
 @pytest.mark.asyncio
-async def test_opus_mode_calls_render_wav_not_synthesize_and_writes_no_artifact(monkeypatch):
+async def test_opus_mode_calls_render_wav_and_writes_no_artifact():
     fake_wav = _silence_wav()
     provider = _FakeRenderingTTS(fake_wav)
     tts_service.providers["stub-opus-nodisk-render-tts"] = provider
 
-    save_wav_calls: list = []
-    original_save_wav = artifact_store.save_wav
-
-    def spy_save_wav(data):
-        save_wav_calls.append(data)
-        return original_save_wav(data)
-
-    monkeypatch.setattr(artifact_store, "save_wav", spy_save_wav)
-
+    before = set(artifact_store.base_dir.iterdir())
     sess, events, audio_pkts = await _drive_text_turn(_cfg())
 
     assert sess.opus_encoder is not None  # sanity: opus mode actually engaged
     assert provider.render_wav_calls >= 1
-    assert provider.synthesize_calls == 0
-    assert save_wav_calls == []  # the load-bearing property: no artifact written
+    # the load-bearing property: no artifact written -- render_audio() is the
+    # only seam, and it never touches the artifact store.
+    assert set(artifact_store.base_dir.iterdir()) == before
     assert audio_pkts  # opus packets did get emitted
     names = [n for n, _ in events]
     assert "audio_start" in names
@@ -177,36 +166,48 @@ async def test_opus_encoder_receives_exactly_the_bytes_render_wav_returned(monke
 
 
 @pytest.mark.asyncio
-async def test_url_mode_still_calls_synthesize_and_emits_audio_url():
+async def test_wav_mode_pushes_one_binary_frame_per_sentence():
     fake_wav = _silence_wav()
     provider = _FakeRenderingTTS(fake_wav)
     tts_service.providers["stub-opus-nodisk-render-tts"] = provider
 
-    sess, events, audio_pkts = await _drive_text_turn(_cfg(audio_out="url"))
+    _session, events, audio_frames = await _drive_text_turn(
+        _cfg(audio_out="wav", tts_engine="stub-opus-nodisk-render-tts")
+    )
 
-    assert sess.opus_encoder is None  # url mode never builds an encoder
-    assert provider.synthesize_calls >= 1
-    assert not audio_pkts  # no binary opus frames in url mode
-    audio_chunks = [p for n, p in events if n == "audio_chunk"]
-    assert audio_chunks
-    assert all(c.get("audio_url") for c in audio_chunks)
+    assert not [p for n, p in events if n == "audio_chunk"]  # event is gone
+    starts = [p for n, p in events if n == "audio_start"]
+    ends = [p for n, p in events if n == "audio_end"]
+    # EchoResponder (the default no-LLM responder driving _drive_text_turn)
+    # always replies with exactly 3 sentences (see its fixed reply string in
+    # responder.py) -- pinned literally, not just relationally, so a
+    # regression that only emits audio for e.g. 1 of the 3 sentences still
+    # fails here. `want_text=False` in `_cfg` means there's no `response_text`
+    # to anchor the sentence count against instead.
+    assert len(starts) == 3
+    assert len(ends) == 3
+    assert len(audio_frames) == 3  # one binary WAV frame per sentence
+    assert all(s["codec"] == "wav" for s in starts)
+    assert all(frame[:4] == b"RIFF" for frame in audio_frames)
 
 
 @pytest.mark.asyncio
-async def test_opus_mode_falls_back_to_synthesize_for_non_rendering_provider():
-    """edge_tts-shaped engines (no render_wav()) must keep working in Opus mode,
-    not crash -- they still go through the old artifact-backed path."""
-    fake_wav = _silence_wav()
-    provider = _NonRenderingTTS(fake_wav)
+async def test_opus_mode_encodes_non_rendering_provider_bytes_without_touching_disk():
+    """edge_tts-shaped engines (no render_wav(), MP3 bytes) must keep working in
+    Opus mode without ever touching the artifact store -- render_audio() is the
+    only seam now, and wav_bytes_to_pcm16's soundfile fallback decodes the
+    non-WAV container in memory. Uses a genuine MP3 container (not a RIFF/WAVE
+    one mislabeled as MP3): wave.open() succeeds on any RIFF bytes regardless of
+    the declared media_type, so a real WAV double would never actually exercise
+    the soundfile fallback this test is named for."""
+    fake_mp3 = _tone_mp3(int(0.1 * OUT_SR), 220.0, OUT_SR)  # 100ms @ 24kHz
+    assert fake_mp3[:4] != b"RIFF"  # sanity: genuinely not a WAV container
+    provider = _NonRenderingTTS(fake_mp3)
     tts_service.providers["stub-opus-nodisk-nonrender-tts"] = provider
 
-    sess, events, audio_pkts = await _drive_text_turn(
-        _cfg(tts_engine="stub-opus-nodisk-nonrender-tts")
+    before = set(artifact_store.base_dir.iterdir())
+    _session, _events, audio_frames = await _drive_text_turn(
+        _cfg(audio_out="opus", tts_engine="stub-opus-nodisk-nonrender-tts")
     )
-
-    assert sess.opus_encoder is not None
-    assert provider.synthesize_calls >= 1
-    assert audio_pkts
-    names = [n for n, _ in events]
-    assert "audio_start" in names
-    assert "audio_end" in names
+    assert audio_frames  # opus packets were produced
+    assert set(artifact_store.base_dir.iterdir()) == before

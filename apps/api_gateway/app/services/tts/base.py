@@ -1,12 +1,7 @@
-import logging
 from abc import ABC, abstractmethod
 
-from app.core.audio import wav_duration_seconds
 from app.core.errors import ProviderError
-from app.schemas.tts import TTSRequest, TTSResult
-from app.services.artifacts import artifact_store
-
-logger = logging.getLogger(__name__)
+from app.schemas.tts import TTSRequest
 
 
 class TTSProvider(ABC):
@@ -16,10 +11,6 @@ class TTSProvider(ABC):
     # engine isn't a plain `pip install <pkg>` (e.g. gated by a config path, or
     # installed from a git URL rather than a PyPI name).
     install_package: str | None = None
-
-    @abstractmethod
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:
-        raise NotImplementedError
 
     def available(self) -> bool:
         """Whether the engine can run real synthesis (deps/binaries present)."""
@@ -49,6 +40,7 @@ class TTSProvider(ABC):
         """Whether ref_audio_path/ref_text (voice cloning) works for this engine."""
         return False
 
+    @abstractmethod
     async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
         """(audio_bytes, media_type) with NO artifact side effect.
 
@@ -58,11 +50,11 @@ class TTSProvider(ABC):
         this -- RenderingTTSProvider does below via render_wav(); a plain
         TTSProvider subclass (e.g. EdgeTTSProvider) implements it directly.
         """
-        raise ProviderError(f"{self.name} cannot render audio")
+        raise NotImplementedError
 
 
 class RenderingTTSProvider(TTSProvider):
-    """Base that runs real synthesis and wraps the WAV as a fetchable artifact.
+    """Base for engines that run real local/remote synthesis to WAV bytes.
 
     Subclasses implement ``_render_wav`` (real synthesis -> WAV bytes). Failures
     surface as ``ProviderError`` instead of degrading to placeholder audio.
@@ -78,23 +70,11 @@ class RenderingTTSProvider(TTSProvider):
         """Public seam: real synthesis -> WAV bytes, no artifact side effect.
 
         apps/model_service returns these bytes straight on the HTTP response;
-        synthesize() below is the gateway's artifact-saving path on top."""
+        render_audio() below is the gateway's own bytes-returning seam on top."""
         try:
             return await self._render_wav(payload)
         except Exception as exc:  # noqa: BLE001 - surface as a clean provider error
             raise ProviderError(f"{self.name} synthesis failed: {exc}") from exc
-
-    async def synthesize(self, payload: TTSRequest) -> TTSResult:
-        wav = await self.render_wav(payload)
-
-        _, audio_url = artifact_store.save_wav(wav)
-        return TTSResult(
-            engine=self.name,
-            sample_rate=self.sample_rate,
-            audio_url=audio_url,
-            duration_seconds=round(wav_duration_seconds(wav), 3),
-            text=payload.text,
-        )
 
     async def render_audio(self, payload: TTSRequest) -> tuple[bytes, str]:
         return await self.render_wav(payload), "audio/wav"

@@ -12,7 +12,7 @@ from app.services.tts.service import tts_service
 class _FakeVoicedProvider(TTSProvider):
     name = "fake_voiced"
 
-    async def synthesize(self, payload):  # pragma: no cover - not exercised here
+    async def render_audio(self, payload) -> tuple[bytes, str]:  # pragma: no cover - not exercised here
         raise NotImplementedError
 
     async def list_voices(self) -> list[dict]:
@@ -25,7 +25,7 @@ class _FakeVoicedProvider(TTSProvider):
 class _FakeBareProvider(TTSProvider):
     name = "fake_bare"
 
-    async def synthesize(self, payload):  # pragma: no cover - not exercised here
+    async def render_audio(self, payload) -> tuple[bytes, str]:  # pragma: no cover - not exercised here
         raise NotImplementedError
 
 
