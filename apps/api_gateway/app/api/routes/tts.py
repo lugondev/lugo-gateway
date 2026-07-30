@@ -75,7 +75,7 @@ async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
             )
         chunks.append(chunk)
     data = b"".join(chunks)
-    ref_id, _url = artifact_store.save_reference_audio(data)
+    ref_id = artifact_store.save_reference_audio(data)
     return {"success": True, "data": {"ref_audio_path": str(artifact_store.path_for(ref_id))}}
 
 

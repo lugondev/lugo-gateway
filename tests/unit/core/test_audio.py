@@ -9,6 +9,7 @@ from app.core.audio import (
     wav_bytes_to_pcm16,
     wav_duration_seconds,
 )
+from audio_helpers import _tone_mp3
 
 
 def test_pcm16_to_wav_roundtrip_duration():
@@ -39,24 +40,6 @@ def test_pcm16_to_float_array_range():
 
 
 # ---------------------------------------------------------- wav_bytes_to_pcm16
-
-def _tone_pcm16(n: int, freq: float, sr: int) -> bytes:
-    t = np.arange(n) / sr
-    samples = (0.3 * np.sin(2 * np.pi * freq * t)).astype(np.float32)
-    return (samples * 32767).astype("<i2").tobytes()
-
-
-def _tone_mp3(n: int, freq: float, sr: int) -> bytes:
-    import io
-
-    import soundfile as sf
-
-    pcm = _tone_pcm16(n, freq, sr)
-    float_samples = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
-    buffer = io.BytesIO()
-    sf.write(buffer, float_samples, sr, format="MP3")
-    return buffer.getvalue()
-
 
 def test_wav_bytes_to_pcm16_decodes_mp3_via_soundfile_fallback():
     # Not a RIFF/WAVE container -- wave.open() raises, and wav_bytes_to_pcm16

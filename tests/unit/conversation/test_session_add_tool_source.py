@@ -14,7 +14,7 @@ def _cfg():
         tts_engine="x", voice=None, ref_audio_path=None, ref_text=None,
         tts_instruct=None, tts_speed=None, tts_language=None, sample_rate=16000,
         output_sample_rate=24000, audio_codec="pcm16", want_audio=False,
-        want_text=True, audio_out="url", denoise=False, resume_sid=None,
+        want_text=True, audio_out="wav", denoise=False, resume_sid=None,
     )
 
 

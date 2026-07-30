@@ -13,13 +13,12 @@ from app.core.settings import settings
 
 
 class ArtifactStore:
-    def __init__(self, base_dir: str, url_prefix: str = "/artifacts") -> None:
+    def __init__(self, base_dir: str) -> None:
         self.base_dir = Path(base_dir)
-        self.url_prefix = url_prefix.rstrip("/")
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
-    def save_reference_audio(self, data: bytes) -> tuple[str, str]:
-        """Persist a voice-clone reference clip; return (artifact_id, public_url).
+    def save_reference_audio(self, data: bytes) -> str:
+        """Persist a voice-clone reference clip; return its artifact_id.
 
         Prefixed `ref_` so it's clearly distinguished from OmniVoice's own
         pinned reference file (`_omnivoice_voice_ref.wav`) sharing this
@@ -27,7 +26,7 @@ class ArtifactStore:
         artifact_id = f"ref_{uuid.uuid4().hex}"
         filename = f"{artifact_id}.wav"
         (self.base_dir / filename).write_bytes(data)
-        return artifact_id, f"{self.url_prefix}/{filename}"
+        return artifact_id
 
     def contains(self, candidate: str) -> bool:
         """True iff `candidate` resolves to a path inside this store's

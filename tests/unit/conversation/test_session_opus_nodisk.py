@@ -21,6 +21,7 @@ Follows the harness pattern established by test_conversation_session_core.py
 import pytest
 
 from app.core.audio import pcm16_to_wav_bytes
+from audio_helpers import _tone_mp3
 from app.core.opus import opus_available
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSRequest
@@ -195,9 +196,13 @@ async def test_opus_mode_encodes_non_rendering_provider_bytes_without_touching_d
     """edge_tts-shaped engines (no render_wav(), MP3 bytes) must keep working in
     Opus mode without ever touching the artifact store -- render_audio() is the
     only seam now, and wav_bytes_to_pcm16's soundfile fallback decodes the
-    non-WAV container in memory."""
-    fake_wav = _silence_wav()
-    provider = _NonRenderingTTS(fake_wav)
+    non-WAV container in memory. Uses a genuine MP3 container (not a RIFF/WAVE
+    one mislabeled as MP3): wave.open() succeeds on any RIFF bytes regardless of
+    the declared media_type, so a real WAV double would never actually exercise
+    the soundfile fallback this test is named for."""
+    fake_mp3 = _tone_mp3(int(0.1 * OUT_SR), 220.0, OUT_SR)  # 100ms @ 24kHz
+    assert fake_mp3[:4] != b"RIFF"  # sanity: genuinely not a WAV container
+    provider = _NonRenderingTTS(fake_mp3)
     tts_service.providers["stub-opus-nodisk-nonrender-tts"] = provider
 
     before = set(artifact_store.base_dir.iterdir())

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -95,18 +96,31 @@ def _resolve_provider(config: ServiceConfig):
     return provider
 
 
-def create_app(config: ServiceConfig | None = None, provider=None) -> FastAPI:
-    config = config or load_config()
-    if provider is None:
-        provider = _resolve_provider(config)
-
-    app = FastAPI(title=f"model-service ({config.kind}:{config.engine})")
-
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Real-boot-only: uvicorn drives the ASGI lifespan protocol (`uvicorn
+    # model_service.app.main:create_app --factory`, see
+    # infra/docker/Dockerfile.model_service), so this runs once per process
+    # start. Deliberately NOT called inline in create_app() -- unit tests
+    # construct the app via `TestClient(create_app(...))` without entering it
+    # as a context manager, so lifespan never fires there, and this sweep
+    # never touches a developer's real repo-root artifacts/ dir during the
+    # unit suite (see test_routes_tts.py/test_routes_stt.py, which don't use
+    # `with TestClient(...) as client:`).
     from app.services.artifacts import artifact_store
 
     swept = sweep_stale_ref_audio(artifact_store.base_dir)
     if swept:
         logger.info("swept %d stale temp reference clip(s) from artifacts dir", swept)
+    yield
+
+
+def create_app(config: ServiceConfig | None = None, provider=None) -> FastAPI:
+    config = config or load_config()
+    if provider is None:
+        provider = _resolve_provider(config)
+
+    app = FastAPI(title=f"model-service ({config.kind}:{config.engine})", lifespan=_lifespan)
 
     @app.get("/health")
     async def health() -> dict:

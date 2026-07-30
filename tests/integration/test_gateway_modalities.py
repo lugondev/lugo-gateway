@@ -28,10 +28,12 @@ class _StubSTT(STTProvider):
 
 
 class _StubTTS(RenderingTTSProvider):
-    """A real RenderingTTSProvider so the Opus path (which calls render_wav(),
-    never synthesize()) gets real WAV bytes to encode instead of a fabricated
-    artifact URL that nothing wrote. synthesize() is inherited unchanged, so
-    URL-mode tests below still get a real artifact_store-backed audio_url."""
+    """A real RenderingTTSProvider so both downlink modes get real WAV bytes
+    to work with: render_audio() (inherited from RenderingTTSProvider, via
+    render_wav() below) is the only seam the session core calls now -- wav
+    mode pushes those bytes straight over the wire as a binary frame, opus
+    mode decodes and re-encodes them. Neither path touches the artifact
+    store."""
 
     name = "stub-gw-tts"
     sample_rate = 24000

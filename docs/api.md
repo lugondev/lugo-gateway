@@ -477,7 +477,9 @@ The events mirrored here are the same ones sent over the STT WebSocket —
 ### `GET /v1/system/status`
 Aggregated runtime status: app env, STT engines (+ remote `configured`), TTS mock flag
 and OmniVoice presence, whisper-local cache state, active Vosk model + installed Vosk
-models, and artifact count/size.
+models, and voice-clone reference-clip count/size (the `artifacts` field — synthesized
+reply audio is never persisted, so this counts only uploaded reference-audio clips, not
+generated audio; see "Artifacts" below).
 
 ### `GET /v1/system/config`
 Fetch the system configuration (preprocessing, conversation tuning, engine defaults).
