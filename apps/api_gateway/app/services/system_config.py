@@ -199,6 +199,17 @@ class ConversationTuningConfig(BaseModel):
     # the wrong shape. Rows stored before this was removed keep loading -- unknown
     # keys are ignored (see ConversationSettings' extra policy and
     # test_system_config_store).
+    conversation_farewell_drain_s: float = Field(
+        default=5.0,
+        title="Farewell drain seconds",
+        description=(
+            "How long the server waits after the pre-idle farewell before sending "
+            "goodbye and closing. speak() returns when the last audio packet is sent, "
+            "not when the device has played it, so closing immediately cuts the "
+            "goodbye off mid-word."
+        ),
+        json_schema_extra={"subgroup": "Timing & VAD", "unit": "s"},
+    )
     conversation_language: str = Field(
         default="vi",
         title="Conversation language",

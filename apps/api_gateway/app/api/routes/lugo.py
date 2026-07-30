@@ -301,6 +301,21 @@ async def lugo_stream(websocket: WebSocket) -> None:
     identity_owned = identity.user_id is not None or identity.device_id is not None
 
     async def _watchdog() -> None:
+        """Wrapper so a failure in here is visible.
+
+        The main loop treats `wd.done()` as "time to close" and never awaits the
+        task, so an exception raised in the watchdog body used to kill the idle
+        path AND the connection without a single line in the log: the socket just
+        dropped at the idle mark with no goodbye. Anything that goes wrong while
+        deciding to disconnect must say so."""
+        try:
+            await _watchdog_body()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - log, then let the connection close
+            logger.exception("lugo idle watchdog failed; connection will close without goodbye")
+
+    async def _watchdog_body() -> None:
         nonlocal closing, last_identity_check
         while True:
             await asyncio.sleep(_IDLE_TICK_S)
@@ -334,8 +349,23 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     # sat silent and timed out has no conversation to take leave of,
                     # and a farewell to nobody is just noise (and an LLM call).
                     if session.turn > 0:
+                        # Buy time on the DEVICE's own watchdog before generating.
+                        # It closes the link after idle_timeout_s + a few seconds of
+                        # hearing nothing from the server, and writing this farewell
+                        # costs an LLM call plus synthesis -- long enough that the
+                        # device can hang up mid-sentence. Any server event resets
+                        # that timer (rpi/esp32 both treat it as activity), and
+                        # `processing` is the honest one: something IS being
+                        # prepared.
+                        await session.emit("processing", turn=session.turn)
                         await session.announce("idle_goodbye")
-                        await asyncio.sleep(0.5)
+                        # Then hold the line. speak() returns once the last packet is
+                        # SENT, not once it is heard: the device is still draining
+                        # its jitter buffer, and closing on its heels cuts the
+                        # goodbye off mid-word.
+                        await asyncio.sleep(
+                            system_config_store.get().conversation.conversation_farewell_drain_s
+                        )
                     await websocket.send_json({"type": "goodbye", "reason": "idle_timeout"})
                 except RuntimeError:
                     pass

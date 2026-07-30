@@ -35,9 +35,13 @@ _DIRECTIVES = {
         "not ask a question."
     ),
     "idle_goodbye": (
-        "The user has gone quiet and you are about to disconnect. Say ONE short "
-        "sentence out loud to say goodbye for now. You may nod to what was just "
-        "discussed. Do not ask a question -- nobody will answer."
+        "The user has stopped talking and you are about to go to sleep -- the "
+        "connection is closing right after you speak. Say ONE short sentence out "
+        "loud that both NOTES the silence and says goodbye, so they know you are "
+        "signing off rather than ignoring them. In the spirit of \"you're not "
+        "saying anything, so I'll say goodbye then\" or \"you must be busy -- talk "
+        "later\", but in your own words. You may nod to what was just discussed. "
+        "Do not ask a question that expects an answer -- nobody will be listening."
     ),
 }
 

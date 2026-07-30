@@ -212,7 +212,9 @@ def test_idle_speaks_farewell_before_goodbye(monkeypatch):
         seen_events.append(event)
         return "Tạm biệt nha, hẹn gặp lại"
 
-    _patch_conversation(monkeypatch, tts_engine="stub-fw-tts")
+    # Real drain is seconds of dead air on purpose (the device is still playing);
+    # here it only needs to be non-zero to prove the goodbye waits for it.
+    _patch_conversation(monkeypatch, tts_engine="stub-fw-tts", conversation_farewell_drain_s=0.2)
     monkeypatch.setattr("app.services.conversation.session.generate_line", _fake_generate_line)
     tts_service.providers["stub-fw-tts"] = _FarewellTTS()
     try:
@@ -231,17 +233,29 @@ def test_idle_speaks_farewell_before_goodbye(monkeypatch):
                 if d.get("type") == "tts" and d.get("state") == "stop":
                     break
             saw_farewell = False
+            kept_alive_before_farewell = False
+            seen_processing = False
             for _ in range(60):
                 m = ws.receive()
                 if m.get("bytes") is not None:
                     continue  # farewell opus audio
                 d = _json.loads(m["text"])
+                if d.get("type") == "processing":
+                    seen_processing = True
                 if d.get("type") == "tts" and d.get("text") and "biệt" in d["text"]:
                     saw_farewell = True
+                    kept_alive_before_farewell = seen_processing
                 if d.get("type") == "goodbye":
                     break
             assert d["type"] == "goodbye" and d["reason"] == "idle_timeout"
             assert saw_farewell, "no spoken farewell was sent before the idle goodbye"
             assert seen_events == ["idle_goodbye"]
+            # Writing the line costs an LLM call plus synthesis, and the device hangs
+            # up on its own after a few seconds of server silence. Something has to go
+            # out first or the farewell races the device's watchdog.
+            assert kept_alive_before_farewell, (
+                "nothing was sent between the idle decision and the farewell, so the "
+                "device's own watchdog can close the link while the line is written"
+            )
     finally:
         tts_service.providers.pop("stub-fw-tts", None)
