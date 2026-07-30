@@ -50,6 +50,12 @@ _IDENTITY_RECHECK_INTERVAL_S = 30.0
 # must not pin the socket open.
 _FAREWELL_BUDGET_S = 45.0
 
+# How far past the idle deadline a hold may push the disconnect before it is
+# overridden. A turn that never finishes must not keep a device connected forever,
+# and a device's own idle watchdog fires at idle_timeout_s + ~5s anyway, so a
+# server hold longer than that just loses the race and drops the farewell.
+_MAX_IDLE_HOLD_S = 20.0
+
 
 def refreshes_idle(event: str, payload: dict) -> bool:
     """Does this server-side event count as interaction for the idle countdown?
@@ -349,6 +355,12 @@ async def lugo_stream(websocket: WebSocket) -> None:
 
     async def _watchdog_body() -> None:
         nonlocal closing, last_identity_check
+        # Why the idle countdown is (not) advancing, logged once per streak rather
+        # than per tick. Without it, "the timeout never fired" is indistinguishable
+        # from "something reset it", and both look like total silence in the log --
+        # which is how the pre-idle farewell stayed unexplained across several
+        # rounds of hardware testing.
+        held_reason: str | None = None
         while True:
             await asyncio.sleep(_IDLE_TICK_S)
             now = time.monotonic()
@@ -361,17 +373,39 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     except RuntimeError:
                         pass
                     return
-            if session.is_turn_active():
-                continue
-            # Hold, don't refresh, while the endpointer is mid-utterance: a
-            # sentence longer than idle_timeout_s must not be cut off, but noise
-            # that opens and closes an utterance must not push the countdown
-            # forward either. It resumes from whenever the last real exchange
-            # was. (max_utterance_ms bounds this: the endpointer force-ends a
-            # stuck utterance, so the flag cannot pin the connection open.)
-            if session.endpointer is not None and session.endpointer.speaking:
+            # Hold (don't refresh) while a turn runs or the endpointer is
+            # mid-utterance: a sentence longer than idle_timeout_s must not be cut
+            # off, but noise that opens and closes an utterance must not push the
+            # countdown forward either -- it resumes from the last real exchange.
+            # NOT held on `endpointer.speaking`. Measured against the real VAD, an
+            # open mic in a room with sustained sound leaves that flag set ~100% of
+            # the time (loud constant noise: speaking 40s out of 40s, the endpoint
+            # firing only at max_utterance_ms and speech_start reopening
+            # immediately; TV-like bursts: 31.7s out of 40s). Holding on it meant
+            # the idle countdown never completed on exactly the device this exists
+            # for -- observed as 28 seconds of server silence after a real turn,
+            # with the speaker hanging up on its own watchdog. A long real
+            # utterance is protected by the turn it produces, and by the device's
+            # own timeout being longer than this one.
+            hold = "a turn is running" if session.is_turn_active() else None
+            # A hold is a pause, never a veto: an endpointer that never closes its
+            # utterance (an open mic in a noisy room) would otherwise keep the
+            # connection alive forever, which is the failure this whole idle path
+            # exists to prevent.
+            if hold and now - last_activity >= idle + _MAX_IDLE_HOLD_S:
+                logger.warning("idle hold overrun (%s); timing out anyway", hold)
+                hold = None
+            if hold != held_reason:
+                logger.info(
+                    "idle countdown %s (%.0fs since last interaction)",
+                    f"held: {hold}" if hold else f"resumed after {held_reason}",
+                    now - last_activity,
+                )
+                held_reason = hold
+            if hold:
                 continue
             if idle > 0 and now - last_activity >= idle:
+                logger.info("idle timeout reached after %.0fs; disconnecting", now - last_activity)
                 # Commit to closing synchronously, before the await below, so
                 # the main loop cannot process/emit a message that raced in
                 # concurrently with this goodbye send (ASGI sends aren't

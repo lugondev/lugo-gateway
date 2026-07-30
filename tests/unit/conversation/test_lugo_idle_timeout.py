@@ -189,6 +189,42 @@ def test_idle_countdown_starts_after_the_bot_finishes(monkeypatch):
         tts_service.providers.pop("stub-slow-tts", None)
 
 
+def test_a_mic_that_never_goes_quiet_cannot_hold_the_countdown(monkeypatch):
+    """An endpointer stuck "mid-utterance" must not stop the idle timeout.
+
+    Measured against the real VAD: an open mic in a room with sustained sound
+    leaves `endpointer.speaking` set essentially all the time -- loud constant
+    noise held it 40s out of 40s (the endpoint fires only at max_utterance_ms and
+    speech_start reopens immediately), TV-like bursts 31.7s out of 40s. A watchdog
+    that paused on that flag never reached its own timeout on exactly the
+    always-listening device it exists for: 28 seconds of server silence after a
+    real turn, and the speaker hanging up on its own watchdog with nothing said.
+    """
+    import time as _time
+
+    from app.services.conversation.endpointer import VadEndpointer
+
+    # The pathological case in one line: this endpointer is ALWAYS mid-utterance.
+    monkeypatch.setattr(VadEndpointer, "speaking", property(lambda self: True))
+
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "fast",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        assert ws.receive_json()["type"] == "welcome"
+        started = _time.monotonic()
+        msg = _receive_until(ws, "goodbye", attempts=40)
+        waited = _time.monotonic() - started
+
+        assert msg["reason"] == "idle_timeout"
+        # On time, not eventually: the overrun cap would also produce a goodbye
+        # here, just far too late to beat the device's own watchdog -- which is
+        # the whole failure. idle_timeout_s is 1s for this profile.
+        assert waited < 5, (
+            f"the goodbye took {waited:.1f}s: the countdown was being paused by a "
+            "mic that never goes quiet, and only the overrun cap released it"
+        )
+
+
 def test_only_real_interaction_refreshes_the_idle_countdown():
     """What the VAD guesses is not interaction.
 
