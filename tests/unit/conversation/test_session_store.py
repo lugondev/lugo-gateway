@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 import pytest
 
 from app.services.history.store import SessionStore
@@ -29,6 +31,23 @@ async def test_messages_roundtrip(store):
         ("user", "xin chào"),
         ("assistant", "chào bạn"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_messages_carry_an_explicitly_utc_timestamp(store):
+    """The web client renders per-message clock times.
+
+    The offset must be in the string: SQLite drops tzinfo, and JS reads a naive
+    ISO string as LOCAL time -- so a bare timestamp shows the wrong hour to
+    anyone not on UTC.
+    """
+    await store.create("s1")
+    await store.append_message("s1", 1, "user", "xin chào")
+    (msg,) = await store.get_messages("s1")
+    assert msg["created_at"] is not None
+    parsed = datetime.fromisoformat(msg["created_at"])
+    assert parsed.tzinfo is not None
+    assert parsed.utcoffset() == timedelta(0)
 
 
 @pytest.mark.asyncio

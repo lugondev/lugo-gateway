@@ -84,7 +84,18 @@ class SessionStore:
                     .order_by(ChatMessage.id)
                 )
             ).scalars().all()
-            return [{"turn": m.turn, "role": m.role, "content": m.content} for m in rows]
+            # created_at goes out too: the web client shows when each turn was
+            # said. iso_utc, not the raw column -- a naive SQLite datetime is
+            # read as LOCAL time by JS and lands hours off (see timefmt).
+            return [
+                {
+                    "turn": m.turn,
+                    "role": m.role,
+                    "content": m.content,
+                    "created_at": iso_utc(m.created_at),
+                }
+                for m in rows
+            ]
 
     async def mark_ended(self, session_id: str) -> None:
         async with db_session() as s:
