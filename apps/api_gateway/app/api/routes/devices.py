@@ -2,15 +2,35 @@ from fastapi import APIRouter, HTTPException, Request
 
 from app.core.actor import current_user_id
 from app.core.errors import AuthError, DeviceSerialConflictError, PairingCodeInvalidError
-from app.schemas.devices import PairClaimRequest, PairInitRequest
+from app.schemas.devices import DeviceProfileRequest, PairClaimRequest, PairInitRequest
 from app.services.auth.devices import device_store
 from app.services.auth.pairing import claim_rate_limiter, init_rate_limiter, pending_pairings
+from app.services.profile_visibility import visible_profile_or_none
+from app.services.profiles.store import profile_store
 
 router = APIRouter(prefix="/v1/devices", tags=["devices"])
 
 
 def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
+
+
+def _checked_profile_name(profile_id: str, user_id: str) -> str:
+    """Return `profile_id` if this user may bind a device to it, else 404.
+
+    This is THE choke point for the bind path. A device identity resolves to its
+    owner's user_id (core/auth_guard.resolve_ws_identity), so a binding the owner
+    couldn't otherwise see would hand them that profile's llm.api_key,
+    system_prompt and private mcp_servers on the next connect -- the C2 IDOR that
+    services/profile_visibility.py exists to close. "Belongs to someone else"
+    collapses into the same 404 as "doesn't exist", per that module's contract:
+    the pair of them must stay indistinguishable so this doesn't become a
+    profile-name enumeration oracle."""
+    if not profile_id:
+        return ""  # unassigned is always allowed
+    if visible_profile_or_none(profile_store.get(profile_id), user_id) is None:
+        raise HTTPException(status_code=404, detail=f"profile '{profile_id}' not found")
+    return profile_id
 
 
 @router.post("/pair/init")
@@ -61,7 +81,10 @@ async def pair_claim(payload: PairClaimRequest, request: Request) -> dict:
         raise DeviceSerialConflictError(
             "a device with this hardware is already paired; revoke it first"
         )
-    device, raw_token = await device_store.create(user_id, payload.name, entry.serial)
+    profile_id = _checked_profile_name(payload.profile_id, user_id)
+    device, raw_token = await device_store.create(
+        user_id, payload.name, entry.serial, profile_id=profile_id
+    )
     pending_pairings.mark_claimed(payload.code, device["id"], raw_token)
     return {"success": True, "data": device}
 
@@ -72,6 +95,27 @@ async def list_my_devices(request: Request) -> dict:
     if not user_id:
         raise AuthError("login required")
     return {"success": True, "data": await device_store.list_for_user(user_id)}
+
+
+@router.post("/mine/{device_id}/profile")
+async def set_my_device_profile(
+    device_id: str, payload: DeviceProfileRequest, request: Request
+) -> dict:
+    """Move a device to another assistant, or unassign it with profile_id="".
+
+    Deliberately does NOT touch the pairing token: the token is hardware
+    identity, the profile is a soft setting, so switching assistants must never
+    send the user back to the device to read a fresh code off its screen."""
+    user_id = current_user_id(request)
+    if not user_id:
+        raise AuthError("login required")
+    profile_id = _checked_profile_name(payload.profile_id, user_id)
+    ok = await device_store.set_profile(device_id, profile_id, owner_user_id=user_id)
+    if not ok:
+        # Someone else's device id and a nonexistent one look identical here, on
+        # purpose -- same reasoning as _checked_profile_name.
+        raise HTTPException(status_code=404, detail=f"device '{device_id}' not found")
+    return {"success": True, "data": {"id": device_id, "profile_id": profile_id}}
 
 
 @router.post("/mine/{device_id}/revoke")

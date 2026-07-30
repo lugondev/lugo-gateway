@@ -4,6 +4,7 @@ from app.core.actor import current_role, current_user_id
 from app.core.errors import AppError
 from app.schemas.common import CloneRequest
 from app.schemas.profiles import ProfileRequest
+from app.services.auth.devices import device_store
 from app.services.auth.users import user_store
 from app.services.model_registry.gate import check_model_allowed
 from app.services.model_registry.store import model_registry_store
@@ -223,7 +224,17 @@ async def delete_profile(name: str, request: Request) -> dict:
     if not existing or not _can_write(existing, current_user_id(request), current_role(request)):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     profile_store.delete(name)
-    return {"success": True, "data": {"name": name, "deleted": True}}
+    # Devices bound to this profile become "Unassigned" -- NOT revoked. The
+    # pairing token is hardware identity and the profile is a soft setting, so
+    # deleting an assistant must never cost the user a trip to the device to
+    # re-pair it. Sweeping here also keeps devices.profile_id from dangling at a
+    # name that no longer resolves (every read path tolerates that, but a
+    # dangling name shows up in the UI as an assistant that isn't there).
+    unassigned = await device_store.clear_profile(name)
+    return {
+        "success": True,
+        "data": {"name": name, "deleted": True, "devices_unassigned": unassigned},
+    }
 
 
 @router.post("/{name}/clone")

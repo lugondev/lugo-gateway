@@ -83,6 +83,14 @@ class Device(Base):
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String(128))
     serial: Mapped[str] = mapped_column(String(128), index=True)
+    # The profile this device runs, by NAME -- profile_store is keyed by name,
+    # same as sessions.profile_id above. "" means unassigned, which is a legal
+    # state: a device keeps its pairing token when its profile is deleted or
+    # deliberately unassigned, so it never has to be re-paired over a soft
+    # setting. A name here may dangle only between a profile delete and the
+    # binding sweep in profiles.py; every read path resolves it through
+    # visible_profile_or_none and falls back to defaults.
+    profile_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     token_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

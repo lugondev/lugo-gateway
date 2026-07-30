@@ -16,6 +16,7 @@ from its transport (query params, handshake, …) and passes them in via
 import asyncio
 import logging
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
@@ -917,10 +918,86 @@ class ConversationSession:
             logger.warning("speak() failed: %s", exc)
 
     async def reset(self) -> None:
+        """Clear the in-memory conversation context, keeping the SAME session row.
+
+        Note what this deliberately does NOT do: it does not end the stored
+        session, so messages from before and after a reset land in one row with a
+        continuous turn counter. Callers that want a genuinely separate
+        conversation -- a distinct entry in History, its own memory extraction --
+        want rotate() instead. Kept as-is because it is documented wire API
+        (docs/api.md) and changing what an existing message means is worse than
+        adding a new one."""
         await self._abort_turn("reset")
         self.history.clear()
         self.endpointer.reset()
         await self.emit("reset")
+
+    async def rotate(self, reason: str = "client") -> None:
+        """End the current conversation and start a fresh one on the same connection.
+
+        session_id is otherwise fixed for the lifetime of a WebSocket, which is
+        wrong for a mains-powered speaker: it holds one socket open for days, so
+        everything it ever says lands in a single History entry, the LLM context
+        grows without bound, and memory extraction -- which only runs in close() --
+        never runs at all.
+
+        Deliberately does NOT rebuild the STT/TTS providers or the tool registry.
+        Rotating is about the conversation RECORD, not the audio pipeline; tearing
+        the pipeline down and back up would drop audio mid-stream and re-announce
+        engine state the client already has.
+
+        A session with nothing in it rotates to itself: pressing the button twice
+        must not litter the History with empty rows.
+        """
+        await self._abort_turn("rotate")
+
+        previous_id = self.cfg.session_id
+        # `turn` is the count of completed turns, so 0 means nothing was ever
+        # persisted under this id. session_ready False means the row does not
+        # exist at all (its creation failed in start()), and minting a second one
+        # would just fail the same way.
+        if self.turn > 0 and self.session_ready:
+            try:
+                await session_store.mark_ended(previous_id)
+            except Exception as exc:  # noqa: BLE001 - rotation must not kill the connection
+                logger.warning("mark_ended failed for %s: %s", previous_id, exc)
+            if self.profile is not None:
+                # Same background extraction close() does. Rotating is the only
+                # moment a long-lived device connection ever reaches it.
+                _spawn_background(
+                    memory_extractor.extract_and_upsert(
+                        previous_id, self.profile, user_id=self.cfg.identity_user_id
+                    )
+                )
+            new_id = str(uuid.uuid4())
+            try:
+                await session_store.create(
+                    new_id,
+                    profile_id=self.cfg.profile_name or "",
+                    meta={"stt_engine": self.cfg.stt_engine, "tts_engine": self.cfg.tts_engine},
+                    # The caller who is actually speaking -- never profile.owner_id.
+                    # See start()'s note on H2: attributing a session to the named
+                    # profile's owner bills someone who never touched it.
+                    user_id=self.cfg.identity_user_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("session create failed on rotate: %s", exc)
+                self.session_ready = False
+            # Point every later write at the new row. Nothing caches this: _persist
+            # and close() both read self.cfg.session_id at call time.
+            self.cfg.session_id = new_id
+            # A later start() must not resurrect the conversation we just ended.
+            self.cfg.resume_sid = None
+
+        self.history.clear()
+        self.endpointer.reset()
+        self.turn = 0
+        await self.emit(
+            "session_rotated",
+            session_id=self.cfg.session_id,
+            previous_session_id=previous_id,
+            reason=reason,
+        )
 
     async def flush(self) -> None:
         audio = self.endpointer.flush()

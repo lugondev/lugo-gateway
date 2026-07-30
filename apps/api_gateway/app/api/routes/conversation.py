@@ -36,6 +36,7 @@ from app.services.health import check_resolved_engines
 from app.services.history.store import session_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
+from app.services.auth.device_profile import resolve_bound_profile
 from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
@@ -309,6 +310,16 @@ async def conversation_stream(websocket: WebSocket) -> None:
 
     # --- Profile resolution ---
     profile_name = q.get("profile")
+    # A paired device's server-side binding outranks whatever profile its own
+    # config asked for, so the control panel is the single source of truth. An
+    # unbound device keeps using its own `?profile=` -- that's what stops this
+    # from breaking fleets deployed before bindings existed. The override is
+    # announced rather than silent: stale firmware config should be visible.
+    profile_name, binding_warning, _from_binding = await resolve_bound_profile(
+        identity, profile_name
+    )
+    if binding_warning:
+        await websocket.send_json({"event": "warning", "message": binding_warning})
     # C2 fix: same rule as HTTP /chat above -- "exists but not yours" must
     # fall into the exact same not-found warning as "doesn't exist" (no new
     # enumeration oracle). bypass=identity.unauthenticated preserves the
@@ -459,6 +470,11 @@ async def conversation_stream(websocket: WebSocket) -> None:
                     await session.abort("user")
                 elif ctype == "reset":
                     await session.reset()
+                elif ctype == "new_session":
+                    # Distinct from `reset` on purpose: reset clears the context
+                    # but keeps writing to the same stored session, this starts a
+                    # genuinely new conversation. See ConversationSession.rotate.
+                    await session.rotate("client")
                 elif ctype in {"flush", "end"}:
                     await session.flush()
                     if ctype == "end":

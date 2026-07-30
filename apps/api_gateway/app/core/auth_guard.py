@@ -61,9 +61,9 @@ _USER_PREFIXES = (
 #  - EXACT, not prefix: `/v1/devices/mine` as a bare prefix also admits
 #    `POST /v1/devices/mine/revoke`, which the ROUTER dispatches to the admin
 #    `revoke_any_device(device_id="mine")` -- the user carve-out would smuggle a
-#    non-admin into an admin handler. The one legitimate subpath under it,
-#    `POST /v1/devices/mine/{device_id}/revoke`, is handled by
-#    _is_own_device_revoke() below, whose shape check `/mine/revoke` cannot match.
+#    non-admin into an admin handler. The legitimate subpaths under it,
+#    `POST /v1/devices/mine/{device_id}/{revoke,profile}`, are handled by
+#    _is_own_device_action() below, whose shape check `/mine/revoke` cannot match.
 #
 #  - BY METHOD: `/v1/model_registry/options` is the user dropdown feed for GET,
 #    but PATCH/DELETE on that exact string dispatch to the admin
@@ -111,19 +111,26 @@ def _matches(path: str, prefixes: tuple[str, ...]) -> bool:
     return any(path == prefix or path.startswith(prefix.rstrip("/") + "/") for prefix in prefixes)
 
 
-def _is_own_device_revoke(path: str) -> bool:
-    """True ONLY for `/v1/devices/mine/{device_id}/revoke` -- the user's
-    own-device revoke (a legitimate user subpath under the exact `/v1/devices/mine`
-    carve-out). Deliberately shape-precise so it does NOT match the M1 attack
-    `/v1/devices/mine/revoke` (which the router dispatches to the admin
-    `revoke_any_device(device_id="mine")`): that string has an empty middle
+# Final segments of `/v1/devices/mine/{device_id}/<action>` that a logged-in
+# user may POST to for a device they own. An ALLOW-list, so adding a route under
+# /v1/devices/mine/ does NOT silently inherit the carve-out: a new action stays
+# at the default-deny floor until it is named here deliberately.
+_OWN_DEVICE_ACTIONS = frozenset({"revoke", "profile"})
+
+
+def _is_own_device_action(path: str) -> bool:
+    """True ONLY for `/v1/devices/mine/{device_id}/<allowed action>` -- the user's
+    own-device subresources (legitimate user subpaths under the exact
+    `/v1/devices/mine` carve-out). Deliberately shape-precise so it does NOT match
+    the M1 attack `/v1/devices/mine/revoke` (which the router dispatches to the
+    admin `revoke_any_device(device_id="mine")`): that string has an empty middle
     segment and is rejected by the `device_id` non-empty check."""
     parts = path.split("/")
     return (
         len(parts) == 6
         and parts[:4] == ["", "v1", "devices", "mine"]
         and parts[4] != ""
-        and parts[5] == "revoke"
+        and parts[5] in _OWN_DEVICE_ACTIONS
     )
 
 
@@ -174,7 +181,7 @@ def _classify(path: str, method: str) -> str | None:
     allowed = _USER_EXACT.get(path)
     if allowed is not None and method in allowed:
         return "user"
-    if method == "POST" and _is_own_device_revoke(path):
+    if method == "POST" and _is_own_device_action(path):
         return "user"
     if _matches(path, _ADMIN_PREFIXES):
         return "admin"
