@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from app.core.audio import pcm16_to_wav_bytes
 from app.main import app
 from app.schemas.stt import STTResult
+from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
 from app.services.history.store import session_store
 from app.services.profiles.models import Profile, SessionConfig
 from app.services.profiles.store import ProfileStore
@@ -195,6 +196,108 @@ def test_conversation_stream_rotates_too():
         rotated = _await_event(ws, "session_rotated")
         assert rotated["previous_session_id"] == first
         assert rotated["session_id"] != first
+
+
+class _SlowTurnSession(ConversationSession):
+    """A session whose "turn" is a bare sleep, so a rotation can be requested
+    while one is provably still running. Only the turn body is faked -- rotate()
+    and the deferral live on the real class."""
+
+    async def start_slow_turn(self, seconds: float = 0.05) -> None:
+        self.turn = 1  # a turn's worth of history exists, so rotate mints a new id
+        self.current_turn = asyncio.create_task(asyncio.sleep(seconds))
+
+    async def start_and_run(self, seconds: float = 0.05) -> None:
+        await self.start()
+        await self.start_slow_turn(seconds)
+
+
+def _rotate_cfg(**over) -> SessionRuntimeConfig:
+    base = dict(
+        session_id="rotate-defer-1", profile_name=None, stt_engine="stub-rotate-stt",
+        language="vi", tts_engine="stub-rotate-tts", voice=None, ref_audio_path=None,
+        ref_text=None, tts_instruct=None, tts_speed=None, tts_language=None,
+        sample_rate=16000, output_sample_rate=24000, audio_codec="pcm16",
+        want_audio=False, want_text=True, audio_out="wav", denoise=False, resume_sid=None,
+    )
+    base.update(over)
+    return SessionRuntimeConfig(**base)
+
+
+@pytest.mark.asyncio
+async def test_new_session_mid_turn_waits_for_the_turn_to_finish():
+    """The voice path asks for this from INSIDE a turn (the self.session.new MCP
+    tool fires while the model waits on its result). Rotating right then cancels
+    the turn that asked, so the assistant never gets to confirm."""
+    events: list[tuple[str, dict]] = []
+
+    async def emit(name, **payload):
+        events.append((name, payload))
+
+    session = _SlowTurnSession(_rotate_cfg(), emit, lambda _pkt: None)
+    await session.start_and_run()
+    events.clear()                                # drop start()'s session_started
+
+    await session.request_rotate("client")
+    assert [n for n, _ in events] == []           # parked, not performed
+
+    await session.current_turn
+    await asyncio.sleep(0)                        # let the done-callback run
+    for _ in range(20):                           # ...and its spawned rotate()
+        if any(n == "session_rotated" for n, _ in events):
+            break
+        await asyncio.sleep(0.01)
+
+    rotated = [p for n, p in events if n == "session_rotated"]
+    assert rotated, f"never rotated: {[n for n, _ in events]}"
+    assert rotated[0]["previous_session_id"] == "rotate-defer-1"
+    assert rotated[0]["session_id"] != "rotate-defer-1"
+    # The deferred turn was left alone: no abort anywhere in the sequence.
+    assert "aborted" not in [n for n, _ in events]
+
+
+@pytest.mark.asyncio
+async def test_a_deferred_rotation_still_happens_if_the_turn_is_cancelled():
+    """Barge-in (or any abort) during the deferred turn must not swallow the
+    request: the user asked to start over, and silently staying in the old
+    conversation is the failure that matters."""
+    events: list[tuple[str, dict]] = []
+
+    async def emit(name, **payload):
+        events.append((name, payload))
+
+    session = _SlowTurnSession(_rotate_cfg(session_id="rotate-defer-2"), emit, lambda _pkt: None)
+    await session.start_and_run(seconds=5)
+
+    await session.request_rotate("client")
+    await session.abort("barge-in")
+    for _ in range(20):
+        if any(n == "session_rotated" for n, _ in events):
+            break
+        await asyncio.sleep(0.01)
+
+    assert any(n == "session_rotated" for n, _ in events), [n for n, _ in events]
+
+
+@pytest.mark.asyncio
+async def test_closing_drops_a_rotation_parked_behind_the_last_turn():
+    """close() cancels the in-flight turn, which fires the parked rotation. It
+    must not mint a session row on the way out -- nothing would ever end it."""
+    events: list[tuple[str, dict]] = []
+
+    async def emit(name, **payload):
+        events.append((name, payload))
+
+    session = _SlowTurnSession(_rotate_cfg(session_id="rotate-defer-3"), emit, lambda _pkt: None)
+    await session.start_and_run(seconds=5)
+
+    await session.request_rotate("client")
+    await session.close()
+    for _ in range(5):
+        await asyncio.sleep(0.01)
+
+    assert "session_rotated" not in [n for n, _ in events]
+    assert session.cfg.session_id == "rotate-defer-3"
 
 
 def test_reset_still_keeps_writing_to_the_same_session():

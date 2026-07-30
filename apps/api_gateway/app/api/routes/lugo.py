@@ -390,7 +390,10 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     # Start a fresh conversation without dropping the socket. A
                     # mains-powered speaker never disconnects, so without this its
                     # whole life is one session (see ConversationSession.rotate).
-                    await session.rotate("client")
+                    # request_rotate, not rotate: a device asks for this from its
+                    # self.session.new tool mid-turn, and that turn has to be
+                    # allowed to finish saying so.
+                    await session.request_rotate("client")
                 elif ctype == "mcp":
                     if transport is not None:
                         transport.on_message(control.get("payload") or {})

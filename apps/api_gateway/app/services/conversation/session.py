@@ -197,6 +197,17 @@ class ConversationSession:
         # turn (None when it isn't speaking). Drives the barge-in grace window
         # in feed_audio so onset echo doesn't abort the turn.
         self._speaking_since: float | None = None
+        # Rotation reason parked by request_rotate() while a turn is in flight,
+        # consumed once that turn ends. See request_rotate().
+        self._rotate_pending: str | None = None
+        # A deferred rotation runs detached from the receive loop, so it can
+        # otherwise overlap a second `new_session` the loop is handling and both
+        # mint a session row. Serialized, the second one finds turn == 0 and is
+        # the documented no-op instead.
+        self._rotate_lock = asyncio.Lock()
+        # Set by close() so a rotation parked behind the last turn can't mint a
+        # fresh session row on a connection that is going away.
+        self._closing = False
 
     def is_turn_active(self) -> bool:
         return bool(self.current_turn and not self.current_turn.done())
@@ -932,6 +943,61 @@ class ConversationSession:
         self.endpointer.reset()
         await self.emit("reset")
 
+    async def request_rotate(self, reason: str = "client") -> None:
+        """Wire entry point for `new_session`: rotate now, or once the turn in
+        flight has finished.
+
+        A voice-driven "start over" is requested from INSIDE a turn -- the device's
+        self.session.new MCP tool fires while the model is still waiting for that
+        tool's result. Rotating right there cancels the very turn that asked for
+        it: the rotation happens, but the assistant never gets to say "starting a
+        new conversation" and the tool result lands on a future nobody is waiting
+        for. Deferring lets that turn finish against the conversation it was in --
+        which is also the session it is persisted to -- and rotates the moment it
+        is done.
+
+        A client that means "stop talking and start over NOW" (a button, not a
+        voice request) sends `abort` first; with no turn left in flight this
+        rotates immediately.
+        """
+        if self.current_turn is not None and not self.current_turn.done():
+            self._rotate_pending = reason
+            # Fires on completion AND on cancellation, so a barge-in in the
+            # middle of the deferred turn still leaves the user in the new
+            # conversation they asked for rather than silently back in the old.
+            self.current_turn.add_done_callback(self._rotate_when_turn_ends)
+            return
+        await self.rotate(reason)
+
+    def _rotate_when_turn_ends(self, task: asyncio.Task) -> None:
+        """done-callback for the turn a rotation is parked behind.
+
+        Runs OUTSIDE the turn task, which is what makes it safe: rotate() aborts
+        the current turn, and awaiting that from inside the turn's own callback
+        chain would be a self-await. By the time this runs the task is done, so
+        _abort_turn() has nothing to wait for."""
+        reason, self._rotate_pending = self._rotate_pending, None
+        if reason is None:
+            return  # a second new_session got here first; one rotation is enough
+        if self._closing:
+            # close() already ended this session. Rotating now would create a
+            # brand-new row on the way out and leave it open forever.
+            return
+        _spawn_background(self._rotate_logged(reason))
+
+    async def _rotate_logged(self, reason: str) -> None:
+        """rotate() for the deferred path: it runs detached from any request, so
+        a failure here has nowhere to surface except the log.
+
+        It runs on the loop tick right after the turn ended, and rotate() aborts
+        whatever turn is current -- so a turn created inside that one tick would
+        be cancelled. Barge-in cannot hit that window: it cancels at speech
+        START and only creates the next turn at speech END, seconds later."""
+        try:
+            await self.rotate(reason)
+        except Exception as exc:  # noqa: BLE001 - detached; must not vanish silently
+            logger.warning("deferred rotate failed for %s: %s", self.cfg.session_id, exc)
+
     async def rotate(self, reason: str = "client") -> None:
         """End the current conversation and start a fresh one on the same connection.
 
@@ -949,6 +1015,10 @@ class ConversationSession:
         A session with nothing in it rotates to itself: pressing the button twice
         must not litter the History with empty rows.
         """
+        async with self._rotate_lock:
+            await self._rotate_locked(reason)
+
+    async def _rotate_locked(self, reason: str) -> None:
         await self._abort_turn("rotate")
 
         previous_id = self.cfg.session_id
@@ -1007,6 +1077,10 @@ class ConversationSession:
             self.current_turn = asyncio.create_task(self._handle_turn(audio))
 
     async def close(self) -> None:
+        # Before the cancel below: cancelling the turn fires any rotation parked
+        # behind it (_rotate_when_turn_ends), and on a closing connection that
+        # rotation must be dropped rather than open a session nothing will end.
+        self._closing = True
         if self.current_turn and not self.current_turn.done():
             self.current_turn.cancel()
         if self.responder is not None:

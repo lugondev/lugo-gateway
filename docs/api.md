@@ -212,7 +212,9 @@ Client → server:
 - `{"type":"new_session"}` — end this conversation and start a fresh one on the same
   socket; the server answers `{"event":"session_rotated","session_id":…,"previous_session_id":…}`
   (`{"type":"session_new", …}` on the Lugo protocol). The old session is marked ended
-  and its memories extracted, exactly as if the socket had closed.
+  and its memories extracted, exactly as if the socket had closed. A turn already in
+  flight **finishes first** and the rotation happens right after it; send
+  `{"type":"abort"}` beforehand to cut that turn short instead.
 - `{"type":"reset"}` — clear the in-memory context only. It keeps writing to the SAME
   stored session, so a reset does not produce a separate History entry and does not
   trigger memory extraction. Left unchanged for compatibility; new clients should use
@@ -360,7 +362,7 @@ Client → server:
 | `text` | `{text}` | text-input turn (no mic) |
 | `abort` | `{reason}` | **barge-in** — cancel the bot's in-flight turn; the connection stays open |
 | `listen` | `{state, mode}` | turn/listen control; Phase 1 no-op — server VAD drives turn segmentation in `auto` mode |
-| `new_session` | *(none)* | end this conversation and start a fresh one **without dropping the socket**; answered with `session_new` |
+| `new_session` | *(none)* | end this conversation and start a fresh one **without dropping the socket**; answered with `session_new`. A turn in flight finishes first — send `abort` first to cut it short |
 | *(binary)* | Opus packets | mic audio up (v3 wrapping optional on uplink) |
 
 Server → client:
@@ -389,6 +391,15 @@ conversation has no turns yet, so pressing a "start over" button twice cannot li
 history with empty rows. This matters most for a mains-powered device: it never
 disconnects, so without `new_session` its whole life is one conversation and memory
 extraction (which only runs when a conversation ends) never runs at all.
+
+A turn in flight is **not** cancelled: the request is parked and the rotation happens
+when that turn ends. This is what makes a voice-driven "start over" work — the device's
+`self.session.new` tool asks for it from *inside* a turn, and that turn has to be allowed
+to finish confirming it (the reply belongs to, and is stored under, the conversation being
+left). It also means the tool result must be written to the socket **before**
+`new_session`. A client that means "stop talking and start over now" — a button, not a
+voice request — sends `abort` first; with no turn left in flight the rotation is
+immediate.
 
 **Idle timeout:** the server tracks last activity (speech, a turn, or audio
 playing) and, once `idle_timeout_s` elapses with the connection otherwise idle,

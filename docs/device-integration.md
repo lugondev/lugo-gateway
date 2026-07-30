@@ -132,6 +132,11 @@ Manage profiles with `GET /v1/profiles`, `GET/PUT/DELETE /v1/profiles/{name}` �
     open for days otherwise accumulates its entire life into a single conversation —
     one History entry, an ever-growing LLM context, and memory extraction that never
     runs (it only runs when a conversation ends).
+    A turn in flight finishes before the rotation happens, so a voice-driven "start
+    over" (the `self.session.new` device tool) still gets confirmed out loud. Send
+    the MCP tool result **before** this frame, never after — both firmwares do
+    (`mcp_tools_take_new_session_request` on ESP32, `_new_session_requested` on the
+    RPi). Send `{"type":"abort"}` first if the request should cut the reply short.
   - `{"type":"reset"}` — clear the in-memory conversation context. **Caveat:** it does
     NOT end the stored session, so messages from before and after a reset stay in the
     same row with a continuous turn counter. Kept as-is for compatibility; prefer

@@ -474,7 +474,9 @@ async def conversation_stream(websocket: WebSocket) -> None:
                     # Distinct from `reset` on purpose: reset clears the context
                     # but keeps writing to the same stored session, this starts a
                     # genuinely new conversation. See ConversationSession.rotate.
-                    await session.rotate("client")
+                    # A turn still in flight finishes first (request_rotate);
+                    # clients that want it cut short send `abort` beforehand.
+                    await session.request_rotate("client")
                 elif ctype in {"flush", "end"}:
                     await session.flush()
                     if ctype == "end":
