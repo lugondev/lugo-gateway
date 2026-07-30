@@ -374,13 +374,21 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     await recv
                 break
             message = recv.result()
-            last_activity = time.monotonic()
             if message.get("type") == "websocket.disconnect":
                 break
             if message.get("bytes") is not None:
-                # Phase 1: device sends raw opus frames (v3 wrapping optional on uplink).
+                # Deliberately NOT activity. An always-listening device streams mic
+                # frames continuously, so counting each frame kept last_activity
+                # permanently fresh and the idle timeout below could never fire on
+                # the very devices it exists for: the device's own watchdog
+                # (idle_timeout_s + grace) closed the link first, which is why no
+                # farewell was ever heard. Activity is what the emit wrapper above
+                # sees -- speech detected by the VAD, a turn, audio playing -- which
+                # is what docs/api.md has always said it was.
                 await session.feed_audio(message["bytes"])
             if message.get("text") is not None:
+                # A control message IS the client doing something on purpose.
+                last_activity = time.monotonic()
                 try:
                     control = json.loads(message["text"])
                 except json.JSONDecodeError:

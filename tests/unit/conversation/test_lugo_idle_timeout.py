@@ -89,6 +89,48 @@ def test_idle_timeout_emits_goodbye():
         assert msg["reason"] == "idle_timeout"
 
 
+def test_a_streaming_but_silent_device_still_idles_out():
+    """Mic frames are not activity.
+
+    Found on hardware: an auto-wake ESP32 streams Opus continuously, and the loop
+    used to refresh the idle countdown on every received message -- so on exactly
+    the always-listening device the timeout exists for, it could never fire. The
+    device's own watchdog (idle_timeout_s + grace) closed the link instead, which is
+    why no pre-idle farewell was ever heard. Activity is speech, a turn, or audio
+    playing, which is what docs/api.md always claimed.
+
+    The assertion is about WHEN the goodbye fires, because that is the only thing
+    that separates the two behaviours through a synchronous TestClient. Frames go up
+    for 2.5x the idle window; then the first read is timed. Already queued (instant)
+    means the server gave up while the stream was still running -- correct. A read
+    that blocks for about a full idle window means the goodbye only started counting
+    once the frames stopped, i.e. they were being treated as activity.
+    """
+    import time as _time
+
+    silence = b"\x00" * 40   # not decodable Opus; feed_audio logs and skips it
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "fast",
+                      "audio_params": {"format": "opus", "sample_rate": 16000}})
+        assert ws.receive_json()["type"] == "welcome"
+
+        idle_s = 1.0                              # the "fast" profile's idle_timeout_s
+        deadline = _time.monotonic() + idle_s * 2.5
+        while _time.monotonic() < deadline:
+            ws.send_bytes(silence)                # keep the uplink busy, say nothing
+            _time.sleep(0.05)
+
+        started = _time.monotonic()
+        msg = _receive_until(ws, "goodbye")
+        waited = _time.monotonic() - started
+
+        assert msg["reason"] == "idle_timeout"
+        assert waited < idle_s * 0.4, (
+            f"the goodbye took {waited:.2f}s to arrive after the stream stopped, so "
+            "the countdown had been restarting on every mic frame"
+        )
+
+
 def test_idle_countdown_starts_after_the_bot_finishes(monkeypatch):
     """The idle countdown must start when the bot FINISHES replying, not before —
     a slow turn's think/response time must NOT be counted toward idle.
