@@ -240,6 +240,16 @@ async def lugo_stream(websocket: WebSocket) -> None:
         elif event == "session_started":
             engine_status["stt_ready"] = bool(payload.get("stt_ready", True))
             engine_status["tts_ready"] = bool(payload.get("tts_ready", True))
+        elif event == "session_rotated":
+            # The device MUST see this: it persists session_id to disk and
+            # resumes it on reconnect (rpi-assistant session_state.py), so a
+            # device that missed the new id would reconnect straight back into
+            # the conversation it just asked to leave.
+            await websocket.send_json({
+                "type": "session_new",
+                "session_id": payload.get("session_id", ""),
+                "previous_session_id": payload.get("previous_session_id", ""),
+            })
         elif event == "engines_ready":
             await websocket.send_json({"type": "engines_ready"})
         # audio_end / reset: not on the wire
@@ -376,6 +386,11 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     await session.abort("barge-in")
                 elif ctype == "listen":
                     pass  # Phase 1 auto mode: server VAD drives turns
+                elif ctype == "new_session":
+                    # Start a fresh conversation without dropping the socket. A
+                    # mains-powered speaker never disconnects, so without this its
+                    # whole life is one session (see ConversationSession.rotate).
+                    await session.rotate("client")
                 elif ctype == "mcp":
                     if transport is not None:
                         transport.on_message(control.get("payload") or {})

@@ -470,6 +470,11 @@ async def conversation_stream(websocket: WebSocket) -> None:
                     await session.abort("user")
                 elif ctype == "reset":
                     await session.reset()
+                elif ctype == "new_session":
+                    # Distinct from `reset` on purpose: reset clears the context
+                    # but keeps writing to the same stored session, this starts a
+                    # genuinely new conversation. See ConversationSession.rotate.
+                    await session.rotate("client")
                 elif ctype in {"flush", "end"}:
                     await session.flush()
                     if ctype == "end":
