@@ -50,6 +50,28 @@ _IDENTITY_RECHECK_INTERVAL_S = 30.0
 # must not pin the socket open.
 _FAREWELL_BUDGET_S = 45.0
 
+
+def refreshes_idle(event: str, payload: dict) -> bool:
+    """Does this server-side event count as interaction for the idle countdown?
+
+    What the VAD *guesses* does not. A room with background sound produces
+    speech_start -> endpoint -> a turn whose transcript comes back empty, over and
+    over; observed on the speaker as three "turns" in twenty seconds, none of them
+    anything the user said. Counting those kept the countdown permanently reset, so
+    the idle timeout -- and the farewell that hangs off it -- never arrived.
+
+    `processing` is excluded for the same reason (it fires before anyone knows
+    whether there are words in the audio); a turn that IS running is held open by
+    `session.is_turn_active()` in the watchdog rather than by refreshing here.
+    """
+    if event in ("speech_start", "speech_end", "processing"):
+        return False
+    if event == "turn_done" and payload.get("skipped"):
+        return False
+    if event == "user_transcript" and not str(payload.get("text") or "").strip():
+        return False
+    return True
+
 def _resolve(profile_name: str | None, caller_id: str | None = None, *, bypass: bool = False):
     """Resolve engines/tts params from a profile (server owns everything).
 
@@ -212,7 +234,11 @@ async def lugo_stream(websocket: WebSocket) -> None:
 
     async def emit(event: str, **payload) -> None:
         nonlocal speaking, last_activity
-        last_activity = time.monotonic()  # any turn progress/end = activity
+        # Real interaction refreshes the idle countdown; a VAD guess does not.
+        # See refreshes_idle() for why, and _watchdog_body for how a sentence
+        # longer than the idle window is still not cut off.
+        if refreshes_idle(event, payload):
+            last_activity = time.monotonic()
         if event == "user_transcript":
             await websocket.send_json({"type": "stt", "text": payload.get("text", ""), "final": True})
         elif event in ("response_text", "audio_start"):
@@ -337,6 +363,14 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     return
             if session.is_turn_active():
                 continue
+            # Hold, don't refresh, while the endpointer is mid-utterance: a
+            # sentence longer than idle_timeout_s must not be cut off, but noise
+            # that opens and closes an utterance must not push the countdown
+            # forward either. It resumes from whenever the last real exchange
+            # was. (max_utterance_ms bounds this: the endpointer force-ends a
+            # stuck utterance, so the flag cannot pin the connection open.)
+            if session.endpointer is not None and session.endpointer.speaking:
+                continue
             if idle > 0 and now - last_activity >= idle:
                 # Commit to closing synchronously, before the await below, so
                 # the main loop cannot process/emit a message that raced in
@@ -351,10 +385,15 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     # give the device a moment to finish playing it out of its jitter
                     # buffer before the goodbye/close.
                     #
-                    # Only when something was actually said: a device that connected,
-                    # sat silent and timed out has no conversation to take leave of,
-                    # and a farewell to nobody is just noise (and an LLM call).
-                    if session.turn > 0:
+                    # Only when there is a conversation to take leave of. `history`
+                    # rather than `turn`: a turn counter is per-CONNECTION, so a
+                    # device that dropped and reconnected mid-conversation would be
+                    # judged to have said nothing and leave in silence. History is
+                    # the conversation itself, and once a reconnect resumes the
+                    # client's thread (see the session-provenance design) it is
+                    # seeded from the row, so the farewell follows the conversation
+                    # instead of the socket.
+                    if session.history:
                         # Buy time on the DEVICE's own watchdog before generating.
                         # It closes the link after idle_timeout_s + a few seconds of
                         # hearing nothing from the server, and writing this farewell

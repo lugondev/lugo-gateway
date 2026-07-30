@@ -189,6 +189,37 @@ def test_idle_countdown_starts_after_the_bot_finishes(monkeypatch):
         tts_service.providers.pop("stub-slow-tts", None)
 
 
+def test_only_real_interaction_refreshes_the_idle_countdown():
+    """What the VAD guesses is not interaction.
+
+    Observed on the speaker: after one real exchange, background sound opened and
+    closed an utterance twice in twenty seconds, each producing a turn whose
+    transcript came back EMPTY. Every one of them refreshed the countdown, so the
+    idle timeout -- and the farewell hanging off it -- never arrived.
+
+    Tested against the policy directly rather than through the socket: driving it
+    end-to-end needs Opus the VAD accepts as speech, and a version of this test
+    that faked those turns with `flush` control frames passed against the OLD
+    behaviour too (a control frame legitimately IS interaction), which is worse
+    than having no test at all.
+    """
+    from app.api.routes.lugo import refreshes_idle
+
+    # Guesses and their fallout: nothing the user did.
+    assert not refreshes_idle("speech_start", {})
+    assert not refreshes_idle("speech_end", {"speech_ms": 400})
+    assert not refreshes_idle("processing", {"turn": 3})
+    assert not refreshes_idle("user_transcript", {"text": "   "})
+    assert not refreshes_idle("turn_done", {"turn": 3, "skipped": "empty transcript"})
+
+    # Someone actually said something, or the bot actually answered.
+    assert refreshes_idle("user_transcript", {"text": "chào Lugo"})
+    assert refreshes_idle("response_text", {"text": "chào bạn"})
+    assert refreshes_idle("audio_start", {"turn": 1})
+    assert refreshes_idle("turn_done", {"turn": 1})
+    assert refreshes_idle("aborted", {"reason": "barge-in"})
+
+
 def test_the_farewell_survives_a_device_that_keeps_streaming(monkeypatch):
     """The failure the speaker actually had: goodbye never heard, idle straight away.
 
