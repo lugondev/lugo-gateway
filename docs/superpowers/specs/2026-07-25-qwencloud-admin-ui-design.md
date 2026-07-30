@@ -27,7 +27,7 @@ The `qwencloud` STT engine exists and works, but no admin-UI path creates an ent
   - `semantic_punctuation` (bool, default `false`)
   - `timeout_seconds` (float, default `60.0`)
   Add optional `choices` support to the field dict (a new key; existing fields simply omit it).
-- **`app/services/stt/service.py` `list_engines`**: enrich the `qwencloud` row so the UI treats it like a fixed-endpoint remote engine (api-key-only, default base_url): report `requires_base_url: false` (and any `location`/fields the dropdown/warning logic reads, mirroring how OpenRouter-style rows behave). `available` stays = an enabled `qwencloud` entry with a resolved api_key. `detail` = model id when configured.
+- **`app/api/routes/model_registry.py`** `_location`/`_requires_base_url`: make `qwencloud` a `"service"` engine that is api-key-only (fixed endpoint, no admin base_url required) — mirror the OpenRouter STT treatment. Add `qwencloud` to the set that yields `location=="service"`, and make `_requires_base_url` return `False` for it (extend the OpenRouter carve-out, e.g. a `_FIXED_ENDPOINT_STT_ENGINES` set = OpenRouter engines ∪ {`qwencloud`}). These fields are surfaced on the engines list the admin UI reads, so a blank base_url reads as "not needed" rather than "misconfigured". (`stt_service.list_engines` already reports `mode:"remote"` + `configured` from Task 2 of the engine work — no change there.)
 
 ### Frontend (`app/static/js/model-registry.js`, maybe `index.html`/`styles.css`)
 - **`_effectiveEngine()`**: in the `providerId && kind==="stt"` branch, if the provider's `base_url` contains `"dashscope"` → return `"qwencloud"` (before the OpenRouter/http_stt fallback).

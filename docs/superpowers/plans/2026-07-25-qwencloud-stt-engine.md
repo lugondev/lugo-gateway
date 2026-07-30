@@ -508,7 +508,10 @@ async def _ws_connect(url: str, headers: dict):
 
 
 def _ws_base(base_url: str) -> str:
-    return (base_url or _DEFAULT_BASE_URL).rstrip("/").replace("https://", "wss://").replace("http://", "ws://")
+    # Build from the HOST ROOT (Task 1's _host_base), not the raw base_url: a
+    # resolved base may carry a path (e.g. the qwencloud provider preset ends
+    # in /compatible-mode/v1). QwenCloud WS paths are absolute from the host.
+    return _host_base(base_url).replace("https://", "wss://").replace("http://", "ws://")
 
 
 class _BaseWsStream(STTStream):
