@@ -16,3 +16,6 @@
 [submodule "lugo-landing"]
 	path = lugo-landing
 	url = ../lugo-landing
+[submodule "servers/router-memory-services"]
+	path = servers/router-memory-services
+	url = ../router-memory-services
