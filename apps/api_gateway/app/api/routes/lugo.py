@@ -265,6 +265,18 @@ async def lugo_stream(websocket: WebSocket) -> None:
                 if event == "aborted" and payload.get("reason"):
                     stop_msg["reason"] = payload["reason"]
                 await websocket.send_json(stop_msg)
+            # The hang-up lives HERE, in the speaking path, not in the watchdog:
+            # whoever armed it (idle, or the end_conversation tool) is long gone by
+            # now, and only this point knows the goodbye has actually been said.
+            if session.close_after_speaking:
+                if event == "aborted":
+                    # The user cut in -- they are back, so there is nobody to say
+                    # goodbye to. Stay.
+                    logger.info("close disarmed: the user spoke over the goodbye")
+                    session.close_after_speaking = None
+                    last_activity = time.monotonic()
+                else:
+                    await _hang_up(session.close_after_speaking)
         elif event == "speech_start":
             await websocket.send_json({"type": "speech_start"})
         elif event == "speech_end":
@@ -294,6 +306,40 @@ async def lugo_stream(websocket: WebSocket) -> None:
 
     async def emit_audio(packet: bytes) -> None:
         await websocket.send_bytes(encode_frame(LUGO_FRAME_OPUS, packet))
+
+    async def _hang_up(reason: str, *, drain: bool = True) -> None:
+        """Goodbye + close, once the last thing said has had time to be heard.
+
+        `drain=False` when nothing was spoken (a connection that idled out without
+        a conversation, a revoked account): there is no audio in flight, so waiting
+        is just a delayed disconnect.
+
+        Audio is paced in real time, so when the final packet is SENT the device
+        still holds its prebuffer -- closing on the heels of the last packet cuts
+        the goodbye off mid-word. The wait is computed from what the device is
+        actually holding (prebuffer frames + 2 for jitter, at the encoder's frame
+        size) rather than guessed, plus conversation_farewell_drain_s as a
+        deliberate beat of silence before the line drops.
+        """
+        nonlocal closing, hung_up
+        closing = True
+        session.close_after_speaking = None
+        conv_cfg = system_config_store.get().conversation
+        frame_s = 0.06
+        if session.opus_encoder is not None:
+            frame_s = session.opus_encoder.frame / session.opus_encoder.sample_rate
+        wait_s = 0.0
+        if drain:
+            wait_s = (conv_cfg.conversation_opus_prebuffer_frames + 2) * frame_s
+            wait_s += conv_cfg.conversation_farewell_drain_s
+        logger.info("hanging up (%s) after %.1fs of drain", reason, wait_s)
+        if wait_s:
+            await asyncio.sleep(wait_s)
+        with contextlib.suppress(RuntimeError):
+            await websocket.send_json({"type": "goodbye", "reason": reason})
+        with contextlib.suppress(RuntimeError):
+            await websocket.close()
+        hung_up = True
 
     stt_health, tts_health = await check_resolved_engines(
         stt_engine, stt_model, tts["engine"], tts["model_id"]
@@ -334,7 +380,8 @@ async def lugo_stream(websocket: WebSocket) -> None:
 
         discovery_task = asyncio.create_task(_discover())
 
-    closing = False
+    closing = False      # a hang-up has been committed to; ignore further input
+    hung_up = False      # ...and _hang_up has finished, so the socket is gone
     last_identity_check = time.monotonic()
     identity_owned = identity.user_id is not None or identity.device_id is not None
 
@@ -367,11 +414,10 @@ async def lugo_stream(websocket: WebSocket) -> None:
             if identity_owned and now - last_identity_check >= _IDENTITY_RECHECK_INTERVAL_S:
                 last_identity_check = now
                 if not await identity_still_valid(identity):
-                    closing = True
-                    try:
-                        await websocket.send_json({"type": "goodbye", "reason": "account_disabled"})
-                    except RuntimeError:
-                        pass
+                    # No farewell here on purpose: a disabled or revoked account is
+                    # cut off, not seen off.
+                    session.close_after_speaking = None
+                    await _hang_up("account_disabled", drain=False)
                     return
             # Hold (don't refresh) while a turn runs or the endpointer is
             # mid-utterance: a sentence longer than idle_timeout_s must not be cut
@@ -406,48 +452,32 @@ async def lugo_stream(websocket: WebSocket) -> None:
                 continue
             if idle > 0 and now - last_activity >= idle:
                 logger.info("idle timeout reached after %.0fs; disconnecting", now - last_activity)
-                # Commit to closing synchronously, before the await below, so
-                # the main loop cannot process/emit a message that raced in
-                # concurrently with this goodbye send (ASGI sends aren't
-                # mutually exclusive across concurrent awaits).
-                closing = True
-                try:
-                    # Say goodbye in the bot's own words before disconnecting: the
-                    # profile's LLM writes the line from the conversation that is
-                    # ending (see ConversationSession.announce), rather than the one
-                    # fixed phrase every profile used to share. Paced in real time;
-                    # give the device a moment to finish playing it out of its jitter
-                    # buffer before the goodbye/close.
-                    #
-                    # Only when there is a conversation to take leave of. `history`
-                    # rather than `turn`: a turn counter is per-CONNECTION, so a
-                    # device that dropped and reconnected mid-conversation would be
-                    # judged to have said nothing and leave in silence. History is
-                    # the conversation itself, and once a reconnect resumes the
-                    # client's thread (see the session-provenance design) it is
-                    # seeded from the row, so the farewell follows the conversation
-                    # instead of the socket.
-                    if session.history:
-                        # Buy time on the DEVICE's own watchdog before generating.
-                        # It closes the link after idle_timeout_s + a few seconds of
-                        # hearing nothing from the server, and writing this farewell
-                        # costs an LLM call plus synthesis -- long enough that the
-                        # device can hang up mid-sentence. Any server event resets
-                        # that timer (rpi/esp32 both treat it as activity), and
-                        # `processing` is the honest one: something IS being
-                        # prepared.
-                        await session.emit("processing", turn=session.turn)
-                        await session.announce("idle_goodbye")
-                        # Then hold the line. speak() returns once the last packet is
-                        # SENT, not once it is heard: the device is still draining
-                        # its jitter buffer, and closing on its heels cuts the
-                        # goodbye off mid-word.
-                        await asyncio.sleep(
-                            system_config_store.get().conversation.conversation_farewell_drain_s
-                        )
-                    await websocket.send_json({"type": "goodbye", "reason": "idle_timeout"})
-                except RuntimeError:
-                    pass
+                # Only when there is a conversation to take leave of. `history`
+                # rather than `turn`: a turn counter is per-CONNECTION, so a device
+                # that dropped and reconnected mid-conversation would be judged to
+                # have said nothing and leave in silence.
+                spoke = False
+                if session.history:
+                    # Arm BEFORE speaking: the hang-up now belongs to the speaking
+                    # path (see emit's turn_done branch), which is the only place
+                    # that knows the goodbye was actually said. The watchdog just
+                    # starts it and gets out of the way -- no flag for the receive
+                    # loop to trip over, no two tasks racing over one socket.
+                    session.close_after_speaking = "idle_timeout"
+                    # Buy time on the DEVICE's own watchdog before generating. It
+                    # closes the link after idle_timeout_s + a few seconds of hearing
+                    # nothing from the server, and writing this farewell costs an LLM
+                    # call plus synthesis -- long enough that the device can hang up
+                    # mid-sentence. Any server event resets that timer (rpi/esp32
+                    # both treat it as activity), and `processing` is the honest one:
+                    # something IS being prepared.
+                    await session.emit("processing", turn=session.turn)
+                    spoke = await session.announce("idle_goodbye")
+                if not spoke:
+                    # Nothing was said, so no turn_done is coming and nothing else
+                    # would ever close this connection.
+                    session.close_after_speaking = None
+                    await _hang_up("idle_timeout", drain=False)
                 return
 
     # Schedule the watchdog whenever there's something for it to watch: a real
@@ -470,28 +500,18 @@ async def lugo_stream(websocket: WebSocket) -> None:
             waitables = {recv, wd} if wd is not None else {recv}
             done, _pending = await asyncio.wait(waitables, return_when=asyncio.FIRST_COMPLETED)
             if closing:
-                # Watchdog has committed to closing; stop reading this connection.
+                # _hang_up has committed: the goodbye is sent (or about to be) and
+                # the socket is going. Drop whatever arrived instead of acting on
+                # it, but keep looping -- the close itself ends this loop when
+                # `recv` comes back as a disconnect. Tearing down from here is what
+                # used to cut the farewell off mid-word on a device that streams
+                # mic frames continuously, since `recv` completes constantly.
                 recv.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await recv
-                # ...but do NOT tear the socket down yet: `closing` is set BEFORE
-                # the farewell is written and spoken (an LLM call, synthesis, and
-                # seconds of paced audio). Breaking straight to the `finally`
-                # closed the WebSocket mid-sentence, and on an always-listening
-                # device it did so instantly -- a device streams mic frames
-                # continuously, so `recv` completes the moment this flag is set.
-                # That is why the farewell was audible when nothing was uplinking
-                # and never audible from the speaker.
-                if wd is not None and not wd.done():
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.shield(wd), timeout=_FAREWELL_BUDGET_S
-                        )
-                    except asyncio.TimeoutError:
-                        # A hung LLM/TTS must not hold the socket open forever.
-                        logger.warning("farewell did not finish in %ss; closing anyway",
-                                       _FAREWELL_BUDGET_S)
-                break
+                if hung_up or (wd is not None and wd.done()):
+                    break
+                continue
             if wd is not None and wd in done:
                 recv.cancel()
                 with contextlib.suppress(asyncio.CancelledError):

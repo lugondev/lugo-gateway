@@ -353,8 +353,25 @@ VOICE_OPTIMIZATION_DIRECTIVE = (
     "- Giữ câu ngắn gọn, tự nhiên như đang trò chuyện."
 )
 
+# Only for transports that can actually hang up (a device, not a browser tab).
+# In the system prompt rather than only in the tool's own description because a
+# model reads the description as "what this does" and the system prompt as "what
+# you do": offered the tool but not told to use it, gpt-4o-mini said a perfectly
+# nice goodbye out loud and left the device connected and listening.
+END_CONVERSATION_DIRECTIVE = (
+    "Khi người dùng có ý kết thúc — chào tạm biệt, bảo bạn im đi, dừng lại, hay tắt "
+    "đi — hãy GỌI tool end_conversation trước, rồi nói lời chào tạm biệt của bạn "
+    "ngay trong lượt đó. Chỉ nói lời chào mà không gọi tool thì thiết bị vẫn kết "
+    "nối và vẫn đang nghe. Đừng gọi tool khi người dùng chỉ im lặng, đổi chủ đề "
+    "hay cảm ơn."
+)
 
-def resolve_system_prompt(system_prompt: str | None, voice_optimized: bool = False) -> str:
+
+def resolve_system_prompt(
+    system_prompt: str | None,
+    voice_optimized: bool = False,
+    can_hang_up: bool = False,
+) -> str:
     """Resolve the persona prompt (explicit override or .env default) and always
     prepend the user-configured base context (platform intro + guardrail rules),
     if any, so it applies regardless of profile.
@@ -370,6 +387,8 @@ def resolve_system_prompt(system_prompt: str | None, voice_optimized: bool = Fal
     prompt = f"{base_context}\n\n{persona}" if base_context else persona
     if voice_optimized:
         prompt = f"{prompt}\n\n{VOICE_OPTIMIZATION_DIRECTIVE}"
+    if can_hang_up:
+        prompt = f"{prompt}\n\n{END_CONVERSATION_DIRECTIVE}"
     return prompt
 
 
@@ -392,11 +411,16 @@ async def build_responder_ex(
     model: str | None = None,
     system_prompt: str | None = None,
     voice_optimized: bool = False,
+    can_hang_up: bool = False,
 ) -> Responder:
     """Build a responder with optional overrides; falls back to the active
     Model Registry LLM entry.
 
     Passing None for any arg uses the current active config value.
+
+    `can_hang_up` must match what the caller actually wired: the directive it adds
+    tells the model to call end_conversation, and a model told to call a tool that
+    was never registered will keep trying instead of just saying goodbye.
     """
     effective_url = base_url if base_url is not None else await get_active_llm_base_url()
     if effective_url:
@@ -404,7 +428,9 @@ async def build_responder_ex(
             base_url=effective_url,
             api_key=api_key if api_key is not None else await get_active_llm_api_key(),
             model=model if model is not None else await get_active_llm_model(),
-            system_prompt=resolve_system_prompt(system_prompt, voice_optimized),
+            system_prompt=resolve_system_prompt(
+                system_prompt, voice_optimized, can_hang_up=can_hang_up
+            ),
             timeout=system_config_store.get().conversation.llm_timeout_seconds,
         )
     return EchoResponder()

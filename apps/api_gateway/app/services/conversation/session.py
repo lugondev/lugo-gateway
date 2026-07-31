@@ -71,7 +71,7 @@ EmitAudioFn = Callable[[bytes], Awaitable[None]]  # emit_audio(opus_packet: byte
 _background_tasks: set[asyncio.Task] = set()
 
 
-async def _build_tool_registry(profile) -> ToolRegistry | None:
+async def _build_tool_registry(profile, can_hang_up: bool = False) -> ToolRegistry | None:
     """Merge global + per-profile MCP servers (profile wins on name collision),
     skip disabled entries, and fetch each enabled server's tools.
 
@@ -91,8 +91,17 @@ async def _build_tool_registry(profile) -> ToolRegistry | None:
     merged_servers = {**global_servers, **profile_specific}
 
     tool_sources: list = []
-    if settings.conversation_tools_enabled:
-        tool_sources.append(LocalToolSource())
+    # Two independent switches. `conversation_tools_enabled` gates the optional
+    # utilities (get_time, device_command). end_conversation is not optional in the
+    # same sense: without it a device told to say goodbye says goodbye and keeps
+    # listening, so it rides on whether this transport can hang up at all.
+    if settings.conversation_tools_enabled or can_hang_up:
+        tool_sources.append(
+            LocalToolSource(
+                utilities=settings.conversation_tools_enabled,
+                end_conversation=can_hang_up,
+            )
+        )
     for srv in merged_servers.values():
         if not srv.enabled:
             continue
@@ -209,6 +218,13 @@ class ConversationSession:
         # Set by close() so a rotation parked behind the last turn can't mint a
         # fresh session row on a connection that is going away.
         self._closing = False
+        # "Hang up once the current utterance has been played" -- a reason string,
+        # or None. Armed by the idle watchdog and by the end_conversation tool;
+        # ACTED ON by the transport's speaking path (lugo.py), never here, so the
+        # farewell is spoken to the end before the socket goes. Putting the close
+        # in the audio path rather than in the watchdog is what stops the receive
+        # loop and the watchdog from racing over the same connection.
+        self.close_after_speaking: str | None = None
 
     def is_turn_active(self) -> bool:
         return bool(self.current_turn and not self.current_turn.done())
@@ -306,9 +322,11 @@ class ConversationSession:
             model=llm_model,
             system_prompt=system_prompt,
             voice_optimized=voice_optimized,
+            # Same condition the end_conversation tool is wired under, below.
+            can_hang_up=cfg.want_audio,
         )
 
-        self.tool_registry = await _build_tool_registry(profile)
+        self.tool_registry = await _build_tool_registry(profile, can_hang_up=cfg.want_audio)
 
         # Friendly labels for the UI: the Model Registry is the single source of
         # truth every profile/service select reads, so the chat header must show
@@ -407,8 +425,16 @@ class ConversationSession:
             tts_ready=tts_ready,
         )
 
-        self.base_system_prompt = resolve_system_prompt(system_prompt, voice_optimized)
-        self.tool_ctx = ToolContext(emit_command=self._emit_command, language=cfg.language or None)
+        self.base_system_prompt = resolve_system_prompt(
+            system_prompt, voice_optimized, can_hang_up=cfg.want_audio
+        )
+        self.tool_ctx = ToolContext(
+            emit_command=self._emit_command,
+            language=cfg.language or None,
+            # Only where hanging up means something: a device disconnects, a
+            # browser tab does not (see ToolContext.request_end).
+            end_conversation=self._arm_close_after_speaking if cfg.want_audio else None,
+        )
 
         # Warm TTS (and STT if it supports it, e.g. MLX graph compile) in the background
         # while the user speaks their first turn, so the first turn isn't delayed by a
@@ -937,7 +963,11 @@ class ConversationSession:
             return f"tts: {exc}"
         return None
 
-    async def announce(self, event: str) -> None:
+    def _arm_close_after_speaking(self, reason: str) -> None:
+        logger.info("close armed after the current utterance: %s", reason)
+        self.close_after_speaking = reason
+
+    async def announce(self, event: str) -> bool:
         """Say one line, in this profile's voice, about something the SERVER just did.
 
         `new_session` (a conversation was rotated away) and `idle_goodbye` (the
@@ -949,9 +979,13 @@ class ConversationSession:
         On failure it stays silent and emits `error` naming the stage that broke, so a
         device shows WHY it went quiet (its panel renders `error` already) instead of
         looking asleep. No built-in phrase to fall back on: that would be the
-        hardcoded sentence this replaces, one layer down."""
+        hardcoded sentence this replaces, one layer down.
+
+        Returns whether an utterance was actually spoken. Callers that hang up after
+        it (the idle watchdog) need to know: a silent skip means nothing will ever
+        emit `turn_done`, so nothing would close the connection."""
         if self.responder is None or self.tts_provider is None or not self.cfg.want_audio:
-            return  # nothing to speak with, or nothing to speak into
+            return False  # nothing to speak with, or nothing to speak into
 
         # Real LLM spend on a line nobody asked for, so: gated before, metered after.
         # Over quota it SKIPS silently rather than erroring, exactly as speak() does
@@ -964,7 +998,7 @@ class ConversationSession:
         )
         if blocked:
             logger.warning("announce %s skipped: llm quota", event)
-            return
+            return False
         try:
             line = await generate_line(
                 responder=self.responder,
@@ -976,7 +1010,7 @@ class ConversationSession:
         except Exception as exc:  # noqa: BLE001 - self-initiated; report, never raise
             logger.warning("announce %s: line generation failed: %s", event, exc)
             await self.emit("error", message=f"llm: could not write the {event} line: {exc}")
-            return
+            return False
         finally:
             # In the finally, not after: a call that spent tokens and then failed on
             # a malformed answer still spent them.
@@ -992,6 +1026,8 @@ class ConversationSession:
         failure = await self.speak(line)
         if failure:
             await self.emit("error", message=f"{failure} (the {event} line went unspoken)")
+            return False
+        return True
 
     async def reset(self) -> None:
         """Clear the in-memory conversation context, keeping the SAME session row.

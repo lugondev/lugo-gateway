@@ -21,14 +21,28 @@ class ToolContext:
 
     ``emit_command`` (async) pushes an event to the connected device over the WS;
     it may be None (e.g. a text-only client) — ``send_command`` then no-ops.
+
+    ``end_conversation`` arms "hang up once you have finished speaking". It does
+    NOT disconnect on the spot: the reply the model is about to give IS the
+    goodbye, so the connection closes when that utterance has been played, not
+    while it is being written. None on transports with no such notion (a browser
+    tab stays open) — ``request_end`` then no-ops.
     """
 
     emit_command: Callable[[dict], Awaitable[None]] | None = None
     language: str | None = None
+    end_conversation: Callable[[str], None] | None = None
 
     async def send_command(self, payload: dict) -> None:
         if self.emit_command is not None:
             await self.emit_command(payload)
+
+    def request_end(self, reason: str) -> bool:
+        """Returns whether this transport can actually hang up."""
+        if self.end_conversation is None:
+            return False
+        self.end_conversation(reason)
+        return True
 
 
 @dataclass
