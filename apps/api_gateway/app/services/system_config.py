@@ -200,13 +200,14 @@ class ConversationTuningConfig(BaseModel):
     # keys are ignored (see ConversationSettings' extra policy and
     # test_system_config_store).
     conversation_farewell_drain_s: float = Field(
-        default=5.0,
+        default=2.0,
         title="Farewell drain seconds",
         description=(
-            "How long the server waits after the pre-idle farewell before sending "
-            "goodbye and closing. speak() returns when the last audio packet is sent, "
-            "not when the device has played it, so closing immediately cuts the "
-            "goodbye off mid-word."
+            "Silence held after a farewell before the goodbye is sent and the socket "
+            "closes. This is ON TOP OF the time the device needs to play what is "
+            "still in its buffer, which the server computes from the prebuffer size "
+            "-- it is a deliberate beat, not the safety margin. 0 closes as soon as "
+            "the audio can have been heard."
         ),
         json_schema_extra={"subgroup": "Timing & VAD", "unit": "s"},
     )
