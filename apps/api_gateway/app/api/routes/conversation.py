@@ -432,6 +432,11 @@ async def conversation_stream(websocket: WebSocket) -> None:
         output_sample_rate=output_sample_rate, audio_codec=audio_codec,
         want_audio=want_audio, want_text=want_text, audio_out=audio_out,
         denoise=denoise, resume_sid=requested_sid, stt_model=stt_model,
+        # One web thread per person: every browser they use continues the same
+        # conversation, and none of them adopts the speaker's. A per-browser id can
+        # replace this later without touching the schema.
+        source="web" if identity.user_id else "",
+        client_id=identity.user_id or "",
         tts_model=tts_model,
         identity_user_id=identity.user_id,
         identity_unauthenticated=identity.unauthenticated,

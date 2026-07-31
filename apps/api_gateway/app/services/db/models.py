@@ -23,6 +23,15 @@ class ChatSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Which client this conversation belongs to. `source` is the kind of client
+    # ("device", "web", ...) and `client_id` the instance within it -- a devices.id
+    # for a speaker, the user id for the web (all a person's browsers share one
+    # thread). Together they answer "the latest conversation for THIS client",
+    # which is what a reconnecting device resumes; "the latest for this user" mixed
+    # the speaker's thread with the browser's. Empty on rows written before this
+    # existed, which is exactly why implicit resume skips them.
+    source: Mapped[str] = mapped_column(String(16), default="", index=True)
+    client_id: Mapped[str] = mapped_column(String(64), default="", index=True)
 
 
 class ChatMessage(Base):

@@ -16,19 +16,57 @@ def _session_dict(s: ChatSession) -> dict:
         "created_at": iso_utc(s.created_at),
         "ended_at": iso_utc(s.ended_at),
         "meta": s.meta or {},
+        "source": s.source or "",
+        "client_id": s.client_id or "",
     }
 
 
 class SessionStore:
     async def create(
         self, session_id: str, profile_id: str = "", meta: dict | None = None,
-        user_id: str | None = None,
+        user_id: str | None = None, source: str = "", client_id: str = "",
     ) -> dict:
         async with db_session() as s:
-            row = ChatSession(id=session_id, profile_id=profile_id, meta=meta or {}, user_id=user_id)
+            row = ChatSession(
+                id=session_id, profile_id=profile_id, meta=meta or {}, user_id=user_id,
+                source=source, client_id=client_id,
+            )
             s.add(row)
             await s.commit()
             return _session_dict(row)
+
+    async def latest_for_client(self, source: str, client_id: str) -> dict | None:
+        """The newest conversation belonging to one client, or None.
+
+        This is what a reconnecting device continues. Scoped to the client rather
+        than the user on purpose: "the user's latest" handed the browser whatever
+        the speaker had just been saying, and handed the speaker nothing at all
+        (it remembers no id). Blank provenance is never matched -- rows written
+        before these columns existed are not guessed into anyone's thread.
+        """
+        if not source or not client_id:
+            return None
+        async with db_session() as s:
+            row = (
+                await s.execute(
+                    select(ChatSession)
+                    .where(ChatSession.source == source, ChatSession.client_id == client_id)
+                    .order_by(ChatSession.created_at.desc())
+                    .limit(1)
+                )
+            ).scalars().first()
+            return _session_dict(row) if row else None
+
+    async def reopen(self, session_id: str) -> None:
+        """Clear ended_at: this conversation is live again.
+
+        Without it a resumed session reads as ended in History while it is being
+        added to, and close() would just set the same field again at the end."""
+        async with db_session() as s:
+            row = await s.get(ChatSession, session_id)
+            if row is not None and row.ended_at is not None:
+                row.ended_at = None
+                await s.commit()
 
     async def get(self, session_id: str) -> dict | None:
         async with db_session() as s:
@@ -40,7 +78,8 @@ class SessionStore:
 
     async def list(
         self, profile_id: str | None = None, user_id: str | None = None,
-        limit: int = 20, offset: int = 0,
+        limit: int = 20, offset: int = 0, source: str | None = None,
+        client_id: str | None = None,
     ) -> list[dict]:
         async with db_session() as s:
             q = select(ChatSession).order_by(ChatSession.created_at.desc())
@@ -48,6 +87,10 @@ class SessionStore:
                 q = q.where(ChatSession.profile_id == profile_id)
             if user_id is not None:
                 q = q.where(ChatSession.user_id == user_id)
+            if source is not None:
+                q = q.where(ChatSession.source == source)
+            if client_id is not None:
+                q = q.where(ChatSession.client_id == client_id)
             rows = (await s.execute(q.limit(limit).offset(offset))).scalars().all()
             out = []
             for row in rows:

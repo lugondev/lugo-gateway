@@ -180,15 +180,37 @@ async def test_over_quota_skips_silently_without_calling_the_llm(stubs, monkeypa
 @pytest.mark.asyncio
 async def test_announce_speaks_persists_and_remembers(stubs):
     session, events = await _session(_cfg(session_id="announce-speak"))
+    session._row_exists = True   # a conversation is already under way
+    await session_store.create("announce-speak")
 
-    await session.announce("new_session")
+    await session.announce("idle_goodbye")
 
     assert stubs.spoken == ["Mình bắt đầu lại nha!"]
-    # In history, so the model knows it already greeted and doesn't greet again.
+    # In history, so the model knows it already spoke and doesn't repeat itself.
     assert session.history[-1] == {"role": "assistant", "content": "Mình bắt đầu lại nha!"}
     stored = await session_store.get_messages("announce-speak")
     assert [m["content"] for m in stored] == ["Mình bắt đầu lại nha!"]
     assert "error" not in _names(events)
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_start_line_alone_does_not_create_a_conversation(stubs):
+    """The greeting after a rotation is spoken and remembered, but a conversation
+    nobody then joins must not appear in History as an entry containing only
+    "let\'s start over" -- the row waits for a real message, and the greeting is
+    flushed into it if one arrives."""
+    session, _events = await _session(_cfg(session_id="announce-lazy"))
+
+    await session.announce("new_session")
+
+    assert stubs.spoken == ["Mình bắt đầu lại nha!"]
+    assert session.history[-1]["content"] == "Mình bắt đầu lại nha!"
+    assert await session_store.get("announce-lazy") is None, "an empty conversation was stored"
+
+    await session._persist("user", "chào bạn")
+
+    stored = [m["content"] for m in await session_store.get_messages("announce-lazy")]
+    assert stored == ["Mình bắt đầu lại nha!", "chào bạn"], stored
 
 
 @pytest.mark.asyncio
@@ -234,7 +256,9 @@ async def test_a_text_only_session_announces_nothing(stubs):
 @pytest.mark.asyncio
 async def test_rotating_from_a_button_announces_the_new_conversation(stubs):
     session, events = await _session(_cfg(session_id="announce-rotate"))
-    session.turn = 1   # a conversation worth ending exists
+    session.turn = 1
+    session._row_exists = True   # a conversation worth ending exists
+    await session_store.create("announce-rotate")
 
     await session.request_rotate("client")
 
@@ -260,6 +284,8 @@ async def test_rotating_from_a_voice_tool_stays_quiet(stubs):
     that asked. A second confirmation would be the device saying it twice."""
     session, events = await _session(_cfg(session_id="announce-rotate-voice"))
     session.turn = 1
+    session._row_exists = True
+    await session_store.create("announce-rotate-voice")
     session.current_turn = asyncio.create_task(asyncio.sleep(0.02))
 
     await session.request_rotate("client")

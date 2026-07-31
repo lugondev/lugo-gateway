@@ -367,6 +367,12 @@ def test_ws_dev_mode_naming_a_profile_creates_ownerless_session_not_victim_owned
         started = ws.receive_json()
         assert started["event"] == "session_started"
         sid = started["session_id"]
+        # The row is written when the conversation first HAS something in it, not
+        # when the socket opens, so say something before looking for it.
+        ws.send_json({"type": "text", "text": "xin chào"})
+        for _ in range(40):
+            if ws.receive_json().get("event") == "turn_done":
+                break
 
     row = asyncio.run(session_store.get(sid))
     assert row is not None

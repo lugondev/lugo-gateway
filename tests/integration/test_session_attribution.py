@@ -56,6 +56,22 @@ class _StubTTS(TTSProvider):
         return _silence_wav(), "audio/wav"
 
 
+
+def _say_something(ws) -> None:
+    """A session row is written when the conversation first HAS something in it,
+    not when the socket opens (lazy creation), so attribution can only be checked
+    after a real message."""
+    import json as _json
+
+    ws.send_json({"type": "text", "text": "xin chào"})
+    for _ in range(60):
+        message = ws.receive()
+        if message.get("bytes") is not None or "text" not in message:
+            continue      # reply audio; these sessions are not text-only
+        if _json.loads(message["text"]).get("event") == "turn_done":
+            return
+    raise AssertionError("the turn never finished")
+
 @pytest.fixture(autouse=True)
 def _clean_profile_store(tmp_path, monkeypatch):
     """profile_store is a module-level singleton whose in-memory cache, once
@@ -121,6 +137,7 @@ def test_ws_conversation_session_owned_by_authenticated_speaker(client, _with_pa
         first = ws.receive_json()
         assert first["event"] == "session_started"
         session_id = first["session_id"]
+        _say_something(ws)
 
     resp = client.get("/v1/sessions", headers=_auth(token))
     assert resp.status_code == 200
@@ -142,6 +159,9 @@ def test_ws_livehost_session_owned_by_authenticated_speaker(client, _with_passwo
         first = ws.receive_json()
         assert first["event"] == "session_started"
         session_id = first["session_id"]
+        # No _say_something here: livehost creates its session row up front
+        # (routes/livehost.py) instead of going through ConversationSession's
+        # lazy creation, so there is already something to find.
 
     resp = client.get("/v1/sessions", headers=_auth(token))
     assert resp.status_code == 200
@@ -164,6 +184,7 @@ async def test_ws_conversation_no_identity_naming_a_profile_stays_ownerless(clie
         first = ws.receive_json()
         assert first["event"] == "session_started"
         session_id = first["session_id"]
+        _say_something(ws)
 
     row = await session_store.get(session_id)
     assert row is not None
@@ -177,6 +198,7 @@ async def test_ws_conversation_no_identity_no_profile_stays_unowned(client):
         first = ws.receive_json()
         assert first["event"] == "session_started"
         session_id = first["session_id"]
+        _say_something(ws)
 
     row = await session_store.get(session_id)
     assert row is not None
@@ -193,11 +215,13 @@ def test_ws_conversation_user_only_sees_own_sessions(client, _with_password, use
         f"/v1/conversation/stream?{_ENGINE_QS}", subprotocols=["bearer", token_a]
     ) as ws:
         session_a = ws.receive_json()["session_id"]
+        _say_something(ws)
 
     with client.websocket_connect(
         f"/v1/conversation/stream?{_ENGINE_QS}", subprotocols=["bearer", token_b]
     ) as ws:
         session_b = ws.receive_json()["session_id"]
+        _say_something(ws)
 
     resp_a = client.get("/v1/sessions", headers=_auth(token_a))
     ids_a = [row["id"] for row in resp_a.json()["data"]]

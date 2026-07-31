@@ -149,6 +149,11 @@ def test_the_new_session_inherits_profile_and_owner():
         _one_turn(ws)
         ws.send_json({"type": "new_session"})
         new_id = _await_type(ws, "session_new")["session_id"]
+        _drain_announcement(ws)
+        # The fresh conversation gets its row when it first has something in it,
+        # so give it something -- an id with nothing behind it is not yet a
+        # conversation, which is the point of lazy creation.
+        _one_turn(ws, "second conversation")
 
     row = _row(new_id)
     assert row is not None
@@ -225,6 +230,10 @@ class _SlowTurnSession(ConversationSession):
 
     async def start_slow_turn(self, seconds: float = 0.05) -> None:
         self.turn = 1  # a turn's worth of history exists, so rotate mints a new id
+        # ...and the row that turn would have written (rotate ends a CONVERSATION,
+        # and one only exists once something has been said).
+        self._row_exists = True
+        await session_store.create(self.cfg.session_id)
         self.current_turn = asyncio.create_task(asyncio.sleep(seconds))
 
     async def start_and_run(self, seconds: float = 0.05) -> None:

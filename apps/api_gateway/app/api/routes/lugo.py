@@ -228,6 +228,13 @@ async def lugo_stream(websocket: WebSocket) -> None:
         denoise=False, resume_sid=requested_sid, stt_model=stt_model, tts_model=tts["model_id"],
         identity_user_id=identity.user_id,
         identity_unauthenticated=identity.unauthenticated,
+        # A paired device is its own client: its thread follows the devices row, so
+        # it survives reboots, NVS wipes and reflashes -- none of which the device
+        # itself remembers across. Unpaired (fleet token, dev mode) means no
+        # provenance and therefore no implicit resume, which is the honest answer
+        # when there is nothing to say whose conversation it would be.
+        source="device" if identity.device_id else "",
+        client_id=identity.device_id or "",
     )
 
     speaking = False  # one tts{start} on first response/audio, one tts{stop} at turn end/abort
@@ -356,7 +363,11 @@ async def lugo_stream(websocket: WebSocket) -> None:
     session = ConversationSession(cfg, emit, emit_audio)
     await session.start()
     await websocket.send_json({
-        "type": "welcome", "session_id": session_id, "transport": "websocket",
+        # cfg.session_id, not the id minted above: start() may have resolved this
+        # connection onto the client's existing conversation instead. The device
+        # persists whatever id arrives here (rpi-assistant writes it to disk), so
+        # reporting the pre-resume id would hand it one that nothing ever wrote to.
+        "type": "welcome", "session_id": cfg.session_id, "transport": "websocket",
         "audio_params": {"sample_rate": out_sr}, "idle_timeout_s": idle,
         "stt_ready": engine_status["stt_ready"], "tts_ready": engine_status["tts_ready"],
     })

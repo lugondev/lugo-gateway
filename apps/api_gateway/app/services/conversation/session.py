@@ -116,6 +116,18 @@ async def _build_tool_registry(profile, can_hang_up: bool = False) -> ToolRegist
     return ToolRegistry(tool_sources) if tool_sources else None
 
 
+def _tail(messages: list[dict]) -> list[dict]:
+    """The last N messages -- what the model is actually sent.
+
+    A conversation now runs for as long as its client keeps coming back, with no
+    time window, so the transcript is unbounded. The PROMPT must not be: replaying
+    an ever-growing history on every turn spends more and more per turn until the
+    context window gives out. The full transcript stays in the DB for History;
+    what falls off the back is what the memory system is for."""
+    limit = system_config_store.get().conversation.conversation_history_max_messages
+    return messages[-limit:] if limit > 0 else messages
+
+
 def _spawn_background(coro) -> None:
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
@@ -163,6 +175,13 @@ class SessionRuntimeConfig:
     # case must still only ever resolve a template profile (owner_id=None),
     # never someone else's private one.
     identity_unauthenticated: bool = False
+    # Which client this conversation belongs to (sessions.source / .client_id).
+    # "device" + devices.id for a speaker, "web" + the user id for a browser. Both
+    # blank means no provenance: the session is still recorded, but it is never
+    # implicitly resumed and never resumes anything -- there is nothing to say
+    # whose thread it would be.
+    source: str = ""
+    client_id: str = ""
     # Per-connection override of Opus playback pacing. None (the default, and
     # the only value api/routes/lugo.py ever produces) means "not specified,
     # inherit system_config.conversation.conversation_opus_pace" -- so
@@ -369,27 +388,43 @@ class ConversationSession:
             adaptive_full_ms=conv_cfg.conversation_adaptive_full_ms,
             preroll_ms=conv_cfg.conversation_preroll_ms,
         )
-        # Session persistence: resume seeds history from the DB; new sessions are recorded.
+        # Session persistence. No row is written here: the FIRST stored message
+        # creates it (see _persist), the way other chat products do it, so a
+        # connection nobody speaks into -- a wake with no words, a health probe,
+        # a page load -- leaves nothing behind in History.
+        #
+        # What DOES happen here is picking which conversation this connection is
+        # in: an explicitly requested one, else the client's own latest.
         self.history = []
-        self.session_ready = True
+        self.session_ready = True   # nothing has failed; the row may not exist yet
+        self._row_exists = False
+        # Announcements spoken before any row exists (the "fresh start" line after a
+        # rotation). Flushed ahead of the first real message if one ever arrives; a
+        # greeting nobody answered never becomes a History entry of its own.
+        self._pending_messages: list[tuple[str, str]] = []
         try:
+            resumed = None
             if cfg.resume_sid and await session_store.exists(cfg.resume_sid):
-                self.history = [
-                    {"role": m["role"], "content": m["content"]}
-                    for m in await session_store.get_messages(cfg.resume_sid)
-                ]
-            else:
-                await session_store.create(
-                    cfg.session_id,
-                    profile_id=cfg.profile_name or "",
-                    meta={"stt_engine": cfg.stt_engine, "tts_engine": cfg.tts_engine},
-                    # No `or profile.owner_id` fallback: a fleet/dev-mode caller
-                    # (identity_user_id is None) must create an ownerless row, not
-                    # one silently attributed to the owner of whatever profile
-                    # name was passed in (H2 -- that let a named profile's owner
-                    # be billed for / attributed a session they never touched).
-                    user_id=cfg.identity_user_id,
+                resumed = cfg.resume_sid
+            elif not cfg.resume_sid:
+                # Implicit resume: continue where THIS client left off. Scoped to
+                # (source, client_id), never to the user -- "the user's latest" is
+                # what handed a browser the speaker's conversation and handed the
+                # speaker (which remembers no id) a new one every single wake.
+                latest = await session_store.latest_for_client(cfg.source, cfg.client_id)
+                if latest is not None:
+                    resumed = latest["id"]
+                    cfg.session_id = resumed
+            if resumed is not None:
+                self.history = _tail(
+                    [
+                        {"role": m["role"], "content": m["content"]}
+                        for m in await session_store.get_messages(resumed)
+                    ]
                 )
+                self._row_exists = True
+                # It is live again; close() will re-end it.
+                await session_store.reopen(resumed)
         except Exception as exc:  # noqa: BLE001 - session setup must not drop the connection
             logger.warning("session setup failed for %s: %s", cfg.session_id, exc)
             self.history = []
@@ -454,13 +489,56 @@ class ConversationSession:
     async def _emit_command(self, cmd_payload: dict) -> None:
         await self.emit("command", **cmd_payload)
 
-    async def _persist(self, role: str, content: str) -> None:
+    async def _persist(self, role: str, content: str, *, defer_if_new: bool = False) -> None:
+        """Append a message, creating the session row on the first one.
+
+        `defer_if_new` holds the message instead of creating a row for it: used by
+        the spoken "fresh start" line, which must not turn an empty conversation
+        into a History entry all by itself. Held lines are flushed, in order, ahead
+        of the first message that does create the row.
+        """
         if not self.session_ready:
             return
+        if not self._row_exists:
+            if defer_if_new:
+                self._pending_messages.append((role, content))
+                return
+            if not await self._create_row():
+                return
         try:
+            for pending_role, pending_content in self._pending_messages:
+                await session_store.append_message(
+                    self.cfg.session_id, self.turn, pending_role, pending_content
+                )
+            self._pending_messages.clear()
             await session_store.append_message(self.cfg.session_id, self.turn, role, content)
         except Exception as exc:  # noqa: BLE001 - persistence must not kill the turn
             logger.warning("history persist failed: %s", exc)
+
+    async def _create_row(self) -> bool:
+        """Write the session row. Called when the conversation first has something
+        in it, not when the socket opened."""
+        cfg = self.cfg
+        try:
+            await session_store.create(
+                cfg.session_id,
+                profile_id=cfg.profile_name or "",
+                meta={"stt_engine": cfg.stt_engine, "tts_engine": cfg.tts_engine},
+                # No `or profile.owner_id` fallback: a fleet/dev-mode caller
+                # (identity_user_id is None) must create an ownerless row, not one
+                # silently attributed to the owner of whatever profile name was
+                # passed in (H2 -- that let a named profile's owner be billed for /
+                # attributed a session they never touched).
+                user_id=cfg.identity_user_id,
+                source=cfg.source,
+                client_id=cfg.client_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed row must not kill the turn
+            logger.warning("session create failed for %s: %s", cfg.session_id, exc)
+            self.session_ready = False
+            return False
+        self._row_exists = True
+        return True
 
     async def _refresh_memory(self, query: str) -> None:
         """Per-turn memory injection (mutates the responder's system prompt)."""
@@ -821,6 +899,7 @@ class ConversationSession:
             return
 
         self.history.append({"role": "user", "content": user_text})
+        self.history = _tail(self.history)
         await self._persist("user", user_text)
         await self._refresh_memory(user_text)
         parts = await _stream_to_tts(
@@ -834,6 +913,7 @@ class ConversationSession:
         )
         await self._record_llm_usage()
         self.history.append({"role": "assistant", "content": " ".join(parts)})
+        self.history = _tail(self.history)
         await self._persist("assistant", " ".join(parts))
         logger.info("turn %d: done at +%.0fms", turn, _elapsed_ms())
         await self.emit("turn_done", turn=turn)
@@ -1021,7 +1101,9 @@ class ConversationSession:
         # new_session that is the fresh row (this is its first utterance), for
         # idle_goodbye the row about to be ended.
         self.history.append({"role": "assistant", "content": line})
-        await self._persist("assistant", line)
+        # A greeting alone must not create a conversation: the fresh session after a
+        # rotation stays absent from History until somebody actually says something.
+        await self._persist("assistant", line, defer_if_new=(event == "new_session"))
 
         failure = await self.speak(line)
         if failure:
@@ -1142,7 +1224,9 @@ class ConversationSession:
         # persisted under this id. session_ready False means the row does not
         # exist at all (its creation failed in start()), and minting a second one
         # would just fail the same way.
-        rotated = self.turn > 0 and self.session_ready
+        # A row exists only once something was said (see _persist), so this is the
+        # same question `turn > 0` used to approximate -- without the approximation.
+        rotated = self._row_exists and self.session_ready
         if rotated:
             try:
                 await session_store.mark_ended(previous_id)
@@ -1157,20 +1241,13 @@ class ConversationSession:
                     )
                 )
             new_id = str(uuid.uuid4())
-            try:
-                await session_store.create(
-                    new_id,
-                    profile_id=self.cfg.profile_name or "",
-                    meta={"stt_engine": self.cfg.stt_engine, "tts_engine": self.cfg.tts_engine},
-                    # The caller who is actually speaking -- never profile.owner_id.
-                    # See start()'s note on H2: attributing a session to the named
-                    # profile's owner bills someone who never touched it.
-                    user_id=self.cfg.identity_user_id,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("session create failed on rotate: %s", exc)
-                self.session_ready = False
-            # Point every later write at the new row. Nothing caches this: _persist
+            # No row for it yet: the new conversation is written when it first has
+            # something in it, exactly like this connection's first one was. So a
+            # rotation nobody follows up on leaves one ended conversation behind,
+            # not an ended one plus an empty one.
+            self._row_exists = False
+            self._pending_messages.clear()
+            # Point every later write at the new id. Nothing caches this: _persist
             # and close() both read self.cfg.session_id at call time.
             self.cfg.session_id = new_id
             # A later start() must not resurrect the conversation we just ended.
@@ -1206,7 +1283,7 @@ class ConversationSession:
                 await self.responder.aclose()
             except Exception as exc:  # noqa: BLE001 - teardown must not fail
                 logger.warning("responder aclose failed for %s: %s", self.cfg.session_id, exc)
-        if self.session_ready:
+        if self.session_ready and self._row_exists:
             try:
                 await session_store.mark_ended(self.cfg.session_id)
             except Exception as exc:  # noqa: BLE001 - teardown must not fail

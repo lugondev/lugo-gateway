@@ -16,9 +16,21 @@ def _scope_user_id(request: Request) -> str | None:
 
 
 @router.get("")
-async def list_sessions(request: Request, profile: str | None = None, limit: int = 20, offset: int = 0) -> dict:
+async def list_sessions(
+    request: Request,
+    profile: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    source: str | None = None,
+    client_id: str | None = None,
+) -> dict:
+    """`source`/`client_id` filter by which client held the conversation
+    ("device" vs "web"), so History can separate what was said to the speaker from
+    what was typed in the browser. Rows written before provenance existed carry
+    "" and match neither filter."""
     rows = await session_store.list(
-        profile_id=profile, user_id=_scope_user_id(request), limit=limit, offset=offset
+        profile_id=profile, user_id=_scope_user_id(request), limit=limit, offset=offset,
+        source=source, client_id=client_id,
     )
     return {"success": True, "data": rows}
 

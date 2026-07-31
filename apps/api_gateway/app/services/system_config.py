@@ -199,6 +199,18 @@ class ConversationTuningConfig(BaseModel):
     # the wrong shape. Rows stored before this was removed keep loading -- unknown
     # keys are ignored (see ConversationSettings' extra policy and
     # test_system_config_store).
+    conversation_history_max_messages: int = Field(
+        default=100,
+        title="History messages in the prompt",
+        description=(
+            "How many of a conversation's most recent messages are replayed to the "
+            "LLM each turn. The full transcript is always kept in History; this "
+            "only bounds the prompt, which matters because a conversation is "
+            "resumed for as long as its client keeps coming back. 0 disables the "
+            "cap (unbounded spend)."
+        ),
+        json_schema_extra={"subgroup": "Language & Prompt"},
+    )
     conversation_farewell_drain_s: float = Field(
         default=2.0,
         title="Farewell drain seconds",

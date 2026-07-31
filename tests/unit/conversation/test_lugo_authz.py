@@ -16,6 +16,7 @@ ws_session_owner_denied() helper (app/core/auth_guard.py) both
 """
 
 import asyncio
+import json
 import uuid
 
 import pytest
@@ -227,3 +228,40 @@ def test_lugo_paired_device_can_still_resume_its_owners_session(client, _with_pa
         msg = ws.receive_json()
         assert msg["type"] == "welcome"
         assert msg["session_id"] == owner_sid
+
+
+def test_a_reconnecting_device_is_told_the_conversation_it_actually_resumed(client, _with_password):
+    """The `welcome` id must be the conversation the server put this connection
+    in, not the fresh one it minted before looking.
+
+    The device persists whatever arrives here (rpi-assistant writes it to disk),
+    so reporting the pre-resume id hands it one nothing will ever write to -- and
+    the next reconnect asks to resume an empty conversation. Caught live, not by a
+    test: the route was sending its own local variable.
+    """
+    owner_id = _as_user(client, "resume-owner")
+    _device, raw_token = asyncio.run(device_store.create(owner_id, "speaker", "serial-resume"))
+
+    first = TestClient(app)
+    with first.websocket_connect(f"/v1/lugo/stream?device_token={raw_token}") as ws:
+        _wakeup(ws)
+        first_id = ws.receive_json()["session_id"]
+        # Give it something: a conversation exists only once something was said.
+        ws.send_json({"type": "text", "text": "chào bạn"})
+        for _ in range(40):
+            message = ws.receive()
+            if message.get("bytes") is not None or "text" not in message:
+                continue
+            if json.loads(message["text"]).get("type") == "tts":
+                if json.loads(message["text"]).get("state") == "stop":
+                    break
+
+    second = TestClient(app)
+    with second.websocket_connect(f"/v1/lugo/stream?device_token={raw_token}") as ws:
+        _wakeup(ws)                      # no session id asked for
+        resumed_id = ws.receive_json()["session_id"]
+
+    assert resumed_id == first_id, (
+        "welcome announced a different conversation than the one this connection "
+        "was actually placed in"
+    )
