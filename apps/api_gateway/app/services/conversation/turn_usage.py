@@ -3,7 +3,9 @@
 Lifts the identical "responder.last_usage -> resolve_llm_pair -> record_usage"
 best-effort usage row that used to be duplicated in
 ``api/routes/livehost.py``'s ``_record_llm_usage`` closure and
-``services/conversation/session.py``'s ``_record_llm_usage`` method.
+``services/conversation/session.py``'s ``_record_llm_usage`` method -- and,
+found later, twice more inside ``api/routes/conversation.py``'s ``/chat``, once
+per branch of its tool-registry if/else.
 Byte-neutral: writes the same usage row, same fields, same fail-open contract
 (metering must never break a turn).
 """

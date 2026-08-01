@@ -242,9 +242,10 @@ async def lugo_stream(websocket: WebSocket) -> None:
     # push WAV bytes that emit_audio would frame as Opus (LUGO_FRAME_OPUS) --
     # corrupting the downlink instead of the old silent-audio-drop behavior.
     # Imported locally (not at module scope) so tests can monkeypatch
-    # app.core.opus.opus_available and have it take effect here -- same reason
-    # session.py's own opus_available import lives inside start(), not at
-    # module scope (see that module's comment on the same gotcha).
+    # app.core.opus.opus_available and have it take effect here -- the same
+    # reason session.py imports its make_*_or_downgrade helpers inside start()
+    # rather than at module scope (those read opus_available as their own
+    # module global, so a patch reaches them wherever they are called from).
     from app.core.opus import opus_available
 
     want_audio = opus_available()

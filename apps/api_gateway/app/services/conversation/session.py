@@ -463,7 +463,7 @@ class ConversationSession:
             self.session_ready = False
         self.turn = 0
 
-        active_tools = list(self.tool_registry._tools.keys()) if self.tool_registry else []
+        active_tools = self.tool_registry.names() if self.tool_registry else []
         # Tell the client up front whether the models it's about to use are still
         # loading, so it can show "warming up, please wait" instead of the user
         # speaking into a cold pipeline and losing the start of their utterance.

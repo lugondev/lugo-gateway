@@ -102,6 +102,14 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
+    def names(self) -> list[str]:
+        """Registered tool names, in registration order.
+
+        This is what `session_started`'s `active_tools` reports to the client,
+        which had been reaching into `registry._tools` from another module to
+        get it."""
+        return list(self._tools)
+
     def __len__(self) -> int:
         return len(self._tools)
 
