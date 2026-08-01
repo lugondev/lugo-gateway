@@ -103,8 +103,8 @@ independent layers close this:
    If `_CODE_DIGITS` ever changes again, update `AA_PAIR_CODE_MAX` and
    `PAIR_CODE_LENGTH` in the same change.
 
-3. Rate limiting (`_RateLimiter`, `claim_rate_limiter` / `init_rate_limiter`):
-   a coarse in-process sliding-window limiter on both pair/claim (keyed by
+3. Rate limiting (`claim_rate_limiter` / `init_rate_limiter`): a coarse
+   in-process sliding-window limiter on both pair/claim (keyed by
    IP + user_id, since claim requires login) and pair/init (keyed by IP).
    This is process-local state, same lifecycle/caveat as the rest of this
    module and as `app.services.livehost.registry` / `_job_owners`: with more
@@ -114,13 +114,18 @@ independent layers close this:
    rollout would need to move this to a shared store (e.g. Redis) to keep
    the guarantee.
 
-   Separately (pre-existing infra concern, not fixed here): `_client_ip` in
-   devices.py reads `request.client.host` only, with no X-Forwarded-For
-   handling. Behind the production reverse proxy that collapses every
-   client onto one apparent IP, so `init_rate_limiter` (IP-only) becomes an
-   effectively global cap rather than a per-client one. Not attacker-
-   controlled (no header to forge into a bypass), just coarser than
-   intended -- flagged for whoever wires up real client-IP extraction.
+   The limiter itself now lives in app.core.rate_limit (shared with the
+   password endpoints, which had none at all); it was `_RateLimiter` here.
+   That move also fixed the unbounded key map this module used to carry --
+   see that module's docstring.
+
+   The "which IP" question is likewise no longer this module's blind spot:
+   devices.py keys on app.core.client_ip.client_ip, which reads the trusted
+   tail of X-Forwarded-For when TRUSTED_PROXY_HOPS says how many proxies we
+   own. Left at its default of 0 it still degrades to the socket peer, so
+   behind the production reverse proxy `init_rate_limiter` (IP-only) remains
+   an effectively global cap until that setting is configured for the
+   deployment.
 -----------------------------------------------------------------------------
 """
 
@@ -128,8 +133,10 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import dataclass
+
+from app.core.rate_limit import SlidingWindowRateLimiter
 
 _TTL_SECONDS = 600.0
 
@@ -248,30 +255,6 @@ class PendingPairingRegistry:
         self._recent_misses.clear()
 
 
-class _RateLimiter:
-    """Coarse in-process sliding-window limiter -- see module docstring,
-    defense #3, for its scope and multi-worker caveat."""
-
-    def __init__(self, max_events: int, window_seconds: float) -> None:
-        self._max_events = max_events
-        self._window = window_seconds
-        self._hits: dict[str, deque[float]] = defaultdict(deque)
-
-    def allow(self, key: str) -> bool:
-        now = time.monotonic()
-        hits = self._hits[key]
-        while hits and now - hits[0] > self._window:
-            hits.popleft()
-        if len(hits) >= self._max_events:
-            return False
-        hits.append(now)
-        return True
-
-    def reset(self) -> None:
-        """Test-only: clear all tracked keys."""
-        self._hits.clear()
-
-
 pending_pairings = PendingPairingRegistry()
 
 # pair/claim requires login, so key on IP + user_id; pair/init is anonymous
@@ -280,5 +263,5 @@ pending_pairings = PendingPairingRegistry()
 # init after a flaky connection) but crush an automated sweep: 1e8 codes at
 # 20 requests/30s would take ~4.6 years to exhaust even before defense #1
 # burns the target pairing after 5 wrong guesses.
-claim_rate_limiter = _RateLimiter(max_events=20, window_seconds=30.0)
-init_rate_limiter = _RateLimiter(max_events=30, window_seconds=30.0)
+claim_rate_limiter = SlidingWindowRateLimiter(max_events=20, window_seconds=30.0)
+init_rate_limiter = SlidingWindowRateLimiter(max_events=30, window_seconds=30.0)

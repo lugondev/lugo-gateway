@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 import uuid
 
 from sqlalchemy import select
@@ -11,6 +12,24 @@ from app.core.timefmt import iso_utc
 from app.services.auth.password import hash_password, verify_password
 from app.services.db.engine import db_session
 from app.services.db.models import User
+
+
+_timing_reference_hash: str | None = None
+
+
+def _timing_reference() -> str:
+    """A throwaway hash for verify_login's unknown-username branch to verify
+    against, so a miss costs the same PBKDF2 run as a hit.
+
+    Built on first use rather than at import: hashing is ~100-300ms and this
+    module is imported by every process and every test collection, most of
+    which never authenticate anything. Its plaintext is irrelevant -- it exists
+    to be compared against, never to match.
+    """
+    global _timing_reference_hash
+    if _timing_reference_hash is None:
+        _timing_reference_hash = hash_password(secrets.token_urlsafe(32))
+    return _timing_reference_hash
 
 
 def _user_dict(u: User) -> dict:
@@ -73,8 +92,17 @@ class UserStore:
             return await s.get(User, user_id)
 
     async def verify_login(self, username: str, password: str) -> User | None:
+        """Constant-WORK in the username: a miss hashes against a throwaway
+        reference hash instead of returning early.
+
+        Returning early made a miss come back in ~2ms where a hit took ~60ms
+        (PBKDF2 at 600k rounds), so anyone could tell which usernames exist by
+        timing /api/auth/login -- no credentials needed. The dummy hash costs
+        the same as a real verify, which is the point.
+        """
         user = await self.get_by_username(username)
         if user is None:
+            await asyncio.to_thread(verify_password, password, _timing_reference())
             return None
         if not await asyncio.to_thread(verify_password, password, user.password_hash):
             return None

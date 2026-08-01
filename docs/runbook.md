@@ -83,9 +83,28 @@ variables (or `.env`). See `.env.example` for the full list.
 | `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | bind address |
 | `LOG_LEVEL` | `INFO` | logging level |
 | `CORS_ALLOW_ORIGINS` | `*` | comma-separated origins, or `*` |
+| `TRUSTED_PROXY_HOPS` | `0` | reverse proxies you own, in front of this app — see below |
 | `ADMIN_PASSWORD` | — | browser control-panel login |
 | `SESSION_SECRET` | — (random per process) | signs cookie sessions **and** bearer tokens — see below |
 | `ARTIFACTS_DIR` | `artifacts` | voice-clone reference audio only (never served over HTTP) — synthesized reply audio is never written to disk |
+
+### `TRUSTED_PROXY_HOPS` — set it to 1 in production
+
+`/api/auth/login`, `/api/auth/token`, `/api/auth/signup` and `/v1/devices/pair/*` are
+rate limited, and every one of those limiters keys on the client's address.
+
+Behind a reverse proxy the socket peer is the *proxy*, identical for every real client,
+so at the default of `0` those per-client limits collapse into one shared bucket for the
+whole deployment. Nothing breaks silently — logins still work — but a single noisy client
+can spend everyone's budget, and device pairing (`init_rate_limiter`, 30 req/30s) is the
+easiest one to exhaust.
+
+Set it to the number of proxies **you** control (`1` for a single nginx / Traefik /
+Coolify / Cloudflare in front). Only that many rightmost `X-Forwarded-For` entries are
+read, because those are the ones your own proxies appended; anything to their left came
+from the caller and is forgeable. Leave it at `0` when the app is exposed directly —
+reading the header with no proxy in front lets any caller mint a fresh limiter key per
+request and skip the limit entirely.
 
 ### `SESSION_SECRET` — set it in production before the web client ships
 

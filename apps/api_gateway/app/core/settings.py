@@ -67,6 +67,16 @@ class Settings(BaseSettings):
 
     cors_allow_origins: str = "*"
 
+    # How many reverse proxies of OUR OWN sit in front of this app. Rate
+    # limiters key on the client address; behind a proxy the socket peer is the
+    # proxy, so every client collapses onto one key and an IP-keyed limit turns
+    # into a global one. Only the rightmost `trusted_proxy_hops` entries of
+    # X-Forwarded-For were written by our own proxies -- anything further left
+    # is caller-supplied and forgeable, which is why this is configuration
+    # rather than a guess. 0 (the default) = ignore the header entirely.
+    # Set to 1 behind a single reverse proxy. See app/core/client_ip.py.
+    trusted_proxy_hops: int = 0
+
     # Browser control-panel login (single shared password). Empty = auth disabled.
     admin_password: str = ""
     # Cookie-signing secret for the login session. Empty (with admin_password set)

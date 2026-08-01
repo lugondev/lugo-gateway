@@ -28,6 +28,12 @@ Identity comes from exactly one of two sources, never both for a single request:
   identity always resolves to `role="user"`, even for an account that is `admin` in
   the DB — a bearer-holding client can never escalate to admin.
 
+Both paths **re-read the user from the DB on every request**. The cookie carries only a
+`user_id`; `disabled` and `role` are never trusted from the signed cookie. So disabling
+an account cuts its live sessions off immediately (`401`, and the cookie is dropped), and
+promoting or demoting a user takes effect on their next request rather than at their next
+login.
+
 **Public, no credentials at all:**
 - `/` and `/health`
 - `/static/login.html` and its assets (`/static/js/auth.js`, `/static/styles.css`,
@@ -35,6 +41,14 @@ Identity comes from exactly one of two sources, never both for a single request:
 - `/api/auth/*` (login/signup/refresh/logout — the only way to obtain a session)
 - `/v1/devices/pair/init` and `/v1/devices/pair/status` (the device pairing
   handshake — the device itself has no login yet)
+
+Public does not mean unlimited. `POST /api/auth/login` and `POST /api/auth/token` share
+one rate limiter, keyed both per `(client, username)` and per client; `POST
+/api/auth/signup` is limited per client. Over budget returns
+`429 {"detail": "too many attempts, try again shortly"}`. Only **failed** password
+attempts are charged, so nobody can lock a user out of their own account by spending
+their budget. Keying on the client address needs `TRUSTED_PROXY_HOPS` set behind a
+reverse proxy — see `docs/runbook.md`.
 
 **Requires a logged-in user (any role):** everything under `/ui`, `/static/`,
 `/v1/events`, `/v1/conversation`, `/v1/livehost`, `/v1/profiles`,

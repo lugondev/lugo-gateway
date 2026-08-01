@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core.actor import current_user_id
+from app.core.client_ip import client_ip
 from app.core.errors import AuthError, DeviceSerialConflictError, PairingCodeInvalidError
 from app.schemas.devices import DeviceProfileRequest, PairClaimRequest, PairInitRequest
 from app.services.auth.devices import device_store
@@ -12,7 +13,10 @@ router = APIRouter(prefix="/v1/devices", tags=["devices"])
 
 
 def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    """Thin alias kept so the two call sites below read the same as before.
+    The X-Forwarded-For handling this used to lack now lives in
+    app.core.client_ip (see pairing.py's docstring, defense #3)."""
+    return client_ip(request)
 
 
 def _checked_profile_name(profile_id: str, user_id: str) -> str:

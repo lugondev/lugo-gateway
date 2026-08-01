@@ -9,6 +9,29 @@ sys.path.insert(0, str(Path(__file__).parent))  # for concurrency_guard import
 from concurrency_guard import running_foreign_pytest_pids  # noqa: E402
 
 
+def _reset_auth_limiters() -> None:
+    """Clear every process-global rate limiter between tests.
+
+    They are keyed by client IP, and TestClient always presents the same one,
+    so a budget spent by one test would otherwise 429 an unrelated later test.
+    """
+    from app.api.routes.auth import (
+        login_account_limiter,
+        login_ip_limiter,
+        signup_limiter,
+    )
+    from app.services.auth.pairing import claim_rate_limiter, init_rate_limiter
+
+    for limiter in (
+        login_account_limiter,
+        login_ip_limiter,
+        signup_limiter,
+        claim_rate_limiter,
+        init_rate_limiter,
+    ):
+        limiter.reset()
+
+
 def pytest_sessionstart(session):
     """Fail fast if another pytest is already running: concurrent runs of
     this suite deadlock each other (both wedge at 0% CPU mid-run -- shared
@@ -171,7 +194,15 @@ def _tmp_db(tmp_path, monkeypatch):
     profile_store.invalidate()
     tts_profile_store.invalidate()
     mcp_server_store.invalidate()
+    # The auth rate limiters (api/routes/auth.py) are process-global sliding
+    # windows keyed by client IP, and every TestClient request arrives from the
+    # same "testclient" address -- so without this the signup/login budget is
+    # shared by the WHOLE run and the 20th test to sign a user up starts getting
+    # 429s from a limit some earlier, unrelated test spent. Same class of leak
+    # as the config-store caches above.
+    _reset_auth_limiters()
     yield
+    _reset_auth_limiters()
     db_engine.configure()
     cfg_engine.configure()
     model_registry_store.invalidate()
