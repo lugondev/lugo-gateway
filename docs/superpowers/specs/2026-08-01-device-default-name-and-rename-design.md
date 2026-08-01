@@ -78,8 +78,9 @@ the existing `set_profile`.
 
 ## 3. UI (`lugo-web-client`)
 
-- `claimDevice` returns the created `Device` instead of `void` — the wizard needs the
-  new device's `id` and `name`.
+- `claimDevice` already returns the created `Device`, so the wizard can read the new
+  device's `id` and `name` with no change to that function's return type. Its `name`
+  parameter becomes optional.
 - **PairWizard, `code` step:** the name input is removed. Submit enables on a
   full-length code alone.
 - **PairWizard, `done` step:** a `TextInput` prefilled with the device's name, with
@@ -89,6 +90,10 @@ the existing `set_profile`.
   has already succeeded by this point, so neither button can fail the pairing.
 - **DeviceRow:** add `Rename device` to the existing `MenuButton` items, opening a
   small modal built from `Modal` + `TextInput`, following `MoveDeviceModal`.
+- The rename modal is extracted as its own `RenameDeviceModal` component, because
+  `DeviceRow` has **two** parents that must both offer the action —
+  `screens/settings/AllDevices.tsx` and `screens/profiles/ProfileDevices.tsx`. They
+  already share `MoveDeviceModal` the same way; a second copy would drift.
 
 Both entry points call the same endpoint.
 
@@ -96,7 +101,7 @@ Both entry points call the same endpoint.
 
 | Case | Behaviour |
 |---|---|
-| Rename a device you don't own, or one that's gone | 404 → `friendlyDeviceError` |
+| Rename a device you don't own, or one that's gone | 404; the server's message is shown in the dialog verbatim. Not routed through `friendlyDeviceError` — that function only rewrites "invalid or expired" and "already paired", neither of which a rename can produce |
 | Empty name after trim | `Save` disabled client-side; server also rejects with 400 |
 | Name over 128 chars | Server 400; client caps input length |
 | Rename fails in the wizard's `done` step | Modal stays open with the error; the device is already paired, so `Done` remains a clean exit |
