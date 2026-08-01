@@ -484,7 +484,10 @@ class ConversationSession:
                 except Exception:  # noqa: BLE001 - socket may already be closed/gone
                     pass
 
-        asyncio.create_task(_warm_and_notify())
+        # _spawn_background, not a bare create_task: nothing else holds a
+        # reference to this task, so CPython is free to collect it mid-flight
+        # (the exact hazard _background_tasks exists for -- see its comment).
+        _spawn_background(_warm_and_notify())
 
     async def _emit_command(self, cmd_payload: dict) -> None:
         await self.emit("command", **cmd_payload)
@@ -702,7 +705,6 @@ class ConversationSession:
                 # (the LLM's words must survive a TTS outage) and a `tts_error`, then
                 # keeps the turn going. Raising instead would unwind the whole turn to
                 # the generic `error` handler and swallow the already-generated text.
-                logger.info("DEBUG_HANG _synth: starting engine=%s sentence=%r", cfg.tts_engine, sentence)
                 # Built INSIDE the guard, not before it: cfg.ref_audio_path comes
                 # from a stored TtsProfile, which now validates this at save time
                 # too -- but constructing TTSRequest here as well means any future
@@ -741,7 +743,6 @@ class ConversationSession:
                     lookahead=system_config_store.get().conversation.conversation_tts_lookahead,
                 )
             ) as pipeline:
-                logger.info("DEBUG_HANG _stream_to_tts: entering pipeline consume loop")
                 # Global real-time pacer for the WHOLE reply: prebuffer the first
                 # few frames, then release every frame on one monotonic clock.
                 # Per-sentence pacing used to prebuffer-burst at each sentence, so
@@ -754,8 +755,12 @@ class ConversationSession:
                 _pace_t0 = None
                 _pace_n = 0
                 tts_error_reported = False
+                # NB: nothing in this loop may log `sentence` (or the transcript
+                # it answers). The stage timings below are deliberately
+                # content-free -- a debugging pass once logged every synthesized
+                # sentence at INFO, which put private conversation content into
+                # the server log for every turn.
                 async for index, sentence, (audio, packets, tts_error) in pipeline:
-                    logger.info("DEBUG_HANG _stream_to_tts: pipeline yielded index=%d", index)
                     _log_first_chunk()
                     parts.append(sentence)
                     if want_text:
@@ -1278,6 +1283,15 @@ class ConversationSession:
         self._closing = True
         if self.current_turn and not self.current_turn.done():
             self.current_turn.cancel()
+            # Awaited, not just cancelled: cancellation is a REQUEST, and the
+            # turn still has to unwind through its own finally/except blocks --
+            # which touch the responder. Closing the responder out from under a
+            # turn that is still unwinding raised inside a detached task, where
+            # the only trace is a log line nobody reads.
+            try:
+                await self.current_turn
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - teardown
+                pass
         if self.responder is not None:
             try:
                 await self.responder.aclose()
