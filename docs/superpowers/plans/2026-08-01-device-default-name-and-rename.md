@@ -11,6 +11,7 @@
 ## Global Constraints
 
 - **Two separate git repositories.** The gateway lives in the monorepo at `/Users/lugon/code/speech-text-transformer`. The web client is its own repo at `/Users/lugon/code/speech-text-transformer/lugo-web-client`. Commit in whichever repo the task's files belong to; never stage across both.
+- **Branch:** both repos are on `feat/device-default-name`. Commit there; never on `main`. The merge back to `main` happens once, after the final review.
 - **No firmware change.** Nothing in `esp32-assistant/` is touched by this plan.
 - Default name formula, exactly: `"Lugo-" + serial[-4:].upper()`.
 - Degenerate serial (fewer than 4 characters): the literal `"New device"`.
@@ -44,9 +45,21 @@
 | `src/screens/devices/RenameDeviceModal.test.tsx` *(create)* | Modal behaviour. |
 | `src/screens/devices/PairWizard.tsx` *(modify)* | No name field; prefilled name on the done step. |
 | `src/screens/devices/PairWizard.test.tsx` *(modify)* | Updated flow. |
+| `src/screens/devices/useDeviceActions.ts` *(create)* | Move/remove/rename state + handlers, shared by both device screens. |
+| `src/screens/devices/useDeviceActions.test.tsx` *(create)* | Hook behaviour — the only test coverage these screens have. |
 | `src/screens/devices/DeviceRow.tsx` *(modify)* | `onRename` prop + menu item. |
-| `src/screens/settings/AllDevices.tsx` *(modify)* | Wire rename. |
-| `src/screens/profiles/ProfileDevices.tsx` *(modify)* | Wire rename. |
+| `src/screens/devices/DeviceRow.test.tsx` *(create)* | Menu offers rename. |
+| `src/screens/settings/AllDevices.tsx` *(modify)* | Consume the hook; render the rename dialog. |
+| `src/screens/profiles/ProfileDevices.tsx` *(modify)* | Consume the hook; render the rename dialog. |
+
+**Decision (taken before execution):** `AllDevices.tsx` and `ProfileDevices.tsx`
+currently carry byte-identical `move`/`remove` handlers and their state. Rather than
+adding a third identical copy for rename, Task 7 extracts all of it into a
+`useDeviceActions` hook and Task 8 adds rename to that one place. Task 7 is therefore
+a pure refactor with no behaviour change; Task 8 is the feature.
+
+**Note:** neither screen has any test today, so the refactor's only safety nets are
+the hook's own new tests and `tsc -b` (via `pnpm build`). Both are mandatory in Task 7.
 
 ---
 
@@ -1069,19 +1082,386 @@ git commit -m "feat(devices): pair on the code alone, name the device afterwards
 
 ---
 
-### Task 7: Rename from both device lists
+### Task 7: Extract `useDeviceActions` (pure refactor, no behaviour change)
+
+`AllDevices.tsx` and `ProfileDevices.tsx` hold byte-identical `move`/`remove`
+handlers and state. Pull that into one hook now, so Task 8 adds rename in a single
+place instead of a third copy. **Nothing about how the screens behave may change.**
 
 **Files:**
-- Modify: `lugo-web-client/src/screens/devices/DeviceRow.tsx`
-- Modify: `lugo-web-client/src/screens/settings/AllDevices.tsx`
-- Modify: `lugo-web-client/src/screens/profiles/ProfileDevices.tsx`
-- Test: `lugo-web-client/src/screens/devices/DeviceRow.test.tsx` *(create)*
+- Create: `lugo-web-client/src/screens/devices/useDeviceActions.ts`
+- Test: `lugo-web-client/src/screens/devices/useDeviceActions.test.tsx` *(create)*
+- Modify: `lugo-web-client/src/screens/settings/AllDevices.tsx:22-90` and its `DeviceRow`/`MoveDeviceModal`/`ConfirmModal` call sites
+- Modify: `lugo-web-client/src/screens/profiles/ProfileDevices.tsx:24-81` and its `DeviceRow`/`MoveDeviceModal`/`ConfirmModal` call sites
 
 **Interfaces:**
-- Consumes: `RenameDeviceModal` (Task 5), `renameDevice` (Task 4).
-- Produces: `DeviceRow` gains a required `onRename: () => void` prop.
+- Consumes: `setDeviceProfile`, `revokeDevice`, `type Device` from `../../api/devices`.
+- Produces:
+
+```ts
+useDeviceActions(
+  refresh: () => Promise<void>,
+  onRemoveError: (message: string) => void,
+): {
+  moving: Device | null
+  moveBusy: boolean
+  moveError: string | null
+  openMove: (device: Device) => void
+  closeMove: () => void
+  move: (targetProfileId: string) => Promise<void>
+  removing: Device | null
+  removeBusy: boolean
+  openRemove: (device: Device) => void
+  closeRemove: () => void
+  remove: () => Promise<void>
+}
+```
+
+`onRemoveError` exists because removal failures are shown in the page-level error
+banner that lives in each screen, not in the confirm dialog — that is existing
+behaviour and must be preserved.
 
 - [ ] **Step 1: Write the failing test**
+
+Create `lugo-web-client/src/screens/devices/useDeviceActions.test.tsx`:
+
+```tsx
+import { renderHook, act, waitFor } from '@testing-library/react'
+import { beforeEach, expect, it, vi } from 'vitest'
+
+vi.mock('../../api/devices', async (orig) => ({
+  ...(await orig<typeof import('../../api/devices')>()),
+  setDeviceProfile: vi.fn(),
+  revokeDevice: vi.fn(),
+}))
+
+import { revokeDevice, setDeviceProfile, type Device } from '../../api/devices'
+import { useDeviceActions } from './useDeviceActions'
+
+const DEVICE = {
+  id: 'd1',
+  user_id: 'u1',
+  name: 'Lugo-48D0',
+  serial: '2884855048d0',
+  profile_id: 'kitchen',
+  created_at: null,
+  last_seen_at: null,
+  revoked: false,
+} satisfies Device
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.mocked(setDeviceProfile).mockResolvedValue(undefined)
+  vi.mocked(revokeDevice).mockResolvedValue(undefined)
+})
+
+function setup() {
+  const refresh = vi.fn().mockResolvedValue(undefined)
+  const onRemoveError = vi.fn()
+  const hook = renderHook(() => useDeviceActions(refresh, onRemoveError))
+  return { ...hook, refresh, onRemoveError }
+}
+
+it('moves the open device and refreshes', async () => {
+  const { result, refresh } = setup()
+
+  act(() => result.current.openMove(DEVICE))
+  expect(result.current.moving).toEqual(DEVICE)
+
+  await act(() => result.current.move('living-room'))
+
+  expect(setDeviceProfile).toHaveBeenCalledWith('d1', 'living-room')
+  expect(refresh).toHaveBeenCalled()
+  await waitFor(() => expect(result.current.moving).toBeNull())
+})
+
+it('keeps the move dialog open and shows the error when the move fails', async () => {
+  vi.mocked(setDeviceProfile).mockRejectedValue(new Error('nope'))
+  const { result, refresh } = setup()
+
+  act(() => result.current.openMove(DEVICE))
+  await act(() => result.current.move('living-room'))
+
+  expect(result.current.moveError).toBe('nope')
+  // Still open, so the user can retry rather than losing their place.
+  expect(result.current.moving).toEqual(DEVICE)
+  expect(refresh).not.toHaveBeenCalled()
+})
+
+it('clears a stale move error when the dialog is reopened', async () => {
+  vi.mocked(setDeviceProfile).mockRejectedValue(new Error('nope'))
+  const { result } = setup()
+
+  act(() => result.current.openMove(DEVICE))
+  await act(() => result.current.move('living-room'))
+  expect(result.current.moveError).toBe('nope')
+
+  act(() => result.current.openMove(DEVICE))
+  expect(result.current.moveError).toBeNull()
+})
+
+it('does nothing when move is called with no device open', async () => {
+  const { result } = setup()
+  await act(() => result.current.move('living-room'))
+  expect(setDeviceProfile).not.toHaveBeenCalled()
+})
+
+it('revokes the open device and refreshes', async () => {
+  const { result, refresh } = setup()
+
+  act(() => result.current.openRemove(DEVICE))
+  await act(() => result.current.remove())
+
+  expect(revokeDevice).toHaveBeenCalledWith('d1')
+  expect(refresh).toHaveBeenCalled()
+  await waitFor(() => expect(result.current.removing).toBeNull())
+})
+
+it('reports removal failures to the page banner, not the dialog', async () => {
+  vi.mocked(revokeDevice).mockRejectedValue(new Error('Removal failed'))
+  const { result, onRemoveError } = setup()
+
+  act(() => result.current.openRemove(DEVICE))
+  await act(() => result.current.remove())
+
+  expect(onRemoveError).toHaveBeenCalledWith('Removal failed')
+})
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd lugo-web-client && pnpm vitest run src/screens/devices/useDeviceActions.test.tsx`
+Expected: FAIL — cannot resolve `./useDeviceActions`.
+
+- [ ] **Step 3: Write the hook**
+
+Create `lugo-web-client/src/screens/devices/useDeviceActions.ts`:
+
+```ts
+import { useState } from 'react'
+import { revokeDevice, setDeviceProfile, type Device } from '../../api/devices'
+
+/** Move and remove, for the two screens that list devices.
+ *
+ * `AllDevices` and `ProfileDevices` are near-twins: same rows, same actions,
+ * different filters. They carried byte-identical copies of this state and these
+ * handlers, which is exactly the kind of pair that drifts. One hook, two callers.
+ *
+ * Failures are deliberately routed to two different places, matching what the
+ * screens already did: a failed move stays in the move dialog (the user is in it,
+ * and can retry), while a failed removal goes to the page-level banner via
+ * `onRemoveError` (its confirm dialog has nowhere to put a message).
+ */
+export function useDeviceActions(
+  refresh: () => Promise<void>,
+  onRemoveError: (message: string) => void,
+) {
+  const [moving, setMoving] = useState<Device | null>(null)
+  const [moveBusy, setMoveBusy] = useState(false)
+  const [moveError, setMoveError] = useState<string | null>(null)
+  const [removing, setRemoving] = useState<Device | null>(null)
+  const [removeBusy, setRemoveBusy] = useState(false)
+
+  async function move(targetProfileId: string) {
+    if (!moving) return
+    setMoveBusy(true)
+    setMoveError(null)
+    try {
+      await setDeviceProfile(moving.id, targetProfileId)
+      setMoving(null)
+      await refresh()
+    } catch (e) {
+      setMoveError(e instanceof Error ? e.message : 'Could not move the device')
+    } finally {
+      setMoveBusy(false)
+    }
+  }
+
+  async function remove() {
+    if (!removing) return
+    setRemoveBusy(true)
+    try {
+      await revokeDevice(removing.id)
+      setRemoving(null)
+      await refresh()
+    } catch (e) {
+      onRemoveError(e instanceof Error ? e.message : 'Removal failed')
+    } finally {
+      setRemoveBusy(false)
+    }
+  }
+
+  return {
+    moving,
+    moveBusy,
+    moveError,
+    // Opening clears any error left from a previous attempt, so a stale message
+    // never greets the next device the user picks.
+    openMove: (device: Device) => {
+      setMoveError(null)
+      setMoving(device)
+    },
+    closeMove: () => setMoving(null),
+    move,
+    removing,
+    removeBusy,
+    openRemove: (device: Device) => setRemoving(device),
+    closeRemove: () => setRemoving(null),
+    remove,
+  }
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd lugo-web-client && pnpm vitest run src/screens/devices/useDeviceActions.test.tsx`
+Expected: PASS — 6 passed
+
+- [ ] **Step 5: Consume the hook in both screens**
+
+In **both** `src/screens/settings/AllDevices.tsx` and `src/screens/profiles/ProfileDevices.tsx`:
+
+**(a)** Delete these five `useState` lines and the `move` and `remove` functions entirely:
+
+```tsx
+  const [moving, setMoving] = useState<Device | null>(null)
+  const [moveError, setMoveError] = useState<string | null>(null)
+  const [moveBusy, setMoveBusy] = useState(false)
+  const [removing, setRemoving] = useState<Device | null>(null)
+  const [removeBusy, setRemoveBusy] = useState(false)
+```
+
+**(b)** Add the hook call directly below the `refresh` `useCallback`:
+
+```tsx
+  const actions = useDeviceActions(refresh, setError)
+```
+
+**(c)** Import it:
+
+```tsx
+import { useDeviceActions } from '../devices/useDeviceActions'
+```
+
+**(d)** Update the three call sites to read from `actions`:
+
+```tsx
+              <DeviceRow
+                device={d}
+                onMove={() => actions.openMove(d)}
+                onRemove={() => actions.openRemove(d)}
+              />
+```
+
+```tsx
+      <MoveDeviceModal
+        device={actions.moving}
+        profiles={profiles}
+        busy={actions.moveBusy}
+        error={actions.moveError}
+        onCancel={actions.closeMove}
+        onConfirm={actions.move}
+      />
+```
+
+```tsx
+      <ConfirmModal
+        open={actions.removing !== null}
+        title="Remove device?"
+        message={`${actions.removing?.name ?? 'This device'} will lose access and have to be paired again.`}
+        confirmLabel="Remove"
+        destructive
+        busy={actions.removeBusy}
+        onConfirm={actions.remove}
+        onCancel={actions.closeRemove}
+      />
+```
+
+**(e)** `setDeviceProfile` and `revokeDevice` are now unused in both screens — remove them from the `../../api/devices` import, keeping `listDevices` and `type Device`. `useState` is still used (for `devices`, `profiles`, `error`, and `pairing` in `ProfileDevices`), so keep that import.
+
+Note: `AllDevices.tsx` keeps its own `error` banner state and passes `setError` as
+`onRemoveError`; `ProfileDevices.tsx` does the same. In `AllDevices.tsx` the
+`ConfirmModal` message currently reads from `removing`; after the change it reads
+from `actions.removing`. Do not alter the wording.
+
+- [ ] **Step 6: Verify nothing changed for the user**
+
+Run: `cd lugo-web-client && pnpm test && pnpm build && pnpm lint`
+Expected: PASS on all three. `pnpm build` runs `tsc -b`, which is the check that
+catches a missed rename of any of the five state variables at their call sites.
+
+- [ ] **Step 7: Commit**
+
+```bash
+cd /Users/lugon/code/speech-text-transformer/lugo-web-client
+git add src/screens/devices/useDeviceActions.ts src/screens/devices/useDeviceActions.test.tsx src/screens/settings/AllDevices.tsx src/screens/profiles/ProfileDevices.tsx
+git commit -m "refactor(devices): share move and remove between both device lists"
+```
+
+---
+
+### Task 8: Rename from both device lists
+
+**Files:**
+- Modify: `lugo-web-client/src/screens/devices/useDeviceActions.ts` (add rename)
+- Modify: `lugo-web-client/src/screens/devices/useDeviceActions.test.tsx` (add rename tests)
+- Modify: `lugo-web-client/src/screens/devices/DeviceRow.tsx`
+- Create: `lugo-web-client/src/screens/devices/DeviceRow.test.tsx`
+- Modify: `lugo-web-client/src/screens/settings/AllDevices.tsx`
+- Modify: `lugo-web-client/src/screens/profiles/ProfileDevices.tsx`
+
+**Interfaces:**
+- Consumes: `useDeviceActions` (Task 7), `RenameDeviceModal` (Task 5), `renameDevice` (Task 4).
+- Produces: `DeviceRow` gains a required `onRename: () => void` prop; `useDeviceActions` additionally returns `renaming`, `renameBusy`, `renameError`, `openRename(device)`, `closeRename()`, `rename(name)`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `lugo-web-client/src/screens/devices/useDeviceActions.test.tsx`, and add `renameDevice: vi.fn()` to the existing `vi.mock` factory plus `renameDevice` to the import from `../../api/devices`. Also add `vi.mocked(renameDevice).mockResolvedValue(undefined)` to the existing `beforeEach`:
+
+```tsx
+it('renames the open device and refreshes', async () => {
+  const { result, refresh } = setup()
+
+  act(() => result.current.openRename(DEVICE))
+  expect(result.current.renaming).toEqual(DEVICE)
+
+  await act(() => result.current.rename('Kitchen speaker'))
+
+  expect(renameDevice).toHaveBeenCalledWith('d1', 'Kitchen speaker')
+  expect(refresh).toHaveBeenCalled()
+  await waitFor(() => expect(result.current.renaming).toBeNull())
+})
+
+it('keeps the rename dialog open and shows the error when it fails', async () => {
+  vi.mocked(renameDevice).mockRejectedValue(new Error("device 'd1' not found"))
+  const { result, refresh } = setup()
+
+  act(() => result.current.openRename(DEVICE))
+  await act(() => result.current.rename('Kitchen speaker'))
+
+  expect(result.current.renameError).toBe("device 'd1' not found")
+  expect(result.current.renaming).toEqual(DEVICE)
+  expect(refresh).not.toHaveBeenCalled()
+})
+
+it('clears a stale rename error when the dialog is reopened', async () => {
+  vi.mocked(renameDevice).mockRejectedValue(new Error('nope'))
+  const { result } = setup()
+
+  act(() => result.current.openRename(DEVICE))
+  await act(() => result.current.rename('Kitchen'))
+  expect(result.current.renameError).toBe('nope')
+
+  act(() => result.current.openRename(DEVICE))
+  expect(result.current.renameError).toBeNull()
+})
+
+it('does nothing when rename is called with no device open', async () => {
+  const { result } = setup()
+  await act(() => result.current.rename('Kitchen'))
+  expect(renameDevice).not.toHaveBeenCalled()
+})
+```
 
 Create `lugo-web-client/src/screens/devices/DeviceRow.test.tsx`:
 
@@ -1115,14 +1495,57 @@ it('offers rename alongside move and remove', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd lugo-web-client && pnpm vitest run src/screens/devices/DeviceRow.test.tsx`
-Expected: FAIL — TypeScript rejects the unknown `onRename` prop and there is no `Rename device` item.
+Run: `cd lugo-web-client && pnpm vitest run src/screens/devices/useDeviceActions.test.tsx src/screens/devices/DeviceRow.test.tsx`
+Expected: FAIL — `result.current.openRename is not a function`, and `DeviceRow` has no `Rename device` item.
 
-- [ ] **Step 3: Add the prop and the menu item**
+- [ ] **Step 3: Add rename to the hook**
 
-In `lugo-web-client/src/screens/devices/DeviceRow.tsx`, add `onRename` to the props type and destructuring, and put the item first in the menu (renaming is the least destructive action):
+In `useDeviceActions.ts`, add `renameDevice` to the `../../api/devices` import, add the state next to the move state:
+
+```ts
+  const [renaming, setRenaming] = useState<Device | null>(null)
+  const [renameBusy, setRenameBusy] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
+```
+
+add the handler next to `move`:
+
+```ts
+  async function rename(name: string) {
+    if (!renaming) return
+    setRenameBusy(true)
+    setRenameError(null)
+    try {
+      await renameDevice(renaming.id, name)
+      setRenaming(null)
+      await refresh()
+    } catch (e) {
+      setRenameError(e instanceof Error ? e.message : 'Could not rename the device')
+    } finally {
+      setRenameBusy(false)
+    }
+  }
+```
+
+and add to the returned object:
+
+```ts
+    renaming,
+    renameBusy,
+    renameError,
+    openRename: (device: Device) => {
+      setRenameError(null)
+      setRenaming(device)
+    },
+    closeRename: () => setRenaming(null),
+    rename,
+```
+
+- [ ] **Step 4: Add the prop and the menu item to `DeviceRow`**
+
+In `lugo-web-client/src/screens/devices/DeviceRow.tsx`, add `onRename` to the props type and destructuring:
 
 ```tsx
 export function DeviceRow({
@@ -1138,7 +1561,7 @@ export function DeviceRow({
 }) {
 ```
 
-and in the `items` array:
+and put the item first in the menu — renaming is the least destructive action:
 
 ```tsx
         items={[
@@ -1151,75 +1574,48 @@ and in the `items` array:
         ]}
 ```
 
-- [ ] **Step 4: Run the row test to verify it passes**
+- [ ] **Step 5: Run those two test files to verify they pass**
 
-Run: `cd lugo-web-client && pnpm vitest run src/screens/devices/DeviceRow.test.tsx`
-Expected: PASS
+Run: `cd lugo-web-client && pnpm vitest run src/screens/devices/useDeviceActions.test.tsx src/screens/devices/DeviceRow.test.tsx`
+Expected: PASS — 10 passed in the hook file, 1 in the row file.
 
-- [ ] **Step 5: Wire it into both parent screens**
+- [ ] **Step 6: Wire it into both screens**
 
-Apply the **same four edits** to `src/screens/settings/AllDevices.tsx` and `src/screens/profiles/ProfileDevices.tsx`. Both files already hold `moving`/`moveBusy`/`moveError` state and render `MoveDeviceModal`; rename mirrors that exactly.
-
-**(a)** Add to the imports — `renameDevice` joins the existing `../../api/devices` import, and the modal joins the existing `../devices/...` imports:
+In **both** `src/screens/settings/AllDevices.tsx` and `src/screens/profiles/ProfileDevices.tsx`, import the dialog:
 
 ```tsx
 import { RenameDeviceModal } from '../devices/RenameDeviceModal'
 ```
 
-**(b)** Add state next to the `moving` trio:
+pass the new prop on `DeviceRow`:
 
 ```tsx
-  const [renaming, setRenaming] = useState<Device | null>(null)
-  const [renameError, setRenameError] = useState<string | null>(null)
-  const [renameBusy, setRenameBusy] = useState(false)
+                onRename={() => actions.openRename(d)}
 ```
 
-**(c)** Add the handler next to `move()`:
-
-```tsx
-  async function rename(next: string) {
-    if (!renaming) return
-    setRenameBusy(true)
-    setRenameError(null)
-    try {
-      await renameDevice(renaming.id, next)
-      setRenaming(null)
-      await refresh()
-    } catch (e) {
-      setRenameError(e instanceof Error ? e.message : 'Could not rename the device')
-    } finally {
-      setRenameBusy(false)
-    }
-  }
-```
-
-**(d)** Pass the prop on `<DeviceRow ... onRename={() => setRenaming(d)} />`, and render the modal next to `<MoveDeviceModal ... />`:
+and render the dialog next to `MoveDeviceModal`:
 
 ```tsx
       <RenameDeviceModal
-        device={renaming}
-        busy={renameBusy}
-        error={renameError}
-        onCancel={() => {
-          setRenaming(null)
-          setRenameError(null)
-        }}
-        onConfirm={rename}
+        device={actions.renaming}
+        busy={actions.renameBusy}
+        error={actions.renameError}
+        onCancel={actions.closeRename}
+        onConfirm={actions.rename}
       />
 ```
 
-In `ProfileDevices.tsx` the `DeviceRow` is rendered inside the same kind of `.map((d) => ...)` as in `AllDevices.tsx`, so `d` is in scope at that call site in both files.
-
-- [ ] **Step 6: Run the whole web suite, typecheck and lint**
+- [ ] **Step 7: Run the whole web suite, typecheck and lint**
 
 Run: `cd lugo-web-client && pnpm test && pnpm build && pnpm lint`
-Expected: PASS on all three. `pnpm build` runs `tsc -b`, which is what catches a missed `onRename` at either `DeviceRow` call site.
+Expected: PASS on all three. `pnpm build` runs `tsc -b`, which is what catches a
+missed `onRename` at either `DeviceRow` call site.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 cd /Users/lugon/code/speech-text-transformer/lugo-web-client
-git add src/screens/devices/DeviceRow.tsx src/screens/devices/DeviceRow.test.tsx src/screens/settings/AllDevices.tsx src/screens/profiles/ProfileDevices.tsx
+git add src/screens/devices/useDeviceActions.ts src/screens/devices/useDeviceActions.test.tsx src/screens/devices/DeviceRow.tsx src/screens/devices/DeviceRow.test.tsx src/screens/settings/AllDevices.tsx src/screens/profiles/ProfileDevices.tsx
 git commit -m "feat(devices): offer rename from both device lists"
 ```
 
