@@ -13,6 +13,7 @@ from app.core.auth_guard import (
 )
 from app.core.audio import parse_sample_rate
 from app.core.errors import AppError
+from app.core.opus import OPUS_SAMPLE_RATES
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
 from app.schemas.conversation import ChatRequest, LlmConfig
@@ -31,6 +32,7 @@ from app.services.conversation.session import (
     SessionRuntimeConfig,
     _build_tool_registry,
     _spawn_background,
+    _tail,
 )
 from app.services.conversation.turn_quota import llm_turn_quota_blocked
 from app.services.health import check_resolved_engines
@@ -189,7 +191,12 @@ async def chat(
         session_ready = False
 
     new_msgs = [{"role": m.role, "content": m.content} for m in payload.messages]
-    history = [{"role": m["role"], "content": m["content"]} for m in stored] + new_msgs
+    # Capped by the same conversation_history_max_messages the WS path applies
+    # (_tail). Resuming a long-lived session used to replay its ENTIRE stored
+    # transcript on every request: cost per request grew without bound and a
+    # session old enough eventually just overflowed the context window. The full
+    # transcript stays in the DB for History either way.
+    history = _tail([{"role": m["role"], "content": m["content"]} for m in stored] + new_msgs)
 
     # Memory injection: prepend the profile's memories to the system prompt.
     last_user = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
@@ -264,7 +271,11 @@ async def chat(
 
     if session_ready:
         try:
-            turn = (len(stored) // 2) + 1
+            # From the stored turn numbers, not `len(stored) // 2`: that assumed
+            # every turn contributes exactly two messages, so a single turn that
+            # stored only a user message (an empty/failed reply) shifted the
+            # count by half and made the next turn collide with the previous one.
+            turn = max((m.get("turn") or 0) for m in stored) + 1 if stored else 1
             for m in new_msgs:
                 await session_store.append_message(sid, turn, m["role"], m["content"])
             await session_store.append_message(sid, turn, "assistant", reply)
@@ -404,6 +415,25 @@ async def conversation_stream(websocket: WebSocket) -> None:
         await websocket.send_json({"event": "error", "message": str(exc)})
         await websocket.close()
         return
+    # parse_sample_rate above only bounds the value to a plausible range, which
+    # is right for the PCM/WAV paths. Opus is stricter: libopus accepts exactly
+    # OPUS_SAMPLE_RATES and its encoder/decoder constructors RAISE on anything
+    # else -- from inside session.start(), after accept(), with no error on the
+    # wire. Checked here, per direction, only when that direction is Opus.
+    for rate, is_opus, param in (
+        (sample_rate, audio_codec == "opus", "sample_rate"),
+        (output_sample_rate, want_audio and audio_out == "opus", "output_sample_rate"),
+    ):
+        if is_opus and rate not in OPUS_SAMPLE_RATES:
+            await websocket.send_json({
+                "event": "error",
+                "message": (
+                    f"invalid {param}: {rate} "
+                    f"(opus supports {', '.join(str(r) for r in OPUS_SAMPLE_RATES)})"
+                ),
+            })
+            await websocket.close()
+            return
     # Per-connection override of Opus playback pacing (None = inherit the
     # global system_config default -- what api/routes/lugo.py always gets).
     # Web sends opus_pace=0: see

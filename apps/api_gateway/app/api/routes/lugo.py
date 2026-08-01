@@ -18,7 +18,9 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.auth_guard import resolve_ws_identity, ws_session_owner_denied
+from app.core.errors import AppError
 from app.core.identity_watch import identity_still_valid
+from app.core.opus import parse_opus_sample_rate
 from app.core.settings import settings
 from app.services.conversation.lugo_frame import LUGO_FRAME_OPUS, encode_frame
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
@@ -44,11 +46,19 @@ _IDLE_TICK_S = 1.0
 # is cut off even mid-turn.
 _IDENTITY_RECHECK_INTERVAL_S = 30.0
 
-# Ceiling on how long the receive loop waits for the watchdog's farewell (LLM +
-# synthesis + paced audio + drain) before closing regardless. Generous, because
-# cutting the goodbye off is the bug being fixed; bounded, because a hung engine
-# must not pin the socket open.
+# Ceiling on how long the idle watchdog spends producing its farewell (LLM +
+# synthesis + paced audio) before hanging up regardless. Generous, because
+# cutting the goodbye off is the bug this whole path exists to fix; bounded,
+# because a hung LLM or TTS engine must not pin the socket open -- announce()
+# awaits both with no deadline of its own, so without this a stuck engine kept
+# the device connected and the watchdog parked in an await forever.
 _FAREWELL_BUDGET_S = 45.0
+
+# How long the server waits for the opening `wakeup` frame. A client that
+# passes auth and then says nothing would otherwise hold a socket (and its
+# handler task) open indefinitely: the idle watchdog does not exist yet at that
+# point in the handshake, so nothing else would ever reclaim it.
+_WAKEUP_TIMEOUT_S = 10.0
 
 # How far past the idle deadline a hold may push the disconnect before it is
 # overridden. A turn that never finishes must not keep a device connected forever,
@@ -122,8 +132,16 @@ async def lugo_stream(websocket: WebSocket) -> None:
         await websocket.close(code=4401, reason="unauthorized")
         return
     await websocket.accept()
-    # Handshake: first frame must be a `wakeup`.
-    message = await websocket.receive()
+    # Handshake: first frame must be a `wakeup`, and it must arrive promptly.
+    try:
+        message = await asyncio.wait_for(websocket.receive(), _WAKEUP_TIMEOUT_S)
+    except TimeoutError:
+        logger.info("lugo: no wakeup within %.0fs; closing", _WAKEUP_TIMEOUT_S)
+        with contextlib.suppress(RuntimeError):
+            await websocket.send_json({"type": "error", "message": "expected wakeup"})
+        with contextlib.suppress(RuntimeError):
+            await websocket.close()
+        return
     if message.get("type") == "websocket.disconnect":
         return
     if message.get("bytes") is not None:
@@ -196,15 +214,27 @@ async def lugo_stream(websocket: WebSocket) -> None:
         await websocket.close()
         return
     session_id = requested_sid or str(uuid.uuid4())
-    default_sample_rate = settings.stt_stream_sample_rate
+    # Refused, not silently defaulted. The Lugo wire is Opus in both directions,
+    # so a rate libopus rejects (anything outside OPUS_SAMPLE_RATES) makes
+    # OpusFrameDecoder/OpusFrameEncoder raise from inside session.start() --
+    # after accept(), with nothing on the wire to say why -- and sample_rate=0
+    # additionally divides by zero in VadEndpointer. Same contract
+    # api/routes/conversation.py already enforced on its own socket via
+    # parse_sample_rate; this route was simply missed.
+    audio_params = hello.get("audio_params")
+    if not isinstance(audio_params, dict):
+        audio_params = {}
     try:
-        in_sr = int((hello.get("audio_params") or {}).get("sample_rate", default_sample_rate))
-    except (TypeError, ValueError):
-        in_sr = default_sample_rate
-    try:
-        out_sr = int((hello.get("audio_params") or {}).get("output_sample_rate", 24000))
-    except (TypeError, ValueError):
-        out_sr = 24000
+        in_sr = parse_opus_sample_rate(
+            audio_params.get("sample_rate"), settings.stt_stream_sample_rate
+        )
+        out_sr = parse_opus_sample_rate(
+            audio_params.get("output_sample_rate"), 24000, name="output_sample_rate"
+        )
+    except AppError as exc:
+        await websocket.send_json({"type": "error", "message": str(exc)})
+        await websocket.close()
+        return
     # The device wire protocol has only OPUS and JSON frames (lugo_frame.py), so a
     # server with no libopus cannot send this client audio at all. Ask for a
     # text-only session rather than letting session.start()'s opus->wav downgrade
@@ -361,40 +391,21 @@ async def lugo_stream(websocket: WebSocket) -> None:
             return
 
     session = ConversationSession(cfg, emit, emit_audio)
-    await session.start()
-    await websocket.send_json({
-        # cfg.session_id, not the id minted above: start() may have resolved this
-        # connection onto the client's existing conversation instead. The device
-        # persists whatever id arrives here (rpi-assistant writes it to disk), so
-        # reporting the pre-resume id would hand it one that nothing ever wrote to.
-        "type": "welcome", "session_id": cfg.session_id, "transport": "websocket",
-        "audio_params": {"sample_rate": out_sr}, "idle_timeout_s": idle,
-        "stt_ready": engine_status["stt_ready"], "tts_ready": engine_status["tts_ready"],
-    })
-
-    device_mcp = bool((hello.get("features") or {}).get("mcp"))
     transport: DeviceMcpTransport | None = None
     discovery_task: asyncio.Task | None = None
-    if device_mcp and settings.device_mcp_enabled:
-        transport = DeviceMcpTransport(
-            websocket.send_json,
-            request_timeout=settings.device_mcp_request_timeout_s,
-        )
-
-        async def _discover() -> None:
-            defs = await discover_device_tools(
-                transport, discovery_timeout=settings.device_mcp_discovery_timeout_s
-            )
-            if defs:
-                session.add_tool_source(DeviceMcpToolSource(defs, transport))
-                logger.info("device mcp: registered %d tool(s)", len(defs))
-
-        discovery_task = asyncio.create_task(_discover())
-
+    wd: asyncio.Task | None = None
     closing = False      # a hang-up has been committed to; ignore further input
     hung_up = False      # ...and _hang_up has finished, so the socket is gone
     last_identity_check = time.monotonic()
     identity_owned = identity.user_id is not None or identity.device_id is not None
+
+    async def _discover() -> None:
+        defs = await discover_device_tools(
+            transport, discovery_timeout=settings.device_mcp_discovery_timeout_s
+        )
+        if defs:
+            session.add_tool_source(DeviceMcpToolSource(defs, transport))
+            logger.info("device mcp: registered %d tool(s)", len(defs))
 
     async def _watchdog() -> None:
         """Wrapper so a failure in here is visible.
@@ -483,7 +494,19 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     # both treat it as activity), and `processing` is the honest one:
                     # something IS being prepared.
                     await session.emit("processing", turn=session.turn)
-                    spoke = await session.announce("idle_goodbye")
+                    # Bounded: announce() awaits an LLM call and a synthesis
+                    # with no deadline of its own, so a hung engine would park
+                    # the watchdog here and keep the device connected forever.
+                    try:
+                        spoke = await asyncio.wait_for(
+                            session.announce("idle_goodbye"), _FAREWELL_BUDGET_S
+                        )
+                    except TimeoutError:
+                        logger.warning(
+                            "farewell exceeded %.0fs; hanging up without it",
+                            _FAREWELL_BUDGET_S,
+                        )
+                        spoke = False
                 if not spoke:
                     # Nothing was said, so no turn_done is coming and nothing else
                     # would ever close this connection.
@@ -491,19 +514,43 @@ async def lugo_stream(websocket: WebSocket) -> None:
                     await _hang_up("idle_timeout", drain=False)
                 return
 
-    # Schedule the watchdog whenever there's something for it to watch: a real
-    # idle timeout (idle > 0) or an identity to periodically recheck
-    # (identity_owned). Skip scheduling entirely when neither applies, rather
-    # than having it return immediately, since a completed task would make
-    # `wd.done()` true on the very next loop check below and tear down the
-    # connection mid-turn.
-    #
-    # Note: idle <= 0 ("never idle-disconnect") can still leave the watchdog
-    # running when identity_owned is true — that's fine, because the
-    # idle-check branch above is separately guarded with `idle > 0`, so it
-    # can never fire in that case; only the identity re-check can.
-    wd = asyncio.create_task(_watchdog()) if (idle > 0 or identity_owned) else None
+    # start() is INSIDE the try, not before it. It resolves providers, builds
+    # the tool registry and spawns a background warm-up, any of which can raise
+    # (an engine that disappeared between the health probe and here, a codec the
+    # negotiated rate can't support). Raising outside the try skipped the whole
+    # finally: the session row was never marked ended, memory extraction never
+    # ran, and the responder's httpx client leaked along with the warm-up task.
     try:
+        await session.start()
+        await websocket.send_json({
+            # cfg.session_id, not the id minted above: start() may have resolved this
+            # connection onto the client's existing conversation instead. The device
+            # persists whatever id arrives here (rpi-assistant writes it to disk), so
+            # reporting the pre-resume id would hand it one that nothing ever wrote to.
+            "type": "welcome", "session_id": cfg.session_id, "transport": "websocket",
+            "audio_params": {"sample_rate": out_sr}, "idle_timeout_s": idle,
+            "stt_ready": engine_status["stt_ready"], "tts_ready": engine_status["tts_ready"],
+        })
+
+        if bool((hello.get("features") or {}).get("mcp")) and settings.device_mcp_enabled:
+            transport = DeviceMcpTransport(
+                websocket.send_json,
+                request_timeout=settings.device_mcp_request_timeout_s,
+            )
+            discovery_task = asyncio.create_task(_discover())
+
+        # Schedule the watchdog whenever there's something for it to watch: a real
+        # idle timeout (idle > 0) or an identity to periodically recheck
+        # (identity_owned). Skip scheduling entirely when neither applies, rather
+        # than having it return immediately, since a completed task would make
+        # `wd.done()` true on the very next loop check below and tear down the
+        # connection mid-turn.
+        #
+        # Note: idle <= 0 ("never idle-disconnect") can still leave the watchdog
+        # running when identity_owned is true — that's fine, because the
+        # idle-check branch above is separately guarded with `idle > 0`, so it
+        # can never fire in that case; only the identity re-check can.
+        wd = asyncio.create_task(_watchdog()) if (idle > 0 or identity_owned) else None
         while True:
             if wd is not None and wd.done():
                 break
@@ -569,14 +616,20 @@ async def lugo_stream(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        if wd is not None:
-            wd.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await wd
-        if discovery_task is not None:
-            discovery_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await discovery_task
+        # `except Exception` around each await, not just CancelledError: a task
+        # that had ALREADY failed re-raises its stored exception here, and an
+        # exception escaping a finally block skips everything after it -- which
+        # is session.close(), i.e. mark_ended + memory extraction + the
+        # responder's httpx client. Teardown must reach the end no matter what
+        # these two tasks did.
+        for task in (wd, discovery_task):
+            if task is None:
+                continue
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - teardown
+                pass
         if transport is not None:
             transport.close()
         await session.close()

@@ -71,6 +71,41 @@ def opus_available() -> bool:
     return _load() is not None
 
 
+# libopus accepts ONLY these rates: opus_encoder_create/opus_decoder_create
+# return OPUS_BAD_ARG for anything else, which surfaces as an exception from
+# OpusFrameEncoder/OpusFrameDecoder's constructor -- i.e. from deep inside
+# ConversationSession.start(), after the socket was already accepted.
+OPUS_SAMPLE_RATES = (8000, 12000, 16000, 24000, 48000)
+
+
+def parse_opus_sample_rate(raw, default: int, *, name: str = "sample_rate") -> int:
+    """Parse + validate a client-supplied sample rate for an Opus stream.
+
+    Same contract as core.audio.parse_sample_rate (None means "absent, use the
+    default", anything else must parse), but checks membership in
+    OPUS_SAMPLE_RATES rather than a plausible range: a rate libopus rejects is
+    not a degraded stream, it is a constructor that raises. Refuse it at the
+    handshake, where the caller can still be told why.
+
+    `default` is server config, not client input, so it is returned unvalidated
+    -- an operator's odd default must not make every device unable to connect.
+    """
+    from app.core.errors import AppError
+
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise AppError(f"invalid {name}: {raw!r} (must be an integer)") from None
+    if value not in OPUS_SAMPLE_RATES:
+        raise AppError(
+            f"invalid {name}: {value} "
+            f"(opus supports {', '.join(str(r) for r in OPUS_SAMPLE_RATES)})"
+        )
+    return value
+
+
 class OpusFrameEncoder:
     """Encode PCM16 mono to a list of Opus packets (for pushing to devices)."""
 

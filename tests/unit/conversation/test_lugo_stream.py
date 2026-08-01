@@ -156,12 +156,40 @@ def test_non_dict_json_first_frame_errors():
         assert msg["type"] == "error"
 
 
-def test_non_numeric_sample_rate_falls_back():
+def test_non_numeric_sample_rate_is_refused():
+    """Refused, not silently defaulted -- the same contract
+    api/routes/conversation.py's socket already enforced (parse_sample_rate).
+
+    Falling back was the old behavior and it hid the real failure: the value
+    reaches OpusFrameDecoder/VadEndpointer, which raise (or divide by zero) from
+    inside session.start() after accept(), with nothing on the wire to say why.
+    """
     with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
         ws.send_json({"type": "wakeup", "profile": "dev",
                       "audio_params": {"format": "opus", "sample_rate": "fast"}})
         msg = ws.receive_json()
-        assert msg["type"] == "welcome"
+        assert msg["type"] == "error"
+        assert "sample_rate" in msg["message"]
+
+
+def test_zero_sample_rate_is_refused():
+    """sample_rate=0 was a ZeroDivisionError inside VadEndpointer, per frame."""
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "sample_rate": 0}})
+        msg = ws.receive_json()
+        assert msg["type"] == "error"
+
+
+def test_non_opus_sample_rate_is_refused():
+    """44100 is a plausible rate but not one libopus accepts, so the encoder
+    constructor raises inside session.start(). Refuse it at the handshake."""
+    with TestClient(app).websocket_connect("/v1/lugo/stream") as ws:
+        ws.send_json({"type": "wakeup", "profile": "dev",
+                      "audio_params": {"format": "opus", "output_sample_rate": 44100}})
+        msg = ws.receive_json()
+        assert msg["type"] == "error"
+        assert "output_sample_rate" in msg["message"]
 
 
 def test_tts_start_and_stop_bracket_a_turn():

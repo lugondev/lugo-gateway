@@ -108,3 +108,56 @@ async def test_two_users_on_one_profile_keep_separate_memory(monkeypatch):
 
     assert "A is in Hanoi" in await memory_retriever.get_context(profile, user_id="user-a")
     assert "A is in Hanoi" not in await memory_retriever.get_context(profile, user_id="user-b")
+
+
+def test_chat_caps_the_replayed_history(client, monkeypatch):
+    """Resuming replayed the ENTIRE stored transcript into the prompt: cost per
+    request grew with the length of the conversation and a long enough session
+    just overflowed the context window. The WS path already capped this (_tail);
+    this route did not.
+    """
+    from app.services.system_config import system_config_store
+
+    _real_get = system_config_store.get
+    monkeypatch.setattr(
+        system_config_store, "get",
+        lambda: _real_get().model_copy(update={
+            "conversation": _real_get().conversation.model_copy(
+                update={"conversation_history_max_messages": 4}
+            )
+        }),
+    )
+
+    seen: list[list[dict]] = []
+
+    class _SpyResponder:
+        name = "spy"
+        last_usage = None
+
+        async def reply(self, history):
+            seen.append(list(history))
+            return "ok"
+
+        async def aclose(self):
+            pass
+
+    async def _build(**_kwargs):
+        return _SpyResponder()
+
+    sid = "chat-cap"
+    asyncio.run(session_store.create(sid))
+    for i in range(10):
+        asyncio.run(session_store.append_message(sid, i, "user", f"m{i}"))
+
+    monkeypatch.setattr("app.api.routes.conversation.build_responder_ex", _build)
+    resp = client.post(
+        "/v1/conversation/chat",
+        params={"profile": "pet", "session_id": sid},
+        json={"messages": [{"role": "user", "content": "latest"}]},
+    )
+
+    assert resp.status_code == 200
+    assert len(seen[0]) == 4
+    assert seen[0][-1]["content"] == "latest"
+    # Nothing was dropped from the record -- History still has all of it.
+    assert len(asyncio.run(session_store.get_messages(sid))) == 12
