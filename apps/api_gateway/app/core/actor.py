@@ -1,14 +1,16 @@
 """Accessor an toàn cho danh tính đang gọi request.
 
-Hai nguồn danh tính:
-- request.state.actor -- do AuthGuardMiddleware đặt khi request mang bearer
-  token. Luôn tường minh cả user_id lẫn role.
-- cookie session -- đường của admin webui. Fallback khi không có actor.
+Nguồn danh tính DUY NHẤT khi auth bật: request.state.actor, do
+AuthGuardMiddleware đặt cho CẢ hai đường vào -- bearer (_bearer_actor) lẫn
+cookie session (_session_actor). Cả hai đều tra lại user trong DB ở mỗi
+request, nên `role` ở đây luôn là role hiện tại, không phải role đã ký vào
+cookie lúc đăng nhập. Trước đây nhánh cookie đọc thẳng session["role"]: hạ
+quyền một admin không hề gỡ được quyền admin cho tới khi cookie hết hạn.
 
-Nhánh session fallback role thiếu thành "admin": khi settings.admin_password
-rỗng (dev mode), AuthGuardMiddleware no-op cho mọi prefix nên route có thể
-chạy với session hoàn toàn rỗng. Coi role thiếu là "admin" khớp với hành vi
-dev-mode thực tế (một caller không xác thực, toàn quyền) thay vì crash.
+Fallback bên dưới (session, rồi "admin") CHỈ còn với chể độ dev: khi
+settings.auth_enabled False, AuthGuardMiddleware no-op nên không có actor nào
+được đặt và route chạy với session rỗng. Coi role thiếu là "admin" khớp với
+hành vi dev-mode thực tế (một caller không xác thực, toàn quyền) thay vì crash.
 """
 
 from dataclasses import dataclass
@@ -37,8 +39,7 @@ def current_role(request: Request) -> str:
     actor = _state_actor(request)
     if actor is not None:
         return actor.role
-    # Invariant mà fallback này phụ thuộc: không được ghi "user_id" vào session
-    # mà không ghi "role" cùng chỗ (hôm nay chỉ /api/auth/login làm việc đó, và
-    # nó luôn set cả hai -- xem api/routes/auth.py). Đường bearer KHÔNG đi qua
-    # đây: nó luôn đặt request.state.actor với role tường minh.
+    # Không còn đường xác thực nào rơi tới đây khi auth bật: guard đặt
+    # request.state.actor cho cả bearer lẫn cookie (xem docstring ở trên).
+    # Còn lại đúng nhánh dev-mode, nơi session rỗng và "admin" là mặc định.
     return request.session.get("role") or "admin"

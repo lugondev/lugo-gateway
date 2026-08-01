@@ -211,6 +211,32 @@ async def _bearer_actor(request: Request) -> "Actor | None":
     return Actor(user_id=user.id, role="user")
 
 
+async def _session_actor(request: Request) -> "Actor | None":
+    """Phân giải danh tính từ cookie session, ĐỌC LẠI user từ DB mỗi request.
+
+    Cookie chỉ mang `user_id`; `disabled` và `role` LUÔN lấy từ DB, không bao
+    giờ tin giá trị đã ký trong cookie. Trước đây nhánh này đọc thẳng
+    `session["user_id"]` + `session["role"]`: vô hiệu hoá một user không hề
+    cắt được phiên đang sống của họ, và hạ quyền một admin không hề gỡ được
+    quyền admin -- suốt vòng đời cookie (mặc định 14 ngày của
+    SessionMiddleware). Mọi đường danh tính khác trong app đã tra lại từ trước:
+    `_bearer_actor` ngay trên, `resolve_ws_identity` bên dưới, và
+    /api/auth/status. Đây là đường cuối cùng còn thiếu.
+
+    Trả None khi phiên không còn hợp lệ; caller xoá cookie để trình duyệt thôi
+    gửi lại một phiên đã chết.
+    """
+    from app.services.auth.users import user_store
+
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return None
+    user = await user_store.get_by_id(user_id)
+    if user is None or user.disabled:
+        return None
+    return Actor(user_id=user.id, role=user.role)
+
+
 class AuthGuardMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Fix #5 (M2): the guard has NO OPTIONS exemption. A genuine CORS
@@ -248,8 +274,16 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
             request.state.actor = actor
             user_id = actor.user_id
         else:
-            actor = None
-            user_id = request.session.get("user_id")
+            actor = await _session_actor(request)
+            if actor is None:
+                # Either there was never a session, or the user behind it is
+                # gone/disabled. Both are "not logged in" from here; drop the
+                # cookie so a dead session stops being re-presented.
+                request.session.clear()
+                user_id = None
+            else:
+                request.state.actor = actor
+                user_id = actor.user_id
 
         if kind == "user":
             if not user_id:
@@ -259,7 +293,9 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         if kind == "admin":
             if not user_id:
                 return self._unauthenticated(request)
-            role = actor.role if actor is not None else request.session.get("role")
+            # actor.role is the DB role as of THIS request (see _bearer_actor /
+            # _session_actor); the cookie's own "role" claim is never read.
+            role = actor.role if actor is not None else None
             if role != "admin":
                 return JSONResponse({"success": False, "error": "admin only"}, status_code=403)
             return await call_next(request)
