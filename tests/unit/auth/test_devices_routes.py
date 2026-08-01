@@ -360,5 +360,9 @@ def test_rename_someone_elses_device_is_indistinguishable_from_a_missing_one(cli
         "/v1/devices/mine/does-not-exist/name", json={"name": "mine now"}
     )
 
-    # Same status AND same message: otherwise this becomes a device-id oracle.
+    # Same status AND same message template: otherwise this becomes a device-id
+    # oracle. Assert the wording, not just the code -- a future split into
+    # "not yours" vs "not found" would pass a status-only check.
     assert theirs.status_code == missing.status_code == 404
+    assert theirs.json()["detail"] == f"device '{device['id']}' not found"
+    assert missing.json()["detail"] == "device 'does-not-exist' not found"
