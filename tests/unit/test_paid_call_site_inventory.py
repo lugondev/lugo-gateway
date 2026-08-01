@@ -106,13 +106,6 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         1, "metered+gated", "livehost voice turn STT",
         "tests/unit/livehost/test_livehost_quota_gate.py",
     ),
-    ("api/routes/livehost.py", "render_audio"): (
-        1, "metered+gated",
-        "livehost TTS per sentence -- Task 2 (drop-audio-artifacts) moved this "
-        "off synthesize() onto the bytes-returning seam so reply audio is "
-        "pushed as a binary WAV/Opus frame instead of an artifact URL",
-        "tests/unit/livehost/test_livehost_quota_gate.py",
-    ),
     ("api/routes/livehost.py", "reply_stream"): (
         2, "metered+gated", "livehost voice and social turns",
         "tests/unit/livehost/test_livehost_quota_gate.py",
@@ -131,13 +124,21 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "once per synthesized sentence/utterance",
         "tests/unit/conversation/test_session_usage_metering.py",
     ),
-    ("services/conversation/turn_stream.py", "render_audio"): (
+    ("services/conversation/turn_tts.py", "render_audio"): (
         1, "metered+gated",
-        "conversation core TTS, per-sentence prefetch path -- gated by the turn "
-        "it runs in (llm_turn_quota_blocked, once per turn in _run_turn before "
-        "any provider is touched) and metered per sentence via the session's "
-        "_record_tts_usage, which this module calls on the session it was handed. "
-        "Split out of session.py's _run_turn closure, unchanged",
+        "BOTH per-sentence voice paths -- the conversation core (via "
+        "conversation/turn_stream.py) and the livehost socket -- now reach the "
+        "provider through this one helper, which used to be a copy in each. "
+        "Gated by the caller's once-per-turn quota check before any provider is "
+        "touched (llm_turn_quota_blocked in _run_turn; _quota_blocked_now in "
+        "livehost_stream). Metered through the `record_usage` callback the "
+        "caller supplies, because the two attribute the row from different "
+        "state: the session reads its own cfg, the socket its own locals.\n"
+        "NOTE for whoever reads this next: consolidating means THIS test can no "
+        "longer see whether a given caller meters. `record_usage` is a required "
+        "keyword arg with no default, so a new caller has to pass something "
+        "deliberately -- but passing a no-op would be invisible here. Check the "
+        "callback, not just the call site",
         "tests/unit/conversation/test_session_usage_metering.py",
     ),
     ("services/tts/base.py", "render_wav"): (

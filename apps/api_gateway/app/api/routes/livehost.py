@@ -10,7 +10,6 @@ from app.core.actor import scope_user_id
 from app.core.audio import (
     parse_sample_rate,
     pcm16_to_wav_bytes,
-    wav_bytes_to_pcm16,
     wav_duration_seconds,
 )
 from app.core.auth_guard import resolve_ws_identity, ws_session_owner_denied, ws_subprotocol
@@ -23,7 +22,7 @@ from app.services.conversation.responder import build_responder_ex
 from app.services.conversation.turn_quota import llm_turn_quota_blocked_for_pins
 from app.services.conversation.llm_config import resolve_llm_config
 from app.services.conversation.tts_params import TtsParams, tts_params_from_profile
-from app.services.conversation.turn_tts import build_tts_request_or_degrade
+from app.services.conversation.turn_tts import synthesize_or_degrade
 from app.services.conversation.turn_usage import record_llm_turn_usage
 from app.services.history.store import session_store
 from app.services.livehost.ingestor import TikTokLiveIngestor
@@ -353,51 +352,34 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 await _record_llm_usage(responder)
                 return parts
 
+            async def _meter_tts(sentence: str) -> None:
+                # Attributed from this socket's own locals, which is why the
+                # shared helper takes metering as a callback rather than doing
+                # it itself. Fail-open, same as the session's equivalent.
+                try:
+                    await record_usage(
+                        user_id=identity.user_id or "", profile_id=profile_name or "",
+                        kind="tts", engine=tts_engine, model_id=tts_model or "",
+                        unit="chars", native_amount=len(sentence or ""),
+                    )
+                except Exception as exc:  # noqa: BLE001 - metering must never break the turn
+                    logger.warning("livehost tts usage metering failed: %s", exc)
+
             async def _synth(sentence: str):
-                # (result, packets, error) mirrors
-                # services/conversation/session.py's _synth: a TTS failure
-                # (including TTSRequest construction itself -- e.g. a stored
-                # profile's ref_audio_path that fails the artifacts-dir
-                # containment check) is caught HERE and returned as the
-                # third element instead of raised, so prefetch_synthesis
-                # doesn't propagate it and unwind the whole turn -- which
-                # would drop every not-yet-sent sentence's response_text
-                # along with it. The consumer below emits this sentence's
-                # response_text regardless, then a `tts_error` for audio only.
-                #
-                # Request construction + its degrade decision (Task 6 dedup)
-                # is shared with session.py's _synth via turn_tts.py; the
-                # provider call, metering, encode, and pacing below stay here.
-                request, build_exc = build_tts_request_or_degrade(
-                    text=sentence, engine=tts_engine, model_id=tts_model, voice=voice,
+                # (result, packets, error) -- see turn_tts.synthesize_or_degrade
+                # for why a synthesis failure has to be a value here and not an
+                # exception. Only the pacing loop below is this route's own.
+                return await synthesize_or_degrade(
+                    sentence,
+                    provider=tts_provider,
+                    record_usage=_meter_tts,
+                    opus_encoder=opus_encoder,
+                    output_sample_rate=output_sample_rate,
+                    log_label="livehost TTS",
+                    engine=tts_engine, model_id=tts_model, voice=voice,
                     ref_audio_path=ref_audio_path, ref_text=ref_text,
                     instruct=tts_instruct, speed=tts_speed, language=tts_language,
                 )
-                if build_exc is not None:
-                    logger.warning(
-                        "livehost TTS synth failed (engine=%s) for %r: %s", tts_engine, sentence, build_exc
-                    )
-                    return None, None, build_exc
-                try:
-                    audio, media_type = await tts_provider.render_audio(request)
-                    try:
-                        await record_usage(
-                            user_id=identity.user_id or "", profile_id=profile_name or "",
-                            kind="tts", engine=tts_engine, model_id=tts_model or "",
-                            unit="chars", native_amount=len(sentence or ""),
-                        )
-                    except Exception as exc:  # noqa: BLE001 - metering must never break the turn
-                        logger.warning("livehost tts usage metering failed: %s", exc)
-                    if opus_encoder is not None:
-                        pcm = await asyncio.to_thread(wav_bytes_to_pcm16, audio, output_sample_rate)
-                        packets = await asyncio.to_thread(opus_encoder.encode_pcm16, pcm)
-                        return None, packets, None
-                    return (audio, media_type), None, None
-                except asyncio.CancelledError:
-                    raise  # barge-in / turn supersede -- must propagate to unwind the turn
-                except Exception as exc:  # noqa: BLE001 - degrade to text-only, don't lose the reply
-                    logger.warning("livehost TTS synth failed (engine=%s) for %r: %s", tts_engine, sentence, exc)
-                    return None, None, exc
 
             tts_error_reported = False
             async with aclosing(

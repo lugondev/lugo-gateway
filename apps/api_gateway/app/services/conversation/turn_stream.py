@@ -18,8 +18,7 @@ import logging
 import time
 from contextlib import aclosing
 
-from app.core.audio import wav_bytes_to_pcm16
-from app.services.conversation.turn_tts import build_tts_request_or_degrade
+from app.services.conversation.turn_tts import synthesize_or_degrade
 from app.services.system_config import system_config_store
 from app.services.tts.streaming import prefetch_synthesis
 
@@ -35,18 +34,6 @@ async def stream_reply(
     sentences AHEAD of sending (prefetch_synthesis), so the next sentence's
     audio is usually ready before the current one finishes -> gapless playback.
     Text-only just emits sentences as the LLM streams them.
-    """
-    """Stream a sentence iterator out to the client, synthesizing as it goes.
-
-    For audio output we synthesize up to ``conversation_tts_lookahead``
-    sentences AHEAD of sending (prefetch_synthesis), so the next sentence's
-    audio is usually ready before the current one finishes -> gapless
-    playback. Text-only just emits sentences as the LLM streams them.
-
-    A method rather than the closure it used to be inside _run_turn: at ~140
-    lines it was half of that function, and everything it needs from the turn
-    is now named in the signature (`turn`, `log_first_chunk`) instead of
-    captured -- so reading it no longer means reading _run_turn first.
     """
     cfg = session.cfg
     want_audio = cfg.want_audio
@@ -65,43 +52,20 @@ async def stream_reply(
         return parts
 
     async def _synth(sentence: str):
-        # Returns (result, packets, error). A TTS failure is caught HERE and
-        # returned as the third element instead of raised, so the pipeline
-        # still yields this sentence -- the consumer emits its `response_text`
-        # (the LLM's words must survive a TTS outage) and a `tts_error`, then
-        # keeps the turn going. Raising instead would unwind the whole turn to
-        # the generic `error` handler and swallow the already-generated text.
-        # Built INSIDE the guard, not before it: cfg.ref_audio_path comes
-        # from a stored TtsProfile, which now validates this at save time
-        # too -- but constructing TTSRequest here as well means any future
-        # validation error (or any other TTSRequest construction failure)
-        # still degrades to tts_error below instead of raising and
-        # unwinding the whole turn, swallowing already-generated text the
-        # comment above warns against losing. Shared with livehost.py's
-        # _synth via turn_tts.py (Task 6 dedup); the provider call,
-        # metering, encode, and this route's own global-clock pacing
-        # loop below stay here.
-        request, build_exc = build_tts_request_or_degrade(
-            text=sentence, engine=cfg.tts_engine, model_id=cfg.tts_model, voice=cfg.voice,
+        # (result, packets, error) -- see turn_tts.synthesize_or_degrade for why
+        # a synthesis failure has to be a value here and not an exception. Only
+        # the pacing loop below is this module's own; livehost paces differently
+        # and deliberately.
+        return await synthesize_or_degrade(
+            sentence,
+            provider=session.tts_provider,
+            record_usage=session._record_tts_usage,
+            opus_encoder=session.opus_encoder,
+            output_sample_rate=cfg.output_sample_rate,
+            engine=cfg.tts_engine, model_id=cfg.tts_model, voice=cfg.voice,
             ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
             instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
         )
-        if build_exc is not None:
-            logger.warning("TTS synth failed (engine=%s) for %r: %s", cfg.tts_engine, sentence, build_exc)
-            return None, None, build_exc
-        try:
-            audio, media_type = await session.tts_provider.render_audio(request)
-            await session._record_tts_usage(sentence)
-            if session.opus_encoder is not None:
-                pcm = await asyncio.to_thread(wav_bytes_to_pcm16, audio, cfg.output_sample_rate)
-                packets = await asyncio.to_thread(session.opus_encoder.encode_pcm16, pcm)
-                return None, packets, None
-            return (audio, media_type), None, None
-        except asyncio.CancelledError:
-            raise  # barge-in / turn supersede -- must propagate to unwind the turn
-        except Exception as exc:  # noqa: BLE001 - degrade to text-only, don't lose the reply
-            logger.warning("TTS synth failed (engine=%s) for %r: %s", cfg.tts_engine, sentence, exc)
-            return None, None, exc
 
     async with aclosing(
         prefetch_synthesis(

@@ -26,7 +26,7 @@ from app.core.opus import opus_available
 from app.schemas.stt import STTResult
 from app.schemas.tts import TTSRequest
 from app.services.artifacts import artifact_store
-from app.services.conversation import turn_stream as turn_stream_module
+from app.services.conversation import turn_tts as turn_tts_module
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
@@ -150,17 +150,17 @@ async def test_opus_encoder_receives_exactly_the_bytes_render_wav_returned(monke
     tts_service.providers["stub-opus-nodisk-render-tts"] = provider
 
     decode_calls: list = []
-    # Patched on turn_stream, not session: the per-sentence wav -> PCM16 -> Opus
-    # step lives in conversation/turn_stream.py since _run_turn's streaming
-    # closure was split out of session.py. session.py's own copy of the import
-    # serves speak()'s farewell, which this test does not drive.
-    original_wav_bytes_to_pcm16 = turn_stream_module.wav_bytes_to_pcm16
+    # Patched on turn_tts, not session: the per-sentence wav -> PCM16 -> Opus
+    # step lives in conversation/turn_tts.py's synthesize_or_degrade, which both
+    # voice paths now share. session.py's own copy of the import serves speak()'s
+    # farewell, which this test does not drive.
+    original_wav_bytes_to_pcm16 = turn_tts_module.wav_bytes_to_pcm16
 
     def spy_wav_bytes_to_pcm16(wav_bytes, target_sr):
         decode_calls.append(wav_bytes)
         return original_wav_bytes_to_pcm16(wav_bytes, target_sr)
 
-    monkeypatch.setattr(turn_stream_module, "wav_bytes_to_pcm16", spy_wav_bytes_to_pcm16)
+    monkeypatch.setattr(turn_tts_module, "wav_bytes_to_pcm16", spy_wav_bytes_to_pcm16)
 
     _, _, audio_pkts = await _drive_text_turn(_cfg())
 
