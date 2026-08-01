@@ -173,3 +173,30 @@ async def test_the_prompt_keeps_only_the_last_messages(monkeypatch):
     assert session.history[-1]["content"] == "message-9"
     # The transcript itself is untouched -- History still shows everything.
     assert len(await session_store.get_messages("prov-long")) == 10
+
+
+@pytest.mark.asyncio
+async def test_the_text_input_path_also_keeps_only_the_last_messages(monkeypatch):
+    """The audio path capped its history after every append; the text path did
+    not, so a text-driven session replayed an ever-growing prompt to the LLM --
+    exactly what _tail() exists to prevent, just on the other branch. announce()
+    had the same omission.
+    """
+    _real_get = system_config_store.get
+    monkeypatch.setattr(
+        system_config_store, "get",
+        lambda: _real_get().model_copy(update={
+            "conversation": _real_get().conversation.model_copy(
+                update={"conversation_history_max_messages": 4}
+            )
+        }),
+    )
+    session = await _session(_cfg(session_id="prov-text-cap"))
+
+    for i in range(6):
+        await session._run_turn(text_input=f"cau hoi {i}")
+
+    assert len(session.history) == 4
+    assert session.history[-2]["content"] == "cau hoi 5"
+    # 6 turns x 2 messages, all still on the record.
+    assert len(await session_store.get_messages("prov-text-cap")) == 12

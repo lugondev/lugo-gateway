@@ -656,9 +656,16 @@ class ConversationSession:
             identity_user_id=cfg.identity_user_id, profile=self.profile, profile_name=cfg.profile_name,
         )
         if blocked:
-            # Mirror the existing STT-failure pattern: a plain "error" notice,
-            # then return without running the turn at all.
+            # A plain "error" notice, then close the turn out without running
+            # it. The `turn_done` is not cosmetic: it is the ONLY event the
+            # transports treat as "the assistant has stopped" -- lugo.py's emit
+            # clears its `speaking` flag and consumes `close_after_speaking`
+            # there. Returning bare (what this did) left a device that had
+            # already armed a hang-up waiting for a `turn_done` that was never
+            # coming, mid-utterance forever. `skipped` marks it as not-real
+            # interaction, so refreshes_idle() correctly ignores it.
             await self.emit("error", message=quota_message)
+            await self.emit("turn_done", turn=self.turn, skipped="quota")
             return
 
         self.turn += 1
@@ -835,6 +842,7 @@ class ConversationSession:
                 await self.emit("turn_done", turn=turn, skipped="empty text")
                 return
             self.history.append({"role": "user", "content": user_text})
+            self.history = _tail(self.history)
             await self._persist("user", user_text)
             await self._refresh_memory(user_text)
             parts = await _stream_to_tts(
@@ -848,6 +856,7 @@ class ConversationSession:
             )
             await self._record_llm_usage()
             self.history.append({"role": "assistant", "content": " ".join(parts)})
+            self.history = _tail(self.history)
             await self._persist("assistant", " ".join(parts))
             logger.info("turn %d: done at +%.0fms (text input)", turn, _elapsed_ms())
             await self.emit("turn_done", turn=turn)
@@ -885,7 +894,10 @@ class ConversationSession:
         try:
             stt_result = await turn_provider.transcribe_bytes(wav, cfg.language, model=turn_model)
         except RuntimeError as exc:
+            # turn_done for the same reason the quota branch above emits one:
+            # without it the transport never learns the turn ended.
             await self.emit("error", message=f"STT failed: {exc}")
+            await self.emit("turn_done", turn=turn, skipped="stt failed")
             return
         logger.info("turn %d: stt (%s) done at +%.0fms", turn, turn_engine, _elapsed_ms())
         try:
@@ -1106,6 +1118,7 @@ class ConversationSession:
         # new_session that is the fresh row (this is its first utterance), for
         # idle_goodbye the row about to be ended.
         self.history.append({"role": "assistant", "content": line})
+        self.history = _tail(self.history)
         # A greeting alone must not create a conversation: the fresh session after a
         # rotation stays absent from History until somebody actually says something.
         await self._persist("assistant", line, defer_if_new=(event == "new_session"))
