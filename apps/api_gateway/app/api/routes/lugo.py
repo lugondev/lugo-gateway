@@ -567,9 +567,22 @@ async def lugo_stream(websocket: WebSocket) -> None:
                 # used to cut the farewell off mid-word on a device that streams
                 # mic frames continuously, since `recv` completes constantly.
                 recv.cancel()
+                dropped = None
                 with contextlib.suppress(asyncio.CancelledError):
-                    await recv
+                    dropped = await recv
                 if hung_up or (wd is not None and wd.done()):
+                    break
+                # ...but a disconnect is not something to drain past. The peer is
+                # gone, so there is no farewell left to protect, and Starlette
+                # forbids a second receive() once one has reported a disconnect
+                # (WebSocket.receive raises RuntimeError from its DISCONNECTED
+                # branch) -- continuing here would take that path on the very next
+                # iteration, and the RuntimeError would escape `except
+                # WebSocketDisconnect` and cancel the in-flight _hang_up. Reaching
+                # this needs the device to drop inside the drain window, which its
+                # own watchdog can do; I could not stage it through TestClient, so
+                # this is reasoned from Starlette's source rather than reproduced.
+                if dropped is not None and dropped.get("type") == "websocket.disconnect":
                     break
                 continue
             if wd is not None and wd in done:
