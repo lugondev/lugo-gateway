@@ -36,6 +36,7 @@ from app.core.auth_guard import AuthGuardMiddleware
 from app.core.errors import AppError
 from app.core.logging import setup_logging
 from app.core.settings import settings
+from app.core.static_paths import STATIC_DIR
 from app.core.upload_limits import REFERENCE_AUDIO_MAX_BYTES
 from app.core.upload_size_limit import UploadSizeLimitMiddleware
 
@@ -296,7 +297,7 @@ app.include_router(providers_router)
 app.include_router(quotas_router)
 app.include_router(usage_router)
 
-app.mount("/static", StaticFiles(directory="apps/api_gateway/app/static"), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
