@@ -122,15 +122,22 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "tests/unit/conversation/test_session_usage_metering.py",
     ),
     ("services/conversation/session.py", "render_audio"): (
-        2, "metered+gated",
-        "conversation core TTS: the per-sentence prefetch path (gated by the turn "
-        "it runs in) and speak()'s farewell (metered, and gated as a silent skip "
-        "-- nobody is waiting on a goodbye, so over quota it is dropped, not "
-        "refused). Task 1 (drop-audio-artifacts) moved both off synthesize()/"
-        "render_wav() onto this one bytes-returning seam -- Opus mode decodes the "
-        "bytes to PCM16 and encodes packets, wav mode pushes them straight over "
-        "the wire -- but _record_tts_usage still fires exactly once per "
-        "synthesized sentence/utterance on both branches, unchanged",
+        1, "metered+gated",
+        "speak()'s farewell: metered, and gated as a silent skip -- nobody is "
+        "waiting on a goodbye, so over quota it is dropped, not refused. Was 2 "
+        "until the per-sentence prefetch path moved to turn_stream.py (below); "
+        "both still go through the one bytes-returning seam Task 1 "
+        "(drop-audio-artifacts) left, and _record_tts_usage still fires exactly "
+        "once per synthesized sentence/utterance",
+        "tests/unit/conversation/test_session_usage_metering.py",
+    ),
+    ("services/conversation/turn_stream.py", "render_audio"): (
+        1, "metered+gated",
+        "conversation core TTS, per-sentence prefetch path -- gated by the turn "
+        "it runs in (llm_turn_quota_blocked, once per turn in _run_turn before "
+        "any provider is touched) and metered per sentence via the session's "
+        "_record_tts_usage, which this module calls on the session it was handed. "
+        "Split out of session.py's _run_turn closure, unchanged",
         "tests/unit/conversation/test_session_usage_metering.py",
     ),
     ("services/tts/base.py", "render_wav"): (

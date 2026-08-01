@@ -18,7 +18,6 @@ import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
-from contextlib import aclosing
 from dataclasses import dataclass
 
 from app.core.audio import (
@@ -31,6 +30,7 @@ from app.core.errors import AppError
 from app.core.settings import settings
 from app.schemas.tts import TTSRequest
 from app.services.conversation.announce import generate_line
+from app.services.conversation.background import spawn_background
 from app.services.conversation.endpointer import (
     VadEndpointer,
     barge_in_suppressed,
@@ -45,7 +45,7 @@ from app.services.conversation.tools.base import ToolContext, ToolRegistry, Tool
 from app.services.conversation.tools.local import LocalToolSource
 from app.services.conversation.tools.mcp import McpToolSource
 from app.services.conversation.turn_quota import llm_turn_quota_blocked
-from app.services.conversation.turn_tts import build_tts_request_or_degrade
+from app.services.conversation.turn_stream import stream_reply
 from app.services.conversation.turn_usage import record_llm_turn_usage
 from app.services.history.store import session_store
 from app.services.mcp.pool import mcp_pool
@@ -60,7 +60,7 @@ from app.services.stt.routing import select_stt_engine
 from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
 from app.services.tts.service import tts_service
-from app.services.tts.streaming import pacing_delays, prefetch_synthesis
+from app.services.tts.streaming import pacing_delays
 from app.services.usage.attribution import resolve_usage_model
 from app.services.usage.recorder import record_usage
 from app.services.warmup import is_ready, warm_providers
@@ -69,10 +69,6 @@ logger = logging.getLogger(__name__)
 
 EmitFn = Callable[..., Awaitable[None]]  # emit(event: str, **payload)
 EmitAudioFn = Callable[[bytes], Awaitable[None]]  # emit_audio(opus_packet: bytes)
-
-# Fire-and-forget background tasks (e.g. memory extraction) must be retained
-# somewhere or CPython may garbage-collect them mid-flight.
-_background_tasks: set[asyncio.Task] = set()
 
 
 async def _build_tool_registry(profile, can_hang_up: bool = False) -> ToolRegistry | None:
@@ -157,32 +153,11 @@ def _tail(messages: list[dict]) -> list[dict]:
     return messages[-limit:] if limit > 0 else messages
 
 
-def _spawn_background(coro) -> None:
-    task = asyncio.create_task(coro)
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
-
-
-async def drain_background_tasks(timeout: float = 10.0) -> None:
-    """Let in-flight background work finish, then give up on the rest.
-
-    Called from the app's shutdown (app/main.py). The work here is memory
-    extraction, which runs at the teardown of EVERY session -- so a server going
-    down while a fleet of devices disconnects has one of these in flight per
-    device, and without this they were simply abandoned mid-write.
-    """
-    pending = [t for t in _background_tasks if not t.done()]
-    if not pending:
-        return
-    logger.info("draining %d background task(s) before shutdown", len(pending))
-    done, still_running = await asyncio.wait(pending, timeout=timeout)
-    for task in still_running:
-        task.cancel()
-    if still_running:
-        logger.warning(
-            "%d background task(s) did not finish within %.0fs; cancelled",
-            len(still_running), timeout,
-        )
+# Body in conversation/background.py, together with the shutdown drain that is
+# the other half of the same contract. Kept under the private name this module
+# has always used, so the call sites below (and the comments explaining why they
+# use it) do not all have to move at once.
+_spawn_background = spawn_background
 
 
 @dataclass
@@ -672,12 +647,19 @@ class ConversationSession:
             await self.emit("error", message=str(exc))
             await self.emit("turn_done", turn=self.turn)
 
+    async def _stream_reply(
+        self, sentence_aiter, responder_name: str, *, turn: int, log_first_chunk
+    ) -> list[str]:
+        """Thin seam onto conversation/turn_stream.py -- see that module."""
+        return await stream_reply(
+            self, sentence_aiter, responder_name,
+            turn=turn, log_first_chunk=log_first_chunk,
+        )
+
     async def _run_turn(
         self, audio_pcm: bytes | None = None, text_input: str | None = None, speech_ms: float = 0.0
     ) -> None:
         cfg = self.cfg
-        want_audio = cfg.want_audio
-        want_text = cfg.want_text
 
         # Best-effort quota gate: ONCE per turn, before anything else (STT/LLM/TTS).
         # quota_gate() itself is fail-open (internal errors log + allow), so only a
@@ -720,151 +702,10 @@ class ConversationSession:
                 first_chunk_logged = True
                 logger.info("turn %d: first response chunk at +%.0fms", turn, _elapsed_ms())
 
-        # Stream a sentence iterator through TTS. For audio output we synthesize up to
-        # `conversation_tts_lookahead` sentences AHEAD of sending (prefetch_synthesis),
-        # so the next sentence's audio is usually ready before the current finishes ->
-        # gapless playback. Text-only just emits sentences as the LLM streams them.
         async def _stream_to_tts(sentence_aiter, responder_name: str) -> list[str]:
-            parts: list[str] = []
-
-            if not want_audio:
-                index = 0
-                async for sentence in sentence_aiter:
-                    _log_first_chunk()
-                    parts.append(sentence)
-                    if want_text:
-                        await self.emit("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
-                    index += 1
-                return parts
-
-            async def _synth(sentence: str):
-                # Returns (result, packets, error). A TTS failure is caught HERE and
-                # returned as the third element instead of raised, so the pipeline
-                # still yields this sentence -- the consumer emits its `response_text`
-                # (the LLM's words must survive a TTS outage) and a `tts_error`, then
-                # keeps the turn going. Raising instead would unwind the whole turn to
-                # the generic `error` handler and swallow the already-generated text.
-                # Built INSIDE the guard, not before it: cfg.ref_audio_path comes
-                # from a stored TtsProfile, which now validates this at save time
-                # too -- but constructing TTSRequest here as well means any future
-                # validation error (or any other TTSRequest construction failure)
-                # still degrades to tts_error below instead of raising and
-                # unwinding the whole turn, swallowing already-generated text the
-                # comment above warns against losing. Shared with livehost.py's
-                # _synth via turn_tts.py (Task 6 dedup); the provider call,
-                # metering, encode, and this route's own global-clock pacing
-                # loop below stay here.
-                request, build_exc = build_tts_request_or_degrade(
-                    text=sentence, engine=cfg.tts_engine, model_id=cfg.tts_model, voice=cfg.voice,
-                    ref_audio_path=cfg.ref_audio_path, ref_text=cfg.ref_text,
-                    instruct=cfg.tts_instruct, speed=cfg.tts_speed, language=cfg.tts_language,
-                )
-                if build_exc is not None:
-                    logger.warning("TTS synth failed (engine=%s) for %r: %s", cfg.tts_engine, sentence, build_exc)
-                    return None, None, build_exc
-                try:
-                    audio, media_type = await self.tts_provider.render_audio(request)
-                    await self._record_tts_usage(sentence)
-                    if self.opus_encoder is not None:
-                        pcm = await asyncio.to_thread(wav_bytes_to_pcm16, audio, cfg.output_sample_rate)
-                        packets = await asyncio.to_thread(self.opus_encoder.encode_pcm16, pcm)
-                        return None, packets, None
-                    return (audio, media_type), None, None
-                except asyncio.CancelledError:
-                    raise  # barge-in / turn supersede -- must propagate to unwind the turn
-                except Exception as exc:  # noqa: BLE001 - degrade to text-only, don't lose the reply
-                    logger.warning("TTS synth failed (engine=%s) for %r: %s", cfg.tts_engine, sentence, exc)
-                    return None, None, exc
-
-            async with aclosing(
-                prefetch_synthesis(
-                    sentence_aiter, _synth,
-                    lookahead=system_config_store.get().conversation.conversation_tts_lookahead,
-                )
-            ) as pipeline:
-                # Global real-time pacer for the WHOLE reply: prebuffer the first
-                # few frames, then release every frame on one monotonic clock.
-                # Per-sentence pacing used to prebuffer-burst at each sentence, so
-                # multi-sentence replies accumulated in the device jitter buffer
-                # and overflowed (dropped words on long replies). A single clock
-                # keeps the device buffer ~prebuffer-deep for the entire reply.
-                _conv_cfg = system_config_store.get().conversation
-                _do_pace = cfg.opus_pace if cfg.opus_pace is not None else _conv_cfg.conversation_opus_pace
-                _prebuf = _conv_cfg.conversation_opus_prebuffer_frames
-                _pace_t0 = None
-                _pace_n = 0
-                tts_error_reported = False
-                # NB: nothing in this loop may log `sentence` (or the transcript
-                # it answers). The stage timings below are deliberately
-                # content-free -- a debugging pass once logged every synthesized
-                # sentence at INFO, which put private conversation content into
-                # the server log for every turn.
-                async for index, sentence, (audio, packets, tts_error) in pipeline:
-                    _log_first_chunk()
-                    parts.append(sentence)
-                    if want_text:
-                        await self.emit("response_text", turn=turn, chunk_index=index, text=sentence, responder=responder_name)
-                    if tts_error is not None:
-                        # Synth failed for this sentence: text already went out above.
-                        # Report the TTS failure once per turn (a fully-down engine
-                        # would otherwise emit one per sentence) and skip audio -- the
-                        # client falls back to showing text only.
-                        if not tts_error_reported:
-                            tts_error_reported = True
-                            await self.emit(
-                                "tts_error", turn=turn, chunk_index=index,
-                                engine=cfg.tts_engine, message=str(tts_error),
-                            )
-                        continue
-                    if packets is not None:
-                        # Mark when the assistant first starts speaking this turn,
-                        # so feed_audio can ignore onset echo as barge-in.
-                        if self._speaking_since is None:
-                            self._speaking_since = time.monotonic()
-                        # Push Opus binary frames bracketed by audio_start/audio_end (devices).
-                        await self.emit(
-                            "audio_start", turn=turn, chunk_index=index,
-                            text=sentence if want_text else None,
-                            codec="opus", sample_rate=cfg.output_sample_rate, frames=len(packets),
-                        )
-                        # Release on the single global clock (see _pace_* above).
-                        # First _prebuf frames of the reply go out immediately to
-                        # fill the device jitter buffer; every frame after that is
-                        # paced to real time, so a fast synth can't flood the
-                        # device and a slow one just catches up (no per-sentence
-                        # burst accumulation).
-                        #
-                        # Frame duration is read HERE, not before the loop: a
-                        # session that negotiated no Opus (wav mode) has
-                        # self.opus_encoder is None for the whole turn, and
-                        # touching it eagerly crashed every such turn. Inside
-                        # this branch the encoder is guaranteed -- packets
-                        # only exist when it does -- same as speak().
-                        _frame_s = self.opus_encoder.frame / self.opus_encoder.sample_rate
-                        for pkt in packets:
-                            if _do_pace:
-                                if _pace_t0 is None:
-                                    _pace_t0 = time.monotonic()
-                                if _pace_n >= _prebuf:
-                                    target = _pace_t0 + (_pace_n - _prebuf) * _frame_s
-                                    now = time.monotonic()
-                                    if target > now:
-                                        await asyncio.sleep(target - now)
-                                _pace_n += 1
-                            await self.emit_audio(pkt)
-                        await self.emit("audio_end", turn=turn, chunk_index=index)
-                    else:
-                        audio_bytes, media_type = audio
-                        if self._speaking_since is None:
-                            self._speaking_since = time.monotonic()
-                        await self.emit(
-                            "audio_start", turn=turn, chunk_index=index,
-                            text=sentence if want_text else None,
-                            codec="mp3" if media_type == "audio/mpeg" else "wav",
-                        )
-                        await self.emit_audio(audio_bytes)
-                        await self.emit("audio_end", turn=turn, chunk_index=index)
-            return parts
+            return await self._stream_reply(
+                sentence_aiter, responder_name, turn=turn, log_first_chunk=_log_first_chunk
+            )
 
         async def _answer(user_text: str, log_note: str = "") -> None:
             """Everything a turn does once it has a non-empty user utterance.

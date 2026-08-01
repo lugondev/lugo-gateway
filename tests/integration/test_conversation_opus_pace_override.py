@@ -87,20 +87,25 @@ def _stub(monkeypatch, tmp_path):
     # exactly what these tests want to prove behavior against); this is only
     # isolation from whatever state the shared store happens to be in.
     #
-    # All THREE modules that did `from app.services.system_config import
-    # system_config_store` hold independent name bindings and must each be
+    # Every module that did `from app.services.system_config import
+    # system_config_store` holds an independent name binding and must be
     # patched individually -- patching only `app.api.routes.conversation` and
     # `app.services.system_config` (the "dual-binding gotcha" pattern used
     # elsewhere in this suite, e.g. test_gateway_modalities.py) does NOT reach
-    # `app.services.conversation.session`, which is where the actual pacing
-    # decision is made. Verified empirically: after that two-module patch,
-    # `app.services.conversation.session.system_config_store is fresh_config`
-    # is False.
+    # the module where the actual pacing decision is made. Verified empirically
+    # when that module was `app.services.conversation.session`: after the
+    # two-module patch, `session.system_config_store is fresh_config` was False.
+    #
+    # `conversation.turn_stream` is that module now -- session.py's _run_turn
+    # streaming closure was split out into it, taking the pacing clock along.
+    # session.py keeps its own binding for speak()/announce() and the history
+    # cap, so BOTH still need patching.
     from app.services import system_config as sc_mod
 
     fresh_config = sc_mod.SystemConfigStore(str(tmp_path / "system_config.json"))
     monkeypatch.setattr("app.api.routes.conversation.system_config_store", fresh_config)
     monkeypatch.setattr("app.services.conversation.session.system_config_store", fresh_config)
+    monkeypatch.setattr("app.services.conversation.turn_stream.system_config_store", fresh_config)
     monkeypatch.setattr(sc_mod, "system_config_store", fresh_config)
 
     yield

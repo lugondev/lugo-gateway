@@ -186,7 +186,7 @@ async def lifespan(app: FastAPI):
     # spawns (memory extraction runs at teardown of every session -- exactly the
     # work in flight when a fleet of devices disconnects because the server is
     # going down).
-    from app.services.conversation.session import drain_background_tasks
+    from app.services.conversation.background import drain_background_tasks
     from app.services.db.engine import dispose_engine
     from app.services.mcp.pool import mcp_pool
 

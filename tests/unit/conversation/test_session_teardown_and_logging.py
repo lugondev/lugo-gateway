@@ -1,9 +1,9 @@
 """Three loose ends in ConversationSession's lifecycle:
 
 * the boot warm-up task was created with a bare ``asyncio.create_task`` and
-  never retained, which this very module warns against ("must be retained
-  somewhere or CPython may garbage-collect them mid-flight") right above the
-  ``_spawn_background`` helper it should have used;
+  never retained, instead of going through the ``spawn_background`` helper
+  (conversation/background.py) that exists because a task nobody holds a
+  reference to can be garbage-collected mid-flight;
 * ``close()`` cancelled the in-flight turn and then closed the responder
   without waiting, so the turn could still be unwinding through a responder
   that was already shut;
@@ -18,7 +18,7 @@ import pytest
 
 from app.core.audio import pcm16_to_wav_bytes
 from app.schemas.stt import STTResult
-from app.services.conversation import session as session_module
+from app.services.conversation import background as background_module
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
 from app.services.stt.base import STTProvider
 from app.services.stt.service import stt_service
@@ -76,12 +76,15 @@ async def _new_session(**overrides):
 
 
 async def test_the_warmup_task_is_retained_so_it_cannot_be_collected():
-    session_module._background_tasks.clear()
+    # The retention set lives in conversation/background.py, next to the
+    # shutdown drain that is the other half of the same contract; session.py
+    # only re-exports the spawn helper under its old private name.
+    background_module._background_tasks.clear()
     sess = await _new_session()
 
     await sess.start()
 
-    assert session_module._background_tasks, (
+    assert background_module._background_tasks, (
         "start() spawned a fire-and-forget task with no strong reference"
     )
     await sess.close()
