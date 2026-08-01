@@ -7,7 +7,10 @@ class PairInitRequest(BaseModel):
 
 class PairClaimRequest(BaseModel):
     code: str
-    name: str
+    # Optional: blank means "name it after the device". The gateway fills in the
+    # SSID the device shows on its own setup AP (services/auth/device_naming.py),
+    # so pairing can finish on the code alone. Clients that send a name still win.
+    name: str = ""
     # Bind the device to an assistant in the same call that creates it. The web
     # client pairs from inside a profile, so it always knows the answer here, and
     # doing it in one step removes the window where a device exists but answers

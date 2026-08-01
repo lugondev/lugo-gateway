@@ -255,3 +255,41 @@ def test_deleting_a_profile_unassigns_its_devices_without_revoking_them(
     # The pairing token is hardware identity: losing an assistant must not cost
     # the user a trip to the device.
     assert device["revoked"] is False
+
+
+def test_claim_without_a_name_uses_the_devices_own_ap_name(client, _logged_in_user):
+    init = client.post(
+        "/v1/devices/pair/init", json={"serial": "2884855048d0"}
+    ).json()["data"]
+
+    # No `name` key at all: the user pairs on the code alone and names the
+    # device afterwards, if they want to.
+    resp = client.post("/v1/devices/pair/claim", json={"code": init["code"]})
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["name"] == "Lugo-48D0"
+
+
+def test_claim_with_a_blank_name_gets_the_derived_one_too(client, _logged_in_user):
+    init = client.post(
+        "/v1/devices/pair/init", json={"serial": "2884855048d0"}
+    ).json()["data"]
+
+    resp = client.post(
+        "/v1/devices/pair/claim", json={"code": init["code"], "name": "   "}
+    )
+
+    assert resp.json()["data"]["name"] == "Lugo-48D0"
+
+
+def test_an_explicit_name_still_wins(client, _logged_in_user):
+    # Older clients (the static devices.js panel) always send one.
+    init = client.post(
+        "/v1/devices/pair/init", json={"serial": "2884855048d0"}
+    ).json()["data"]
+
+    resp = client.post(
+        "/v1/devices/pair/claim", json={"code": init["code"], "name": "Kitchen speaker"}
+    )
+
+    assert resp.json()["data"]["name"] == "Kitchen speaker"

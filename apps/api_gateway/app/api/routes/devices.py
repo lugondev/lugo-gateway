@@ -4,6 +4,7 @@ from app.core.actor import current_user_id
 from app.core.client_ip import client_ip
 from app.core.errors import AuthError, DeviceSerialConflictError, PairingCodeInvalidError
 from app.schemas.devices import DeviceProfileRequest, PairClaimRequest, PairInitRequest
+from app.services.auth.device_naming import default_device_name
 from app.services.auth.devices import device_store
 from app.services.auth.pairing import claim_rate_limiter, init_rate_limiter, pending_pairings
 from app.services.profile_visibility import visible_profile_or_none
@@ -86,8 +87,9 @@ async def pair_claim(payload: PairClaimRequest, request: Request) -> dict:
             "a device with this hardware is already paired; revoke it first"
         )
     profile_id = _checked_profile_name(payload.profile_id, user_id)
+    name = payload.name.strip() or default_device_name(entry.serial)
     device, raw_token = await device_store.create(
-        user_id, payload.name, entry.serial, profile_id=profile_id
+        user_id, name, entry.serial, profile_id=profile_id
     )
     pending_pairings.mark_claimed(payload.code, device["id"], raw_token)
     return {"success": True, "data": device}
