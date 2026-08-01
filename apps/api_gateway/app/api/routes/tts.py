@@ -8,9 +8,8 @@ from app.core.audio import wav_duration_seconds
 from app.core.upload_limits import REFERENCE_AUDIO_MAX_BYTES
 from app.schemas.tts import TTSRequest
 from app.services.artifacts import artifact_store
-from app.services.model_registry.store import model_registry_store
+from app.services.quota.preflight import quota_preflight
 from app.services.tts.service import tts_service
-from app.services.usage.attribution import resolve_usage_model
 from app.services.usage.recorder import record_usage
 
 logger = logging.getLogger(__name__)
@@ -81,33 +80,12 @@ async def upload_reference_audio(audio: UploadFile = File(...)) -> dict:
 
 @router.post("/synthesize")
 async def synthesize(payload: TTSRequest, request: Request, profile: str | None = None) -> Response:
-    # Quota pre-flight: block BEFORE the provider does any work. See the STT
-    # route for why the model is resolved before the provider lookup.
-
-    provider_id = ""
-    try:
-        # Inside the guard for the same reason as the STT route: resolve_usage_model()
-        # never raises from its own logic, but its function-level import of the
-        # registry store isn't covered by that, and an ImportError there would 500
-        # a request this gate is required to fail open on.
-        usage_engine, usage_model_id = await resolve_usage_model("tts", payload.engine, payload.model_id or "")
-        entry = await model_registry_store.find("tts", usage_engine, usage_model_id)
-        provider_id = (entry or {}).get("config", {}).get("provider_id", "") if entry else ""
-    except Exception:  # noqa: BLE001 - a registry hiccup must never block a request
-        usage_engine, usage_model_id, provider_id = "", "", ""
-    try:
-        # function-local: tests monkeypatch app.services.quota.gate.quota_gate by
-        # reassigning the module attribute (see test_stt_stream_metering.py's
-        # counting_gate); a top-level `from ... import quota_gate` binds the name
-        # once at import time and never observes that reassignment.
-        from app.services.quota.gate import QuotaExceededError, quota_gate
-
-        await quota_gate(
-            user_id=current_user_id(request) or "", provider_id=provider_id,
-            kind="tts", engine=usage_engine, model_id=usage_model_id,
-        )
-    except QuotaExceededError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    # Quota pre-flight: block BEFORE the provider does any work. Same helper the
+    # STT route uses -- services/quota/preflight.py.
+    await quota_preflight(
+        kind="tts", engine=payload.engine, model=payload.model_id or "",
+        user_id=current_user_id(request) or "",
+    )
 
     provider = tts_service.get_provider(payload.engine)
     started = time.perf_counter()

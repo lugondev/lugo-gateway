@@ -36,9 +36,9 @@ from app.services.conversation.endpointer import (
     barge_in_suppressed,
     build_endpointer,
 )
+from app.services.conversation.llm_config import resolve_llm_config
 from app.services.conversation.responder import (
     build_responder_ex,
-    resolve_llm_override_from_registry,
     resolve_system_prompt,
 )
 from app.services.conversation.tools.base import ToolContext, ToolRegistry, ToolSource
@@ -350,15 +350,8 @@ class ConversationSession:
             bypass=cfg.identity_unauthenticated,
         )
         self.profile = profile
-        llm_base_url = (profile.llm.base_url or None) if (profile and profile.llm.base_url) else None
-        llm_api_key = profile.llm.api_key if (profile and profile.llm.base_url) else None
-        llm_model = (profile.llm.model or None) if (profile and profile.llm.model) else None
-        if profile and profile.llm.engine and profile.llm.model:
-            registry_override = await resolve_llm_override_from_registry(profile.llm.engine, profile.llm.model)
-            if registry_override:
-                llm_base_url, llm_api_key = registry_override
-                llm_model = profile.llm.model
-        system_prompt = (profile.system_prompt or None) if (profile and profile.system_prompt) else None
+        # Same precedence the two route-level resolutions apply -- llm_config.py.
+        llm_base_url, llm_api_key, llm_model, system_prompt = await resolve_llm_config(profile)
         voice_optimized = bool(profile and profile.voice_optimized)
 
         self.stt_model_id = cfg.stt_model or resolve_default_stt_model(cfg.stt_engine)

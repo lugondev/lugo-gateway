@@ -5,7 +5,11 @@ Sample rate is configurable (default 16 kHz for STT, 24 kHz for OmniVoice TTS).
 """
 
 import io
+import os
+import tempfile
 import wave
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import numpy as np
 import soundfile as sf
@@ -48,6 +52,31 @@ def parse_sample_rate(raw: str | None, default: int, *, name: str = "sample_rate
             f"(must be between {_MIN_SAMPLE_RATE} and {_MAX_SAMPLE_RATE})"
         )
     return value
+
+
+@contextmanager
+def wav_tempfile(audio_bytes: bytes) -> Iterator[str]:
+    """Write `audio_bytes` to a .wav temp file, yield its path, then remove it.
+
+    Every local STT provider needs this: the model libraries (faster-whisper,
+    mlx-whisper, the qwen3-asr subprocess) take a PATH, not bytes, so each one
+    used to open a NamedTemporaryFile with delete=False and unlink it in its own
+    `finally`. Four hand-copied copies of a cleanup block is four chances to
+    leave a stray wav in /tmp on some error path.
+
+    delete=False + an explicit unlink, not delete=True: the file has to stay
+    readable by name after this process closes the handle, which is the whole
+    point of handing a path to another library (or another process).
+    """
+    path = ""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(audio_bytes)
+            path = f.name
+        yield path
+    finally:
+        if path and os.path.isfile(path):
+            os.unlink(path)
 
 
 def pcm16_to_wav_bytes(pcm: bytes, sample_rate: int, channels: int = 1) -> bytes:

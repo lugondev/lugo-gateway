@@ -23,11 +23,10 @@ import logging
 import os
 import shutil
 import subprocess
-import tempfile
 
 import soundfile as sf
 
-from app.core.audio import pcm16_to_wav_bytes, wav_bytes_to_pcm16
+from app.core.audio import pcm16_to_wav_bytes, wav_bytes_to_pcm16, wav_tempfile
 from app.schemas.stt import STTResult
 from app.services.model_registry.resolve import resolve_stt_engine_config
 from app.services.stt.base import STTProvider
@@ -185,14 +184,7 @@ class Qwen3AsrGgufProvider(STTProvider):
             # no-opped and the binary rejected the un-resampled audio with its
             # own (much less useful) "must be 16kHz" error.
             logger.warning("qwen3_asr_gguf: resample to %dHz failed, sending audio as-is: %s", _TARGET_SR, exc)
-        tmp = ""
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                f.write(audio_bytes)
-                tmp = f.name
+        with wav_tempfile(audio_bytes) as tmp:
             loop = asyncio.get_running_loop()
             text = await loop.run_in_executor(_INFER_EXECUTOR, self._transcribe, tmp, language, model)
             return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
-        finally:
-            if tmp and os.path.isfile(tmp):
-                os.unlink(tmp)

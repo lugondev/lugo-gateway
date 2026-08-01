@@ -25,9 +25,9 @@ from app.services.conversation.responder import (
     get_active_llm_base_url,
     get_active_llm_model,
     reset_active_llm_config,
-    resolve_llm_override_from_registry,
     set_active_llm_config,
 )
+from app.services.conversation.llm_config import resolve_llm_config
 from app.services.conversation.session import (
     ConversationSession,
     SessionRuntimeConfig,
@@ -139,17 +139,8 @@ async def chat(
     # on another user's llm.api_key/system_prompt/mcp_servers (see
     # docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md).
     active_profile = visible_profile_or_none(profile_store.get(profile) if profile else None, caller_id)
-    llm_base_url = (active_profile.llm.base_url or None) if (active_profile and active_profile.llm.base_url) else None
-    llm_api_key = active_profile.llm.api_key if (active_profile and active_profile.llm.base_url) else None
-    llm_model = (active_profile.llm.model or None) if (active_profile and active_profile.llm.model) else None
-    if active_profile and active_profile.llm.engine and active_profile.llm.model:
-        registry_override = await resolve_llm_override_from_registry(
-            active_profile.llm.engine, active_profile.llm.model
-        )
-        if registry_override:
-            llm_base_url, llm_api_key = registry_override
-            llm_model = active_profile.llm.model
-    system_prompt = (active_profile.system_prompt or None) if (active_profile and active_profile.system_prompt) else None
+    # Same precedence the WS paths apply -- services/conversation/llm_config.py.
+    llm_base_url, llm_api_key, llm_model, system_prompt = await resolve_llm_config(active_profile)
 
     # Quota pre-flight: block BEFORE the responder does any work. Shared with
     # livehost's/session.py's own preflight (Task 6 dedup) -- see

@@ -19,8 +19,9 @@ from app.core.identity_watch import build_identity_watchdog, receive_with_watchd
 from app.core.settings import settings
 from app.schemas.livehost import TikTokConnectRequest
 from app.services.conversation.endpointer import build_endpointer
-from app.services.conversation.responder import build_responder_ex, resolve_llm_override_from_registry
+from app.services.conversation.responder import build_responder_ex
 from app.services.conversation.turn_quota import llm_turn_quota_blocked_for_pins
+from app.services.conversation.llm_config import resolve_llm_config
 from app.services.conversation.tts_params import TtsParams, tts_params_from_profile
 from app.services.conversation.turn_tts import build_tts_request_or_degrade
 from app.services.conversation.turn_usage import record_llm_turn_usage
@@ -163,15 +164,8 @@ async def livehost_stream(websocket: WebSocket) -> None:
         identity.user_id,
         bypass=identity.unauthenticated,
     )
-    llm_base_url = (profile.llm.base_url or None) if (profile and profile.llm.base_url) else None
-    llm_api_key = profile.llm.api_key if (profile and profile.llm.base_url) else None
-    llm_model = (profile.llm.model or None) if (profile and profile.llm.model) else None
-    if profile and profile.llm.engine and profile.llm.model:
-        registry_override = await resolve_llm_override_from_registry(profile.llm.engine, profile.llm.model)
-        if registry_override:
-            llm_base_url, llm_api_key = registry_override
-            llm_model = profile.llm.model
-    system_prompt = (profile.system_prompt or None) if (profile and profile.system_prompt) else None
+    # Same precedence conversation.py/session.py apply -- llm_config.py.
+    llm_base_url, llm_api_key, llm_model, system_prompt = await resolve_llm_config(profile)
 
     # STT resolves from the profile (else server default), same as TTS/LLM above.
     stt_engine, language, stt_model = resolve_stt(

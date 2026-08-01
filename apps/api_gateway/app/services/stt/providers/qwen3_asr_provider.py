@@ -12,10 +12,9 @@ package is present (e.g. the CPU-only Linux deploy). Weights download on first u
 
 import asyncio
 import concurrent.futures
-import os
 import platform
-import tempfile
 
+from app.core.audio import wav_tempfile
 from app.core.deps import module_available
 from app.schemas.stt import STTResult
 from app.services.model_registry.resolve import (
@@ -175,16 +174,9 @@ class Qwen3AsrProvider(STTProvider):
     async def transcribe_bytes(
         self, audio_bytes: bytes, language: str | None = None, model: str | None = None
     ) -> STTResult:
-        tmp = ""
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                f.write(audio_bytes)
-                tmp = f.name
+        with wav_tempfile(audio_bytes) as tmp:
             # Run on the single dedicated thread so the model is built once and all MLX
             # work stays thread-pinned (see _INFER_EXECUTOR above).
             loop = asyncio.get_running_loop()
             text = await loop.run_in_executor(_INFER_EXECUTOR, self._transcribe, tmp, language, model)
             return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
-        finally:
-            if tmp and os.path.isfile(tmp):
-                os.unlink(tmp)

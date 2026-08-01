@@ -1,8 +1,7 @@
 import asyncio
-import os
-import tempfile
 import threading
 
+from app.core.audio import wav_tempfile
 from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.model_registry.resolve import (
@@ -82,11 +81,7 @@ class WhisperProvider(STTProvider):
 
     def _do_transcribe(self, audio_bytes: bytes, language: str | None, model: str | None) -> str:
         whisper_model = self._load_model(model)
-        temp_file_path = ""
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                f.write(audio_bytes)
-                temp_file_path = f.name
+        with wav_tempfile(audio_bytes) as temp_file_path:
             engine_cfg = resolve_stt_engine_config("whisper_local")
             segments, _ = whisper_model.transcribe(
                 temp_file_path,
@@ -100,9 +95,6 @@ class WhisperProvider(STTProvider):
                 ),
             )
             return " ".join(s.text.strip() for s in segments if s.text.strip())
-        finally:
-            if temp_file_path and os.path.isfile(temp_file_path):
-                os.unlink(temp_file_path)
 
     async def transcribe_bytes(
         self, audio_bytes: bytes, language: str | None = None, model: str | None = None

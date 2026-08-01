@@ -13,8 +13,8 @@ directory exists; otherwise the engine is hidden and callers fall back to whispe
 import asyncio
 import concurrent.futures
 import os
-import tempfile
 
+from app.core.audio import wav_tempfile
 from app.core.settings import settings
 from app.schemas.stt import STTResult
 from app.services.model_registry.resolve import resolve_stt_engine_config
@@ -65,32 +65,19 @@ class WhisperMlxProvider(STTProvider):
         """Compile + load the model once so the first real turn isn't slow."""
         import numpy as np
 
-        tmp = ""
         try:
             from app.core.audio import pcm16_to_wav_bytes
 
             silence = (np.zeros(8000, dtype="<i2")).tobytes()
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                f.write(pcm16_to_wav_bytes(silence, sample_rate=16000))
-                tmp = f.name
-            _INFER_EXECUTOR.submit(self._transcribe, tmp, "vi").result()
+            with wav_tempfile(pcm16_to_wav_bytes(silence, sample_rate=16000)) as tmp:
+                _INFER_EXECUTOR.submit(self._transcribe, tmp, "vi").result()
         except Exception:  # noqa: BLE001 - warming is best-effort
             pass
-        finally:
-            if tmp and os.path.isfile(tmp):
-                os.unlink(tmp)
 
     async def transcribe_bytes(
         self, audio_bytes: bytes, language: str | None = None, model: str | None = None
     ) -> STTResult:
-        tmp = ""
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                f.write(audio_bytes)
-                tmp = f.name
+        with wav_tempfile(audio_bytes) as tmp:
             loop = asyncio.get_running_loop()
             text = await loop.run_in_executor(_INFER_EXECUTOR, self._transcribe, tmp, language)
             return STTResult(engine=self.name, text=text, is_final=True, confidence=None)
-        finally:
-            if tmp and os.path.isfile(tmp):
-                os.unlink(tmp)
