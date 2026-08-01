@@ -24,6 +24,7 @@ from app.core.opus import parse_opus_sample_rate
 from app.core.settings import settings
 from app.services.conversation.lugo_frame import LUGO_FRAME_OPUS, encode_frame
 from app.services.conversation.session import ConversationSession, SessionRuntimeConfig
+from app.services.conversation.tts_params import TtsParams, tts_params_from_profile
 from app.services.conversation.tools.device_mcp import (
     DeviceMcpToolSource, DeviceMcpTransport, discover_device_tools,
 )
@@ -113,14 +114,14 @@ def _resolve(profile_name: str | None, caller_id: str | None = None, *, bypass: 
     tts_profile = visible_tts_profile_or_none(
         tts_profile_store.get(tts_name) if tts_name else None, caller_id, bypass=bypass
     )
-    if tts_profile and tts_profile.engine:
-        tts = dict(engine=tts_profile.engine, model_id=tts_profile.model_id or "", voice=tts_profile.voice or None,
-                   ref_audio_path=tts_profile.ref_audio_path or None, ref_text=tts_profile.ref_text or None,
-                   instruct=tts_profile.instruct or None, speed=tts_profile.speed, language=tts_profile.language)
-    else:
-        tts = dict(
-            engine=system_config_store.get().engines.default_tts_engine,
-            model_id="", voice=None, ref_audio_path=None, ref_text=None, instruct=None, speed=None, language=None)
+    # Same mapping conversation.py/livehost.py use -- see
+    # services/conversation/tts_params.py. No fallback_voice: the Lugo wire has
+    # no query params, so a profile that names no voice leaves it to the engine.
+    tts = tts_params_from_profile(tts_profile) or TtsParams(
+        engine=system_config_store.get().engines.default_tts_engine,
+        model_id="", voice=None, ref_audio_path=None, ref_text=None,
+        instruct=None, speed=None, language=None,
+    )
     idle = profile.session.idle_timeout_s if profile else 30
     return profile, stt_engine, language, stt_model, tts, idle
 
@@ -251,11 +252,11 @@ async def lugo_stream(websocket: WebSocket) -> None:
         logger.warning("lugo: no libopus on this server; device session is text-only")
     cfg = SessionRuntimeConfig(
         session_id=session_id, profile_name=profile_name, stt_engine=stt_engine, language=language,
-        tts_engine=tts["engine"], voice=tts["voice"], ref_audio_path=tts["ref_audio_path"],
-        ref_text=tts["ref_text"], tts_instruct=tts["instruct"], tts_speed=tts["speed"],
-        tts_language=tts["language"], sample_rate=in_sr, output_sample_rate=out_sr,
+        tts_engine=tts.engine, voice=tts.voice, ref_audio_path=tts.ref_audio_path,
+        ref_text=tts.ref_text, tts_instruct=tts.instruct, tts_speed=tts.speed,
+        tts_language=tts.language, sample_rate=in_sr, output_sample_rate=out_sr,
         audio_codec="opus", want_audio=want_audio, want_text=True, audio_out="opus",
-        denoise=False, resume_sid=requested_sid, stt_model=stt_model, tts_model=tts["model_id"],
+        denoise=False, resume_sid=requested_sid, stt_model=stt_model, tts_model=tts.model_id,
         identity_user_id=identity.user_id,
         identity_unauthenticated=identity.unauthenticated,
         # A paired device is its own client: its thread follows the devices row, so
@@ -379,7 +380,7 @@ async def lugo_stream(websocket: WebSocket) -> None:
         hung_up = True
 
     stt_health, tts_health = await check_resolved_engines(
-        stt_engine, stt_model, tts["engine"], tts["model_id"]
+        stt_engine, stt_model, tts.engine, tts.model_id
     )
     for health in (stt_health, tts_health):
         if health.blocks_session:

@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from app.api.routes.sessions import _scope_user_id
-from app.core.actor import current_role, current_user_id
+from app.core.actor import current_user_id, require_admin
 from app.core.auth_guard import (
     resolve_ws_identity,
     ws_session_owner_denied,
@@ -13,7 +13,8 @@ from app.core.auth_guard import (
 )
 from app.core.audio import parse_sample_rate
 from app.core.errors import AppError
-from app.core.opus import OPUS_SAMPLE_RATES
+from app.core.opus import ensure_opus_rate
+from app.core.params import parse_bool_or
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
 from app.schemas.conversation import ChatRequest, LlmConfig
@@ -34,7 +35,9 @@ from app.services.conversation.session import (
     _spawn_background,
     _tail,
 )
+from app.services.conversation.tts_params import TtsParams, tts_params_from_profile
 from app.services.conversation.turn_quota import llm_turn_quota_blocked
+from app.services.conversation.turn_usage import record_llm_turn_usage
 from app.services.health import check_resolved_engines
 from app.services.history.store import session_store
 from app.services.memory.extractor import memory_extractor
@@ -47,8 +50,6 @@ from app.services.stt.service import stt_service
 from app.services.system_config import system_config_store
 from app.services.tts.profile_store import tts_profile_store
 from app.services.tts.service import tts_service
-from app.services.usage.attribution import resolve_llm_pair
-from app.services.usage.recorder import record_usage
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/conversation", tags=["conversation"])
@@ -58,22 +59,19 @@ router = APIRouter(prefix="/v1/conversation", tags=["conversation"])
 _IDENTITY_RECHECK_INTERVAL_S = 30.0
 
 
-def _truthy(value: str | None, default: bool) -> bool:
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+# Shared with stt.py's socket -- body in core/params.py.
+_truthy = parse_bool_or
 
 
-def _require_admin(request: Request) -> None:
-    """The /llm routes below mutate the Model Registry's server-wide default
-    LLM row (set_active_llm_config), despite living under the /v1/conversation
-    USER prefix. Any logged-in user hitting them today can repoint every other
-    user's LLM at an attacker endpoint, or drop the whole server to the echo
-    responder. Inline check here (rather than moving these three routes to an
-    admin-only prefix) so the public path stays exactly what
-    static/js/model-recommender.js already calls."""
-    if current_role(request) != "admin":
-        raise HTTPException(status_code=403, detail="admin only")
+# The /llm routes below mutate the Model Registry's server-wide default LLM row
+# (set_active_llm_config), despite living under the /v1/conversation USER
+# prefix. Any logged-in user hitting them before this gate could repoint every
+# other user's LLM at an attacker endpoint, or drop the whole server to the echo
+# responder. Inline check here (rather than moving these three routes to an
+# admin-only prefix) so the public path stays exactly what
+# static/js/model-recommender.js already calls. Alias, not a copy: same gate
+# mcp.py's write surface uses.
+_require_admin = require_admin
 
 
 async def _llm_config_view() -> dict:
@@ -230,42 +228,17 @@ async def chat(
                 )
             ]
             reply = " ".join(parts).strip()
-            try:
-                last_usage = getattr(responder, "last_usage", None) or {}
-                prompt_tokens = last_usage.get("prompt_tokens")
-                completion_tokens = last_usage.get("completion_tokens")
-                native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
-                usage_engine, usage_model_id = resolve_llm_pair(
-                    responder,
-                    (active_profile.llm.engine if active_profile else "") or "",
-                    (active_profile.llm.model if active_profile else "") or "",
-                )
-                await record_usage(
-                    user_id=caller_id or "", profile_id=profile or "",
-                    kind="llm", engine=usage_engine, model_id=usage_model_id, unit="tokens",
-                    native_amount=native_amount, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                )
-            except Exception as exc:  # noqa: BLE001 - metering must never break the reply
-                logger.warning("chat usage metering failed: %s", exc)
         else:
             reply = await responder.reply(history)
-            try:
-                last_usage = getattr(responder, "last_usage", None) or {}
-                prompt_tokens = last_usage.get("prompt_tokens")
-                completion_tokens = last_usage.get("completion_tokens")
-                native_amount = (prompt_tokens or 0) + (completion_tokens or 0)
-                usage_engine, usage_model_id = resolve_llm_pair(
-                    responder,
-                    (active_profile.llm.engine if active_profile else "") or "",
-                    (active_profile.llm.model if active_profile else "") or "",
-                )
-                await record_usage(
-                    user_id=caller_id or "", profile_id=profile or "",
-                    kind="llm", engine=usage_engine, model_id=usage_model_id, unit="tokens",
-                    native_amount=native_amount, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                )
-            except Exception as exc:  # noqa: BLE001 - metering must never break the reply
-                logger.warning("chat usage metering failed: %s", exc)
+        # Same best-effort "last_usage -> resolve_llm_pair -> record_usage" row
+        # the WS paths write, via the helper that already exists for it
+        # (services/conversation/turn_usage.py). Both branches above meter
+        # identically, so it sits after the if/else rather than inside each --
+        # and `llm_model` is deliberately NOT passed: the pinned model here has
+        # always been read straight off the profile.
+        await record_llm_turn_usage(
+            responder, identity_user_id=caller_id, profile=active_profile, profile_name=profile,
+        )
     finally:
         await responder.aclose()
 
@@ -365,21 +338,17 @@ async def conversation_stream(websocket: WebSocket) -> None:
         identity.user_id,
         bypass=identity.unauthenticated,
     )
-    if tts_profile and tts_profile.engine:
-        tts_engine = tts_profile.engine
-        tts_model = tts_profile.model_id or ""
-        voice = tts_profile.voice or q.get("voice") or None
-        ref_audio_path = tts_profile.ref_audio_path or None
-        ref_text = tts_profile.ref_text or None
-        tts_instruct = tts_profile.instruct or None
-        tts_speed = tts_profile.speed
-        tts_language = tts_profile.language
-    else:
-        tts_engine = system_config_store.get().engines.default_tts_engine
-        tts_model = q.get("tts_model") or ""
-        voice = q.get("voice") or None
-        ref_audio_path = ref_text = tts_instruct = None
-        tts_speed = tts_language = None
+    # Shared with livehost.py/lugo.py -- see services/conversation/tts_params.py.
+    # The fallback on the right of `or` is only built when the profile pins no
+    # engine, so the config store is still read exactly as lazily as before.
+    (
+        tts_engine, tts_model, voice, ref_audio_path,
+        ref_text, tts_instruct, tts_speed, tts_language,
+    ) = tts_params_from_profile(tts_profile, fallback_voice=q.get("voice")) or TtsParams(
+        engine=system_config_store.get().engines.default_tts_engine,
+        model_id=q.get("tts_model") or "", voice=q.get("voice") or None,
+        ref_audio_path=None, ref_text=None, instruct=None, speed=None, language=None,
+    )
     # Refused rather than cast blindly: sample_rate feeds VadEndpointer, which
     # divides by it (?sample_rate=0 was a ZeroDivisionError inside the handler,
     # after accept()), and a non-numeric value was a bare ValueError. Same
@@ -419,21 +388,18 @@ async def conversation_stream(websocket: WebSocket) -> None:
     # is right for the PCM/WAV paths. Opus is stricter: libopus accepts exactly
     # OPUS_SAMPLE_RATES and its encoder/decoder constructors RAISE on anything
     # else -- from inside session.start(), after accept(), with no error on the
-    # wire. Checked here, per direction, only when that direction is Opus.
-    for rate, is_opus, param in (
-        (sample_rate, audio_codec == "opus", "sample_rate"),
-        (output_sample_rate, want_audio and audio_out == "opus", "output_sample_rate"),
-    ):
-        if is_opus and rate not in OPUS_SAMPLE_RATES:
-            await websocket.send_json({
-                "event": "error",
-                "message": (
-                    f"invalid {param}: {rate} "
-                    f"(opus supports {', '.join(str(r) for r in OPUS_SAMPLE_RATES)})"
-                ),
-            })
-            await websocket.close()
-            return
+    # wire. Checked here, per direction, only when that direction is Opus, via
+    # the same membership rule + message api/routes/lugo.py gets through
+    # parse_opus_sample_rate.
+    try:
+        if audio_codec == "opus":
+            ensure_opus_rate(sample_rate, name="sample_rate")
+        if want_audio and audio_out == "opus":
+            ensure_opus_rate(output_sample_rate, name="output_sample_rate")
+    except AppError as exc:
+        await websocket.send_json({"event": "error", "message": str(exc)})
+        await websocket.close()
+        return
     # Per-connection override of Opus playback pacing (None = inherit the
     # global system_config default -- what api/routes/lugo.py always gets).
     # Web sends opus_pace=0: see

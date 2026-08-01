@@ -158,3 +158,24 @@ class VadEndpointer:
         speech_ms = self._speech_ms
         self.reset()
         return {"event": "endpoint", "audio": audio, "speech_ms": speech_ms}
+
+
+def build_endpointer(sample_rate: int, conv_cfg) -> VadEndpointer:
+    """An endpointer wired to the live conversation config.
+
+    `conv_cfg` is system_config_store.get().conversation, read by the CALLER so
+    a test monkeypatching that route's own `system_config_store` still decides
+    the tuning. Both voice sockets (services/conversation/session.py,
+    api/routes/livehost.py) used to spell out the same seven-field mapping, so a
+    new tuning knob had to be added twice or it silently applied to one path
+    only."""
+    return VadEndpointer(
+        sample_rate,
+        silence_ms=conv_cfg.conversation_silence_ms,
+        min_speech_ms=conv_cfg.conversation_min_speech_ms,
+        rms_threshold=conv_cfg.conversation_rms_threshold,
+        max_utterance_ms=conv_cfg.conversation_max_utterance_ms,
+        min_silence_ms=conv_cfg.conversation_min_silence_ms,
+        adaptive_full_ms=conv_cfg.conversation_adaptive_full_ms,
+        preroll_ms=conv_cfg.conversation_preroll_ms,
+    )

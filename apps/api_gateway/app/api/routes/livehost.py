@@ -6,7 +6,7 @@ from contextlib import aclosing
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
-from app.core.actor import current_role, current_user_id
+from app.core.actor import scope_user_id
 from app.core.audio import (
     parse_sample_rate,
     pcm16_to_wav_bytes,
@@ -18,9 +18,10 @@ from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
 from app.schemas.livehost import TikTokConnectRequest
-from app.services.conversation.endpointer import VadEndpointer
+from app.services.conversation.endpointer import build_endpointer
 from app.services.conversation.responder import build_responder_ex, resolve_llm_override_from_registry
 from app.services.conversation.turn_quota import llm_turn_quota_blocked_for_pins
+from app.services.conversation.tts_params import TtsParams, tts_params_from_profile
 from app.services.conversation.turn_tts import build_tts_request_or_degrade
 from app.services.conversation.turn_usage import record_llm_turn_usage
 from app.services.history.store import session_store
@@ -77,12 +78,9 @@ def _mention_keywords() -> list[str]:
     return [k.strip() for k in settings.livehost_mention_keywords.split(",") if k.strip()]
 
 
-def _scope_user_id(request: Request) -> str | None:
-    """None for admins, or when auth is fully disabled (dev mode -- see
-    app.core.actor.current_role), which is unfiltered/unchanged from today's
-    behavior; the caller's own id otherwise. Same pattern as sessions.py's
-    identically-named helper."""
-    return None if current_role(request) == "admin" else current_user_id(request)
+# Same helper sessions.py exposes under this name; body lives in core/actor.py.
+# Kept as a module-level alias so tests can monkeypatch it per-route.
+_scope_user_id = scope_user_id
 
 
 def _get_owned_session(session_id: str, request: Request) -> LivehostSession:
@@ -187,21 +185,15 @@ async def livehost_stream(websocket: WebSocket) -> None:
         identity.user_id,
         bypass=identity.unauthenticated,
     )
-    if tts_profile and tts_profile.engine:
-        tts_engine = tts_profile.engine
-        tts_model = tts_profile.model_id or ""
-        voice = tts_profile.voice or q.get("voice") or None
-        ref_audio_path = tts_profile.ref_audio_path or None
-        ref_text = tts_profile.ref_text or None
-        tts_instruct = tts_profile.instruct or None
-        tts_speed = tts_profile.speed
-        tts_language = tts_profile.language
-    else:
-        tts_engine = system_config_store.get().engines.default_tts_engine
-        tts_model = q.get("tts_model") or ""
-        voice = q.get("voice") or None
-        ref_audio_path = ref_text = tts_instruct = None
-        tts_speed = tts_language = None
+    # Same mapping conversation.py/lugo.py use -- services/conversation/tts_params.py.
+    (
+        tts_engine, tts_model, voice, ref_audio_path,
+        ref_text, tts_instruct, tts_speed, tts_language,
+    ) = tts_params_from_profile(tts_profile, fallback_voice=q.get("voice")) or TtsParams(
+        engine=system_config_store.get().engines.default_tts_engine,
+        model_id=q.get("tts_model") or "", voice=q.get("voice") or None,
+        ref_audio_path=None, ref_text=None, instruct=None, speed=None, language=None,
+    )
     # Same guard as conversation.py/stt.py: a client-supplied rate reaches
     # VadEndpointer, which divides by it. Refused at connect, not crashed on
     # after accept(). Error shape is livehost's own {"event": "error", ...}.
@@ -239,25 +231,22 @@ async def livehost_stream(websocket: WebSocket) -> None:
         await websocket.close()
         return
 
+    # Same negotiate-or-downgrade both directions get in
+    # services/conversation/session.py; imported inside the handler so a test
+    # monkeypatching app.core.opus.opus_available still takes effect.
+    from app.core.opus import make_decoder_or_downgrade, make_encoder_or_downgrade
+
     opus_decoder = None
     if audio_codec == "opus":
-        from app.core.opus import OpusFrameDecoder, opus_available
-
-        if opus_available():
-            opus_decoder = OpusFrameDecoder(sample_rate=sample_rate, channels=1)
-        else:
+        opus_decoder = make_decoder_or_downgrade(sample_rate)
+        if opus_decoder is None:
             audio_codec = "pcm16"
-            logger.warning("client requested opus but server has no libopus; using pcm16")
 
     opus_encoder = None
     if want_audio and audio_out == "opus":
-        from app.core.opus import OpusFrameEncoder, opus_available
-
-        if opus_available():
-            opus_encoder = OpusFrameEncoder(sample_rate=output_sample_rate, channels=1)
-        else:
+        opus_encoder = make_encoder_or_downgrade(output_sample_rate)
+        if opus_encoder is None:
             audio_out = "wav"
-            logger.warning("client requested opus output but server has no libopus; using wav")
 
     responder = await build_responder_ex(
         base_url=llm_base_url, api_key=llm_api_key, model=llm_model, system_prompt=system_prompt,
@@ -265,16 +254,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
     )
 
     conv_cfg = system_config_store.get().conversation
-    endpointer = VadEndpointer(
-        sample_rate,
-        silence_ms=conv_cfg.conversation_silence_ms,
-        min_speech_ms=conv_cfg.conversation_min_speech_ms,
-        rms_threshold=conv_cfg.conversation_rms_threshold,
-        max_utterance_ms=conv_cfg.conversation_max_utterance_ms,
-        min_silence_ms=conv_cfg.conversation_min_silence_ms,
-        adaptive_full_ms=conv_cfg.conversation_adaptive_full_ms,
-        preroll_ms=conv_cfg.conversation_preroll_ms,
-    )
+    endpointer = build_endpointer(sample_rate, conv_cfg)
 
     history: list[dict] = []
     session_ready = True

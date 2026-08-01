@@ -1,18 +1,19 @@
 from fastapi import APIRouter, HTTPException, Request
 
-from app.core.actor import current_role, current_user_id
+from app.core.actor import scope_user_id
 from app.schemas.sessions import BulkDeleteRequest
 from app.services.history.store import session_store
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 
 
-def _scope_user_id(request: Request) -> str | None:
-    """None for admins, or when auth is fully disabled (dev mode -- see
-    app.core.actor.current_role), which is unfiltered/unchanged from today's
-    behavior; the caller's own id otherwise, so a regular user only ever sees
-    their own sessions."""
-    return None if current_role(request) == "admin" else current_user_id(request)
+# None for admins, or when auth is fully disabled (dev mode -- see
+# app.core.actor.current_role); the caller's own id otherwise, so a regular
+# user only ever sees their own sessions. Imported under the private name this
+# module has always exported (api/routes/conversation.py imports it from here,
+# and tests monkeypatch it per-route) -- the body itself now lives in
+# core/actor.py, shared with livehost.py's identical copy.
+_scope_user_id = scope_user_id
 
 
 @router.get("")

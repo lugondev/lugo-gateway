@@ -8,7 +8,6 @@ explicit startup hook.
 from __future__ import annotations
 
 import asyncio
-import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 

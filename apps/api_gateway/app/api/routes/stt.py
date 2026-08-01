@@ -15,6 +15,7 @@ from app.core.audio import (
 from app.core.auth_guard import resolve_ws_identity, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
+from app.core.params import parse_bool
 from app.core.settings import settings
 from app.schemas.common import StreamEvent
 from app.schemas.stt import STTRequest, STTResult
@@ -40,10 +41,8 @@ def _resolve_flag(value: bool | None, default: bool) -> bool:
     return default if value is None else value
 
 
-def _parse_bool(value: str | None) -> bool | None:
-    if value is None:
-        return None
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+# Shared with conversation.py's socket -- body in core/params.py.
+_parse_bool = parse_bool
 
 
 @router.post("/transcribe")

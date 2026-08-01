@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request
 
-from app.core.actor import current_role, current_user_id
+from app.core.actor import current_role, current_user_id, require_admin
 from app.schemas.common import CloneRequest
 from app.schemas.mcp import McpServerEnabledRequest, McpServerRequest
 from app.services.mcp.models import McpServer
@@ -43,19 +43,18 @@ def _can_write(server: McpServer, user_id: str | None, role: str) -> bool:
     return server.owner_id == user_id
 
 
-def _require_admin(request: Request) -> None:
-    """Create/update/delete/clone let the caller point the gateway's outbound
-    fetch at an arbitrary url + headers, then GET .../tools makes the gateway
-    fetch it and return the response body to the caller -- a full SSRF proxy
-    with reflection (e.g. against http://169.254.169.254) for any logged-in
-    user before this gate. Admin-only; deliberately NO IP blocklist -- the
-    only real server in the live DB (basic-tools) self-hosts on loopback,
-    which is the normal deployment pattern here, and a blocklist would only
-    raise the bar for an actor who must already be an admin. Read routes
-    (list/get/tools) stay open to normal users -- only the write surface is
-    gated. See docs/superpowers/sdd/2026-07-28-critical-authz-fixes/task-6-brief.md."""
-    if current_role(request) != "admin":
-        raise HTTPException(status_code=403, detail="admin only")
+# Create/update/delete/clone let the caller point the gateway's outbound fetch
+# at an arbitrary url + headers, then GET .../tools makes the gateway fetch it
+# and return the response body to the caller -- a full SSRF proxy with
+# reflection (e.g. against http://169.254.169.254) for any logged-in user
+# before this gate. Admin-only; deliberately NO IP blocklist -- the only real
+# server in the live DB (basic-tools) self-hosts on loopback, which is the
+# normal deployment pattern here, and a blocklist would only raise the bar for
+# an actor who must already be an admin. Read routes (list/get/tools) stay open
+# to normal users -- only the write surface is gated. See
+# docs/superpowers/sdd/2026-07-28-critical-authz-fixes/task-6-brief.md.
+# Alias, not a copy: same 403 gate conversation.py's /llm routes use.
+_require_admin = require_admin
 
 
 @router.get("/servers")

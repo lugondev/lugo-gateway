@@ -31,7 +31,11 @@ from app.core.errors import AppError
 from app.core.settings import settings
 from app.schemas.tts import TTSRequest
 from app.services.conversation.announce import generate_line
-from app.services.conversation.endpointer import VadEndpointer, barge_in_suppressed
+from app.services.conversation.endpointer import (
+    VadEndpointer,
+    barge_in_suppressed,
+    build_endpointer,
+)
 from app.services.conversation.responder import (
     build_responder_ex,
     resolve_llm_override_from_registry,
@@ -363,24 +367,21 @@ class ConversationSession:
 
         # Set up Opus decoding if the client negotiated it; fall back to PCM16 with a
         # warning if the server lacks libopus (so the connection still works).
+        # Imported inside start(), not at module scope, so tests that
+        # monkeypatch app.core.opus.opus_available still take effect -- the
+        # helpers read it as their own module global.
+        from app.core.opus import make_decoder_or_downgrade, make_encoder_or_downgrade
+
         if self.audio_codec == "opus":
-            from app.core.opus import OpusFrameDecoder, opus_available
-
-            if opus_available():
-                self.opus_decoder = OpusFrameDecoder(sample_rate=cfg.sample_rate, channels=1)
-            else:
+            self.opus_decoder = make_decoder_or_downgrade(cfg.sample_rate)
+            if self.opus_decoder is None:
                 self.audio_codec = "pcm16"
-                logger.warning("client requested opus but server has no libopus; using pcm16")
 
-        # Set up Opus encoding for pushed audio output (devices). Fall back to url.
+        # Set up Opus encoding for pushed audio output (devices). Fall back to wav.
         if cfg.want_audio and self.audio_out == "opus":
-            from app.core.opus import OpusFrameEncoder, opus_available
-
-            if opus_available():
-                self.opus_encoder = OpusFrameEncoder(sample_rate=cfg.output_sample_rate, channels=1)
-            else:
+            self.opus_encoder = make_encoder_or_downgrade(cfg.output_sample_rate)
+            if self.opus_encoder is None:
                 self.audio_out = "wav"
-                logger.warning("client requested opus output but server has no libopus; using wav")
 
         self.responder = await build_responder_ex(
             base_url=llm_base_url,
@@ -425,16 +426,7 @@ class ConversationSession:
             llm_label = model_label
 
         conv_cfg = system_config_store.get().conversation
-        self.endpointer = VadEndpointer(
-            cfg.sample_rate,
-            silence_ms=conv_cfg.conversation_silence_ms,
-            min_speech_ms=conv_cfg.conversation_min_speech_ms,
-            rms_threshold=conv_cfg.conversation_rms_threshold,
-            max_utterance_ms=conv_cfg.conversation_max_utterance_ms,
-            min_silence_ms=conv_cfg.conversation_min_silence_ms,
-            adaptive_full_ms=conv_cfg.conversation_adaptive_full_ms,
-            preroll_ms=conv_cfg.conversation_preroll_ms,
-        )
+        self.endpointer = build_endpointer(cfg.sample_rate, conv_cfg)
         # Session persistence. No row is written here: the FIRST stored message
         # creates it (see _persist), the way other chat products do it, so a
         # connection nobody speaks into -- a wake with no words, a health probe,

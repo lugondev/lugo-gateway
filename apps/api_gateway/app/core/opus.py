@@ -98,6 +98,18 @@ def parse_opus_sample_rate(raw, default: int, *, name: str = "sample_rate") -> i
         value = int(raw)
     except (TypeError, ValueError):
         raise AppError(f"invalid {name}: {raw!r} (must be an integer)") from None
+    return ensure_opus_rate(value, name=name)
+
+
+def ensure_opus_rate(value: int, *, name: str = "sample_rate") -> int:
+    """Raise AppError unless `value` is a rate libopus actually accepts.
+
+    Split out of parse_opus_sample_rate for the sockets that parse a rate for
+    BOTH codecs and only then know whether this direction is Opus
+    (api/routes/conversation.py negotiates codec per direction). One membership
+    rule and one message, so the two entry points can't drift apart."""
+    from app.core.errors import AppError
+
     if value not in OPUS_SAMPLE_RATES:
         raise AppError(
             f"invalid {name}: {value} "
@@ -155,3 +167,27 @@ class OpusFrameDecoder:
     def decode(self, packet: bytes) -> bytes:
         """Decode one Opus packet to PCM16 little-endian bytes."""
         return self._dec.decode(packet, self._frame_size)
+
+
+def make_decoder_or_downgrade(sample_rate: int, channels: int = 1) -> OpusFrameDecoder | None:
+    """A decoder for a client that negotiated Opus, or None on a server with no
+    libopus -- in which case the caller falls back to pcm16 so the connection
+    still works. Shared by every socket that accepts Opus uplink
+    (services/conversation/session.py, api/routes/livehost.py), which each used
+    to inline this check with its own copy of the warning.
+
+    opus_available() is read as a module global here rather than imported by
+    the caller: that is what makes monkeypatching app.core.opus.opus_available
+    take effect no matter where the socket lives."""
+    if not opus_available():
+        logger.warning("client requested opus but server has no libopus; using pcm16")
+        return None
+    return OpusFrameDecoder(sample_rate=sample_rate, channels=channels)
+
+
+def make_encoder_or_downgrade(sample_rate: int, channels: int = 1) -> OpusFrameEncoder | None:
+    """Same, for the downlink: None means the caller must fall back to wav."""
+    if not opus_available():
+        logger.warning("client requested opus output but server has no libopus; using wav")
+        return None
+    return OpusFrameEncoder(sample_rate=sample_rate, channels=channels)
