@@ -293,3 +293,72 @@ def test_an_explicit_name_still_wins(client, _logged_in_user):
     )
 
     assert resp.json()["data"]["name"] == "Kitchen speaker"
+
+
+def _pair_a_device(client, serial="2884855048d0"):
+    """Pair one device and return its dict. Assumes a logged-in client."""
+    init = client.post("/v1/devices/pair/init", json={"serial": serial}).json()["data"]
+    return client.post("/v1/devices/pair/claim", json={"code": init["code"]}).json()["data"]
+
+
+def test_rename_changes_the_name_and_leaves_the_binding_alone(client, _logged_in_user):
+    device = _pair_a_device(client)
+
+    resp = client.post(
+        f"/v1/devices/mine/{device['id']}/name", json={"name": "Kitchen speaker"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["data"] == {"id": device["id"], "name": "Kitchen speaker"}
+    listed = client.get("/v1/devices/mine").json()["data"]
+    assert [d["name"] for d in listed] == ["Kitchen speaker"]
+    # A name is a label, not hardware identity: renaming must not send the user
+    # back to the device to read a fresh code.
+    assert listed[0]["profile_id"] == device["profile_id"]
+
+
+def test_rename_trims_surrounding_whitespace(client, _logged_in_user):
+    device = _pair_a_device(client)
+
+    resp = client.post(
+        f"/v1/devices/mine/{device['id']}/name", json={"name": "  Kitchen  "}
+    )
+
+    assert resp.json()["data"]["name"] == "Kitchen"
+
+
+def test_rename_to_blank_is_rejected(client, _logged_in_user):
+    device = _pair_a_device(client)
+
+    resp = client.post(f"/v1/devices/mine/{device['id']}/name", json={"name": "   "})
+
+    assert resp.status_code == 400
+
+
+def test_rename_over_the_column_length_is_rejected(client, _logged_in_user):
+    device = _pair_a_device(client)
+
+    resp = client.post(
+        f"/v1/devices/mine/{device['id']}/name", json={"name": "x" * 129}
+    )
+
+    assert resp.status_code == 400
+
+
+def test_rename_someone_elses_device_is_indistinguishable_from_a_missing_one(client):
+    client.post("/api/auth/signup", json={"username": "owner", "password": "pw"})
+    client.post("/api/auth/signup", json={"username": "other", "password": "pw"})
+
+    client.post("/api/auth/login", json={"username": "owner", "password": "pw"})
+    device = _pair_a_device(client, serial="ffffffff1234")
+
+    client.post("/api/auth/login", json={"username": "other", "password": "pw"})
+    theirs = client.post(
+        f"/v1/devices/mine/{device['id']}/name", json={"name": "mine now"}
+    )
+    missing = client.post(
+        "/v1/devices/mine/does-not-exist/name", json={"name": "mine now"}
+    )
+
+    # Same status AND same message: otherwise this becomes a device-id oracle.
+    assert theirs.status_code == missing.status_code == 404

@@ -23,3 +23,9 @@ class DeviceProfileRequest(BaseModel):
     """Body of POST /v1/devices/mine/{device_id}/profile. "" unassigns."""
 
     profile_id: str = ""
+
+
+class DeviceNameRequest(BaseModel):
+    """Body of POST /v1/devices/mine/{device_id}/name."""
+
+    name: str
