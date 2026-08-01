@@ -15,6 +15,28 @@ def _visible(server: McpServer, user_id: str | None) -> bool:
     return server.owner_id is None or server.owner_id == user_id
 
 
+def _view(server: McpServer, role: str) -> dict:
+    """Response body for a server row, with `headers` masked for non-admins.
+
+    `headers` is where an MCP server's credentials live (a bearer token, an
+    api key). Only admins can create a row (`_require_admin`), so every row is
+    a template (owner_id=None) and `_visible` is therefore True for EVERY
+    logged-in user -- /v1/mcp is a user prefix. Dumping the model verbatim
+    handed each of them the admin's MCP credentials, which is the same class
+    of leak that providers.py (`_mask_api_key`), model_registry.py and
+    profiles.py (`_mask`) already guard against on their own secret fields.
+
+    Masked per key rather than dropped, so the response shape is unchanged for
+    a client that iterates `headers`. Admins keep the real values because the
+    admin UI round-trips them back through PUT /v1/mcp/servers/{name} -- masking
+    there would write '***' into the stored row on the next save.
+    """
+    data = server.model_dump()
+    if role != "admin":
+        data["headers"] = {name: "***" for name in data.get("headers", {})}
+    return data
+
+
 def _can_write(server: McpServer, user_id: str | None, role: str) -> bool:
     if server.owner_id is None:
         return role == "admin"
@@ -39,9 +61,10 @@ def _require_admin(request: Request) -> None:
 @router.get("/servers")
 async def list_servers(request: Request) -> dict:
     user_id = current_user_id(request)
+    role = current_role(request)
     servers = mcp_server_store.list()
     visible = {k: v for k, v in servers.items() if _visible(v, user_id)}
-    return {"success": True, "data": {k: v.model_dump() for k, v in visible.items()}}
+    return {"success": True, "data": {k: _view(v, role) for k, v in visible.items()}}
 
 
 @router.post("/servers")
@@ -70,7 +93,7 @@ async def get_server(name: str, request: Request) -> dict:
     entry = mcp_server_store.get(name)
     if not entry or not _visible(entry, current_user_id(request)):
         raise HTTPException(status_code=404, detail=f"MCP server '{name}' not found")
-    return {"success": True, "data": entry.model_dump()}
+    return {"success": True, "data": _view(entry, current_role(request))}
 
 
 @router.put("/servers/{name}")
