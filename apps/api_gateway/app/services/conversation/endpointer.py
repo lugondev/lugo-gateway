@@ -110,11 +110,23 @@ class VadEndpointer:
         if self._speaking:
             self._collected.extend(pcm)  # keep a little trailing silence for the decoder
             self._silence_acc_ms += frame_ms
-            if (
-                self._silence_acc_ms >= self._effective_silence_ms()
-                and self._speech_ms >= self.min_speech_ms
-            ):
-                return self._emit_endpoint()
+            if self._silence_acc_ms >= self._effective_silence_ms():
+                if self._speech_ms >= self.min_speech_ms:
+                    return self._emit_endpoint()
+                # Too short to be an utterance (a cough, a door, a burst of
+                # noise). Drop it and go back to idle.
+                #
+                # This branch is load-bearing, not tidiness: without it
+                # `_speaking` stayed True forever -- the endpoint condition can
+                # never become true once `speech_ms` is stuck below the
+                # minimum -- so EVERY later silence frame kept appending to
+                # `_collected`. Measured: a 200ms noise burst followed by
+                # silence grew the buffer by ~32KB/s (~115MB/hour) on a 16kHz
+                # link, with no upper bound (`max_utterance_ms` caps
+                # `speech_ms`, not the buffer). And when the user finally did
+                # speak, that whole silent blob was prepended to the utterance
+                # sent to STT. Always-on devices sit in exactly this state.
+                self.reset()
         else:
             # Idle: keep a rolling pre-roll buffer of the most recent audio.
             self._preroll.append((pcm, frame_ms))
