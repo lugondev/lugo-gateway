@@ -7,7 +7,12 @@ from contextlib import aclosing
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from app.core.actor import current_role, current_user_id
-from app.core.audio import pcm16_to_wav_bytes, wav_bytes_to_pcm16, wav_duration_seconds
+from app.core.audio import (
+    parse_sample_rate,
+    pcm16_to_wav_bytes,
+    wav_bytes_to_pcm16,
+    wav_duration_seconds,
+)
 from app.core.auth_guard import resolve_ws_identity, ws_session_owner_denied, ws_subprotocol
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
@@ -197,7 +202,17 @@ async def livehost_stream(websocket: WebSocket) -> None:
         voice = q.get("voice") or None
         ref_audio_path = ref_text = tts_instruct = None
         tts_speed = tts_language = None
-    sample_rate = int(q.get("sample_rate", settings.stt_stream_sample_rate))
+    # Same guard as conversation.py/stt.py: a client-supplied rate reaches
+    # VadEndpointer, which divides by it. Refused at connect, not crashed on
+    # after accept(). Error shape is livehost's own {"event": "error", ...}.
+    try:
+        sample_rate = parse_sample_rate(
+            q.get("sample_rate"), settings.stt_stream_sample_rate
+        )
+    except AppError as exc:
+        await websocket.send_json({"event": "error", "message": str(exc)})
+        await websocket.close()
+        return
     audio_codec = (q.get("audio_codec") or "pcm16").lower()
     out_modalities = {m.strip() for m in (q.get("output") or "audio,text").lower().split(",") if m.strip()}
     want_audio = "audio" in out_modalities
@@ -205,7 +220,14 @@ async def livehost_stream(websocket: WebSocket) -> None:
     audio_out = (q.get("audio_out") or "wav").lower()
     if audio_out != "opus":
         audio_out = "wav"
-    output_sample_rate = int(q.get("output_sample_rate", 24000))
+    try:
+        output_sample_rate = parse_sample_rate(
+            q.get("output_sample_rate"), 24000, name="output_sample_rate"
+        )
+    except AppError as exc:
+        await websocket.send_json({"event": "error", "message": str(exc)})
+        await websocket.close()
+        return
 
     resolved_stt_model = stt_model or resolve_default_stt_model(stt_engine)
 

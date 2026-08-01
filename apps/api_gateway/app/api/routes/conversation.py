@@ -11,6 +11,7 @@ from app.core.auth_guard import (
     ws_session_owner_denied,
     ws_subprotocol,
 )
+from app.core.audio import parse_sample_rate
 from app.core.errors import AppError
 from app.core.identity_watch import build_identity_watchdog, receive_with_watchdog
 from app.core.settings import settings
@@ -368,7 +369,18 @@ async def conversation_stream(websocket: WebSocket) -> None:
         voice = q.get("voice") or None
         ref_audio_path = ref_text = tts_instruct = None
         tts_speed = tts_language = None
-    sample_rate = int(q.get("sample_rate", settings.stt_stream_sample_rate))
+    # Refused rather than cast blindly: sample_rate feeds VadEndpointer, which
+    # divides by it (?sample_rate=0 was a ZeroDivisionError inside the handler,
+    # after accept()), and a non-numeric value was a bare ValueError. Same
+    # contract routes/stt.py already enforced on its own socket.
+    try:
+        sample_rate = parse_sample_rate(
+            q.get("sample_rate"), settings.stt_stream_sample_rate
+        )
+    except AppError as exc:
+        await websocket.send_json({"event": "error", "message": str(exc)})
+        await websocket.close()
+        return
     # Audio transport: pcm16 (default) or opus (embedded ESP32/RPi + browser WebCodecs;
     # ~10x less bandwidth). Server decodes Opus packets -> PCM16 for the endpointer.
     audio_codec = (q.get("audio_codec") or "pcm16").lower()
@@ -384,7 +396,14 @@ async def conversation_stream(websocket: WebSocket) -> None:
     audio_out = (q.get("audio_out") or "wav").lower()
     if audio_out != "opus":
         audio_out = "wav"
-    output_sample_rate = int(q.get("output_sample_rate", 24000))
+    try:
+        output_sample_rate = parse_sample_rate(
+            q.get("output_sample_rate"), 24000, name="output_sample_rate"
+        )
+    except AppError as exc:
+        await websocket.send_json({"event": "error", "message": str(exc)})
+        await websocket.close()
+        return
     # Per-connection override of Opus playback pacing (None = inherit the
     # global system_config default -- what api/routes/lugo.py always gets).
     # Web sends opus_pace=0: see

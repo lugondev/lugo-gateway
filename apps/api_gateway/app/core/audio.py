@@ -16,6 +16,40 @@ import soundfile as sf
 _UNDECODABLE_AUDIO_ERRORS = (wave.Error, sf.LibsndfileError)
 
 
+# A sample rate has to be a plausible audio rate, not merely a number. It sizes
+# Opus frame buffers, the silence padding and every duration the endpointer
+# derives, so both ends matter: 0 divides by zero in VadEndpointer, a negative
+# produces nonsense durations, and an arbitrarily large one is an allocation
+# lever. The ceiling sits well above any real capture hardware (192kHz studio
+# gear included) so it can only ever reject abuse.
+_MIN_SAMPLE_RATE = 1
+_MAX_SAMPLE_RATE = 384_000
+
+
+def parse_sample_rate(raw: str | None, default: int, *, name: str = "sample_rate") -> int:
+    """Parse a client-supplied sample rate query param, or raise AppError.
+
+    `raw` is None when the param was absent (use `default`); anything else must
+    parse to an integer inside the plausible range. Callers on the WS routes
+    turn the AppError into an `error` event -- the point is that a bad value
+    is REFUSED at connect, not that it crashes the handler after accept().
+    """
+    from app.core.errors import AppError
+
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise AppError(f"invalid {name}: {raw!r} (must be an integer)") from None
+    if not _MIN_SAMPLE_RATE <= value <= _MAX_SAMPLE_RATE:
+        raise AppError(
+            f"invalid {name}: {value} "
+            f"(must be between {_MIN_SAMPLE_RATE} and {_MAX_SAMPLE_RATE})"
+        )
+    return value
+
+
 def pcm16_to_wav_bytes(pcm: bytes, sample_rate: int, channels: int = 1) -> bytes:
     """Wrap raw PCM signed-16 bytes in a WAV container."""
     buffer = io.BytesIO()
