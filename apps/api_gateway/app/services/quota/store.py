@@ -43,6 +43,14 @@ class QuotaStore:
     def invalidate(self) -> None:
         self._by_id = None
         self._lock = asyncio.Lock()
+        # The gate caches a spend aggregate per (scope, scope_id, period). Those
+        # keys are derived from these rows and the numbers from whichever DB was
+        # in effect, so anything that drops this cache must drop that one too --
+        # otherwise a repointed DB (every test) is gated on the previous one's
+        # spend. Function-local import: quota.gate imports this module.
+        from app.services.quota.gate import invalidate_spend_cache
+
+        invalidate_spend_cache()
 
     async def list_all(self) -> list[dict]:
         await self._ensure_loaded()

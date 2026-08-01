@@ -122,7 +122,14 @@ async def test_turn_aborted_with_notice_when_over_quota(monkeypatch, tmp_path):
         names = [n for n, _ in events]
         assert "user_transcript" not in names
         assert "response_text" not in names
-        assert "turn_done" not in names
+        # `turn_done` IS emitted, marked `skipped`. It used to be withheld, on
+        # the reasoning that no turn ran -- but it is the only event the
+        # transports read as "the assistant has stopped", so withholding it left
+        # a device that had armed a hang-up waiting forever. `skipped` is what
+        # keeps refreshes_idle() from counting a refusal as interaction.
+        done = [p for n, p in events if n == "turn_done"]
+        assert len(done) == 1
+        assert done[0]["skipped"]
 
         # (b) a notice/error event was emitted, naming the quota.
         error_events = [p for n, p in events if n == "error"]

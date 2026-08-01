@@ -8,10 +8,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.settings import settings
+from app.services.db.engine import apply_sqlite_pragmas
 
 _engine = None
 _factory: sessionmaker | None = None
@@ -36,6 +37,13 @@ def configure(url: str | None = None) -> None:
         if db_file and db_file != ":memory:":
             Path(db_file).parent.mkdir(parents=True, exist_ok=True)
     _engine = create_engine(sync_url, future=True)
+    if sync_url.startswith("sqlite"):
+        # Same pragmas the async engine applies -- both open the same file, and
+        # this side is the one holding write locks the async side waits on.
+        @event.listens_for(_engine, "connect")
+        def _on_connect(dbapi_connection, _record):  # pragma: no cover - trivial
+            apply_sqlite_pragmas(dbapi_connection)
+
     _factory = sessionmaker(_engine, expire_on_commit=False)
     _tables_ready = False
 

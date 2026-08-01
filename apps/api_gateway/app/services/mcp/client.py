@@ -25,27 +25,39 @@ class McpHttpClient:
         self._connect_timeout = connect_timeout
         self._tool_timeout = tool_timeout
         self._headers = headers or {}
+        # One client for this adapter's whole lifetime, so httpx keeps the
+        # TCP+TLS connection alive between calls. Every call used to open its
+        # own `async with httpx.AsyncClient(...)`, which meant a full handshake
+        # per tool listing AND per tool invocation -- on the conversation's
+        # critical path, since a tool call sits between the user's words and the
+        # model's reply. Same reasoning as OpenAICompatResponder's client.
+        # Per-call timeouts are passed per request instead of per client.
+        self._client = httpx.AsyncClient(headers=self._headers)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
     async def list_tools(self) -> list[dict]:
         try:
-            async with httpx.AsyncClient(timeout=self._connect_timeout, headers=self._headers) as client:
-                resp = await client.get(f"{self.url}/tools")
-                resp.raise_for_status()
-                data = resp.json()
-                return data if isinstance(data, list) else data.get("tools", [])
+            resp = await self._client.get(
+                f"{self.url}/tools", timeout=self._connect_timeout
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data if isinstance(data, list) else data.get("tools", [])
         except Exception as exc:
             raise McpConnectionError(f"Failed to list tools from {self.url}: {exc}") from exc
 
     async def invoke(self, tool_name: str, arguments: dict) -> str:
         try:
-            async with httpx.AsyncClient(timeout=self._tool_timeout, headers=self._headers) as client:
-                resp = await client.post(
-                    f"{self.url}/tools/{tool_name}",
-                    json={"arguments": arguments},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return str(data.get("result", data))
+            resp = await self._client.post(
+                f"{self.url}/tools/{tool_name}",
+                json={"arguments": arguments},
+                timeout=self._tool_timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return str(data.get("result", data))
         except Exception as exc:
             raise McpConnectionError(
                 f"Failed to invoke '{tool_name}' on {self.url}: {exc}"

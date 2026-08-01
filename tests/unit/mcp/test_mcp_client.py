@@ -50,7 +50,9 @@ async def test_list_tools_strips_trailing_slash():
     with patch("httpx.AsyncClient", return_value=mock_client):
         client = McpHttpClient("http://mcp.test/")
         await client.list_tools()
-    mock_client.get.assert_called_once_with("http://mcp.test/tools")
+    # The timeout rides on the request, not the client: one keep-alive client
+    # now serves both calls, and they have different budgets.
+    mock_client.get.assert_called_once_with("http://mcp.test/tools", timeout=10.0)
 
 
 async def test_list_tools_connection_error_raises():
@@ -71,7 +73,9 @@ async def test_invoke_returns_result_string():
         result = await client.invoke("search", {"query": "hello"})
     assert result == "found it"
     mock_client.post.assert_called_once_with(
-        "http://mcp.test/tools/search", json={"arguments": {"query": "hello"}}
+        "http://mcp.test/tools/search",
+        json={"arguments": {"query": "hello"}},
+        timeout=30.0,
     )
 
 

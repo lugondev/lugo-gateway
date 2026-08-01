@@ -102,17 +102,42 @@ async def _build_tool_registry(profile, can_hang_up: bool = False) -> ToolRegist
                 end_conversation=can_hang_up,
             )
         )
-    for srv in merged_servers.values():
-        if not srv.enabled:
-            continue
-        tools = await mcp_pool.get_tools(srv.url, headers=srv.headers)
-        if tools:
-            tool_sources.append(
-                McpToolSource(
-                    tools,
-                    invoker=lambda n, a, u=srv.url, h=srv.headers: mcp_pool.invoke(u, n, a, headers=h),
-                )
+    # Concurrently, and under one deadline. This ran a `for` loop of awaits, so N
+    # configured servers cost N round trips end to end -- all of it sitting
+    # between "socket accepted" and `session_started`, i.e. before the user may
+    # speak. get_tools() already swallows an unreachable server (returns []), but
+    # it has no bound on a server that ACCEPTS and then just never answers: one
+    # of those held every new conversation open indefinitely.
+    enabled_servers = [srv for srv in merged_servers.values() if srv.enabled]
+    if enabled_servers:
+        try:
+            fetched = await asyncio.wait_for(
+                asyncio.gather(
+                    *(
+                        mcp_pool.get_tools(srv.url, headers=srv.headers)
+                        for srv in enabled_servers
+                    ),
+                    return_exceptions=True,
+                ),
+                timeout=settings.mcp_tool_discovery_timeout_seconds,
             )
+        except TimeoutError:
+            logger.warning(
+                "mcp tool discovery exceeded %ss; starting the session without MCP tools",
+                settings.mcp_tool_discovery_timeout_seconds,
+            )
+            fetched = [[] for _ in enabled_servers]
+        for srv, tools in zip(enabled_servers, fetched):
+            if isinstance(tools, BaseException):
+                logger.warning("MCP server %s tool listing failed: %s", srv.url, tools)
+                continue
+            if tools:
+                tool_sources.append(
+                    McpToolSource(
+                        tools,
+                        invoker=lambda n, a, u=srv.url, h=srv.headers: mcp_pool.invoke(u, n, a, headers=h),
+                    )
+                )
     return ToolRegistry(tool_sources) if tool_sources else None
 
 
@@ -132,6 +157,28 @@ def _spawn_background(coro) -> None:
     task = asyncio.create_task(coro)
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+
+
+async def drain_background_tasks(timeout: float = 10.0) -> None:
+    """Let in-flight background work finish, then give up on the rest.
+
+    Called from the app's shutdown (app/main.py). The work here is memory
+    extraction, which runs at the teardown of EVERY session -- so a server going
+    down while a fleet of devices disconnects has one of these in flight per
+    device, and without this they were simply abandoned mid-write.
+    """
+    pending = [t for t in _background_tasks if not t.done()]
+    if not pending:
+        return
+    logger.info("draining %d background task(s) before shutdown", len(pending))
+    done, still_running = await asyncio.wait(pending, timeout=timeout)
+    for task in still_running:
+        task.cancel()
+    if still_running:
+        logger.warning(
+            "%d background task(s) did not finish within %.0fs; cancelled",
+            len(still_running), timeout,
+        )
 
 
 @dataclass
@@ -865,9 +912,16 @@ class ConversationSession:
         # Audio input: build the wav for STT.
         pcm = audio_pcm
         if cfg.denoise:
-            pcm = preprocess_pcm16(
-                audio_pcm, cfg.sample_rate, denoise=True, vad=False,
-                amount=system_config_store.get().preprocessing.stt_noise_reduce_amount,
+            # On a worker thread: spectral noise reduction over a whole
+            # utterance is real numpy work (tens to hundreds of ms for a 10-30s
+            # turn), and run inline it stalls the event loop -- i.e. every OTHER
+            # live connection's audio, not just this one's. The Opus encode and
+            # decode either side of this already went to_thread for exactly this
+            # reason; this call was the one that didn't.
+            pcm = await asyncio.to_thread(
+                preprocess_pcm16,
+                audio_pcm, cfg.sample_rate, True, False,
+                system_config_store.get().preprocessing.stt_noise_reduce_amount,
             )
         wav = pcm16_to_wav_bytes(pcm, sample_rate=cfg.sample_rate)
 

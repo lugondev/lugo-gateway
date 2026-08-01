@@ -92,24 +92,52 @@ class SessionStore:
             if client_id is not None:
                 q = q.where(ChatSession.client_id == client_id)
             rows = (await s.execute(q.limit(limit).offset(offset))).scalars().all()
+            if not rows:
+                return []
+            # Three queries, not 1 + 2N. This used to run a COUNT and a preview
+            # SELECT per session inside the loop -- 41 round trips for the
+            # default page of 20, each opening its own SQLite connection (the
+            # engine runs NullPool on purpose; see db/engine.py).
+            ids = [row.id for row in rows]
+            counts = dict(
+                (
+                    await s.execute(
+                        select(ChatMessage.session_id, func.count(ChatMessage.id))
+                        .where(ChatMessage.session_id.in_(ids))
+                        .group_by(ChatMessage.session_id)
+                    )
+                ).all()
+            )
+            # The first user message of each session, in two steps: its id per
+            # session, then those rows' content. min(id) is the same ordering
+            # the per-row `order_by(id).limit(1)` used.
+            first_ids = [
+                mid
+                for _sid, mid in (
+                    await s.execute(
+                        select(ChatMessage.session_id, func.min(ChatMessage.id))
+                        .where(ChatMessage.session_id.in_(ids), ChatMessage.role == "user")
+                        .group_by(ChatMessage.session_id)
+                    )
+                ).all()
+            ]
+            previews: dict[str, str] = {}
+            if first_ids:
+                previews = {
+                    sid: content
+                    for sid, content in (
+                        await s.execute(
+                            select(ChatMessage.session_id, ChatMessage.content).where(
+                                ChatMessage.id.in_(first_ids)
+                            )
+                        )
+                    ).all()
+                }
             out = []
             for row in rows:
-                count = (
-                    await s.execute(
-                        select(func.count(ChatMessage.id)).where(ChatMessage.session_id == row.id)
-                    )
-                ).scalar_one()
-                first = (
-                    await s.execute(
-                        select(ChatMessage.content)
-                        .where(ChatMessage.session_id == row.id, ChatMessage.role == "user")
-                        .order_by(ChatMessage.id)
-                        .limit(1)
-                    )
-                ).scalar_one_or_none()
                 d = _session_dict(row)
-                d["message_count"] = count
-                d["preview"] = (first or "")[:80]
+                d["message_count"] = counts.get(row.id, 0)
+                d["preview"] = (previews.get(row.id) or "")[:80]
                 out.append(d)
             return out
 

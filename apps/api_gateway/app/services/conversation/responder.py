@@ -40,25 +40,31 @@ async def _active_llm_entry() -> dict | None:
     return entry if entry and entry["enabled"] else None
 
 
-async def get_active_llm_model() -> str:
+async def _active_llm_config() -> tuple[str, str, str]:
+    """(base_url, api_key, model) of the active LLM entry, resolved ONCE.
+
+    The three getters below each used to re-resolve the entry and its provider
+    credentials from scratch, and every responder build called all three -- so a
+    single build resolved the same row three times over and could, in principle,
+    compose a base_url from one state of the registry with a model from another.
+    """
     entry = await _active_llm_entry()
-    return entry["model_id"] if entry else ""
+    if not entry:
+        return "", "", ""
+    base_url, api_key = await resolve_credentials(entry)
+    return base_url, api_key, entry["model_id"]
+
+
+async def get_active_llm_model() -> str:
+    return (await _active_llm_config())[2]
 
 
 async def get_active_llm_base_url() -> str:
-    entry = await _active_llm_entry()
-    if not entry:
-        return ""
-    base_url, _api_key = await resolve_credentials(entry)
-    return base_url
+    return (await _active_llm_config())[0]
 
 
 async def get_active_llm_api_key() -> str:
-    entry = await _active_llm_entry()
-    if not entry:
-        return ""
-    _base_url, api_key = await resolve_credentials(entry)
-    return api_key
+    return (await _active_llm_config())[1]
 
 
 async def set_active_llm_config(base_url: str, api_key: str, model: str, engine: str = "custom") -> None:
@@ -398,12 +404,12 @@ def resolve_system_prompt(
 
 
 async def build_responder() -> Responder:
-    base_url = await get_active_llm_base_url()
+    base_url, api_key, model = await _active_llm_config()
     if base_url:
         return OpenAICompatResponder(
             base_url=base_url,
-            api_key=await get_active_llm_api_key(),
-            model=await get_active_llm_model(),
+            api_key=api_key,
+            model=model,
             system_prompt=resolve_system_prompt(None),
             timeout=system_config_store.get().conversation.llm_timeout_seconds,
         )
@@ -427,12 +433,18 @@ async def build_responder_ex(
     tells the model to call end_conversation, and a model told to call a tool that
     was never registered will keep trying instead of just saying goodbye.
     """
-    effective_url = base_url if base_url is not None else await get_active_llm_base_url()
+    # Resolved once, and only when something is actually left to default. A
+    # fully-overridden build (the common case: a profile with its own LLM row)
+    # now touches the registry zero times instead of three.
+    default_url = default_key = default_model = ""
+    if base_url is None or api_key is None or model is None:
+        default_url, default_key, default_model = await _active_llm_config()
+    effective_url = base_url if base_url is not None else default_url
     if effective_url:
         return OpenAICompatResponder(
             base_url=effective_url,
-            api_key=api_key if api_key is not None else await get_active_llm_api_key(),
-            model=model if model is not None else await get_active_llm_model(),
+            api_key=api_key if api_key is not None else default_key,
+            model=model if model is not None else default_model,
             system_prompt=resolve_system_prompt(
                 system_prompt, voice_optimized, can_hang_up=can_hang_up
             ),

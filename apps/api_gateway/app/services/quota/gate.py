@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select
@@ -34,6 +35,9 @@ def _current_month_key() -> str:
 
 
 async def current_spend(*, scope: str, scope_id: str, period: str) -> float:
+    """Exact aggregate, straight off the DB. Read paths that display a number
+    (routes/quotas.py, routes/usage.py) use this; the pre-flight gate below uses
+    the cached wrapper."""
     stmt = select(func.coalesce(func.sum(UsageEvent.cost_usd), 0.0))
     if scope == "user":
         stmt = stmt.where(UsageEvent.user_id == scope_id)
@@ -45,6 +49,63 @@ async def current_spend(*, scope: str, scope_id: str, period: str) -> float:
         stmt = stmt.where(UsageEvent.ts >= start, UsageEvent.ts < end)
     async with db_session() as s:
         return float((await s.execute(stmt)).scalar_one() or 0.0)
+
+
+# Cached spend for the PRE-FLIGHT path only.
+#
+# quota_gate runs before every conversation turn, before every farewell, and on
+# every metered HTTP route, and each applicable quota costs it one SUM over the
+# month's usage_events -- a scan that grows with the amount of usage the
+# deployment has. Re-deriving it from scratch several times a second is the
+# wrong shape for a budget check.
+#
+# The cache stays accurate rather than merely fresh: record_usage() folds each
+# newly written cost into whatever entries it belongs to (note_spend below), so
+# spend a turn just incurred is visible to the very next gate call. The TTL is
+# the backstop for what this process cannot see -- another worker's writes, a
+# backfill, the month rolling over -- not the primary mechanism.
+_SPEND_TTL_S = 30.0
+_spend_cache: dict[tuple[str, str, str], tuple[float, float]] = {}
+
+
+def _cache_key(scope: str, scope_id: str, period: str) -> tuple[str, str, str]:
+    return (scope, scope_id, period)
+
+
+async def _cached_spend(*, scope: str, scope_id: str, period: str) -> float:
+    key = _cache_key(scope, scope_id, period)
+    cached = _spend_cache.get(key)
+    if cached is not None and time.monotonic() < cached[0]:
+        return cached[1]
+    spend = await current_spend(scope=scope, scope_id=scope_id, period=period)
+    _spend_cache[key] = (time.monotonic() + _SPEND_TTL_S, spend)
+    return spend
+
+
+def note_spend(*, user_id: str, provider_id: str, cost_usd: float) -> None:
+    """Fold one just-written cost into every cached aggregate that covers it.
+
+    Called by record_usage after the row is committed. Without it the gate would
+    be reading a number up to _SPEND_TTL_S stale and could wave through a turn
+    that has already blown the budget.
+    """
+    if not cost_usd:
+        return
+    for key, (expires_at, spend) in list(_spend_cache.items()):
+        scope, scope_id, _period = key
+        covers = (
+            scope == "global"
+            or (scope == "user" and scope_id == (user_id or ""))
+            or (scope == "provider" and provider_id and scope_id == provider_id)
+        )
+        if covers:
+            _spend_cache[key] = (expires_at, spend + cost_usd)
+
+
+def invalidate_spend_cache() -> None:
+    """Drop every cached aggregate. For tests, and for the admin paths that
+    change what spend even means (editing a quota's scope/period)."""
+    _spend_cache.clear()
 
 
 def _applies(q: dict, user_id: str, provider_id: str) -> bool:
@@ -75,7 +136,9 @@ async def quota_gate(
         for q in quotas:
             if not _applies(q, user_id, provider_id):
                 continue
-            spend = await current_spend(scope=q["scope"], scope_id=q["scope_id"], period=q["period"])
+            spend = await _cached_spend(
+                scope=q["scope"], scope_id=q["scope_id"], period=q["period"]
+            )
             if spend >= q["limit_usd"] > 0:
                 raise QuotaExceededError(q["scope"], q["scope_id"], q["limit_usd"], spend, q["period"])
     except QuotaExceededError as exc:

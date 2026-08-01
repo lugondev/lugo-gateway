@@ -36,5 +36,14 @@ async def record_usage(*, user_id, profile_id, kind, engine, model_id, unit,
                 cost_usd=cost, request_id=request_id, status=status,
             ))
             await s.commit()
+        # Keep the quota pre-flight's cached aggregate exact rather than merely
+        # fresh: the gate now reads a cached SUM (it runs before every turn and
+        # re-scanning the month each time does not scale), so a cost this
+        # process just wrote has to be folded in, not waited out. Imported
+        # function-locally -- quota.gate imports this module, so a top-level
+        # import would be a cycle.
+        from app.services.quota.gate import note_spend
+
+        note_spend(user_id=user_id or "", provider_id=provider_id, cost_usd=cost)
     except Exception as exc:  # noqa: BLE001 - metering must never break a turn
         logger.warning("record_usage failed (%s/%s/%s): %s", kind, engine, model_id, exc)

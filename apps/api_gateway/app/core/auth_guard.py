@@ -378,6 +378,14 @@ class WsIdentity:
     # previously documented in prose across two comment blocks (round-2
     # review, minor).
     via_fleet_token: bool = False
+    # The DB role of this identity's user, captured by the branch that resolved
+    # it. Set ONLY where `via_login` is (the cookie-session branch), which is
+    # the only place it is read -- ws_session_owner_denied's admin bypass used
+    # to re-fetch the same user row it had just been fetched from, microseconds
+    # apart, on every WS connect that resumes a session. Deliberately defaults
+    # to None so a future branch that forgets to set it is denied the bypass by
+    # construction, the same fail-closed shape as `via_login` itself.
+    role: str | None = None
 
 
 async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
@@ -408,7 +416,7 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
         user = await user_store.get_by_id(session_user_id)
         if user is None or user.disabled:
             return None
-        return WsIdentity(user_id=user.id, device_id=None, via_login=True)
+        return WsIdentity(user_id=user.id, device_id=None, via_login=True, role=user.role)
 
     token = websocket.query_params.get("device_token")
     if not token:
@@ -481,12 +489,14 @@ async def ws_session_owner_denied(session_id: str, identity: WsIdentity) -> bool
     a fresh session under this id" path."""
     if identity.unauthenticated:
         return False
-    if identity.user_id and identity.via_login:
-        from app.services.auth.users import user_store
-
-        caller = await user_store.get_by_id(identity.user_id)
-        if caller is not None and caller.role == "admin":
-            return False
+    # identity.role, not a second user_store.get_by_id: resolve_ws_identity's
+    # cookie branch already read this user's row moments ago, in the same
+    # handshake, and carried the role over. Both properties the allow-list
+    # depends on still hold -- via_login is set nowhere else, and `role`
+    # defaults to None -- so an identity source added later is still denied the
+    # bypass by construction rather than granted it by omission.
+    if identity.user_id and identity.via_login and identity.role == "admin":
+        return False
     from app.services.history.store import session_store
 
     sess = await session_store.get(session_id)

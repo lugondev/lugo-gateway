@@ -20,7 +20,12 @@ class ChatSession(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     profile_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Indexed: every listing orders by it (History, and latest_for_client's
+    # "the newest conversation of this client", which runs on every device
+    # connect), so without it each of those sorts the whole table.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     # Which client this conversation belongs to. `source` is the kind of client

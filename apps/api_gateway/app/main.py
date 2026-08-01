@@ -180,6 +180,20 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Shutdown. There was nothing here at all, so a restart dropped whatever was
+    # in flight and left sockets and DB connections to the interpreter: the
+    # keep-alive MCP clients, and the background tasks the conversation core
+    # spawns (memory extraction runs at teardown of every session -- exactly the
+    # work in flight when a fleet of devices disconnects because the server is
+    # going down).
+    from app.services.conversation.session import drain_background_tasks
+    from app.services.db.engine import dispose_engine
+    from app.services.mcp.pool import mcp_pool
+
+    await drain_background_tasks(timeout=settings.shutdown_drain_timeout_s)
+    await mcp_pool.aclose()
+    await dispose_engine()
+
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 

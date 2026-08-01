@@ -12,6 +12,7 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -20,6 +21,46 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.core.settings import settings
+
+# How long a connection waits for a lock before giving up with "database is
+# locked". SQLite serializes writers, and this process has TWO engines on the
+# same file (this one, plus the synchronous one the config stores use), so
+# contention is normal rather than exceptional.
+_BUSY_TIMEOUT_MS = 10_000
+
+
+def apply_sqlite_pragmas(dbapi_connection) -> None:
+    """Per-connection SQLite setup. Applied to BOTH engines (this module and
+    db/sync_engine.py) -- they open the same file, so a pragma set on one side
+    only would leave the other with the defaults.
+
+    Why each one:
+
+    * journal_mode=WAL -- the default rollback journal makes a writer block
+      every reader and vice versa. On a voice turn that means a usage row being
+      written can stall the session lookup of a device connecting at the same
+      moment. WAL is a persistent property of the database FILE, so setting it
+      repeatedly is a no-op after the first time; it is set per connection
+      anyway because a fresh file (tests, first boot) needs it too.
+    * busy_timeout -- without it a contended write raises "database is locked"
+      immediately instead of waiting for the other writer to finish.
+    * synchronous=NORMAL -- safe under WAL (the WAL itself is still durable
+      across process crashes; only an OS-level crash can lose the last commits)
+      and removes an fsync from every single commit. Every turn writes usage
+      rows and messages, so this is on the hot path.
+
+    Deliberately NOT set: foreign_keys=ON. The schema has FKs
+    (messages -> sessions, devices -> users) that have never been enforced, and
+    turning enforcement on under existing data is a data-migration question, not
+    a pragma.
+    """
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+    finally:
+        cursor.close()
 
 _engine: AsyncEngine | None = None
 _factory: async_sessionmaker[AsyncSession] | None = None
@@ -49,7 +90,8 @@ def configure(url: str | None = None) -> None:
             _engine.sync_engine.dispose()
     url = url or settings.database_url_resolved
     engine_kwargs: dict = {}
-    if url.startswith("sqlite"):
+    is_sqlite = url.startswith("sqlite")
+    if is_sqlite:
         db_file = url.split("///", 1)[-1]
         if db_file and db_file != ":memory:":
             Path(db_file).parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +107,13 @@ def configure(url: str | None = None) -> None:
 
         engine_kwargs["poolclass"] = NullPool
     _engine = create_async_engine(url, **engine_kwargs)
+    if is_sqlite:
+        # On sync_engine, not the AsyncEngine: the "connect" event fires on the
+        # DBAPI layer, which for aiosqlite is SQLAlchemy's sync-facade adapter.
+        @event.listens_for(_engine.sync_engine, "connect")
+        def _on_connect(dbapi_connection, _record):  # pragma: no cover - trivial
+            apply_sqlite_pragmas(dbapi_connection)
+
     _factory = async_sessionmaker(_engine, expire_on_commit=False)
     _initialized = False
     # A fresh lock too -- an asyncio.Lock first acquired under a now-closed
@@ -149,9 +198,26 @@ async def init_db() -> None:
             await _ensure_column(conn, "devices", "profile_id", "VARCHAR(128) DEFAULT ''")
             await _ensure_column(conn, "sessions", "source", "VARCHAR(16) DEFAULT ''")
             await _ensure_column(conn, "sessions", "client_id", "VARCHAR(64) DEFAULT ''")
+            # create_all creates missing TABLES, never indexes on an existing
+            # one, so an index added to a model after first boot needs this.
+            # "IF NOT EXISTS" is valid on both SQLite and PostgreSQL.
+            await conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_sessions_created_at ON sessions (created_at)"
+            )
             await _backfill_null_user_ids(conn, "memories")
             await _ensure_doc_composite_pk(conn)
         _initialized = True
+
+
+async def dispose_engine() -> None:
+    """Close every pooled DB connection. For application shutdown -- without it
+    the interpreter tore them down at exit instead, which on SQLite means the
+    WAL is checkpointed (or not) by whatever ran last."""
+    global _initialized
+    if _engine is None:
+        return
+    await _engine.dispose()
+    _initialized = False
 
 
 @asynccontextmanager

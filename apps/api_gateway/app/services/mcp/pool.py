@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 
 _PoolKey = tuple[str, frozenset[tuple[str, str]]]
 
+# Detached close tasks must be referenced somewhere or CPython may collect them
+# mid-flight (same hazard as conversation/session.py's _background_tasks).
+_closing_tasks: set[asyncio.Task] = set()
+
 
 class McpConnectionPool:
     """Lazy-connecting pool of MCP HTTP clients, one per (URL, headers).
@@ -82,7 +86,36 @@ class McpConnectionPool:
         for key in [k for k in self._cache if k[0] == url]:
             self._cache.pop(key, None)
         for key in [k for k in self._clients if k[0] == url]:
-            self._clients.pop(key, None)
+            client = self._clients.pop(key, None)
+            # Each client now owns a keep-alive httpx.AsyncClient, so dropping
+            # the reference is no longer enough -- the sockets have to be
+            # released. This is a sync method called from sync route handlers,
+            # so the close is scheduled rather than awaited; outside a loop
+            # (tests, teardown) there is nothing holding the sockets open
+            # anyway once the object is collected.
+            if client is not None:
+                self._schedule_close(client)
+
+    @staticmethod
+    def _schedule_close(client: McpHttpClient) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(client.aclose())
+        _closing_tasks.add(task)
+        task.add_done_callback(_closing_tasks.discard)
+
+    async def aclose(self) -> None:
+        """Release every pooled client. For application shutdown."""
+        clients = list(self._clients.values())
+        self._clients.clear()
+        self._cache.clear()
+        for client in clients:
+            try:
+                await client.aclose()
+            except Exception as exc:  # noqa: BLE001 - shutdown must not fail
+                logger.warning("closing MCP client failed: %s", exc)
 
 
 mcp_pool = McpConnectionPool(

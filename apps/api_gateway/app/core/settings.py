@@ -114,6 +114,12 @@ class Settings(BaseSettings):
     mcp_tool_cache_ttl_seconds: int = 300
     mcp_connection_timeout_seconds: float = 10.0
     mcp_tool_timeout_seconds: float = 30.0
+    # Total budget for listing tools from ALL configured MCP servers while a
+    # conversation is starting up. The per-request timeouts above bound a server
+    # that is slow to connect or slow to answer one call; this bounds the whole
+    # discovery step, which sits between "socket accepted" and `session_started`
+    # -- the user cannot speak until it finishes.
+    mcp_tool_discovery_timeout_seconds: float = 10.0
     # Function-calling / tool use
     conversation_tools_enabled: bool = False
     conversation_tool_max_iters: int = 3
@@ -151,6 +157,10 @@ class Settings(BaseSettings):
     ollama_bin: str = ""
     warmup_on_startup: bool = True
     warmup_startup_timeout_s: int = 180
+    # How long shutdown waits for in-flight background work (memory extraction
+    # from sessions that were closing as the server went down) before cancelling
+    # it. Short enough not to fight a container orchestrator's own kill timer.
+    shutdown_drain_timeout_s: float = 10.0
     stt_model_dir: str = "models/stt"
     vosk_model_base_url: str = "https://alphacephei.com/vosk/models"
     stt_stream_sample_rate: int = 16000

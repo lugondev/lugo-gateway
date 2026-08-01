@@ -325,12 +325,46 @@ async def test_ws_session_owner_denied_still_bypasses_for_real_login(_with_passw
     """Behavioral-equivalence check for the rewrite: the one legitimate
     bypass source (an interactive cookie login, via_login=True) must still
     get it -- the allow-list must be a pure reshaping of "just the
-    cookie-session branch", not an accidental narrowing."""
-    from app.core.auth_guard import WsIdentity, ws_session_owner_denied
+    cookie-session branch", not an accidental narrowing.
+
+    Driven through resolve_ws_identity rather than a hand-built WsIdentity, so
+    it proves the property for the identity PRODUCTION actually hands in. That
+    matters now that the admin role is carried on the identity (captured by the
+    cookie branch that already read the row) instead of re-fetched here.
+    """
+    from app.core.auth_guard import resolve_ws_identity, ws_session_owner_denied
 
     admin = await user_store.create(f"real-admin-login-{uuid.uuid4().hex[:8]}", "pw", role="admin")
     victim_sid = "victim-real-login-" + uuid.uuid4().hex[:8]
     await session_store.create(victim_sid, user_id="someone-else")
 
-    login_identity = WsIdentity(user_id=admin["id"], device_id=None, via_login=True)
-    assert await ws_session_owner_denied(victim_sid, login_identity) is False
+    identity = await resolve_ws_identity(_CookieWs(admin["id"]))
+    assert identity.via_login is True
+    assert identity.role == "admin"
+    assert await ws_session_owner_denied(victim_sid, identity) is False
+
+
+class _CookieWs:
+    """The bare minimum resolve_ws_identity reads off a WebSocket."""
+
+    def __init__(self, user_id: str) -> None:
+        self.scope = {"subprotocols": []}
+        self.session = {"user_id": user_id}
+        self.query_params = {}
+
+
+@pytest.mark.asyncio
+async def test_ws_session_owner_denied_fails_closed_without_a_carried_role(_with_password):
+    """The admin bypass now reads `identity.role`, and that field defaults to
+    None. A future identity source that sets via_login but forgets the role is
+    therefore denied the bypass by construction -- the same fail-closed shape
+    the allow-list itself has, extended to the new field rather than working
+    around it."""
+    from app.core.auth_guard import WsIdentity, ws_session_owner_denied
+
+    admin = await user_store.create(f"roleless-admin-{uuid.uuid4().hex[:8]}", "pw", role="admin")
+    victim_sid = "victim-roleless-" + uuid.uuid4().hex[:8]
+    await session_store.create(victim_sid, user_id="someone-else")
+
+    roleless = WsIdentity(user_id=admin["id"], device_id=None, via_login=True)  # role defaults None
+    assert await ws_session_owner_denied(victim_sid, roleless) is True
