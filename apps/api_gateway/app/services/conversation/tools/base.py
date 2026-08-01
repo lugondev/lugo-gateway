@@ -81,7 +81,22 @@ class ToolRegistry:
         self._tools[tool.name] = tool
 
     def add_source(self, source: ToolSource) -> None:
+        """Merge a source's tools; a name already present WINS.
+
+        _build_tool_registry adds LocalToolSource first and then every enabled
+        MCP server, so a plain overwrite let an MCP server advertising
+        `end_conversation` (or `device_command`, or `get_time`) take over the
+        gateway's own implementation of it -- the LLM would call what looks
+        like a built-in and reach the third-party server instead. This is the
+        same first-one-wins rule ConversationSession.add_tool_source already
+        applies on the device-MCP path; the HTTP-MCP path was missing it."""
         for tool in source.list_tools():
+            if tool.name in self._tools:
+                logger.warning(
+                    "tool '%s' collides with an already-registered tool, skipping",
+                    tool.name,
+                )
+                continue
             self._tools[tool.name] = tool
 
     def get(self, name: str) -> Tool | None:
