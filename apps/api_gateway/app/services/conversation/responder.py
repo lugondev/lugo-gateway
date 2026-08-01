@@ -249,21 +249,35 @@ class OpenAICompatResponder(Responder):
         ctx = ctx or _TC()
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
-        for _ in range(max_iters):
+        for iteration in range(max_iters):
             messages = [{"role": "system", "content": self.system_prompt}, *working]
-            resp = await self._client.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
-                json={"model": self.model, "messages": messages, "tools": registry.openai_schema()},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            try:
+                resp = await self._client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "tools": registry.openai_schema(),
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                assistant_msg = data["choices"][0]["message"]
+            except Exception as exc:  # noqa: BLE001 - same contract as _stream_history
+                # Wrapped like the streaming half does. A raw httpx/KeyError from
+                # the tool-detect call surfaced verbatim in the client's `error`
+                # event ("Client error '401 Unauthorized' for url ...") instead of
+                # the one message this class exists to produce.
+                logger.warning("LLM tool-detect failed: %s", exc)
+                raise LLMUnavailableError(
+                    f"LLM offline ({self.model} @ {self.base_url}): {exc}"
+                ) from exc
 
-            assistant_msg = data["choices"][0]["message"]
             tool_calls = assistant_msg.get("tool_calls")
-            logger.info("DEBUG_HANG _tool_then_stream: iter=%d tool_calls=%s", _, bool(tool_calls))
             if not tool_calls:
                 break
+            logger.debug("tool loop iter %d: %d tool call(s)", iteration, len(tool_calls))
 
             working.append(assistant_msg)
             for tc in tool_calls:
@@ -272,12 +286,9 @@ class OpenAICompatResponder(Responder):
                     tool_args = json.loads(tc["function"].get("arguments") or "{}")
                 except json.JSONDecodeError:
                     tool_args = {}
-                logger.info("DEBUG_HANG _tool_then_stream: running tool %s", tool_name)
                 result = await registry.run(tool_name, tool_args, ctx)
-                logger.info("DEBUG_HANG _tool_then_stream: tool %s done", tool_name)
                 working.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
 
-        logger.info("DEBUG_HANG _tool_then_stream: handing off to _stream_history, %d messages", len(working))
         async for chunk in self._stream_history(working):
             yield chunk
 
@@ -286,7 +297,11 @@ class OpenAICompatResponder(Responder):
         messages = [{"role": "system", "content": self.system_prompt}, *history]
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         agg = SentenceAggregator()
-        logger.info("DEBUG_HANG _stream_history: opening stream request")
+        # NB: nothing in this method may log a sentence, a delta, or the message
+        # list. A debugging pass once logged every yielded sentence at INFO,
+        # which put the private content of every conversation into the server
+        # log -- the same trap services/conversation/session.py's pacing loop
+        # documents. Counts and statuses only.
         try:
             async with self._client.stream(
                 "POST",
@@ -299,16 +314,12 @@ class OpenAICompatResponder(Responder):
                     "stream_options": {"include_usage": True},
                 },
             ) as resp:
-                logger.info("DEBUG_HANG _stream_history: got response headers, status=%s", resp.status_code)
                 resp.raise_for_status()
-                line_count = 0
                 async for line in resp.aiter_lines():
-                    line_count += 1
                     if not line.startswith("data:"):
                         continue
                     data = line[5:].strip()
                     if data == "[DONE]":
-                        logger.info("DEBUG_HANG _stream_history: saw [DONE] after %d lines", line_count)
                         break
                     parsed = json.loads(data)
                     usage = parsed.get("usage")
@@ -323,15 +334,9 @@ class OpenAICompatResponder(Responder):
                     delta = choices[0].get("delta", {}).get("content", "")
                     if delta:
                         for sentence in agg.push(delta):
-                            logger.info("DEBUG_HANG _stream_history: yielding sentence %r", sentence)
                             yield sentence
-                else:
-                    logger.info("DEBUG_HANG _stream_history: aiter_lines exhausted without [DONE], %d lines", line_count)
-            logger.info("DEBUG_HANG _stream_history: stream closed, flushing aggregator")
             for sentence in agg.flush():
-                logger.info("DEBUG_HANG _stream_history: yielding flushed sentence %r", sentence)
                 yield sentence
-            logger.info("DEBUG_HANG _stream_history: done")
         except Exception as exc:  # noqa: BLE001
             logger.warning("LLM stream failed: %s", exc)
             raise LLMUnavailableError(
