@@ -3,7 +3,13 @@ from fastapi import APIRouter, HTTPException, Request
 from app.core.actor import current_user_id
 from app.core.client_ip import client_ip
 from app.core.errors import AuthError, DeviceSerialConflictError, PairingCodeInvalidError
-from app.schemas.devices import DeviceProfileRequest, PairClaimRequest, PairInitRequest
+from app.schemas.devices import (
+    DeviceNameRequest,
+    DeviceProfileRequest,
+    PairClaimRequest,
+    PairInitRequest,
+)
+from app.services.auth.device_naming import default_device_name
 from app.services.auth.devices import device_store
 from app.services.auth.pairing import claim_rate_limiter, init_rate_limiter, pending_pairings
 from app.services.profile_visibility import visible_profile_or_none
@@ -86,8 +92,9 @@ async def pair_claim(payload: PairClaimRequest, request: Request) -> dict:
             "a device with this hardware is already paired; revoke it first"
         )
     profile_id = _checked_profile_name(payload.profile_id, user_id)
+    name = payload.name.strip() or default_device_name(entry.serial)
     device, raw_token = await device_store.create(
-        user_id, payload.name, entry.serial, profile_id=profile_id
+        user_id, name, entry.serial, profile_id=profile_id
     )
     pending_pairings.mark_claimed(payload.code, device["id"], raw_token)
     return {"success": True, "data": device}
@@ -120,6 +127,33 @@ async def set_my_device_profile(
         # purpose -- same reasoning as _checked_profile_name.
         raise HTTPException(status_code=404, detail=f"device '{device_id}' not found")
     return {"success": True, "data": {"id": device_id, "profile_id": profile_id}}
+
+
+@router.post("/mine/{device_id}/name")
+async def rename_my_device(
+    device_id: str, payload: DeviceNameRequest, request: Request
+) -> dict:
+    """Rename a device.
+
+    Separate from the profile endpoint on purpose: that one moves a device
+    between assistants, this one only changes what the owner calls it. Neither
+    touches the pairing token."""
+    user_id = current_user_id(request)
+    if not user_id:
+        raise AuthError("login required")
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="device name cannot be empty")
+    if len(name) > 128:
+        # Matches the Device.name column (String(128)); rejecting here beats a
+        # database error or a silent truncation the user never sees.
+        raise HTTPException(status_code=400, detail="device name is too long")
+    ok = await device_store.set_name(device_id, name, owner_user_id=user_id)
+    if not ok:
+        # Someone else's device id and a nonexistent one look identical here, on
+        # purpose -- same reasoning as _checked_profile_name.
+        raise HTTPException(status_code=404, detail=f"device '{device_id}' not found")
+    return {"success": True, "data": {"id": device_id, "name": name}}
 
 
 @router.post("/mine/{device_id}/revoke")

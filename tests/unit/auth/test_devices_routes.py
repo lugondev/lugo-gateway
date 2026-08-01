@@ -255,3 +255,114 @@ def test_deleting_a_profile_unassigns_its_devices_without_revoking_them(
     # The pairing token is hardware identity: losing an assistant must not cost
     # the user a trip to the device.
     assert device["revoked"] is False
+
+
+def test_claim_without_a_name_uses_the_devices_own_ap_name(client, _logged_in_user):
+    init = client.post(
+        "/v1/devices/pair/init", json={"serial": "2884855048d0"}
+    ).json()["data"]
+
+    # No `name` key at all: the user pairs on the code alone and names the
+    # device afterwards, if they want to.
+    resp = client.post("/v1/devices/pair/claim", json={"code": init["code"]})
+
+    assert resp.status_code == 200
+    assert resp.json()["data"]["name"] == "Lugo-48D0"
+
+
+def test_claim_with_a_blank_name_gets_the_derived_one_too(client, _logged_in_user):
+    init = client.post(
+        "/v1/devices/pair/init", json={"serial": "2884855048d0"}
+    ).json()["data"]
+
+    resp = client.post(
+        "/v1/devices/pair/claim", json={"code": init["code"], "name": "   "}
+    )
+
+    assert resp.json()["data"]["name"] == "Lugo-48D0"
+
+
+def test_an_explicit_name_still_wins(client, _logged_in_user):
+    # Older clients (the static devices.js panel) always send one.
+    init = client.post(
+        "/v1/devices/pair/init", json={"serial": "2884855048d0"}
+    ).json()["data"]
+
+    resp = client.post(
+        "/v1/devices/pair/claim", json={"code": init["code"], "name": "Kitchen speaker"}
+    )
+
+    assert resp.json()["data"]["name"] == "Kitchen speaker"
+
+
+def _pair_a_device(client, serial="2884855048d0"):
+    """Pair one device and return its dict. Assumes a logged-in client."""
+    init = client.post("/v1/devices/pair/init", json={"serial": serial}).json()["data"]
+    return client.post("/v1/devices/pair/claim", json={"code": init["code"]}).json()["data"]
+
+
+def test_rename_changes_the_name_and_leaves_the_binding_alone(client, _logged_in_user):
+    device = _pair_a_device(client)
+
+    resp = client.post(
+        f"/v1/devices/mine/{device['id']}/name", json={"name": "Kitchen speaker"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["data"] == {"id": device["id"], "name": "Kitchen speaker"}
+    listed = client.get("/v1/devices/mine").json()["data"]
+    assert [d["name"] for d in listed] == ["Kitchen speaker"]
+    # A name is a label, not hardware identity: renaming must not send the user
+    # back to the device to read a fresh code.
+    assert listed[0]["profile_id"] == device["profile_id"]
+
+
+def test_rename_trims_surrounding_whitespace(client, _logged_in_user):
+    device = _pair_a_device(client)
+
+    resp = client.post(
+        f"/v1/devices/mine/{device['id']}/name", json={"name": "  Kitchen  "}
+    )
+
+    assert resp.json()["data"]["name"] == "Kitchen"
+
+
+def test_rename_to_blank_is_rejected(client, _logged_in_user):
+    device = _pair_a_device(client)
+
+    resp = client.post(f"/v1/devices/mine/{device['id']}/name", json={"name": "   "})
+
+    assert resp.status_code == 400
+
+
+def test_rename_over_the_column_length_is_rejected(client, _logged_in_user):
+    device = _pair_a_device(client)
+
+    resp = client.post(
+        f"/v1/devices/mine/{device['id']}/name", json={"name": "x" * 129}
+    )
+
+    assert resp.status_code == 400
+
+
+def test_rename_someone_elses_device_is_indistinguishable_from_a_missing_one(client):
+    client.post("/api/auth/signup", json={"username": "owner", "password": "pw"})
+    client.post("/api/auth/signup", json={"username": "other", "password": "pw"})
+
+    client.post("/api/auth/login", json={"username": "owner", "password": "pw"})
+    device = _pair_a_device(client, serial="ffffffff1234")
+
+    client.post("/api/auth/login", json={"username": "other", "password": "pw"})
+    theirs = client.post(
+        f"/v1/devices/mine/{device['id']}/name", json={"name": "mine now"}
+    )
+    missing = client.post(
+        "/v1/devices/mine/does-not-exist/name", json={"name": "mine now"}
+    )
+
+    # Same status AND same message template: otherwise this becomes a device-id
+    # oracle. Assert the wording, not just the code -- a future split into
+    # "not yours" vs "not found" would pass a status-only check.
+    assert theirs.status_code == missing.status_code == 404
+    assert theirs.json()["detail"] == f"device '{device['id']}' not found"
+    assert missing.json()["detail"] == "device 'does-not-exist' not found"

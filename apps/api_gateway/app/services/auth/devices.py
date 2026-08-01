@@ -119,6 +119,24 @@ class DeviceStore:
             await s.commit()
             return True
 
+    async def set_name(self, device_id: str, name: str, owner_user_id: str) -> bool:
+        """Rename one of `owner_user_id`'s devices. False if it isn't theirs.
+
+        Same ownership shape as set_profile(): a device_id belonging to someone
+        else returns False and is reported by the route as 404, so this cannot be
+        used to probe which device ids exist. A revoked device is not renamable
+        either -- it is a tombstone, not a device the owner still has.
+
+        Touches `name` only. The token is hardware identity and the profile is a
+        soft setting; neither has anything to do with a label."""
+        async with db_session() as s:
+            row = await s.get(Device, device_id)
+            if row is None or row.user_id != owner_user_id or row.revoked:
+                return False
+            row.name = name
+            await s.commit()
+            return True
+
     async def clear_profile(self, profile_id: str) -> int:
         """Unbind every device pointing at `profile_id`; returns how many.
 
