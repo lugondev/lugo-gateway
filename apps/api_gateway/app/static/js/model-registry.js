@@ -1,4 +1,4 @@
-import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
+import { el, print, escapeHtml, patchJson, runBulk, printBulkSummary } from "./helpers.js";
 import { renderDataTable } from "./data-table.js";
 import { confirmDialog } from "./modal.js";
 
@@ -554,21 +554,11 @@ function _configFromForm(id) {
 }
 
 async function _patchEntryRaw(id, fields) {
-  try {
-    const resp = await fetch(`/v1/model_registry/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(fields),
-    });
-    if (!resp.ok) {
-      const body = await resp.json().catch(() => ({}));
-      return { ok: false, error: body.detail || "Update failed" };
-    }
-    const body = await resp.json().catch(() => ({}));
-    return { ok: true, cleared: (body.data && body.data.cleared) || [] };
-  } catch (error) {
-    return { ok: false, error: String(error) };
-  }
+  const result = await patchJson(`/v1/model_registry/${encodeURIComponent(id)}`, fields);
+  if (!result.ok) return result;
+  // Disabling a row cascades: the API reports which profile bindings it had to
+  // clear, and the caller surfaces that list to the admin.
+  return { ok: true, cleared: (result.body.data && result.body.data.cleared) || [] };
 }
 
 // Disabling/deleting a row blanks the bindings of every profile that pinned it

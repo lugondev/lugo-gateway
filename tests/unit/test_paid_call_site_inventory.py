@@ -142,7 +142,13 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "tests/unit/tts/test_tts_render_seam.py",
     ),
     ("services/conversation/session.py", "reply_stream"): (
-        2, "metered+gated", "conversation core LLM, tool and plain paths",
+        1, "metered+gated",
+        "conversation core LLM. Was 2 -- the typed-text and transcribed-speech "
+        "branches of _run_turn each carried their own identical copy of the "
+        "reply-and-persist tail; both now go through the single _answer() "
+        "closure, which is where the one _record_llm_usage() lives. One call "
+        "site, still metered, and a third input shape cannot arrive with its "
+        "own unmetered copy",
         "tests/unit/conversation/test_session_usage_metering.py",
     ),
     ("services/conversation/announce.py", "reply"): (

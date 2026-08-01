@@ -866,13 +866,16 @@ class ConversationSession:
                         await self.emit("audio_end", turn=turn, chunk_index=index)
             return parts
 
-        # Text input: skip STT, reply via the text responder (text→text / text→audio).
-        if text_input is not None:
-            user_text = (text_input or "").strip()
-            await self.emit("user_transcript", turn=turn, text=user_text, engine="text")
-            if not user_text:
-                await self.emit("turn_done", turn=turn, skipped="empty text")
-                return
+        async def _answer(user_text: str, log_note: str = "") -> None:
+            """Everything a turn does once it has a non-empty user utterance.
+
+            The two input shapes below (typed text, transcribed speech) differ
+            only in how they GET that utterance -- from there the work is
+            identical: history, memory, the responder stream, metering,
+            persistence, turn_done. It was written out twice, so a change to
+            the turn tail (a new metering call, the history cap) only ever
+            landed on one of the two input paths.
+            """
             self.history.append({"role": "user", "content": user_text})
             self.history = _tail(self.history)
             await self._persist("user", user_text)
@@ -890,8 +893,17 @@ class ConversationSession:
             self.history.append({"role": "assistant", "content": " ".join(parts)})
             self.history = _tail(self.history)
             await self._persist("assistant", " ".join(parts))
-            logger.info("turn %d: done at +%.0fms (text input)", turn, _elapsed_ms())
+            logger.info("turn %d: done at +%.0fms%s", turn, _elapsed_ms(), log_note)
             await self.emit("turn_done", turn=turn)
+
+        # Text input: skip STT, reply via the text responder (text→text / text→audio).
+        if text_input is not None:
+            user_text = (text_input or "").strip()
+            await self.emit("user_transcript", turn=turn, text=user_text, engine="text")
+            if not user_text:
+                await self.emit("turn_done", turn=turn, skipped="empty text")
+                return
+            await _answer(user_text, " (text input)")
             return
 
         # Audio input: build the wav for STT.
@@ -954,25 +966,7 @@ class ConversationSession:
             await self.emit("turn_done", turn=turn, skipped="empty transcript")
             return
 
-        self.history.append({"role": "user", "content": user_text})
-        self.history = _tail(self.history)
-        await self._persist("user", user_text)
-        await self._refresh_memory(user_text)
-        parts = await _stream_to_tts(
-            self.responder.reply_stream(
-                self.history,
-                registry=self.tool_registry,
-                ctx=self.tool_ctx,
-                max_iters=settings.conversation_tool_max_iters,
-            ),
-            self.responder.name,
-        )
-        await self._record_llm_usage()
-        self.history.append({"role": "assistant", "content": " ".join(parts)})
-        self.history = _tail(self.history)
-        await self._persist("assistant", " ".join(parts))
-        logger.info("turn %d: done at +%.0fms", turn, _elapsed_ms())
-        await self.emit("turn_done", turn=turn)
+        await _answer(user_text)
 
     async def _abort_turn(self, reason: str) -> None:
         if self.current_turn and not self.current_turn.done():

@@ -454,10 +454,10 @@ async def livehost_stream(websocket: WebSocket) -> None:
             await _record_llm_usage(responder)
             return parts
 
-        async def _run_voice_turn(audio_pcm: bytes) -> None:
-            nonlocal turn
-            turn += 1
-            await send("processing", turn=turn)
+        async def _quota_blocked_now() -> bool:
+            """True (having already told the client so) when this turn is over
+            quota. Both turn kinds below open with the same check and the same
+            error + turn_done pair; `turn` is read live, so each sees its own."""
             blocked, quota_message = await _quota_blocked_for(
                 user_id=identity.user_id or "", profile_name=profile_name or "",
                 pinned_engine=(profile.llm.engine if profile else "") or "",
@@ -466,6 +466,13 @@ async def livehost_stream(websocket: WebSocket) -> None:
             if blocked:
                 await send("error", message=quota_message)
                 await send("turn_done", turn=turn)
+            return blocked
+
+        async def _run_voice_turn(audio_pcm: bytes) -> None:
+            nonlocal turn
+            turn += 1
+            await send("processing", turn=turn)
+            if await _quota_blocked_now():
                 return
             wav = pcm16_to_wav_bytes(audio_pcm, sample_rate=sample_rate)
             try:
@@ -514,14 +521,7 @@ async def livehost_stream(websocket: WebSocket) -> None:
                 "social_reply", turn=turn,
                 event_count=len(social_turn.events), overflow_count=social_turn.overflow_count,
             )
-            blocked, quota_message = await _quota_blocked_for(
-                user_id=identity.user_id or "", profile_name=profile_name or "",
-                pinned_engine=(profile.llm.engine if profile else "") or "",
-                pinned_model=llm_model or (profile.llm.model if profile else "") or "",
-            )
-            if blocked:
-                await send("error", message=quota_message)
-                await send("turn_done", turn=turn)
+            if await _quota_blocked_now():
                 return
             history.append({"role": "user", "content": formatted_text})
             await persist("user", formatted_text)

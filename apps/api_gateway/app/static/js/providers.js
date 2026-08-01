@@ -1,4 +1,4 @@
-import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
+import { el, print, escapeHtml, patchJson, runBulk, printBulkSummary } from "./helpers.js";
 import { renderDataTable } from "./data-table.js";
 import { confirmDialog } from "./modal.js";
 
@@ -113,20 +113,7 @@ function renderProviders() {
 }
 
 async function _patchProviderRaw(id, fields) {
-  try {
-    const resp = await fetch(`/v1/providers/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(fields),
-    });
-    if (!resp.ok) {
-      const body = await resp.json().catch(() => ({}));
-      return { ok: false, error: body.detail || "Update failed" };
-    }
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: String(error) };
-  }
+  return patchJson(`/v1/providers/${encodeURIComponent(id)}`, fields);
 }
 
 async function bulkPatchProviders(ids, fields, verb) {

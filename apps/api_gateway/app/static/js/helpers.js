@@ -82,6 +82,29 @@ export function escapeHtml(str) {
   return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+// PATCH `url` with `fields` as JSON, never throwing: resolves to
+// `{ ok: true, body }` or `{ ok: false, error }` — the exact shape runBulk
+// below expects, which is why every admin table's row-edit goes through here.
+// Four tables (users, providers, quotas, model registry) each carried their
+// own copy of this, so a change to how the API reports a failure had to be
+// made four times.
+export async function patchJson(url, fields) {
+  try {
+    const resp = await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    });
+    // Parsed on both paths: a non-2xx carries {detail}, and a 2xx may carry a
+    // data payload the caller needs (the registry's `cleared` list).
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) return { ok: false, error: body.detail || "Update failed" };
+    return { ok: true, body };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
 // Runs `fn(id)` for every id in sequence. `fn` must resolve to
 // `{ ok: true }` or `{ ok: false, error }` and must never throw (catch
 // internally). Returns one "<label>: <error>" string per failed id — an

@@ -299,18 +299,32 @@ async def stt_stream(websocket: WebSocket) -> None:
         {"event_type": "session_started", "session_id": session_id, "sample_rate": sample_rate}
     )
 
-    async def _emit_result(result: STTResult) -> None:
+    async def _emit_event(event_type: str, payload: dict) -> None:
+        """One numbered frame on this socket.
+
+        `sequence` is what the client uses to order and de-duplicate, so every
+        send has to bump it -- which is why all five send sites below funnel
+        through here rather than each doing its own `sequence += 1` next to its
+        own StreamEvent(...) literal."""
         nonlocal sequence
         sequence += 1
         await _emit(
             websocket,
             channel,
             StreamEvent(
-                event_type="final" if result.is_final else "partial",
+                event_type=event_type,
                 session_id=session_id,
                 sequence=sequence,
-                payload=result.model_dump(),
+                payload=payload,
             ),
+        )
+
+    async def _emit_error(message: str) -> None:
+        await _emit_event("error", {"message": message})
+
+    async def _emit_result(result: STTResult) -> None:
+        await _emit_event(
+            "final" if result.is_final else "partial", result.model_dump()
         )
 
     watchdog = build_identity_watchdog(identity, interval_s=_IDENTITY_RECHECK_INTERVAL_S)
@@ -341,17 +355,7 @@ async def stt_stream(websocket: WebSocket) -> None:
                 try:
                     results = await stream.accept(frame)
                 except RuntimeError as exc:
-                    sequence += 1
-                    await _emit(
-                        websocket,
-                        channel,
-                        StreamEvent(
-                            event_type="error",
-                            session_id=session_id,
-                            sequence=sequence,
-                            payload={"message": str(exc)},
-                        ),
-                    )
+                    await _emit_error(str(exc))
                     continue
                 for result in results:
                     await _emit_result(result)
@@ -367,17 +371,7 @@ async def stt_stream(websocket: WebSocket) -> None:
                     try:
                         final = await stream.finalize()
                     except RuntimeError as exc:
-                        sequence += 1
-                        await _emit(
-                            websocket,
-                            channel,
-                            StreamEvent(
-                                event_type="error",
-                                session_id=session_id,
-                                sequence=sequence,
-                                payload={"message": str(exc)},
-                            ),
-                        )
+                        await _emit_error(str(exc))
                         final = None
                     if final is not None:
                         await _emit_result(final)
@@ -391,26 +385,11 @@ async def stt_stream(websocket: WebSocket) -> None:
                     recorded = await _record_stream_usage()
                     refusal = await _quota_message(caller_id) if recorded > 0 else ""
                     if refusal:
-                        sequence += 1
-                        await _emit(
-                            websocket, channel,
-                            StreamEvent(event_type="error", session_id=session_id,
-                                        sequence=sequence, payload={"message": refusal}),
-                        )
+                        await _emit_error(refusal)
                         break
 
                 if control_type == "end":
-                    sequence += 1
-                    await _emit(
-                        websocket,
-                        channel,
-                        StreamEvent(
-                            event_type="done",
-                            session_id=session_id,
-                            sequence=sequence,
-                            payload={"message": "stream ended"},
-                        ),
-                    )
+                    await _emit_event("done", {"message": "stream ended"})
                     break
 
     except WebSocketDisconnect:
