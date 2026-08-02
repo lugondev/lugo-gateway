@@ -65,6 +65,18 @@ Optional extras: `pip install -e ".[mlx]"` (Apple-Silicon GPU STT: `whisper_mlx`
 `pip install -e ".[opus]"` (Opus audio transport — also needs system
 libopus: `brew install opus` / `apt install libopus0`).
 
+### What can this machine run?
+
+```bash
+make check-system            # or: python scripts/check_system.py [--json]
+```
+
+Scans the hardware (CPU/RAM/disk, Apple Silicon vs NVIDIA, GPU + VRAM, Docker +
+NVIDIA Container Toolkit, audio libs), validates the setup, and recommends the
+engine stack — plus the exact `infra/compose/*.yml` file for this host, CPU or
+GPU variant. Stdlib-only, so it also runs on a bare box before anything is
+installed.
+
 ### Setup local Vosk and Whisper
 
 ```bash
@@ -88,7 +100,8 @@ docker compose up --build
   voice device guide**: protocol, audio formats, and a runnable reference client.
 - [docs/architecture.md](docs/architecture.md) — components, data flows, upgrade paths.
 - [apps/model_service/README.md](apps/model_service/README.md) — the one-engine-per-container
-  model service and the `openai_stt` / `openai_tts` remote providers.
+  model service, its per-engine CPU/GPU compose files, and the `http_stt` /
+  `http_tts` remote providers.
 - [docs/runbook.md](docs/runbook.md) — run, configure, troubleshoot.
 
 ## Endpoints

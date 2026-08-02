@@ -40,6 +40,10 @@ install: ## Install the package + dev deps into .venv
 setup: ## Interactive setup checklist: tick engines to install (host-aware). Scripted: scripts/setup.sh
 	PYTHON=$(PY) $(PY) scripts/setup.py
 
+.PHONY: check-system
+check-system: ## Scan hardware, validate the setup, recommend an engine stack + compose file
+	$(PY) scripts/check_system.py
+
 # ---- Run (foreground, hot-reload) ----
 .PHONY: dev run
 dev run: ## Run in foreground with --reload (Ctrl-C to stop)
