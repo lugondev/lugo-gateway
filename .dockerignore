@@ -32,6 +32,13 @@ data/
 **/dist/
 **/build/
 
+# Locally converted GGUF weights (multi-GB). The image produces its own under
+# apps/model_service/vendor/qwen3-asr.cpp/models/ during the
+# BUILD_QWEN3_ASR_GGUF layer, which runs before `COPY apps ./apps` -- so
+# excluding the host's copies only keeps them out of the upload, it never
+# removes the one the build itself converted.
+**/*.gguf
+
 # VCS / tooling / editors
 .git/
 .github/
