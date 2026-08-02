@@ -61,10 +61,14 @@ def _coerce(raw: str, default, var_name: str):
 def _env_overrides(prefix: str, defaults: dict) -> dict:
     """Read {PREFIX}_{KEY} for each key in `defaults`. Only keys that exist in
     `defaults` are readable, so a typo'd env var is ignored rather than
-    injecting an unknown key into provider config."""
+    injecting an unknown key into provider config.
+
+    An empty prefix reads bare {KEY} -- used by resolve_omnivoice_config, whose
+    field names already carry the engine name (omnivoice_path -> OMNIVOICE_PATH)
+    and would otherwise stutter as OMNIVOICE_OMNIVOICE_PATH."""
     out = {}
     for key, default in defaults.items():
-        var_name = f"{prefix}_{key}".upper()
+        var_name = f"{prefix}_{key}".upper() if prefix else key.upper()
         raw = os.environ.get(var_name)
         if raw is not None:
             out[key] = _coerce(raw, default, var_name)
@@ -141,12 +145,19 @@ def resolve_omnivoice_config() -> OmnivoiceConfig:
     """Looked up by the reserved model_id="" sentinel -- see
     resolve_stt_local_device's docstring for why (an admin may add a
     tts/omnivoice restriction row that would otherwise be ambiguous with this
-    config sentinel)."""
+    config sentinel).
+
+    Precedence: registry row > env > model defaults, same as the STT resolvers
+    above. The env layer (bare field names: OMNIVOICE_PATH, OMNIVOICE_PYTHON,
+    OMNIVOICE_DEVICE, ...) is what makes the engine deployable as a
+    single-engine container: the model defaults point omnivoice_path at a
+    developer checkout with its own venv, which doesn't exist in an image, and
+    a container has no registry database to override it from."""
+    defaults = OmnivoiceConfig()
+    env = _env_overrides("", {k: getattr(defaults, k) for k in OmnivoiceConfig.model_fields})
     entry = model_registry_store.find_sync("tts", "omnivoice", "")
-    if entry is None:
-        return OmnivoiceConfig()
-    config = entry.get("config") or {}
-    return OmnivoiceConfig().model_copy(update=config)
+    config = (entry or {}).get("config") or {}
+    return defaults.model_copy(update={**env, **config})
 
 
 def resolve_remote_stt_config() -> RemoteSttConfig:

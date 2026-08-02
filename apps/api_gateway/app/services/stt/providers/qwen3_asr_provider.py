@@ -54,8 +54,8 @@ def set_active_qwen3_asr_model(name: str | None) -> None:
 
 def clear_model_cache() -> None:
     """Drop every cached model instance so the next call rebuilds with current
-    settings (e.g. a changed qwen3_asr_device, which the cache key does not
-    include — see _cuda_model's key format)."""
+    settings (e.g. a changed dtype or model path; the device itself is part of
+    the CUDA-backend cache key — see _cuda_model)."""
     _MODEL_CACHE.clear()
 
 # A single dedicated worker thread for ALL Qwen3-ASR GPU work (model build + every
@@ -83,6 +83,17 @@ def _cuda_dtype(torch):
         return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     except Exception:  # noqa: BLE001
         return torch.float16
+
+
+def _torch_dtype(torch, device: str):
+    """float32 on CPU, half precision on GPU.
+
+    The torch backend is reachable on CPU (device_map="cpu") -- much slower than
+    the GGUF engine, but it's the only way to run these exact HF weights without
+    a GPU. Half precision there is not just slow but broken: many CPU kernels
+    have no fp16/bf16 implementation and raise "not implemented for 'Half'"
+    mid-inference, so the device decides the dtype, not the GPU's capabilities."""
+    return torch.float32 if device.split(":")[0] == "cpu" else _cuda_dtype(torch)
 
 # Map our short language codes to the names Qwen3-ASR expects; unknown -> auto-detect.
 _LANG = {
@@ -137,15 +148,18 @@ class Qwen3AsrProvider(STTProvider):
 
     def _cuda_model(self, model: str | None = None):
         resolved = resolve_qwen3_asr_model(model or get_active_qwen3_asr_model())
-        key = f"cuda:{resolved}"
+        device = resolve_stt_local_device("qwen3_asr")["device"] or "cuda:0"
+        # The device is part of the key: STT_QWEN3_ASR_DEVICE=cpu and the GPU
+        # default build two different models from the same weights.
+        key = f"cuda:{resolved}:{device}"
         if key not in _MODEL_CACHE:
             import torch
             from qwen_asr import Qwen3ASRModel
 
             _MODEL_CACHE[key] = Qwen3ASRModel.from_pretrained(
                 resolved,
-                dtype=_cuda_dtype(torch),  # bf16 on Ampere+, fp16 on T4/Turing
-                device_map=resolve_stt_local_device("qwen3_asr")["device"] or "cuda:0",
+                dtype=_torch_dtype(torch, device),  # bf16 Ampere+, fp16 T4, fp32 CPU
+                device_map=device,
                 max_new_tokens=256,
             )
         return _MODEL_CACHE[key]

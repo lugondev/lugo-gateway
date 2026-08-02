@@ -65,6 +65,52 @@ def test_unrecognized_bool_env_string_raises_instead_of_silently_becoming_false(
         resolve.resolve_stt_engine_config("whisper_local")
 
 
+def test_omnivoice_env_overrides_defaults(monkeypatch):
+    # A single-engine omnivoice container has no registry DB and no second venv:
+    # without these overrides omnivoice_python_path stays the dev-machine path
+    # (/Users/lugon/code/OmniVoice/.venv/bin/python) and the engine reports
+    # unavailable inside the image.
+    monkeypatch.setenv("OMNIVOICE_PATH", "/app")
+    monkeypatch.setenv("OMNIVOICE_PYTHON", "/usr/local/bin/python")
+    monkeypatch.setenv("OMNIVOICE_DEVICE", "cpu")
+    monkeypatch.setenv("OMNIVOICE_DTYPE", "float32")
+    monkeypatch.setenv("OMNIVOICE_NUM_STEP", "8")
+    monkeypatch.setenv("OMNIVOICE_USE_SERVER", "false")
+    monkeypatch.setenv("OMNIVOICE_TIMEOUT_SECONDS", "120.5")
+    cfg = resolve.resolve_omnivoice_config()
+    assert cfg.omnivoice_path == "/app"
+    assert cfg.omnivoice_python_path == "/usr/local/bin/python"
+    assert cfg.omnivoice_device == "cpu"
+    assert cfg.omnivoice_dtype == "float32"
+    assert cfg.omnivoice_num_step == 8  # coerced to int
+    assert cfg.omnivoice_use_server is False  # coerced to bool
+    assert cfg.omnivoice_timeout_seconds == 120.5  # coerced to float
+    assert cfg.omnivoice_server_port == 8762  # untouched default
+
+
+def test_omnivoice_bad_env_raises_naming_the_var(monkeypatch):
+    monkeypatch.setenv("OMNIVOICE_NUM_STEP", "many")
+    with pytest.raises(EnvVarError, match="OMNIVOICE_NUM_STEP"):
+        resolve.resolve_omnivoice_config()
+
+
+def test_omnivoice_registry_row_beats_env(monkeypatch):
+    monkeypatch.setattr(
+        model_registry_store,
+        "_by_id",
+        {
+            "x": {
+                "id": "x", "kind": "tts", "engine": "omnivoice", "model_id": "",
+                "enabled": True, "stage": "stable", "label": "", "api_key": "",
+                "base_url": "", "config": {"omnivoice_device": "from-registry"},
+            }
+        },
+        raising=False,
+    )
+    monkeypatch.setenv("OMNIVOICE_DEVICE", "from-env")
+    assert resolve.resolve_omnivoice_config().omnivoice_device == "from-registry"
+
+
 def test_registry_row_beats_env(monkeypatch):
     # Gateway conditions: a warm cache with a sentinel row must win, so existing
     # deployments are unaffected by env vars that happen to be set.

@@ -68,6 +68,51 @@ def test_cuda_dtype_prefers_bf16_only_when_supported():
     assert q_mod._cuda_dtype(fake) == "bf16"
 
 
+def test_torch_dtype_is_fp32_on_cpu_regardless_of_gpu_capability():
+    """The torch backend also serves the CPU compose variant. Half precision on
+    CPU raises "not implemented for 'Half'" inside the model, so the device --
+    not the GPU's bf16 support -- decides the dtype."""
+    class _Cuda:
+        @staticmethod
+        def is_bf16_supported():
+            return True
+    fake = type("T", (), {"bfloat16": "bf16", "float16": "fp16", "float32": "fp32", "cuda": _Cuda})
+    assert q_mod._torch_dtype(fake, "cpu") == "fp32"
+    assert q_mod._torch_dtype(fake, "cuda:0") == "bf16"
+
+
+def test_cuda_model_cache_key_includes_the_device(monkeypatch):
+    """A cpu-device container and a gpu one build different models from the same
+    weights; a device-blind key would hand the second one the first one's model."""
+    built: list[tuple] = []
+
+    class FakeModel:
+        @staticmethod
+        def from_pretrained(model, dtype=None, device_map=None, max_new_tokens=None):
+            built.append((model, dtype, device_map))
+            return object()
+
+    fake_torch = types.ModuleType("torch")
+    fake_torch.float32 = "fp32"
+    fake_torch.float16 = "fp16"
+    fake_torch.bfloat16 = "bf16"
+    fake_torch.cuda = types.SimpleNamespace(is_bf16_supported=lambda: True)
+    fake_qwen = types.ModuleType("qwen_asr")
+    fake_qwen.Qwen3ASRModel = FakeModel
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "qwen_asr", fake_qwen)
+    q_mod._MODEL_CACHE.clear()
+
+    p = Qwen3AsrProvider()
+    monkeypatch.setenv("STT_QWEN3_ASR_DEVICE", "cpu")
+    p._cuda_model("Qwen/Qwen3-ASR-0.6B")
+    monkeypatch.setenv("STT_QWEN3_ASR_DEVICE", "cuda:0")
+    p._cuda_model("Qwen/Qwen3-ASR-0.6B")
+
+    assert [(d, dev) for _, d, dev in built] == [("fp32", "cpu"), ("bf16", "cuda:0")]
+    q_mod._MODEL_CACHE.clear()
+
+
 def test_neither_backend_hidden(monkeypatch):
     p = stt_service.providers["qwen3_asr"]
     monkeypatch.setattr(q_mod, "_is_apple_silicon", lambda: False)
