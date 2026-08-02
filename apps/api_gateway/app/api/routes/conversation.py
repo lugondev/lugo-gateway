@@ -74,6 +74,37 @@ _truthy = parse_bool_or
 _require_admin = require_admin
 
 
+async def _cross_profile_resume_message(session_id: str | None, profile_name: str | None) -> str | None:
+    """Why `session_id` must not be resumed under `profile_name`, or None when
+    resuming is fine.
+
+    A session keeps the `profile_id`, `source` and `client_id` it was created
+    with -- resuming never rewrites them. Appending a conversation to a session
+    created under a different profile therefore files those turns under an
+    assistant the caller isn't looking at, and History reads per assistant
+    (`GET /v1/sessions?profile=...`), so they vanish from view. That is exactly
+    what happened on 2026-08-02: a browser talking as `dev-copy` was handed the
+    id of an ESP32 session under `esp32-assistant` (same user, so the ownership
+    check passed) and its turns landed in the speaker's transcript.
+
+    An id that doesn't exist yet is not a mismatch -- that's the ordinary
+    create-on-first-use path, not a resume.
+    """
+    if not session_id:
+        return None
+    stored = await session_store.get(session_id)
+    if not stored:
+        return None
+    stored_profile = stored.get("profile_id") or ""
+    if stored_profile == (profile_name or ""):
+        return None
+    return (
+        f"session '{session_id}' belongs to profile '{stored_profile or '(none)'}', "
+        f"not '{profile_name or '(none)'}' — starting a new session instead so this "
+        "conversation is filed under the profile you asked for."
+    )
+
+
 async def _llm_config_view() -> dict:
     """Current conversation LLM config (api key masked, never echoed back)."""
     responder = await build_responder()
@@ -152,6 +183,14 @@ async def chat(
     )
     if blocked:
         raise HTTPException(status_code=429, detail=quota_message)
+
+    # Cross-profile resume: drop the id rather than append this turn to another
+    # assistant's history -- see _cross_profile_resume_message. The caller learns
+    # about it from the session_id in the response, which is the new one.
+    mismatch = await _cross_profile_resume_message(session_id, profile)
+    if mismatch:
+        logger.info("chat: %s", mismatch)
+        session_id = None
 
     # Session: resume when session_id given (stored messages prefix the context).
     sid = session_id or str(uuid.uuid4())
@@ -312,6 +351,17 @@ async def conversation_stream(websocket: WebSocket) -> None:
             "event": "warning",
             "message": f"profile '{profile_name}' not found, using defaults",
         })
+
+    # Cross-profile resume: checked here rather than next to the ownership check
+    # above because the profile isn't final until resolve_bound_profile() has had
+    # its say (a paired device's binding overrides ?profile=). Announced, not
+    # silent -- a client that resumes the wrong session should be able to see it
+    # did. See _cross_profile_resume_message.
+    mismatch = await _cross_profile_resume_message(requested_sid, profile_name)
+    if mismatch:
+        await websocket.send_json({"event": "warning", "message": mismatch})
+        requested_sid = None
+        session_id = str(uuid.uuid4())
 
     # STT engine + language: the active profile's STT config > server default.
     # Devices can connect with just ?profile=<name> and inherit the profile's

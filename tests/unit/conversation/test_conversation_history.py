@@ -145,7 +145,12 @@ def test_chat_caps_the_replayed_history(client, monkeypatch):
         return _SpyResponder()
 
     sid = "chat-cap"
-    asyncio.run(session_store.create(sid))
+    # profile_id must match the ?profile= used below: a session is only resumed
+    # under the profile it was created with (see test_resume_profile_mismatch.py
+    # for why -- turns filed under another profile vanish from that profile's
+    # History). Without it this reads as a cross-profile resume, the route hands
+    # back a fresh session, and nothing is replayed at all.
+    asyncio.run(session_store.create(sid, profile_id="pet"))
     for i in range(10):
         asyncio.run(session_store.append_message(sid, i, "user", f"m{i}"))
 
