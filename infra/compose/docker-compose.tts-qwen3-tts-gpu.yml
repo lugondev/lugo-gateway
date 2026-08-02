@@ -1,0 +1,51 @@
+# Standalone Coolify "Docker Compose" app: qwen3_tts (TTS, multilingual +
+# voice cloning) on an NVIDIA GPU. CPU twin:
+# docker-compose.tts-qwen3-tts-cpu.yml.
+#
+# 1.7B here (0.6B on the CPU file); switch with SERVICE_ENGINE=qwen3_tts_0_6b.
+#
+# `qwen3-tts-cuda` (faster-qwen3-tts) is not optional decoration in this file:
+# it's a CUDA-graph fast path the provider auto-selects whenever the resolved
+# device is cuda AND the package is importable, and selecting it also *avoids*
+# the other branch, which loads the model with `attn_implementation="flash_attention_2"`
+# and therefore needs flash-attn compiled into the image. Drop the extra and
+# you inherit that requirement.
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
+
+services:
+  tts-qwen3-tts-gpu:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.model_service.cuda
+      args:
+        PIP_EXTRAS: qwen3-tts,qwen3-tts-cuda,opus
+    environment:
+      SERVICE_KIND: tts
+      SERVICE_ENGINE: qwen3_tts_1_7b
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
+      # cuda:0 is what auto-detect would pick anyway; spelled out so a multi-GPU
+      # host has one place to pin a card. Do NOT set this to cpu/mps here -- that
+      # deselects faster_qwen3_tts and wastes the reserved GPU.
+      QWEN3_TTS_DEVICE: cuda:0
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    expose:
+      - "8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  hf-cache:

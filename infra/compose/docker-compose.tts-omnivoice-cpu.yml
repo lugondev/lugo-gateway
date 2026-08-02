@@ -1,0 +1,77 @@
+# Standalone Coolify "Docker Compose" app: omnivoice (TTS, multilingual), CPU
+# build. GPU twin: docker-compose.tts-omnivoice-gpu.yml.
+#
+# Honest expectation setting: OmniVoice is a diffusion-style model and CPU
+# synthesis is far from realtime -- seconds of compute per sentence even at
+# num_step 8. This file is for batch/offline use, a smoke test, or a fallback;
+# for a live conversation on CPU-only hardware, vieneu (docker-compose.tts-vieneu.yml)
+# is the engine that actually keeps up.
+#
+# How OmniVoice runs here differs from a dev machine: locally the provider shells
+# out to a separate OmniVoice checkout and its own venv (that's what
+# OMNIVOICE_PATH/.venv/bin/python defaults to). A single-engine container has no
+# second venv, so it pip-installs `omnivoice` alongside the app and points
+# OMNIVOICE_PYTHON at its own interpreter -- the sidecar
+# (apps/api_gateway/app/services/tts/omnivoice_sidecar.py) then loads the model
+# once and serves synth over localhost:8762 inside the container.
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
+
+services:
+  tts-omnivoice-cpu:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.model_service
+      args:
+        PIP_EXTRAS: omnivoice,opus
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    environment:
+      SERVICE_KIND: tts
+      SERVICE_ENGINE: omnivoice
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
+      # The two that make the engine work in a container at all: available()
+      # checks that this interpreter exists, and the sidecar is spawned with
+      # OMNIVOICE_PATH as its cwd.
+      OMNIVOICE_PYTHON: /usr/local/bin/python
+      OMNIVOICE_PATH: /app
+      OMNIVOICE_MODEL_ID: k2-fsa/OmniVoice
+      OMNIVOICE_DEVICE: cpu
+      # float32: the model default (float16) has no fast CPU kernels and several
+      # ops raise "not implemented for 'Half'".
+      OMNIVOICE_DTYPE: float32
+      # Sampling steps, the main quality/latency dial. 8 halves the project's
+      # own 16 to claw back CPU time; raise it if the voice sounds unstable.
+      OMNIVOICE_NUM_STEP: "8"
+      # Persistent sidecar rather than CLI mode -- CLI reloads the whole model
+      # per call (~7s+ on CPU) where the sidecar pays that once.
+      OMNIVOICE_USE_SERVER: "true"
+      # First start also downloads the weights, so allow a long warmup and a
+      # long per-request budget; the defaults (60s / 45s) are GPU-shaped.
+      OMNIVOICE_SERVER_STARTUP_SECONDS: "600"
+      OMNIVOICE_TIMEOUT_SECONDS: "300"
+      # OmniVoice is multilingual; this container pins one language per
+      # deployment (the provider sends it on every synth call).
+      OMNIVOICE_LANGUAGE: ${OMNIVOICE_LANGUAGE:-vi}
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-4}
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    # No host port publish -- see docker-compose.stt-whisper-turbo-cpu.yml. Port
+    # 8762 (the in-container sidecar) is never exposed at all: it binds
+    # 127.0.0.1 and only this process talks to it.
+    expose:
+      - "8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8g
+
+volumes:
+  hf-cache:

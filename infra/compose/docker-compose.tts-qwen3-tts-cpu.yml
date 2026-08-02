@@ -1,0 +1,54 @@
+# Standalone Coolify "Docker Compose" app: qwen3_tts (TTS, multilingual +
+# voice cloning), CPU build. GPU twin: docker-compose.tts-qwen3-tts-gpu.yml.
+#
+# 0.6B here, 1.7B on the GPU file: the size is the engine name, so switching is
+# just SERVICE_ENGINE=qwen3_tts_1_7b (and a bigger memory limit). Both sizes are
+# served by the same provider and the same package.
+#
+# CPU is the slow path by design -- the engine's own install hint says "GPU/CUDA
+# recommended; runs on CPU/MPS but slower, no flash-attention". Expect
+# well-above-realtime synthesis; use vieneu for CPU-realtime Vietnamese.
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
+
+services:
+  tts-qwen3-tts-cpu:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.model_service
+      args:
+        PIP_EXTRAS: qwen3-tts,opus
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    environment:
+      SERVICE_KIND: tts
+      SERVICE_ENGINE: qwen3_tts_0_6b
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
+      # Forced, not auto-detected. The provider's auto path would resolve to cpu
+      # in this image anyway, but pinning it also documents the dtype it
+      # selects (float32 -- fp16 is what breaks Qwen3-TTS's codec sampling off
+      # CUDA) and keeps the CUDA-only faster_qwen3_tts backend deselected even
+      # if the package ever lands in this image.
+      QWEN3_TTS_DEVICE: cpu
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-4}
+    volumes:
+      # Two checkpoints download on first use (Base for cloning, CustomVoice for
+      # preset speakers), each pulled the first time that mode is requested.
+      - hf-cache:/root/.cache/huggingface
+    # No host port publish -- see docker-compose.stt-whisper-turbo-cpu.yml.
+    expose:
+      - "8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8g
+
+volumes:
+  hf-cache:

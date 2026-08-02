@@ -1,0 +1,62 @@
+# Standalone Coolify "Docker Compose" app: whisper_local @ large-v3-turbo (STT),
+# CPU build. One service per file so it deploys as its own Coolify resource --
+# same shape as docker-compose.stt-qwen3-asr-gguf.yml / docker-compose.tts-vieneu.yml.
+# The GPU twin of this file is docker-compose.stt-whisper-turbo-gpu.yml.
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
+
+services:
+  stt-whisper-turbo-cpu:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.model_service
+      args:
+        # faster-whisper (CTranslate2). Torch-free -- CTranslate2 is its own
+        # inference runtime -- so this image needs no TORCH_INDEX_URL and stays
+        # small; `tts` (vieneu) is deliberately dropped, this container only
+        # ever serves STT.
+        PIP_EXTRAS: whisper,opus
+    environment:
+      SERVICE_KIND: stt
+      SERVICE_ENGINE: whisper_local
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
+      # Weights (~1.6GB, Systran/faster-whisper-large-v3-turbo) download on the
+      # first request into the HF cache volume below, not at build time.
+      STT_WHISPER_LOCAL_DEFAULT_MODEL: large-v3-turbo
+      STT_WHISPER_LOCAL_DEVICE: cpu
+      # int8 is the CPU tuning: ~4x less memory and ~2-3x faster than float32
+      # on CTranslate2's CPU backend, at a WER cost small enough that turbo
+      # still beats a smaller float model. Use int8_float32 if you'd rather
+      # trade the speed back for accuracy.
+      STT_WHISPER_LOCAL_COMPUTE_TYPE: int8
+      # Greedy decoding (beam_size 1) is the other half of the CPU tuning --
+      # beam search multiplies decode cost per token for a marginal WER win.
+      STT_WHISPER_LOCAL_BEAM_SIZE: "1"
+      STT_WHISPER_LOCAL_VAD_FILTER: "true"
+      # CTranslate2 spawns one OpenMP thread per core by default and then
+      # thrashes on a small container; keep it inside the cpu limit below.
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-4}
+    volumes:
+      # First-request model download, kept across restarts/redeploys.
+      - hf-cache:/root/.cache/huggingface
+    # No host port publish: containers sharing one physical server would collide
+    # on 8100 ("port is already allocated"). `expose` is enough for Traefik and
+    # for other Coolify apps on the same internal "coolify" network. Add a
+    # `ports:` mapping only when the gateway lives outside this docker network.
+    expose:
+      - "8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4g
+
+volumes:
+  hf-cache:

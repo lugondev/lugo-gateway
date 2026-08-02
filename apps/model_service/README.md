@@ -32,16 +32,55 @@ addition specific to this image: `libatomic1`. Without it, `vosk`'s compiled
 discovered while testing this image end-to-end with the `vosk` engine, not a
 theoretical one.
 
-The image is engine-agnostic: it contains the whole `apps/` tree (both
-`api_gateway` and `model_service`), and which single engine actually runs is
-picked entirely by environment variables at container start, not by anything
-baked into the build. Build it once, run it many times with different env.
+The image is engine-agnostic in its *code*: it contains the whole `apps/` tree
+(both `api_gateway` and `model_service`), and which single engine actually runs
+is picked entirely by environment variables at container start. Its *wheels* are
+not: `PIP_EXTRAS` decides which engines' Python packages are installed, so an
+image built for one engine generally can't serve another. It defaults to
+`tts,opus` (vieneu + the Opus transport), which is what every compose file
+predating this arg was built against.
+
+| Engine | `PIP_EXTRAS` | `TORCH_INDEX_URL` |
+|---|---|---|
+| `vieneu` (TTS) — CPU | `tts,opus` (default) | — (ONNX Runtime, torch-free) |
+| `vieneu` (TTS) — GPU | `tts,opus` | — (the CUDA image's torch is what switches it to the PyTorch path) |
+| `vosk` (STT) | `opus` | — (torch-free) |
+| `whisper_local` (STT) | `whisper,opus` | — (CTranslate2, torch-free) |
+| `qwen3_asr_gguf` (STT) | `opus` + `--build-arg BUILD_QWEN3_ASR_GGUF=1` | — |
+| `qwen3_asr` (STT) | `qwen3-asr-cuda,opus` | CPU build: `https://download.pytorch.org/whl/cpu` |
+| `omnivoice` (TTS) | `omnivoice,opus` | CPU build: `https://download.pytorch.org/whl/cpu` |
+| `voxcpm2` (TTS) | `voxcpm,opus` | CPU build: `https://download.pytorch.org/whl/cpu` |
+| `qwen3_tts_*` (TTS) — CPU | `qwen3-tts,opus` | `https://download.pytorch.org/whl/cpu` |
+| `qwen3_tts_*` (TTS) — GPU | `qwen3-tts,qwen3-tts-cuda,opus` | — (default CUDA wheel) |
+
+`TORCH_INDEX_URL` exists because PyPI's default linux torch wheel bundles the
+whole CUDA runtime (~2.5GB) even on a machine with no GPU; pointing it at
+PyTorch's CPU index installs torch in its own layer first, and the later
+`pip install ".[...]"` then finds the requirement already satisfied.
 
 Build:
 
 ```bash
 docker build -f infra/docker/Dockerfile.model_service -t model-service:dev .
+
+# ... or an engine-specific image
+docker build -f infra/docker/Dockerfile.model_service \
+  --build-arg PIP_EXTRAS=whisper,opus -t model-service:whisper .
 ```
+
+### GPU images
+
+`infra/docker/Dockerfile.model_service.cuda` is the GPU sibling: same app, same
+`SERVICE_KIND`/`SERVICE_ENGINE` contract, same port and healthcheck — only the
+base image (`nvidia/cuda:*-cudnn-runtime-*`) and the wheels differ. Two things
+make it a separate file rather than an arg: a Dockerfile can't swap its own
+`FROM` per build, and `faster-whisper` needs cuBLAS + cuDNN 9 at model-load time
+without shipping them in its wheel, so the stock slim image plus `--gpus` fails
+with `Unable to load libcudnn_ops.so.9`. It also installs into a venv at
+`/opt/venv` (Ubuntu 24.04 marks its system python externally managed), which
+matters for `OMNIVOICE_PYTHON`. Running it needs the NVIDIA Container Toolkit on
+the host (`docker run --gpus all`, or compose's
+`deploy.resources.reservations.devices`).
 
 Run directly (STT, vosk):
 
@@ -93,22 +132,36 @@ SERVICE_KIND=tts SERVICE_ENGINE=qwen3_tts_0_6b SERVICE_API_TOKEN=dev-token \
   uvicorn model_service.app.main:create_app --factory --port 8100
 ```
 
-Run in Docker on a CUDA GPU host (fast path): the stock
-`infra/docker/Dockerfile.model_service` is built on `python:3.11-slim` with no
-GPU access, so it can only ever run the `qwen_tts` (CPU) backend — `torch.cuda.is_available()`
-is false inside it regardless of the host's GPU. To actually exercise
-`faster_qwen3_tts`, the container needs:
+In Docker, that choice is the difference between the two compose files:
+`docker-compose.tts-qwen3-tts-cpu.yml` (stock slim image + CPU torch wheels +
+`QWEN3_TTS_DEVICE=cpu`) and `docker-compose.tts-qwen3-tts-gpu.yml`
+(`Dockerfile.model_service.cuda` + `PIP_EXTRAS=qwen3-tts,qwen3-tts-cuda,opus` +
+a GPU reservation). The stock slim image can never reach the fast path —
+`torch.cuda.is_available()` is false inside it regardless of the host's GPU.
 
-1. A CUDA-capable base image (e.g. an `nvidia/cuda` runtime image with a
-   matching PyTorch/CUDA version) instead of `python:3.11-slim`.
-2. `RUN pip install ".[qwen3-tts,qwen3-tts-cuda]"` in the build.
-3. `docker run --gpus all ...` (needs the NVIDIA Container Toolkit on the
-   host) so the container can actually see the GPU.
+One non-obvious reason the GPU file installs `qwen3-tts-cuda` rather than
+treating it as optional: when `faster_qwen3_tts` is *absent* on a CUDA device,
+the provider loads the model with `attn_implementation="flash_attention_2"`,
+which requires flash-attn built into the image. Selecting the faster backend
+sidesteps that branch entirely.
 
-There is no separate `Dockerfile.model_service.cuda` for this yet — the stock
-image intentionally stays CPU-only and small. Building a GPU variant is a
-follow-up, not something this doc's stock `docker build`/`docker run`
-examples produce as written.
+### OmniVoice in a container
+
+On a dev Mac the `omnivoice` provider shells out to a *separate* OmniVoice
+checkout running its own venv — that's what `OMNIVOICE_PATH` (default
+`/Users/lugon/code/OmniVoice`) and the derived `.venv/bin/python` mean, and it
+exists so OmniVoice's dependency set never has to agree with the gateway's.
+
+A single-engine container has no second venv to shell into, so it flips that
+around: the image installs `omnivoice` from PyPI alongside the app
+(`PIP_EXTRAS=omnivoice,opus`) and `OMNIVOICE_PYTHON` points at the container's
+own interpreter — `/usr/local/bin/python` in the slim image, `/opt/venv/bin/python`
+in the CUDA one. Everything else is unchanged: the provider still spawns
+`omnivoice_sidecar.py` as a subprocess, the sidecar still loads the model once
+and serves synth over `127.0.0.1:8762` inside the container, and the gateway
+still only sees the OpenAI-compatible endpoint. The tradeoff is that a future
+dependency conflict between `omnivoice` and the gateway's own packages surfaces
+as a failed image build instead of being isolated by the second venv.
 
 The process validates `SERVICE_KIND`, `SERVICE_ENGINE`, `SERVICE_API_TOKEN`,
 and `SERVICE_PORT` at startup, not on first request: an unset or misspelled
@@ -133,7 +186,7 @@ boots.
 | Variable | Required | Meaning |
 |---|---|---|
 | `SERVICE_KIND` | yes | `stt` or `tts`. Picks which router (transcription vs. speech) the app mounts. |
-| `SERVICE_ENGINE` | yes | The engine name, e.g. `vosk`, `whisper_local`, `whisper_mlx`, `qwen3_asr` for STT; `vieneu`, `qwen3_tts_0_6b`, `qwen3_tts_1_7b` for TTS. Must match a key the gateway's own `stt_service`/`tts_service` registers. |
+| `SERVICE_ENGINE` | yes | The engine name, e.g. `vosk`, `whisper_local`, `whisper_mlx`, `qwen3_asr`, `qwen3_asr_gguf` for STT; `vieneu`, `omnivoice`, `voxcpm2`, `qwen3_tts_0_6b`, `qwen3_tts_1_7b` for TTS. Must match a key the gateway's own `stt_service`/`tts_service` registers, **and** the image must have been built with that engine's `PIP_EXTRAS`. |
 | `SERVICE_API_TOKEN` | yes | Bearer token every request must present (`Authorization: Bearer <token>`). No default — the process refuses to start without it. |
 | `SERVICE_PORT` | no (default `8100`) | Port `uvicorn` binds. |
 | `ARTIFACTS_DIR` | set in the image (`/tmp/artifacts`) | The gateway's artifact store creates this directory at import time even though the model service never serves artifacts; pointed at `/tmp` so nothing writes into the image's read-only working tree. You should not need to override this. |
@@ -161,6 +214,14 @@ var name is silently ignored rather than injecting an unknown key, so double
 check spelling against `STT_ENGINE_CONFIG_DEFAULTS` in `resolve.py` if an
 override doesn't seem to take effect.
 
+`omnivoice` has the same layer with **no prefix**, because its config field
+names already carry the engine name: `resolve_omnivoice_config()` reads
+`OMNIVOICE_PATH`, `OMNIVOICE_PYTHON`, `OMNIVOICE_DEVICE`, `OMNIVOICE_DTYPE`,
+`OMNIVOICE_NUM_STEP`, and so on — one per field of `OmnivoiceConfig`
+(`app/services/system_config.py`), same coercion and same
+registry-row-beats-env precedence. The first two are what make the engine
+runnable in a container at all; see the compose files.
+
 ## Wiring into the gateway's Model Registry
 
 Once the container is running and reachable from the gateway (e.g. as the
@@ -169,17 +230,20 @@ add a Model Registry entry in the gateway so the gateway can use it as a
 remote engine. The registry engine to use depends on the container's
 `SERVICE_KIND`:
 
-- `SERVICE_KIND=stt` container → registry Engine `openai_stt`
-  (`apps/api_gateway/app/services/stt/providers/openai_stt_provider.py`).
-- `SERVICE_KIND=tts` container → registry Engine `openai_tts`
-  (`apps/api_gateway/app/services/tts/providers/openai_tts_provider.py`).
+- `SERVICE_KIND=stt` container → registry Engine `http_stt`
+  (`apps/api_gateway/app/services/stt/providers/http_stt_provider.py`).
+- `SERVICE_KIND=tts` container → registry Engine `http_tts`
+  (`apps/api_gateway/app/services/tts/providers/http_tts_provider.py`).
+
+(Both were called `openai_stt`/`openai_tts` until the rename; a startup
+migration rewrites old rows, so existing deployments keep working.)
 
 Both are the gateway's own OpenAI-compatible remote clients; they issue the
 HTTP calls to the container and are otherwise symmetric — same `base_url`/
 `api_key` shape, same test-before-add behavior. To add either:
 
 1. Kind: `stt` or `tts`, matching the container's `SERVICE_KIND`.
-2. Engine: `openai_stt` (for `stt`) or `openai_tts` (for `tts`).
+2. Engine: `http_stt` (for `stt`) or `http_tts` (for `tts`).
 3. `model_id`: whatever you want to label the model as (it's forwarded to the
    container as the `model` field but the container's engine, chosen by its
    own `SERVICE_ENGINE`, decides what actually runs — the registry `model_id`
@@ -190,8 +254,8 @@ HTTP calls to the container and are otherwise symmetric — same `base_url`/
 
 Saving the entry triggers the gateway's usual test-before-add call against the
 container, so a saved entry is already proof the container answered over HTTP
-with the token accepted. After that, `GET /v1/stt/engines` (for `openai_stt`)
-or `GET /v1/tts/engines` (for `openai_tts`) on the gateway should list the
+with the token accepted. After that, `GET /v1/stt/engines` (for `http_stt`)
+or `GET /v1/tts/engines` (for `http_tts`) on the gateway should list the
 engine with `mode: remote` and `available: true`, and any request routed with
 that engine reaches the container instead of loading a model in the gateway's
 own process.
@@ -201,11 +265,6 @@ own process.
 This is a first version and intentionally narrow. It does not support:
 
 - **LLM services.** There is no `SERVICE_KIND=llm`; only `stt` and `tts` exist.
-- **OmniVoice.** `OmnivoiceConfig.omnivoice_path` defaults to a hardcoded
-  developer-machine path (`/Users/lugon/code/OmniVoice`,
-  `apps/api_gateway/app/services/system_config.py`), which has no meaning
-  inside a container, and there's no way to override it through this service's
-  env layer. Don't set `SERVICE_ENGINE=omnivoice`.
 - **`edge_tts`.** It isn't a `RenderingTTSProvider` (the model service's TTS
   router only serves engines that render WAV bytes synchronously) and it
   produces MP3 output rather than WAV — it can't be plugged into
@@ -226,25 +285,47 @@ This is a first version and intentionally narrow. It does not support:
 
 ## Compose
 
-`infra/compose/docker-compose.yml` has a `model-service` entry behind the
-`models` profile, so it is *not* started by a plain `docker compose up` — that
-command still only brings up `api` and `redis`, unchanged, so ordinary gateway
-development doesn't suddenly try to pull model weights. Bring it up explicitly:
+`infra/compose/` holds one file per deployable unit. Two of them are
+multi-service (local dev, and a plain-SSH VM); the rest are single-engine apps,
+one per file, so each deploys as its own Coolify resource and can be
+sized/restarted independently:
+
+| File | Engine | Hardware |
+|---|---|---|
+| `docker-compose.yml` | api + redis + two model services | local dev |
+| `docker-compose.vm.yml` | `qwen3_asr_gguf` + `vieneu` | one CPU VM, plain `docker compose` |
+| `docker-compose.stt-qwen3-asr-gguf.yml` | `qwen3_asr_gguf` | CPU (quantized C++ runtime; no GPU twin by design) |
+| `docker-compose.tts-vieneu.yml` + `docker-compose.tts-vieneu-gpu.yml` | `vieneu` | CPU / NVIDIA |
+| `docker-compose.stt-whisper-turbo-{cpu,gpu}.yml` | `whisper_local` @ `large-v3-turbo` | CPU / NVIDIA |
+| `docker-compose.stt-qwen3-asr-{cpu,gpu}.yml` | `qwen3_asr` (HF weights, non-GGUF) | CPU / NVIDIA |
+| `docker-compose.tts-omnivoice-{cpu,gpu}.yml` | `omnivoice` | CPU / NVIDIA |
+| `docker-compose.tts-voxcpm2-{cpu,gpu}.yml` | `voxcpm2` | CPU / NVIDIA |
+| `docker-compose.tts-qwen3-tts-{cpu,gpu}.yml` | `qwen3_tts_0_6b` / `qwen3_tts_1_7b` | CPU / NVIDIA |
+
+(The `vieneu` CPU file has no `-cpu` suffix because it is a live Coolify
+resource that predates the pairs; renaming it would orphan that app.)
+
+Every single-engine file takes `SERVICE_API_TOKEN` with no default
+(`${SERVICE_API_TOKEN:?...}`), so compose refuses to start rather than quietly
+booting a container that would then refuse to run. They use `build.context: "."`
+(repo root) because Coolify runs `docker compose` with `--project-directory` set
+to the app's base directory; building one locally needs the same base:
 
 ```bash
-MODEL_SERVICE_TOKEN=dev-token docker compose -f infra/compose/docker-compose.yml --profile models up -d model-service
+SERVICE_API_TOKEN=dev-token docker compose \
+  -f infra/compose/docker-compose.stt-whisper-turbo-cpu.yml \
+  --project-directory . up -d --build
 ```
 
-`MODEL_SERVICE_TOKEN` has no default (`${MODEL_SERVICE_TOKEN:?set MODEL_SERVICE_TOKEN}`
-in the compose file) — compose refuses to start the service at all if it's
-unset, rather than quietly booting the container without
-`SERVICE_API_TOKEN` and having the container itself immediately refuse to run.
-The default compose service mounts `../../models` (repo-root `models/`) into
-the container at `/models:ro` and configures the `vosk` engine, pointed at
-`STT_VOSK_MODEL_PATH=/models/stt/vosk-model-small-en-us-0.15` — that matches
-the nested `models/stt/...` layout `scripts/download_vosk_model.sh` produces
-by default, so running that script from the repo root is enough to make the
-compose example work as written.
+The `-cpu`/`-gpu` pairs differ in three places: the Dockerfile (slim vs. `.cuda`),
+the engine's device/precision env, and a `deploy.resources` block (cpu+memory
+limits vs. an NVIDIA device reservation). They also mount a named `hf-cache`
+volume at `/root/.cache/huggingface` — none of these engines bake weights into
+the image, so the first request downloads them and the volume is what keeps a
+redeploy from doing it again.
+
+In the local-dev `docker-compose.yml`, `MODEL_SERVICE_TOKEN` plays the same role
+for both `model-service-stt` (qwen3_asr_gguf) and `model-service-tts` (vieneu).
 
 ## Cloudflare Containers
 
@@ -256,6 +337,7 @@ platform, `SERVICE_ENGINE=vieneu`. Deployed and end-to-end verified
 answers `/health` and returns real synthesized WAV audio from
 `POST /v1/audio/speech`, with auth enforced (unauthenticated requests get
 `401`). See that directory's own README for deploy steps, cost/instance-type
-notes, and why `omnivoice` isn't deployable there yet (the same env-override
-gap described above under Limits, not a Cloudflare-specific issue). Not yet
+notes, and its take on `omnivoice` (which is now deployable in principle — the
+env-override gap that used to block it is gone — but is a GPU-shaped,
+multi-GB-image engine, so nothing about that has been tried there). Not yet
 wired into this gateway's own Model Registry.

@@ -1,0 +1,50 @@
+# Standalone Coolify "Docker Compose" app: vieneu (TTS, Vietnamese) on an NVIDIA
+# GPU. CPU twin: docker-compose.tts-vieneu.yml (no -cpu suffix — it's a live
+# Coolify resource that predates this pair).
+#
+# There is no GPU flag and no separate mode here: vieneu's default `v3turbo`
+# builds as `V3TurboVieNeuTTS(device="auto", backend="auto")`, which checks
+# `torch.cuda.is_available()` and runs the PyTorch path on a GPU, the ONNX
+# Runtime path otherwise. So the only thing that makes this the GPU variant is
+# that its base image ships torch (the CUDA one does, by default) and a GPU is
+# reserved below. If either is missing it silently degrades to exactly what the
+# CPU file does — correct output, no speedup.
+#
+# vieneu's own `legacy` extra is NOT needed for this; that extra covers its older
+# standard/fast/turbo modes, which this provider never selects.
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
+
+services:
+  tts-vieneu-gpu:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.model_service.cuda
+      args:
+        PIP_EXTRAS: tts,opus
+    environment:
+      SERVICE_KIND: tts
+      SERVICE_ENGINE: vieneu
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
+    volumes:
+      # v3turbo pulls its weights from the hub on first use.
+      - hf-cache:/root/.cache/huggingface
+    expose:
+      - "8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  hf-cache:

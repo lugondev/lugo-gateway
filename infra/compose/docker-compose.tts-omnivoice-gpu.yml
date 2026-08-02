@@ -1,0 +1,63 @@
+# Standalone Coolify "Docker Compose" app: omnivoice (TTS, multilingual) on an
+# NVIDIA GPU. CPU twin: docker-compose.tts-omnivoice-cpu.yml.
+#
+# This is the variant OmniVoice is usable in: RTF ~1 with the persistent sidecar,
+# which is what makes it viable as the live-conversation TTS engine. Requires the
+# NVIDIA Container Toolkit on the host.
+#
+# How OmniVoice runs here differs from a dev machine: locally the provider shells
+# out to a separate OmniVoice checkout and its own venv (that's what
+# OMNIVOICE_PATH/.venv/bin/python defaults to). This image pip-installs
+# `omnivoice` alongside the app instead and points OMNIVOICE_PYTHON at its own
+# interpreter -- note that's the venv at /opt/venv, not /usr/local/bin, because
+# the CUDA base image (Ubuntu 24.04) marks its system python as externally
+# managed.
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
+
+services:
+  tts-omnivoice-gpu:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.model_service.cuda
+      args:
+        PIP_EXTRAS: omnivoice,opus
+    environment:
+      SERVICE_KIND: tts
+      SERVICE_ENGINE: omnivoice
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
+      OMNIVOICE_PYTHON: /opt/venv/bin/python
+      OMNIVOICE_PATH: /app
+      OMNIVOICE_MODEL_ID: k2-fsa/OmniVoice
+      OMNIVOICE_DEVICE: cuda:0
+      OMNIVOICE_DTYPE: float16
+      # 16 steps: the project's "faster inference" setting, still fine on a GPU.
+      # 32 is the model's own quality-first default if you have headroom.
+      OMNIVOICE_NUM_STEP: "16"
+      OMNIVOICE_USE_SERVER: "true"
+      # Generous only because the first start downloads the weights; steady-state
+      # synth is far under the per-request timeout.
+      OMNIVOICE_SERVER_STARTUP_SECONDS: "300"
+      OMNIVOICE_TIMEOUT_SECONDS: "60"
+      OMNIVOICE_LANGUAGE: ${OMNIVOICE_LANGUAGE:-vi}
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    expose:
+      - "8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  hf-cache:

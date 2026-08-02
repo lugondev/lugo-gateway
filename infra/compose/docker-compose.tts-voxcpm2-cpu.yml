@@ -1,0 +1,52 @@
+# Standalone Coolify "Docker Compose" app: voxcpm2 (TTS, 30 languages, 48 kHz,
+# voice cloning + voice design), CPU build. GPU twin:
+# docker-compose.tts-voxcpm2-gpu.yml.
+#
+# The engine picks its device itself (torch auto-detect inside the voxcpm
+# package -- the provider passes none), so CPU vs GPU here is decided entirely by
+# which torch wheel the image carries and whether a GPU is reserved. That's why
+# there is no *_DEVICE env in either file.
+#
+# Expect roughly realtime-or-slower synthesis on CPU; the package's own hint
+# calls CUDA "recommended". vieneu remains the CPU-realtime Vietnamese engine.
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
+
+services:
+  tts-voxcpm2-cpu:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.model_service
+      args:
+        PIP_EXTRAS: voxcpm,opus
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    environment:
+      SERVICE_KIND: tts
+      SERVICE_ENGINE: voxcpm2
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
+      # Read by the provider (tts/providers/extra_engines.py). The OMNIVOICE_
+      # prefix is inherited from the OmniVoice-Studio port this engine came
+      # from, not a typo -- it has nothing to do with the omnivoice engine.
+      OMNIVOICE_VOXCPM_MODEL: ${VOXCPM_MODEL:-openbmb/VoxCPM2}
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-4}
+    volumes:
+      # Weights download on the first synth request, not at build time.
+      - hf-cache:/root/.cache/huggingface
+    # No host port publish -- see docker-compose.stt-whisper-turbo-cpu.yml.
+    expose:
+      - "8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 8g
+
+volumes:
+  hf-cache:

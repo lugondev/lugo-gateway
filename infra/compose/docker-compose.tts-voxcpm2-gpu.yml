@@ -1,0 +1,47 @@
+# Standalone Coolify "Docker Compose" app: voxcpm2 (TTS, 30 languages, 48 kHz,
+# voice cloning + voice design) on an NVIDIA GPU. CPU twin:
+# docker-compose.tts-voxcpm2-cpu.yml.
+#
+# The engine picks its device itself (torch auto-detect inside the voxcpm
+# package -- the provider passes none), so this file differs from the CPU one
+# only in its base image and the GPU reservation. Requires the NVIDIA Container
+# Toolkit on the host; if the reservation is dropped or the toolkit is missing,
+# the container still starts and quietly synthesizes on CPU.
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
+
+services:
+  tts-voxcpm2-gpu:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.model_service.cuda
+      args:
+        PIP_EXTRAS: voxcpm,opus
+    environment:
+      SERVICE_KIND: tts
+      SERVICE_ENGINE: voxcpm2
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
+      # See the CPU file: the OMNIVOICE_ prefix is inherited from the
+      # OmniVoice-Studio port, not a reference to the omnivoice engine.
+      OMNIVOICE_VOXCPM_MODEL: ${VOXCPM_MODEL:-openbmb/VoxCPM2}
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    expose:
+      - "8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  hf-cache:

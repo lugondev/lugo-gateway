@@ -4,6 +4,11 @@
 # docker-compose.vm.yml for the combined two-service form (plain SSH + docker
 # compose deploys).
 #
+# This IS the CPU variant of the pair; the GPU one is
+# docker-compose.tts-vieneu-gpu.yml. The name has no -cpu suffix because this
+# file is a live Coolify resource -- renaming it would orphan that app -- not
+# because it's the only variant.
+#
 # context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
 # with --project-directory set to the app's base_directory (repo root here),
 # which makes it the resolution base for every relative build.context, no

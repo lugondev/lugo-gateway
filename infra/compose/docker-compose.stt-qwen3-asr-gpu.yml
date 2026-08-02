@@ -1,0 +1,50 @@
+# Standalone Coolify "Docker Compose" app: qwen3_asr (STT) on an NVIDIA GPU --
+# the non-GGUF engine (original HF weights via the official qwen-asr/PyTorch
+# backend). CPU twin: docker-compose.stt-qwen3-asr-cpu.yml.
+#
+# This is the variant the engine was actually designed for; on VN benchmarks
+# (FLEURS) Qwen3-ASR beat PhoWhisper, and 1.7B beats 0.6B. Requires the NVIDIA
+# Container Toolkit on the host.
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
+
+services:
+  stt-qwen3-asr-gpu:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.model_service.cuda
+      args:
+        PIP_EXTRAS: qwen3-asr-cuda,opus
+    environment:
+      SERVICE_KIND: stt
+      SERVICE_ENGINE: qwen3_asr
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
+      # 1.7B (~3.4GB of weights) -- the accurate variant, affordable on a GPU.
+      # Drop to Qwen/Qwen3-ASR-0.6B on a card with little VRAM.
+      STT_QWEN3_ASR_DEFAULT_MODEL: Qwen/Qwen3-ASR-1.7B
+      # cuda:0 is also the provider's own default; spelled out so a multi-GPU
+      # host has one obvious place to pin a different card.
+      STT_QWEN3_ASR_DEVICE: cuda:0
+      # Dtype is not configurable and needs no env: the provider picks bfloat16
+      # on Ampere+ and float16 on older cards (T4/Turing has no native bf16).
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    expose:
+      - "8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  hf-cache:

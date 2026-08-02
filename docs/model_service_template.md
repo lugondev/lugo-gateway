@@ -123,6 +123,32 @@ Each engine gets its own one-service compose file in `infra/compose/` (e.g.
 `Dockerfile.model_service` — see `docker-compose.vm.yml` for running several
 engines together on one plain SSH+docker-compose VM instead.
 
+Two build args decide what the shared image actually contains, so a new engine's
+compose file has to set them:
+
+- **`PIP_EXTRAS`** (default `tts,opus`) — the engine's own extras from
+  `pyproject.toml`, e.g. `whisper,opus` or `omnivoice,opus`. The image's *code*
+  is engine-agnostic; its wheels are not.
+- **`TORCH_INDEX_URL`** — set to `https://download.pytorch.org/whl/cpu` for a
+  CPU build of a torch-backed engine, or PyPI's default wheel drags in ~2.5GB of
+  CUDA runtime that can never be used. It installs torch **and torchaudio**
+  together: a torch from that index plus a torchaudio from PyPI builds cleanly
+  and then dies at import with `Could not load this library:
+  .../_torchaudio.abi3.so`.
+
+An engine that can use a GPU gets two files, `-cpu` and `-gpu` (see
+`docker-compose.tts-omnivoice-{cpu,gpu}.yml`). Sometimes the pair differs *only*
+in the image and the reservation, because the engine auto-detects: `vieneu`'s
+v3turbo mode runs ONNX Runtime when no CUDA device is visible and PyTorch when
+one is, and `voxcpm2` lets torch pick. Say so in the file's header when that's
+the case — otherwise the next reader hunts for a device env var that doesn't
+exist. The GPU one builds from
+`Dockerfile.model_service.cuda` — an `nvidia/cuda:*-cudnn-runtime-*` base,
+because CTranslate2 (faster-whisper) dlopens cuBLAS/cuDNN 9 without shipping
+them — and swaps the CPU file's `deploy.resources.limits` for an NVIDIA
+`devices` reservation. Note that image installs into a venv at `/opt/venv`, so
+anything naming an interpreter path (`OMNIVOICE_PYTHON`) differs between the two.
+
 Gotchas hit standing these up (in case they resurface):
 
 - **`build.context` must be `.`, not `../..`.** Coolify invokes `docker compose`

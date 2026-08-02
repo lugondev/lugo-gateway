@@ -1,0 +1,57 @@
+# Standalone Coolify "Docker Compose" app: whisper_local @ large-v3-turbo (STT),
+# NVIDIA GPU build. CPU twin: docker-compose.stt-whisper-turbo-cpu.yml.
+#
+# Requires the NVIDIA Container Toolkit on the host (nvidia-container-runtime +
+# a driver new enough for CUDA 12). Without it the container starts but
+# CTranslate2 finds no GPU and the request fails rather than silently running on
+# CPU -- switch to the -cpu file for CPU hosts instead of dropping the device
+# reservation here.
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
+
+services:
+  stt-whisper-turbo-gpu:
+    build:
+      context: .
+      # CUDA base image: CTranslate2 dlopens cuBLAS and cuDNN 9 and does not
+      # bundle them, so the stock slim image + --gpus is not enough (it fails
+      # with "Unable to load libcudnn_ops.so.9"). See that Dockerfile's header.
+      dockerfile: infra/docker/Dockerfile.model_service.cuda
+      args:
+        PIP_EXTRAS: whisper,opus
+    environment:
+      SERVICE_KIND: stt
+      SERVICE_ENGINE: whisper_local
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
+      STT_WHISPER_LOCAL_DEFAULT_MODEL: large-v3-turbo
+      STT_WHISPER_LOCAL_DEVICE: cuda
+      # float16 is the GPU tuning -- native half-precision throughput, ~3GB of
+      # VRAM for turbo. int8_float16 halves that again on a small card at a
+      # slight WER cost; plain float32 wastes both bandwidth and VRAM here.
+      STT_WHISPER_LOCAL_COMPUTE_TYPE: float16
+      # A GPU decodes fast enough that beam search is affordable; 5 is
+      # faster-whisper's own default and buys back the WER the CPU file trades
+      # away. Set to 1 if you're serving many concurrent streams.
+      STT_WHISPER_LOCAL_BEAM_SIZE: "5"
+      STT_WHISPER_LOCAL_VAD_FILTER: "true"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    expose:
+      - "8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  hf-cache:

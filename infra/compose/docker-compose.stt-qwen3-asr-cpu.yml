@@ -1,0 +1,63 @@
+# Standalone Coolify "Docker Compose" app: qwen3_asr (STT) on CPU -- the
+# non-GGUF engine, i.e. the original HF weights through the official qwen-asr
+# (PyTorch) backend, not the quantized qwen3-asr.cpp one. GPU twin:
+# docker-compose.stt-qwen3-asr-gpu.yml.
+#
+# Read this before deploying it: for CPU-only hosts,
+# docker-compose.stt-qwen3-asr-gguf.yml is the faster and much lighter option
+# (q8_0 weights, a C++ binary, no torch at all). This file exists so the CPU and
+# GPU variants run byte-identical HF weights -- useful for A/B-ing quantization
+# loss, or as a fallback when a GPU box loses its GPU. Expect several seconds of
+# CPU inference per utterance even at 0.6B; it is not a realtime path.
+#
+# context is "." (repo root), not "../.." -- Coolify invokes `docker compose`
+# with --project-directory set to the app's base_directory (repo root here),
+# which makes it the resolution base for every relative build.context, no
+# matter where this file itself lives in the tree. Building this locally
+# needs the same override: `docker compose -f infra/compose/<this file>
+# --project-directory . build` from the repo root.
+
+services:
+  stt-qwen3-asr-cpu:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.model_service
+      args:
+        # The extra is named for its usual home (NVIDIA) but the package it
+        # installs -- qwen-asr -- is the same PyTorch backend on either device;
+        # what makes this image CPU-only is the torch wheel below.
+        PIP_EXTRAS: qwen3-asr-cuda,opus
+        # ~2GB smaller than PyPI's default CUDA-bundling wheel, and nothing here
+        # can use CUDA anyway.
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    environment:
+      SERVICE_KIND: stt
+      SERVICE_ENGINE: qwen3_asr
+      SERVICE_PORT: "8100"
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?set SERVICE_API_TOKEN}
+      # 0.6B, not the GPU file's 1.7B: on CPU the smaller model is the only one
+      # with a tolerable turnaround. Weights (~1.2GB) download on first request
+      # into the HF cache volume below.
+      STT_QWEN3_ASR_DEFAULT_MODEL: Qwen/Qwen3-ASR-0.6B
+      # Also selects the dtype: the provider forces float32 on CPU, because many
+      # torch CPU kernels have no fp16/bf16 implementation and would raise
+      # "not implemented for 'Half'" mid-inference.
+      STT_QWEN3_ASR_DEVICE: cpu
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-4}
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    # No host port publish -- see docker-compose.stt-whisper-turbo-cpu.yml for
+    # why `expose` is enough behind Coolify/Traefik.
+    expose:
+      - "8100"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          # fp32 0.6B weights + activations; well over the 2g the gguf engine
+          # gets by in.
+          memory: 6g
+
+volumes:
+  hf-cache:
