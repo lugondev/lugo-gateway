@@ -19,3 +19,6 @@
 [submodule "servers/router-memory-services"]
 	path = servers/router-memory-services
 	url = ../router-memory-services
+[submodule "servers/knowledge-api"]
+	path = servers/knowledge-api
+	url = ../knowledge-api
