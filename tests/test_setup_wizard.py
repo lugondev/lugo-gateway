@@ -41,7 +41,17 @@ def test_install_plan_groups_extras_and_pips():
     cmds = setup.install_commands([cuda, gpu_tts])
     joined = " ".join(" ".join(c) for c in cmds)
     assert "qwen3-asr-cuda" in joined  # extra folded into pip install -e .[...]
-    assert "vieneu[gpu]" in joined     # raw pip spec
+    assert "torch" in joined           # raw pip spec
+
+
+def test_vieneu_gpu_installs_torch_not_a_nonexistent_extra():
+    """Regression guard: this used to install `vieneu[gpu]`, an extra vieneu has
+    never published (3.2.3 offers only `legacy` and `pdf`) -- pip warns and
+    installs the base package, so the flag silently did nothing. The real GPU
+    switch is torch: v3turbo runs ONNX Runtime without CUDA and PyTorch with it."""
+    gpu_tts = next(c for c in setup.COMPONENTS if c["id"] == "vieneu_gpu")
+    assert gpu_tts["install"] == ("pip", "torch")
+    assert "[gpu]" not in gpu_tts["install"][1]
 
 
 def test_omnivoice_is_a_pip_component():

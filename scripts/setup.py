@@ -36,8 +36,14 @@ COMPONENTS = [
          install=("extra", "mlx"), hosts={"apple"}, note=""),
     dict(id="vieneu", label="VieNeu v3turbo — TTS (CPU, Vietnamese)", module="vieneu",
          install=("extra", "tts"), hosts={"apple", "nvidia", "cpu"}, note=""),
-    dict(id="vieneu_gpu", label="VieNeu GPU modes — TTS (turbo/fast)", module="lmdeploy",
-         install=("pip", "vieneu[gpu]"), hosts={"nvidia"}, note=""),
+    # NOT `vieneu[gpu]` — vieneu publishes no such extra (3.2.3 has only `legacy`
+    # and `pdf`), so that spec installs the base package with a pip warning and
+    # changes nothing. The GPU path is torch: the provider builds mode v3turbo as
+    # V3TurboVieNeuTTS(device="auto", backend="auto"), which runs ONNX Runtime with
+    # no CUDA device visible and PyTorch with one. vieneu[legacy] is for its older
+    # standard/fast/turbo modes, which this provider never selects by default.
+    dict(id="vieneu_gpu", label="VieNeu v3turbo GPU path — TTS (torch/CUDA)", module="torch",
+         install=("pip", "torch"), hosts={"nvidia"}, note=""),
     dict(id="omnivoice", label="OmniVoice — TTS (600+ langs, voice clone)", module="omnivoice",
          install=("pip", "omnivoice"), hosts={"apple", "nvidia", "cpu"}, note=""),
     dict(id="voxcpm2", label="VoxCPM — TTS (30 langs, CPU/MPS/CUDA, clone)", module="voxcpm",

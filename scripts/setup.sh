@@ -3,7 +3,7 @@
 # matching engine packages + system libs. Pick extras with flags ("tick" what you want).
 #
 #   bash scripts/setup.sh                      # host-appropriate STT + TTS
-#   bash scripts/setup.sh --gpu-tts            # + VieNeu GPU modes (NVIDIA)
+#   bash scripts/setup.sh --gpu-tts            # + torch, so VieNeu v3turbo runs on the GPU
 #   bash scripts/setup.sh --ollama gemma2:2b   # + local LLM via Ollama
 #   bash scripts/setup.sh --dry-run            # print the plan, install nothing
 set -euo pipefail
@@ -19,14 +19,14 @@ usage() {
 Setup wizard for speech-text-transformer.
 
 Options (tick what you want):
-  --gpu-tts          VieNeu GPU modes (vieneu[gpu]: llama-cpp-python + lmdeploy) — NVIDIA only
+  --gpu-tts          Install torch so VieNeu's v3turbo runs on CUDA instead of ONNX/CPU — NVIDIA only
   --ollama [MODEL]   Install Ollama + pull MODEL (default gemma2:2b) for a local conversation LLM
   --dry-run          Print the plan only; install nothing
   -h, --help         Show this help
 
 Engines installed per detected host:
   Apple Silicon -> .[mlx,qwen3-asr,tts,opus]  (whisper_mlx, qwen3_asr MLX, VieNeu, Opus)
-  NVIDIA GPU    -> .[qwen3-asr-cuda,tts]       (qwen3_asr CUDA, VieNeu)  [+ vieneu[gpu] with --gpu-tts]
+  NVIDIA GPU    -> .[qwen3-asr-cuda,tts]       (qwen3_asr CUDA, VieNeu)  [+ torch with --gpu-tts]
   CPU only      -> .[tts,opus]                 (whisper CPU, VieNeu v3turbo, Opus)
 EOF
 }
@@ -65,17 +65,17 @@ print_menu() {
       echo "  STT : whisper_mlx, qwen3_asr (MLX), whisper (CPU), vosk"
       echo "  TTS : VieNeu v3turbo (CPU)"
       echo "  LLM : Ollama (--ollama MODEL)  |  online (UI)"
-      echo "  Skipped (incompatible): qwen3_asr CUDA, VieNeu GPU modes  (need NVIDIA)" ;;
+      echo "  Skipped (incompatible): qwen3_asr CUDA, VieNeu GPU path  (need NVIDIA)" ;;
     nvidia)
       echo "  STT : qwen3_asr (CUDA) ⭐, whisper (CPU), vosk"
-      echo "  TTS : VieNeu v3turbo (CPU)  |  VieNeu GPU modes (--gpu-tts)"
+      echo "  TTS : VieNeu v3turbo (CPU/ONNX  |  GPU/torch with --gpu-tts)"
       echo "  LLM : Ollama (--ollama MODEL)  |  online (UI)"
       echo "  Skipped (incompatible): whisper_mlx, qwen3_asr MLX  (Apple Silicon only)" ;;
     cpu)
       echo "  STT : whisper (CPU), vosk"
       echo "  TTS : VieNeu v3turbo (CPU)"
       echo "  LLM : online (UI)  |  Ollama (--ollama MODEL, slow on CPU)"
-      echo "  Skipped (incompatible): qwen3_asr (needs GPU), whisper_mlx (Apple), VieNeu GPU modes" ;;
+      echo "  Skipped (incompatible): qwen3_asr (needs GPU), whisper_mlx (Apple), VieNeu GPU path" ;;
   esac
   echo
 }
@@ -103,7 +103,13 @@ run "$PY" -m pip install -e ".[$EXTRAS]"
 
 if [ "$GPU_TTS" -eq 1 ]; then
   if [ "$HOST" = "nvidia" ]; then
-    sh_run "$PY -m pip install 'vieneu[gpu]'"   # llama-cpp-python + lmdeploy (Turbo/Fast/Standard modes)
+    # NOT vieneu[gpu]: no such extra exists (3.2.3 publishes only `legacy` and `pdf`),
+    # so pip would warn and install the base package unchanged. VieNeu's default
+    # v3turbo mode builds as V3TurboVieNeuTTS(device="auto", backend="auto") -- ONNX
+    # Runtime when no CUDA device is visible, PyTorch when one is. Installing torch
+    # IS the GPU switch.
+    sh_run "$PY -m pip install torch"
+    echo "  (VieNeu's older standard/fast/turbo modes: pip install 'vieneu[legacy]')"
   else
     echo "  (skip --gpu-tts: no NVIDIA GPU detected)"
   fi
