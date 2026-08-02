@@ -61,10 +61,37 @@ RUN if [ "$BUILD_QWEN3_ASR_GGUF" = "1" ]; then \
         && pip uninstall -y torch safetensors tqdm gguf huggingface_hub 2>/dev/null || true; \
     fi
 
+# Torch-backed engines (omnivoice, voxcpm2, the non-GGUF qwen3_asr) pull torch
+# transitively, and PyPI's default linux wheel bundles the whole CUDA runtime
+# (~2.5GB) even on a machine that has no GPU. Pre-installing from PyTorch's own
+# CPU index makes the later `pip install ".[...]"` find the requirement already
+# satisfied and keeps the CPU images ~2GB smaller:
+#   --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+# Deliberately its own layer above the COPY of the source tree: torch is by far
+# the largest download in these images and must not be re-fetched every time app
+# code changes. Empty (the default) skips this entirely -- the torch-free engines
+# (vieneu, vosk, whisper_local, qwen3_asr_gguf) never install torch at all.
+#
+# torchaudio is installed here too, from the SAME index. It isn't needed for its
+# own sake -- omnivoice/voxcpm pull it in -- but its wheel contains a C extension
+# compiled against one exact torch build, and pip would otherwise satisfy it from
+# PyPI against the +cpu torch installed here. The mismatch is not a resolver
+# error; it's an ImportError at runtime, well after the image builds clean:
+#   OSError: Could not load this library: .../torchaudio/lib/_torchaudio.abi3.so
+ARG TORCH_INDEX_URL=""
+RUN if [ -n "$TORCH_INDEX_URL" ]; then \
+        pip install --no-cache-dir --index-url "$TORCH_INDEX_URL" torch torchaudio; \
+    fi
+
 COPY pyproject.toml README.md ./
 COPY apps ./apps
 
-RUN pip install --no-cache-dir ".[tts,opus]"
+# Which engine's dependencies this image carries. The default keeps the vieneu
+# TTS + Opus set every existing compose file was built against; per-engine images
+# pass their own (e.g. --build-arg PIP_EXTRAS=whisper,opus). See
+# [project.optional-dependencies] in pyproject.toml for the full list.
+ARG PIP_EXTRAS=tts,opus
+RUN pip install --no-cache-dir ".[${PIP_EXTRAS}]"
 
 ENV PYTHONPATH=/app/apps/api_gateway:/app/apps \
     PYTHONUNBUFFERED=1 \

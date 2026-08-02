@@ -49,8 +49,12 @@ whisper = [
 opus = [
   "opuslib>=3.0.1",
 ]
-# VieNeu-TTS — Vietnamese TTS. The base package runs the v3turbo mode on CPU via
-# onnxruntime (torch-free); the heavy GPU modes live in vieneu's own [gpu] extra.
+# VieNeu-TTS — Vietnamese TTS. One package, two execution paths inside the same
+# default v3turbo mode: `V3TurboVieNeuTTS(device="auto", backend="auto")` runs
+# ONNX Runtime (torch-free) when no CUDA device is visible and PyTorch when one
+# is, so the GPU variant needs no extra of its own -- just torch present in the
+# image (see infra/compose/docker-compose.tts-vieneu-gpu.yml). vieneu's own
+# `legacy` extra is for its *older* modes (standard/fast/turbo), not for GPU.
 # soundfile needs system libsndfile1 (apt-get install libsndfile1).
 tts = [
   "vieneu>=3.2.3",
@@ -78,6 +82,21 @@ qwen3-tts = [
 # CPU/MPS baseline. See https://github.com/andimarafioti/faster-qwen3-tts.
 qwen3-tts-cuda = [
   "faster-qwen3-tts",
+]
+# OmniVoice (k2-fsa) — multilingual TTS. Only needed where the engine actually
+# runs its model: on a dev Mac the provider shells out to a separate OmniVoice
+# checkout's own venv (OMNIVOICE_PATH/.venv/bin/python) and this extra is not
+# installed, but a single-engine container has no second venv to shell into, so
+# it installs omnivoice alongside the app and points OMNIVOICE_PYTHON at its own
+# interpreter. Pulls torch (CPU wheels unless the image asks for CUDA ones).
+omnivoice = [
+  "omnivoice>=0.2.1",
+]
+# VoxCPM2 (openbmb) — 30-language TTS with voice cloning + voice design, 48 kHz.
+# Runs on CPU/MPS and on CUDA (much faster); same package either way, the device
+# is picked by torch at runtime. See tts/providers/extra_engines.py.
+voxcpm = [
+  "voxcpm>=2.0.3",
 ]
 # TikTok Live co-host ingestion (unofficial API). See
 # docs/superpowers/specs/2026-07-05-livehost-tiktok-cohost-design.md.

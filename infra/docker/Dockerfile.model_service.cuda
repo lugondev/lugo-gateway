@@ -1,0 +1,82 @@
+# infra/docker/Dockerfile.model_service.cuda
+# GPU sibling of Dockerfile.model_service: same app, same SERVICE_KIND +
+# SERVICE_ENGINE contract, same port and healthcheck -- only the base image and
+# the wheels differ. Run it with the NVIDIA Container Toolkit (`docker run --gpus
+# all`, or compose's deploy.resources.reservations.devices) or the GPU is simply
+# invisible inside the container and every engine silently falls back to CPU.
+#
+# Why a separate file rather than an ARG on the slim one: the base image is what
+# changes, and a Dockerfile cannot swap its own FROM per build without turning
+# every subsequent instruction into a maze of conditionals. The two files are
+# deliberately kept structurally identical so a change to one is easy to mirror.
+#
+# Why an nvidia/cuda *cudnn* base specifically: faster-whisper's CTranslate2
+# backend dlopens cuBLAS and cuDNN 9 at model-load time and does NOT ship them
+# in its wheel (unlike torch, which bundles its own copies). On a plain
+# python:3.11-slim + --gpus image, whisper_local on CUDA dies with
+# "Unable to load libcudnn_ops.so.9". The cudnn runtime tag has both.
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
+
+# python3-venv: Ubuntu 24.04 marks its system python as externally managed
+# (PEP 668), so pip refuses to install into it -- everything goes into a venv on
+# PATH instead. The rest mirrors the slim image: libsndfile1 for soundfile audio
+# I/O, libopus0 for the Opus transport, libatomic1 for vosk's libvosk.so,
+# libgomp1 for OpenMP-linked native code.
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 python3-venv python3-dev \
+        libsndfile1 libopus0 libatomic1 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+
+WORKDIR /app
+
+# CUDA build of torch. Left at PyPI's default wheel, which already bundles the
+# CUDA 12 runtime and is what `pip install omnivoice/voxcpm/qwen-asr` would pull
+# anyway -- pinned here as its own layer purely so the multi-GB download survives
+# app-code changes. Override for a different CUDA line, e.g.
+#   --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121
+# The host's NVIDIA driver must be new enough for whichever CUDA the wheel
+# carries; a too-old driver shows up as torch.cuda.is_available() == False.
+#
+# torchaudio comes from the same index for the same reason as in the slim image:
+# its C extension is compiled against one exact torch build, and a torch from
+# here + a torchaudio from PyPI fails at import time with
+# "Could not load this library: .../_torchaudio.abi3.so".
+ARG TORCH_INDEX_URL=""
+RUN if [ -n "$TORCH_INDEX_URL" ]; then \
+        pip install --no-cache-dir --index-url "$TORCH_INDEX_URL" torch torchaudio; \
+    else \
+        pip install --no-cache-dir torch torchaudio; \
+    fi
+
+COPY pyproject.toml README.md ./
+COPY apps ./apps
+
+# Same meaning as in the slim image, different default: nothing GPU-shaped runs
+# vieneu (its CPU/onnxruntime mode is the whole point of that engine), so the
+# default here is the one extra every GPU engine wants.
+ARG PIP_EXTRAS=opus
+RUN pip install --no-cache-dir ".[${PIP_EXTRAS}]"
+
+ENV PYTHONPATH=/app/apps/api_gateway:/app/apps \
+    PYTHONUNBUFFERED=1 \
+    SERVICE_PORT=8100 \
+    ARTIFACTS_DIR=/tmp/artifacts \
+    DATABASE_URL=sqlite+aiosqlite:////tmp/model_service.db
+
+# ARTIFACTS_DIR / DATABASE_URL: see the slim image -- both point at /tmp so the
+# gateway code these providers share never writes into the image's working tree.
+
+EXPOSE 8100
+# start-period is longer than the slim image's 120s: the first boot on a GPU box
+# downloads model weights (multi-GB for omnivoice/voxcpm2/qwen3_asr) before the
+# server can answer, and a healthcheck that fires during that window would flap
+# the container.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=600s --retries=3 \
+    CMD python -c "import urllib.request,os;urllib.request.urlopen(f'http://127.0.0.1:{os.environ[\"SERVICE_PORT\"]}/health').read()"
+
+CMD ["sh", "-c", "uvicorn model_service.app.main:create_app --factory --host 0.0.0.0 --port ${SERVICE_PORT}"]
