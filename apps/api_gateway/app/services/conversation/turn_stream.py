@@ -25,6 +25,66 @@ from app.services.tts.streaming import prefetch_synthesis
 logger = logging.getLogger(__name__)
 
 
+class ReplyPacer:
+    """The release clock for one reply's Opus frames.
+
+    Holds the invariant this module's docstring promises: the stream never runs
+    more than a prebuffer ahead of real playback, for the whole reply.
+
+    Why that has to be enforced rather than assumed. The clock is anchored once,
+    at the reply's first frame, and each later frame is due at
+    ``t0 + (n - prebuffer) * frame_s``. When synthesis keeps up, frames arrive
+    after their due time by a hair and the clock is self-correcting. When it does
+    NOT keep up the clock falls into arrears -- and arrears are settled by
+    emitting every overdue frame with no sleep at all, because each one's due
+    time is already in the past.
+
+    That is not a corner case here: every Vietnamese TTS engine we ship runs
+    slower than real time (vieneu measures RTF 1.11-1.34), so the clock loses
+    ``synth - audio`` seconds on every single sentence and the debt compounds
+    across the reply. A 4-second sentence synthesized in 5.4s left the clock
+    ~53 frames behind, and all 67 of that sentence's frames then went out as one
+    burst. The ESP32's downlink queue is ``DL_QUEUE_DEPTH`` = 32 frames and
+    ``dl_push`` is ``xQueueSend(..., 0)``, which drops silently when full
+    (main.c's ``s_dl_drops``) -- so half the sentence never reached the speaker,
+    and the device's Opus decoder resumed from stale state, which is audible as
+    a warbly, drawn-out first word. Only the reply's FIRST sentence was safe,
+    because nothing was in arrears yet.
+
+    So: cap the arrears. Overdue frames still go out immediately -- the device is
+    starved at that point and wants them -- but only a prebuffer's worth, after
+    which the clock is re-anchored to now. Playback latency is unchanged (the
+    frames the device can actually hold arrive just as fast); what goes away is
+    the part of the burst it was always going to drop.
+    """
+
+    def __init__(self, prebuffer: int, frame_s: float) -> None:
+        self._prebuffer = prebuffer
+        self._frame_s = frame_s
+        self._t0: float | None = None
+        self._n = 0
+
+    def delay_before_next(self, now: float) -> float:
+        """Seconds to wait before releasing the next frame (<= 0 means now).
+
+        Takes ``now`` instead of reading the clock so the pacing arithmetic can
+        be tested for what it does, not how long it takes.
+        """
+        if self._t0 is None:
+            self._t0 = now
+        n, self._n = self._n, self._n + 1
+        if n < self._prebuffer:
+            return 0.0
+        target = self._t0 + (n - self._prebuffer) * self._frame_s
+        # Arrears beyond a prebuffer mean synthesis has fallen behind playback.
+        # Re-anchor rather than pay the whole debt out at once (see class docs).
+        max_arrears = self._prebuffer * self._frame_s
+        if now - target > max_arrears:
+            self._t0 += (now - target) - max_arrears
+            target = self._t0 + (n - self._prebuffer) * self._frame_s
+        return target - now
+
+
 async def stream_reply(
     session, sentence_aiter, responder_name: str, *, turn: int, log_first_chunk
 ) -> list[str]:
@@ -82,8 +142,7 @@ async def stream_reply(
         _conv_cfg = system_config_store.get().conversation
         _do_pace = cfg.opus_pace if cfg.opus_pace is not None else _conv_cfg.conversation_opus_pace
         _prebuf = _conv_cfg.conversation_opus_prebuffer_frames
-        _pace_t0 = None
-        _pace_n = 0
+        _pacer = None   # built on the first packet, once the frame size is known
         tts_error_reported = False
         # NB: nothing in this loop may log `sentence` (or the transcript
         # it answers). The stage timings below are deliberately
@@ -118,12 +177,14 @@ async def stream_reply(
                     text=sentence if want_text else None,
                     codec="opus", sample_rate=cfg.output_sample_rate, frames=len(packets),
                 )
-                # Release on the single global clock (see _pace_* above).
+                # Release on the single global clock (see ReplyPacer).
                 # First _prebuf frames of the reply go out immediately to
                 # fill the device jitter buffer; every frame after that is
                 # paced to real time, so a fast synth can't flood the
-                # device and a slow one just catches up (no per-sentence
-                # burst accumulation).
+                # device. A slow synth catches up too, but only by a
+                # prebuffer at a time -- an unbounded catch-up burst is
+                # what used to overrun the device queue (ReplyPacer's
+                # docstring has the numbers).
                 #
                 # Frame duration is read HERE, not before the loop: a
                 # session that negotiated no Opus (wav mode) has
@@ -134,14 +195,11 @@ async def stream_reply(
                 _frame_s = session.opus_encoder.frame / session.opus_encoder.sample_rate
                 for pkt in packets:
                     if _do_pace:
-                        if _pace_t0 is None:
-                            _pace_t0 = time.monotonic()
-                        if _pace_n >= _prebuf:
-                            target = _pace_t0 + (_pace_n - _prebuf) * _frame_s
-                            now = time.monotonic()
-                            if target > now:
-                                await asyncio.sleep(target - now)
-                        _pace_n += 1
+                        if _pacer is None:
+                            _pacer = ReplyPacer(prebuffer=_prebuf, frame_s=_frame_s)
+                        delay = _pacer.delay_before_next(time.monotonic())
+                        if delay > 0:
+                            await asyncio.sleep(delay)
                     await session.emit_audio(pkt)
                 await session.emit("audio_end", turn=turn, chunk_index=index)
             else:
