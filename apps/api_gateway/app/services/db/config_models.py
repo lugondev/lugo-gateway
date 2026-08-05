@@ -25,6 +25,12 @@ class McpServerRow(ConfigBase):
     data: Mapped[str] = mapped_column(Text)
 
 
+class PluginRow(ConfigBase):
+    __tablename__ = "config_plugins"
+    name: Mapped[str] = mapped_column(Text, primary_key=True)
+    data: Mapped[str] = mapped_column(Text)
+
+
 class SystemRow(ConfigBase):
     __tablename__ = "config_system"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
