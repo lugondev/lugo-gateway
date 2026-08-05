@@ -270,22 +270,26 @@ def test_a_ticket_is_not_an_access_token():
     assert verify_plugin_token(access, "livehost") is None
 
 
-def test_an_expired_ticket_is_refused():
-    import itsdangerous
+def test_an_expired_ticket_is_refused(monkeypatch):
+    """Proves the TTL is actually consulted, not merely that _verify catches
+    SignatureExpired. verify_plugin_token reads the module-level constant at
+    call time, so shrinking it below zero makes a ticket issued a moment ago
+    genuinely expired -- through real itsdangerous, with no clock to wait on
+    and no shared class left patched.
 
+    The discriminating property matters more than the green tick: patching a
+    serializer to raise unconditionally would pass whether the code threaded
+    through PLUGIN_TICKET_TTL_SECONDS or ACCESS_TTL_SECONDS, so it would guard
+    nothing. Prove this one bites by swapping the constant and watching it
+    fail before you trust it.
+    """
     from app.services.auth import tokens
 
     token = issue_plugin_token("user-1", "livehost")
-    real_loads = itsdangerous.URLSafeTimedSerializer.loads
+    assert verify_plugin_token(token, "livehost") == "user-1"
 
-    def _expired(self, s, max_age=None, **kw):
-        raise itsdangerous.SignatureExpired("too old")
-
-    itsdangerous.URLSafeTimedSerializer.loads = _expired
-    try:
-        assert tokens.verify_plugin_token(token, "livehost") is None
-    finally:
-        itsdangerous.URLSafeTimedSerializer.loads = real_loads
+    monkeypatch.setattr(tokens, "PLUGIN_TICKET_TTL_SECONDS", -1)
+    assert verify_plugin_token(token, "livehost") is None
 
 
 def test_garbage_is_refused():
