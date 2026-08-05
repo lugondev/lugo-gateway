@@ -180,7 +180,7 @@ class Plugin(BaseModel):
 Create `apps/api_gateway/app/services/plugins/store.py`:
 
 ```python
-"""The sixth SqliteBackedStore. No legacy-JSON predecessor exists for plugins,
+"""The fourth SqliteBackedStore. No legacy-JSON predecessor exists for plugins,
 so `legacy_parse` is never reachable: with no `path` and no `settings_attr`,
 _resolve_path() returns None and _ensure() skips the import branch entirely."""
 
@@ -349,6 +349,7 @@ git commit -m "feat(auth): plugin tickets, audience-bound by salt"
 **Files:**
 - Modify: `apps/api_gateway/app/schemas/auth.py` (append `IntrospectRequest`)
 - Modify: `apps/api_gateway/app/api/routes/auth.py` (append the route)
+- Modify: `tests/conftest.py` (add `plugin_store` to `_tmp_db`'s invalidate list)
 - Test: `tests/unit/auth/test_auth_introspect.py`
 
 **Interfaces:**
@@ -504,20 +505,37 @@ async def introspect(body: IntrospectRequest, request: Request) -> dict:
 
 Confirm `AuthError` is already imported in this module (it is used by `refresh`); if the file imports it from `app.core.errors`, reuse that import. Confirm `Request` is imported — `token` and `login` already take one.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Step 5: Register `plugin_store` with the per-test DB fixture**
+
+This task is the first where a *route* reaches `plugin_store`, so the shared fixture has to know about it. In `tests/conftest.py`'s `_tmp_db` fixture, import `plugin_store` alongside the other config stores and invalidate it with them:
+
+```python
+    from app.services.plugins.store import plugin_store
+```
+
+```python
+    profile_store.invalidate()
+    tts_profile_store.invalidate()
+    mcp_server_store.invalidate()
+    plugin_store.invalidate()
+```
+
+Without it, the store's process-global cache — warmed by whichever test touched it first, against *that* test's tmp DB — leaks into every later test, and those tests never re-run `init_config_tables()` against their own DB. The fixture's existing comment names the exact failure: `"no such table: config_profiles"`. `plugin_store` needs no `settings_attr` path repointing, because it has no legacy-JSON predecessor.
+
+- [ ] **Step 6: Run test to verify it passes**
 
 Run: `pytest tests/unit/auth/test_auth_introspect.py -v`
 Expected: PASS, 7 passed
 
-- [ ] **Step 6: Verify AuthError maps to 401**
+- [ ] **Step 7: Verify AuthError maps to 401**
 
 Run: `pytest tests/unit/auth/test_auth_introspect.py::test_a_wrong_plugin_secret_is_401 -v`
 Expected: PASS. If it reports 400 instead, `AuthError` is not mapped to 401 by the app's exception handler — in that case raise `HTTPException(status_code=401, detail="invalid plugin credentials")` instead and keep the tests as written.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add apps/api_gateway/app/api/routes/auth.py apps/api_gateway/app/schemas/auth.py tests/unit/auth/test_auth_introspect.py
+git add apps/api_gateway/app/api/routes/auth.py apps/api_gateway/app/schemas/auth.py tests/conftest.py tests/unit/auth/test_auth_introspect.py
 git commit -m "feat(auth): introspect a plugin ticket, authenticated by plugin secret"
 ```
 

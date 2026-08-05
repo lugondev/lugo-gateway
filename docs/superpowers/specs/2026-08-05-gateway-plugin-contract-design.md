@@ -48,10 +48,12 @@ gateway grew for ESP32 devices and the web client. Livehost and Lugo are
 simply its third and fourth consumers — which is the strongest available
 evidence that the boundary is real rather than invented.
 
-**3. The registry pattern is already generic.** `SqliteBackedStore[T]` backs
-five stores today (MCP servers, model registry, profiles, TTS profiles, system
-config). `McpServer` — `name`, `owner_id`, `url`, `headers`, `enabled` — is
-within one field of what a plugin record needs. The four services under
+**3. The registry pattern is already generic.** `SqliteBackedStore[T]` is
+parameterized and backs three stores today: `ProfileStore`, `TtsProfileStore`
+and `McpServerStore`. (`ModelRegistryStore` and `SystemConfigStore` are
+hand-rolled and share only the `invalidate()` convention.) `McpServer` —
+`name`, `owner_id`, `url`, `headers`, `enabled` — is within one field of what
+a plugin record needs. The four services under
 `servers/` are integrated purely through runtime configuration; the gateway
 does not reference them in code at all.
 
@@ -83,7 +85,7 @@ were wrapped, but because each one is already performed inside the
 
 ### Plugin record and registry
 
-A sixth instance of `SqliteBackedStore[T]`, modelled directly on `McpServer`:
+A fourth instance of `SqliteBackedStore[T]`, modelled directly on `McpServer`:
 
 ```python
 class PluginMount(BaseModel):
