@@ -13,7 +13,8 @@
 ## Global Constraints
 
 - Every HTTP response uses the envelope `{"success": True, "data": ...}`.
-- Gateway tests run from the repo root: `pytest` with `pythonpath = ["apps/api_gateway", "apps"]`, `asyncio_mode = "auto"`, a 120s hard timeout for the whole run.
+- Gateway tests run from the repo root with the repo's own interpreter — `/Users/lugon/code/speech-text-transformer/.venv/bin/python -m pytest`. A bare `python` resolves to a pyenv shim that lacks the dependencies, and a git worktree has no `.venv` of its own.
+- pytest config: `pythonpath = ["apps/api_gateway", "apps"]`, `asyncio_mode = "auto"`. The `timeout = 120` is **per test**, not for the whole run; the full suite is ~1978 tests and takes about 3.5 minutes.
 - `tests/conftest.py` provides three autouse fixtures: `_hermetic`, `_hermetic_engine_health`, `_tmp_db`. Any store singleton touched in a test must be `.invalidate()`d, because the singletons outlive the per-test database.
 - Plugins MUST NOT import gateway internals. The only gateway surface a plugin may use is `WS /v1/conversation/stream`, `POST /api/auth/introspect`, `GET /v1/profiles`, `GET /v1/tts_profiles`.
 - `tests/unit/http/test_auth_guard_route_coverage.py` walks the real route table and fails if any mounted HTTP path is unclassified by `app/core/auth_guard.py`. New routes must be classified in the same commit.
