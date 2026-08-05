@@ -1748,20 +1748,33 @@ from tests.fake_gateway import build_fake_gateway
 
 @pytest.fixture
 def gateway(monkeypatch):
-    """Point the plugin's upstream at an in-process fake."""
-    app, log = build_fake_gateway()
-    # Serve the fake on a real loopback port so `websockets.connect` can reach
-    # it; a TestClient-only fake cannot be dialled by a real ws client.
+    """Point the plugin's upstream at an in-process fake.
+
+    Served on a real loopback port because `websockets.connect` dials a real
+    socket; a TestClient-only fake cannot be reached by a real ws client.
+    """
     import threading
+    import time
 
     import uvicorn
 
+    app, log = build_fake_gateway()
     config = uvicorn.Config(app, host="127.0.0.1", port=8199, log_level="error")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
+
+    # Bounded wait, not a spin: a server that fails to bind never sets
+    # `started`, and a bare `while not server.started: pass` would burn a core
+    # until the suite's 120s timeout killed the whole run.
+    deadline = time.monotonic() + 10
     while not server.started:
-        pass
+        if time.monotonic() > deadline:
+            server.should_exit = True
+            thread.join(timeout=5)
+            pytest.fail("fake gateway did not start within 10s")
+        time.sleep(0.01)
+
     monkeypatch.setattr("livehost.settings.settings.gateway_url", "http://127.0.0.1:8199")
     yield log
     server.should_exit = True
@@ -1799,14 +1812,20 @@ def test_session_started_is_relayed_from_the_gateway(gateway, authed):
 
 
 def test_browser_audio_reaches_the_gateway(gateway, authed):
+    import time
+
     from livehost.app import app
 
     with TestClient(app) as client:
         with client.websocket_connect("/v1/livehost/stream?ticket=good") as ws:
             ws.receive_json()
             ws.send_bytes(b"MIC")
-            import time
-            time.sleep(0.2)
+            # Poll to a deadline rather than sleeping a guessed interval: a
+            # fixed sleep is either flaky on a loaded machine or slow on an
+            # idle one.
+            deadline = time.monotonic() + 5
+            while b"MIC" not in gateway["audio"] and time.monotonic() < deadline:
+                time.sleep(0.01)
     assert b"MIC" in gateway["audio"]
 ```
 
