@@ -59,12 +59,12 @@ does not reference them in code at all.
 
 ```
 Browser (livehost UI)
-   │  1. POST /v1/plugins/livehost/ticket        → {url, token, expires_in}
-   │  2. WS <plugin url>/v1/livehost/stream      mic frames ↑  audio + events ↓
+   │  1. POST /v1/plugins/ticket {"plugin":"livehost"} → {url, token, expires_in}
+   │  2. WS <plugin url>/v1/livehost/stream?ticket=…   mic ↑  audio + events ↓
    ▼
 servers/livehost-api                      ← new repo, owns the TikTokLive dep
    ├─ ingest/tiktok.py ─► scheduler ─► orchestrator  (arbitration)
-   ├─ auth.py           → POST /v1/auth/introspect   (once per connection)
+   ├─ auth.py           → POST /api/auth/introspect  (once per connection)
    └─ upstream.py       → WS /v1/conversation/stream?output=audio,text
          │   mic bytes, passed through unchanged
          │   {"type":"text"}   social turn, formatted
@@ -95,7 +95,7 @@ class Plugin(BaseModel):
     name: str                            # "livehost"
     owner_id: str | None = None
     url: str                             # "https://livehost.internal:8091"
-    headers: dict[str, str] = {}         # secret the gateway sends to the plugin
+    secret: str                          # the plugin's credential for calling back
     enabled: bool = True
     kind: Literal["feature", "tools"] = "feature"
     mounts: list[PluginMount] = []
@@ -105,10 +105,32 @@ class Plugin(BaseModel):
 `kind` exists so the MCP server registry can later fold into this one; nothing
 in this design depends on that happening.
 
+`secret` runs plugin → gateway, the opposite direction from `McpServer.headers`,
+because in this design the gateway never calls the plugin — the browser does.
+It is masked for non-admin readers exactly as `mcp.py::_view` masks `headers`.
+
 New route module `api/routes/plugins.py`, mirroring `api/routes/mcp.py`:
 `GET|POST /v1/plugins`, `GET|PUT|DELETE /v1/plugins/{name}`, plus
-`POST /v1/plugins/{name}/ticket`. `GET /v1/plugins` is what the web client
-reads to decide which feature tabs to render.
+`POST /v1/plugins/ticket`. `GET /v1/plugins` is what the web client reads to
+decide which feature tabs to render.
+
+**Why the ticket route is not `/v1/plugins/{name}/ticket`.** `/v1/plugins` is
+an admin prefix, and the two routes users must reach — listing plugins and
+minting a ticket — are carve-outs inside it. `auth_guard._USER_EXACT` matches
+exactly and by method precisely to stop a path parameter from shadowing an
+admin handler (its comments document this as bug class M1). A carve-out cannot
+be written for a parameterized path, so the plugin name moves into the request
+body and the route becomes a fixed string:
+
+```python
+_ADMIN_PREFIXES += ("/v1/plugins",)
+_USER_EXACT["/v1/plugins"]        = frozenset({"GET", "HEAD"})
+_USER_EXACT["/v1/plugins/ticket"] = frozenset({"POST"})
+```
+
+`GET|PUT|DELETE /v1/plugins/{name}` would route `name="ticket"`, which is why
+the carve-out is restricted to `POST` — and no `POST /v1/plugins/{name}` route
+exists, so `POST /v1/plugins/ticket` can only ever reach the ticket handler.
 
 ### Ticket issuance and introspection
 
@@ -116,30 +138,52 @@ Access tokens today carry a user id and nothing else — `auth_guard.py` states
 plainly that a role claim is never read because it does not exist. A plugin
 ticket is therefore a new token kind, not a new claim on the existing one.
 
-`services/auth/tokens.py` gains:
+`tokens.py` signs with `itsdangerous.URLSafeTimedSerializer` under a salt per
+token kind — `lugo-access` and `lugo-refresh` — so that access and refresh
+tokens share a secret but can never be used for each other. Audience binding
+therefore needs no new claim; it is the salt:
 
 ```python
-def issue_plugin_token(user_id: str, plugin: str, ttl: int) -> str
-def verify_plugin_token(token: str) -> tuple[str, str] | None   # (user_id, plugin)
+PLUGIN_TICKET_TTL_SECONDS = 60
+
+def _plugin_salt(plugin: str) -> str:
+    return f"lugo-plugin:{plugin}"
+
+def issue_plugin_token(user_id: str, plugin: str) -> str
+def verify_plugin_token(token: str, plugin: str) -> str | None   # → user_id
 ```
 
-The token carries an audience claim naming the plugin, so a ticket minted for
-`livehost` cannot be replayed against another plugin.
+A ticket minted for `livehost` fails signature verification under any other
+plugin's salt. The verifier names the plugin it expects, which every plugin
+knows about itself, so the check cannot be forgotten.
 
-`POST /v1/plugins/{name}/ticket` requires a normal authenticated caller,
-checks the plugin exists and is enabled, and returns
+The 60-second TTL is short because a ticket is redeemed immediately on
+connect: browsers cannot set headers on a WebSocket handshake, so the ticket
+travels as a query parameter and lands in access logs. It buys one connection,
+not a session — the connection itself lives as long as the socket.
+
+`POST /v1/plugins/ticket` takes `{plugin}`, requires a normal authenticated
+caller, checks the plugin exists and is enabled, and returns
 `{url, token, expires_in}`.
 
-`POST /v1/auth/introspect` accepts `{token}` and returns
-`{active, user_id, plugin}`. The plugin calls it once when a connection opens.
+`POST /api/auth/introspect` takes `{token, plugin}` and returns
+`{active, user_id}`. The plugin calls it once when a connection opens,
+authenticating with its own `Plugin.secret` as a bearer.
 
 **Why introspection rather than local verification:** verifying signatures in
-the plugin would mean distributing the gateway's HMAC secret, and any holder
-of that secret can mint tokens for arbitrary users. Introspection costs one
-round trip per connection, off the audio hot path, and keeps the signing key
-inside the gateway. If plugin count or connection rate ever makes this hurt,
-the upgrade is asymmetric signing plus a published JWKS — a change confined to
-`tokens.py` and the plugin's `auth.py`.
+the plugin would mean distributing the gateway's session secret, and any
+holder of that secret can mint tokens for arbitrary users. Introspection costs
+one round trip per connection, off the audio hot path, and keeps the signing
+key inside the gateway.
+
+**Why introspection is authenticated:** `/api/auth` sits in
+`_NO_AUTH_PREFIXES` — it must, since login lives there. An unauthenticated
+introspect would therefore turn any ticket into a `user_id` lookup for anyone
+who could read it, and per the paragraph above, tickets are written to access
+logs by design. Requiring `Plugin.secret` closes that. If plugin count or
+connection rate ever makes the round trip hurt, the upgrade is asymmetric
+signing plus a published JWKS — a change confined to `tokens.py` and the
+plugin's `auth.py`.
 
 ### Host API v1
 
@@ -148,7 +192,7 @@ The contract a plugin may depend on, and nothing else:
 | Capability | Endpoint | Status |
 |---|---|---|
 | Voice turn loop (STT, LLM, TTS, pacing, quota, usage, history, memory) | `WS /v1/conversation/stream` | exists |
-| Identity from a ticket | `POST /v1/auth/introspect` | **new** |
+| Identity from a ticket | `POST /api/auth/introspect` | **new** |
 | Profile and TTS-profile listing for the plugin's own UI | `GET /v1/profiles`, `GET /v1/tts_profiles` | exists |
 
 Plugins must not import gateway internals. That rule is the whole point: the
@@ -230,7 +274,7 @@ its existing overflow behaviour.
 **Ticket rejected.** `introspect` returning `active: false` closes the browser
 socket with 4401, matching what `resolve_ws_identity` does today.
 
-**Plugin unreachable.** `POST /v1/plugins/{name}/ticket` does not probe the
+**Plugin unreachable.** `POST /v1/plugins/ticket` does not probe the
 plugin; a dead plugin surfaces as a failed browser connection. `GET
 /v1/plugins` reports stored state only. Health probing is deliberately absent
 from v1 — the gateway already has `services/model_registry/health_probe.py`
@@ -242,9 +286,9 @@ polling interval, now inside the plugin.
 ## Testing
 
 Eleven existing test modules cover Livehost today — eight under
-`tests/unit/livehost/` and three under `tests/integration/`. They have three
-distinct fates, and sorting them correctly matters more than it looks: two of
-the three groups do **not** follow the code to the new repository.
+`tests/unit/livehost/` and three under `tests/integration/`. They have four
+distinct fates, and sorting them correctly matters more than it looks: only
+five of the eleven follow the code to the new repository.
 
 **Move verbatim (5).** `test_livehost_schemas.py`,
 `test_livehost_ingestor.py`, `test_livehost_tiktok_adapter.py`,
@@ -253,14 +297,28 @@ the zero-dependency package and pass in the new repository without edits —
 the cheapest available proof that the boundary was drawn where the code
 already agreed it was.
 
-**Retarget and keep in the gateway (3).** `test_livehost_quota_gate.py`,
-`test_livehost_tts_profile.py` and `test_livehost_disabled_cutoff.py` all
-build the gateway app directly and stub STT/TTS providers. The behaviour they
-guard — quota fail-open semantics, TTS profile resolution precedence,
-cutting off a session whose account was disabled mid-stream — becomes
-`conversation/stream` behaviour after the port. It does not stop mattering, so
-these are rewritten against that socket and stay in the gateway. Letting them
-leave with the code would silently drop three real guarantees.
+**Retarget and keep in the gateway (2).** `test_livehost_tts_profile.py` and
+`test_livehost_disabled_cutoff.py` build the gateway app directly and stub
+STT/TTS providers. The behaviour they guard — TTS profile resolution
+precedence, and cutting off a session whose account was disabled mid-stream —
+becomes `conversation/stream` behaviour after the port. It does not stop
+mattering, so these are rewritten against that socket and stay. Letting them
+leave with the code would silently drop two real guarantees.
+
+**Retire, with one replacement (1).** `test_livehost_quota_gate.py` does not
+survive contact with the port, in three different ways. Two of its tests
+exercise livehost's `_quota_blocked_for`, a thin wrapper over the shared
+`llm_turn_quota_blocked_for_pins` that `tests/unit/conversation/
+test_turn_quota.py` already covers directly — keeping them would be keeping a
+duplicate. The third reads the livehost route module's source and asserts both
+turn functions reach the gate; it becomes vacuous when livehost runs no turns.
+
+What that third test uniquely held is still worth holding, though, and it
+moves rather than evaporating. `ConversationSession._run_turn` gates once per
+turn *above* the branch between audio and text input, so an injected social
+turn cannot bypass the gate — but nothing asserted that for the text path, and
+the text path is exactly what the plugin now depends on. One new test in
+`test_turn_quota.py` pins the ordering.
 
 **Rewrite plugin-side (3).** `test_livehost_authz.py` changes auth model from
 `resolve_ws_identity` to ticket plus introspection.
@@ -282,7 +340,7 @@ Four steps, each shippable on its own.
 
 1. **Gateway grows the contract.** `Plugin`, `PluginStore`,
    `api/routes/plugins.py`, `issue_plugin_token` / `verify_plugin_token`,
-   `POST /v1/auth/introspect`. Livehost remains in-process and untouched. The
+   `POST /api/auth/introspect`. Livehost remains in-process and untouched. The
    suite stays green.
 2. **New repository.** Move the five zero-dependency modules and their tests
    verbatim. Write `upstream.py`, `auth.py`, `cli.py`, the Dockerfile and the
