@@ -1,16 +1,26 @@
+import hmac
+
 from fastapi import APIRouter, HTTPException, Request
 
 from app.core.client_ip import client_ip
 from app.core.errors import AuthError
 from app.core.rate_limit import SlidingWindowRateLimiter
-from app.schemas.auth import LoginRequest, RefreshRequest, SignupRequest, TokenRequest
+from app.schemas.auth import (
+    IntrospectRequest,
+    LoginRequest,
+    RefreshRequest,
+    SignupRequest,
+    TokenRequest,
+)
 from app.services.auth.tokens import (
     ACCESS_TTL_SECONDS,
     issue_access_token,
     issue_refresh_token,
+    verify_plugin_token,
     verify_refresh_token,
 )
 from app.services.auth.users import user_store
+from app.services.plugins.store import plugin_store
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -155,3 +165,28 @@ async def refresh(body: RefreshRequest) -> dict:
             "expires_in": ACCESS_TTL_SECONDS,
         },
     }
+
+
+@router.post("/introspect")
+async def introspect(body: IntrospectRequest, request: Request) -> dict:
+    """Đổi vé plugin lấy user_id. Người gọi là plugin, không phải người dùng.
+
+    Endpoint này nằm dưới /api/auth, tức là trong _NO_AUTH_PREFIXES (đăng nhập
+    buộc phải ở đó). Nên nó tự xác thực bằng Plugin.secret: thiếu bước này, bất
+    kỳ ai đọc được vé trong access log đều tra ra được user_id.
+
+    Plugin lạ, plugin đã tắt, và secret sai đều trả về đúng một phản hồi 401 --
+    một người gọi chưa xác thực không được phép dò xem plugin nào đang đăng ký.
+    """
+    entry = plugin_store.get(body.plugin)
+    header = request.headers.get("Authorization", "")
+    scheme, _, presented = header.partition(" ")
+    if (
+        entry is None
+        or not entry.enabled
+        or scheme.lower() != "bearer"
+        or not hmac.compare_digest(presented.strip(), entry.secret)
+    ):
+        raise AuthError("invalid plugin credentials")
+    user_id = verify_plugin_token(body.token, body.plugin)
+    return {"success": True, "data": {"active": user_id is not None, "user_id": user_id}}

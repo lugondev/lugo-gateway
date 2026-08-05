@@ -18,3 +18,8 @@ class TokenRequest(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class IntrospectRequest(BaseModel):
+    token: str
+    plugin: str
