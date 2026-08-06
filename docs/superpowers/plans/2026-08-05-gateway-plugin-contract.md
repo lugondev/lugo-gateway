@@ -921,7 +921,11 @@ From the gateway repo, copy without editing any logic:
 | `ingestor.py` | `ingest/tiktok.py` (top half) |
 | `tiktok_adapter.py` | `ingest/tiktok.py` (bottom half) |
 
-`ingestor.py` and `tiktok_adapter.py` merge into one module because `tiktok_adapter.py` imports `RoomOfflineError` from `ingestor.py` and nothing else imports either separately. Concatenate them, drop the now-internal cross-import, and keep every other line as-is.
+`ingestor.py` and `tiktok_adapter.py` merge into one module because `tiktok_adapter.py` imports `RoomOfflineError` from `ingestor.py` and nothing else imports either separately.
+
+**Integrate the two headers; do not stack them.** A literal concatenation leaves the second file's module docstring sitting mid-file, where it is no longer a docstring at all but a bare string-literal statement — legal Python, invisible to `pydoc`, `help()`, IDE hover and Sphinx. That is precisely where this codebase keeps its reasoning, so stacking would bury it. The second file's imports would likewise strand themselves after class definitions (`E402`).
+
+So: one module docstring at the top carrying the full text of both, nothing reworded or dropped; one import block at the top; the now-internal cross-import removed. Everything below the header keeps every line as-is — no function body, class body, comment or logic line may change, because byte-identity with the originals is the evidence this task exists to produce.
 
 The only edits permitted in this step are import rewrites: `from app.services.livehost.X import Y` becomes `from livehost.X import Y`. If any other change seems necessary, stop — it means the module was not as decoupled as the spec claims, and that is a finding worth reporting before continuing.
 
