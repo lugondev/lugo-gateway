@@ -89,3 +89,22 @@ async def test_llm_turn_quota_blocked_default_quota_gate_is_function_local():
         assert blocked is False and message == ""
     finally:
         gate_mod.quota_gate = original
+
+
+@pytest.mark.asyncio
+async def test_an_injected_text_turn_is_quota_gated():
+    """The livehost plugin drives social turns with {"type":"text"}. The gate
+    sits above _run_turn's audio/text branch, so text is covered by
+    construction -- this pins that construction down, because the plugin has
+    no gate of its own any more."""
+    import inspect
+
+    from app.services.conversation import session as session_module
+
+    source = inspect.getsource(session_module.ConversationSession._run_turn)
+    gate_at = source.index("llm_turn_quota_blocked")
+    text_branch_at = source.index("if text_input is not None")
+    assert gate_at < text_branch_at, (
+        "the quota gate must run before _run_turn splits into the audio and "
+        "text paths, or an injected social turn skips it"
+    )
