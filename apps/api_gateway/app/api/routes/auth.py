@@ -54,8 +54,16 @@ login_account_limiter = SlidingWindowRateLimiter(
 login_ip_limiter = SlidingWindowRateLimiter(
     max_events=LOGIN_MAX_FAILURES_PER_IP, window_seconds=60.0
 )
-signup_limiter = SlidingWindowRateLimiter(
-    max_events=SIGNUP_MAX_PER_IP, window_seconds=60.0
+signup_limiter = SlidingWindowRateLimiter(max_events=SIGNUP_MAX_PER_IP, window_seconds=60.0)
+
+# Introspect is the fourth route on this unauthenticated surface, and it
+# guards Plugin.secret. Keyed per (ip, plugin) only -- unlike login there is
+# no spraying key, because the plugin namespace is tiny and admin-created,
+# so guessing a plugin NAME is not the attack; guessing its secret is.
+INTROSPECT_MAX_FAILURES = 10
+
+introspect_limiter = SlidingWindowRateLimiter(
+    max_events=INTROSPECT_MAX_FAILURES, window_seconds=60.0
 )
 
 _TOO_MANY = "too many attempts, try again shortly"
@@ -177,7 +185,18 @@ async def introspect(body: IntrospectRequest, request: Request) -> dict:
 
     Plugin lạ, plugin đã tắt, và secret sai đều trả về đúng một phản hồi 401 --
     một người gọi chưa xác thực không được phép dò xem plugin nào đang đăng ký.
+
+    Có giới hạn tốc độ (introspect_limiter), khoá theo (ip, plugin): không có
+    bước này, secret của plugin có thể bị đoán ở tốc độ tối đa mãi mãi -- đúng
+    lỗ hổng mà _authenticate đã vá cho /login và /token. Chỉ tính vào ngân
+    sách khi SECRET sai; một vé rác/hết hạn kèm secret đúng vẫn trả về 200
+    active=false và không bị tính, vì người gọi đã xác thực hợp lệ -- và một
+    secret đúng không bao giờ bị tính, nếu không một plugin bận rộn với nhiều
+    kết nối trình duyệt sẽ tự khoá chính nó.
     """
+    key = f"{client_ip(request)}:{body.plugin}"
+    if not introspect_limiter.check(key):
+        raise HTTPException(status_code=429, detail=_TOO_MANY)
     entry = plugin_store.get(body.plugin)
     header = request.headers.get("Authorization", "")
     scheme, _, presented = header.partition(" ")
@@ -187,6 +206,7 @@ async def introspect(body: IntrospectRequest, request: Request) -> dict:
         or scheme.lower() != "bearer"
         or not hmac.compare_digest(presented.strip(), entry.secret)
     ):
+        introspect_limiter.charge(key)
         raise AuthError("invalid plugin credentials")
     user_id = verify_plugin_token(body.token, body.plugin)
     return {"success": True, "data": {"active": user_id is not None, "user_id": user_id}}

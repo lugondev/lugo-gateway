@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.routes.auth import INTROSPECT_MAX_FAILURES
 from app.main import app
 from app.services.auth.tokens import issue_plugin_token
 from app.services.plugins.models import Plugin
@@ -80,3 +81,52 @@ def test_garbage_token_is_inactive_not_an_error():
         r = _post(client, "not-a-token")
         assert r.status_code == 200
         assert r.json()["data"]["active"] is False
+
+
+def test_repeated_wrong_secret_eventually_returns_429_not_401():
+    """The same guessing-at-full-speed hole /login was closed for: without a
+    limiter, INTROSPECT_MAX_FAILURES+1 wrong secrets should not all still be
+    plain 401s."""
+    with TestClient(app) as client:
+        for _ in range(INTROSPECT_MAX_FAILURES):
+            r = _post(client, issue_plugin_token("user-1", "livehost"), secret="wrong")
+            assert r.status_code == 401
+        r = _post(client, issue_plugin_token("user-1", "livehost"), secret="wrong")
+        assert r.status_code == 429
+
+
+def test_a_correct_secret_still_works_after_another_plugins_budget_is_spent():
+    """Keyed per (ip, plugin): one plugin being hammered must not throttle a
+    different, well-behaved plugin sharing the same client ip."""
+    plugin_store.upsert(Plugin(name="other", url="http://127.0.0.1:8092", secret="other-secret"))
+    with TestClient(app) as client:
+        for _ in range(INTROSPECT_MAX_FAILURES):
+            r = _post(client, "whatever", plugin="other", secret="wrong")
+            assert r.status_code == 401
+        # "other"'s budget is now fully spent -- confirm it, so this test would
+        # actually catch a key collision instead of assuming one.
+        assert _post(client, "whatever", plugin="other", secret="wrong").status_code == 429
+        r = _post(client, issue_plugin_token("user-1", "livehost"))
+        assert r.status_code == 200
+
+
+def test_many_successful_introspections_never_trip_the_limiter():
+    """The property most likely to rot: a correct secret must never be
+    charged against the budget. If `charge` moved above the auth check (or a
+    success were charged at all), a busy plugin doing one introspect per
+    browser connection would eventually throttle itself under load."""
+    with TestClient(app) as client:
+        for _ in range(INTROSPECT_MAX_FAILURES + 5):
+            r = _post(client, issue_plugin_token("user-1", "livehost"))
+            assert r.status_code == 200
+
+
+def test_garbage_ticket_with_correct_secret_never_consumes_budget():
+    """A dead/garbage ticket with a correct secret is an authenticated caller
+    reporting `active: false`, not a credential-guessing attempt -- it must
+    not count against the plugin's budget."""
+    with TestClient(app) as client:
+        for _ in range(INTROSPECT_MAX_FAILURES + 5):
+            r = _post(client, "not-a-token")
+            assert r.status_code == 200
+            assert r.json()["data"]["active"] is False

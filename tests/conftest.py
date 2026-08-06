@@ -16,6 +16,7 @@ def _reset_auth_limiters() -> None:
     so a budget spent by one test would otherwise 429 an unrelated later test.
     """
     from app.api.routes.auth import (
+        introspect_limiter,
         login_account_limiter,
         login_ip_limiter,
         signup_limiter,
@@ -26,6 +27,7 @@ def _reset_auth_limiters() -> None:
         login_account_limiter,
         login_ip_limiter,
         signup_limiter,
+        introspect_limiter,
         claim_rate_limiter,
         init_rate_limiter,
     ):
