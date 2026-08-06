@@ -182,7 +182,24 @@ key inside the gateway.
 `_NO_AUTH_PREFIXES` — it must, since login lives there. An unauthenticated
 introspect would therefore turn any ticket into a `user_id` lookup for anyone
 who could read it, and per the paragraph above, tickets are written to access
-logs by design. Requiring `Plugin.secret` closes that. If plugin count or
+logs by design. Requiring `Plugin.secret` closes that.
+
+**And rate-limited, for the same reason.** A secret checked on a public route
+is a secret that can be guessed at full speed. `auth.py` already reached this
+conclusion for the other three routes on this prefix — *"the app's only
+unauthenticated write surface … and until now had no limiter of any kind, so
+a password could be guessed at full speed forever"* — so introspect joins
+them rather than inventing a rule. `introspect_limiter` is keyed per
+`(ip, plugin)`, with no second spraying key: unlike usernames, plugin names
+are few and admin-created, so guessing the *name* is not the attack.
+
+Only a **secret** failure is charged. A correct secret never consumes budget,
+because a busy plugin opens one introspection per browser connection and would
+otherwise throttle itself; and a dead ticket presented with a correct secret
+returns 200 `{"active": false}` without charging, because that caller
+authenticated fine. This mirrors login's own rule, whose comment explains why
+charging successes is wrong: it would let anyone lock a user out by burning
+the budget on their behalf. If plugin count or
 connection rate ever makes the round trip hurt, the upgrade is asymmetric
 signing plus a published JWKS — a change confined to `tokens.py` and the
 plugin's `auth.py`.
