@@ -1,4 +1,4 @@
-"""The sixth SqliteBackedStore. No legacy-JSON predecessor exists for plugins,
+"""The fourth SqliteBackedStore. No legacy-JSON predecessor exists for plugins,
 so `legacy_parse` is never reachable: with no `path` and no `settings_attr`,
 _resolve_path() returns None and _ensure() skips the import branch entirely."""
 
