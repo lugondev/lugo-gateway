@@ -36,9 +36,20 @@ sits in the single file `api/routes/livehost.py`.
 **2. The host API already exists.** `WS /v1/conversation/stream` accepts audio
 frames *or* a `{"type":"text"}` control message and returns paced audio plus a
 JSON event stream. Its control protocol is `text`, `abort`, `reset`,
-`new_session`, `flush`, `end`; its event stream includes `speech_start`,
-`speech_end`, `processing`, `turn_done`, `user_transcript`, `response_text`,
-`audio_start`, `audio_end`, `aborted`, `error`. Behind it,
+`new_session`, `flush`, `end`.
+
+Its event stream comes from two places, and both belong in the contract.
+`ConversationSession` emits `session_started`, `speech_start`, `speech_end`,
+`processing`, `user_transcript`, `response_text`, `audio_start`, `audio_end`,
+`turn_done`, `aborted`, `command`, `engines_ready`, `reset`, `error`. The
+route itself emits two more: `warning` (profile not found, cross-profile
+resume, binding override) and `done` (acknowledging `{"type":"end"}` before
+the socket closes).
+
+Enumerating only the session's emits is an easy mistake and it was made once
+while writing this design — the route-level pair is invisible to a grep for
+`self.emit(`. An incomplete protocol list is exactly how the fake and the real
+socket drift apart. Behind it,
 `ConversationSession` already performs STT, endpointing, LLM, TTS with
 prefetch and pacing, quota gating, usage recording, history persistence and
 memory injection.

@@ -1382,11 +1382,37 @@ def build_fake_gateway() -> tuple[FastAPI, dict]:
     return app, log
 
 
-async def speech_start(websocket: WebSocket) -> None:
-    """Helper for tests that need the streamer to start talking."""
-    await websocket.send_json({"event": "speech_start"})
-    await asyncio.sleep(0)
 ```
+
+**The fake must answer audio, not only text.** A first draft of this file
+replied only to `{"type":"text"}` and offered a `speech_start` helper nobody
+called — which left the voice-triggered turn, the primary path of a voice
+product, with no executable specification anywhere in the contract. Social
+turns were specified; the streamer speaking was not.
+
+So the fake also reacts to binary frames, emitting the same sequence the real
+socket does when the endpointer fires:
+
+```python
+                if message.get("bytes") is not None:
+                    log["audio"].append(message["bytes"])
+                    # The real socket answers audio with the endpointer's
+                    # verdict, then a turn. Livehost's arbitration reads
+                    # exactly these two events -- speech_start sets
+                    # voice_active, turn_done clears it -- so a fake that
+                    # stays silent here specifies away the primary path.
+                    await websocket.send_json({"event": "speech_start"})
+                    await websocket.send_json({"event": "speech_end"})
+                    await websocket.send_json(
+                        {"event": "user_transcript", "turn": 1,
+                         "text": "hello", "engine": "fake-stt"}
+                    )
+                    await websocket.send_json({"event": "turn_done", "turn": 1})
+                    continue
+```
+
+Place this inside the receive loop where the audio branch already logs the
+frame, replacing the bare `continue`.
 
 - [ ] **Step 2: Write the failing test**
 
