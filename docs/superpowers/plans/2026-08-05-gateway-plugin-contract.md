@@ -2475,25 +2475,37 @@ pytest tests/unit/conversation/test_turn_quota.py -v
 
 Expected: PASS, including the new test.
 
-- [ ] **Step 2: Retarget the TTS profile test**
+- [ ] **Step 2: Check the targets before writing anything**
 
-Read `tests/unit/livehost/test_livehost_tts_profile.py` in full and write down the guarantee each test function asserts — expect `?tts_profile=` beating the profile's linked TTS profile, and the linked profile beating the server default.
+Both files this task was going to create **already exist**, and have since long before this plan:
 
-Create `tests/unit/conversation/test_conversation_tts_profile.py`. Each test keeps its assertion and its provider stubs verbatim; only the socket changes, from `/v1/livehost/stream` to `/v1/conversation/stream`, dropping any livehost-only query params. Where the original drove a turn by injecting a TikTok event, drive it with `{"type": "text", "text": "hello"}` — the same control message the plugin now sends.
+- `tests/unit/conversation/test_conversation_tts_profile.py` — four tests, already against `conversation/stream`
+- `tests/integration/test_conversation_disabled_cutoff.py` — one test, `test_disabled_user_connection_is_closed_within_recheck_interval`
+
+So most of what looked like retargeting is really deduplication. Build the mapping before touching anything:
+
+| livehost test | conversation equivalent |
+|---|---|
+| `test_livehost_tts_profile_linked_from_llm_profile` | `test_tts_profile_linked_from_llm_profile_resolves_clone_fields` |
+| `test_livehost_query_param_tts_profile_overrides_llm_profile` | `test_query_param_tts_profile_overrides_llm_profile` |
+| `test_livehost_no_tts_profile_falls_back_to_default_tts_engine` | `test_no_tts_profile_falls_back_to_default_tts_engine` |
+| `test_livehost_bad_ref_audio_path_degrades_to_tts_error` | **none — this one is unique** |
+| `test_disabled_user_connection_is_closed_within_recheck_interval` (integration) | identically-named twin already present |
+
+Confirm each pairing by reading both tests, not by matching names. A same-named test can assert a different thing.
+
+- [ ] **Step 3: Preserve the one guarantee that has no twin**
+
+`test_livehost_bad_ref_audio_path_degrades_to_tts_error` is the only guarantee in these two files with no conversation-side equivalent: a TTS profile pointing at a missing reference-audio file must degrade to a reported TTS error rather than killing the turn. Deleting the file without moving this test would silently drop it — which is the exact failure this task exists to prevent.
+
+Add it to the existing `tests/unit/conversation/test_conversation_tts_profile.py`, keeping its assertion and provider stubs verbatim; only the socket changes to `/v1/conversation/stream`, and a turn is driven with `{"type": "text", "text": "hello"}` instead of an injected TikTok event.
 
 Run: `pytest tests/unit/conversation/test_conversation_tts_profile.py -v`
-Expected: PASS
+Expected: PASS, five tests — the four that were already there plus this one.
 
-- [ ] **Step 3: Retarget the disabled-cutoff test**
+Any guarantee that cannot be made to hold against `conversation/stream` is a real finding: it would mean the gateway's socket does not provide something livehost was relying on. Stop and report it rather than dropping the test.
 
-Same treatment for `tests/integration/test_livehost_disabled_cutoff.py` → `tests/integration/test_conversation_disabled_cutoff.py`: a user disabled mid-session must have the socket closed with 4401. The mechanism is `receive_with_watchdog` yielding `None`, which `conversation.py` already handles identically to `livehost.py`.
-
-Run: `pytest tests/integration/test_conversation_disabled_cutoff.py -v`
-Expected: PASS
-
-Any test that cannot be made to pass against `conversation/stream` is a real finding — it means the gateway's socket does not in fact provide a guarantee livehost was relying on. Stop and report it rather than deleting the test.
-
-- [ ] **Step 4: Delete the originals and run the full suite**
+- [ ] **Step 4: Delete the now-duplicated originals and run the full suite**
 
 ```bash
 git rm tests/unit/livehost/test_livehost_tts_profile.py \
@@ -2501,7 +2513,7 @@ git rm tests/unit/livehost/test_livehost_tts_profile.py \
 pytest -q
 ```
 
-Expected: PASS
+Expected: PASS. The suite count should fall by four, not five: five livehost tests go, one is re-added on the conversation socket.
 
 - [ ] **Step 5: Commit**
 
