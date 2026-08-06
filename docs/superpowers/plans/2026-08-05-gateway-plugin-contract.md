@@ -2099,10 +2099,21 @@ async def _caller_user_id(request: Request) -> str | None:
 
 async def _get_owned_session(session_id: str, request: Request) -> LivehostSession:
     """404s uniformly for "doesn't exist" and "exists but isn't yours", so this
-    is not an existence oracle -- same contract the gateway version kept."""
+    is not an existence oracle -- same contract the gateway version kept.
+
+    The comparison is direct, NOT guarded by `scope is not None`, and that
+    difference from the gateway's version is the whole point. In the gateway,
+    AuthGuardMiddleware has already refused unauthenticated callers before the
+    handler runs, so `scope_user_id()` returning None means "admin" or "auth
+    disabled server-wide" -- a deliberate bypass. This plugin has no such
+    middleware: None here means "presented no ticket, or a bad one". Carrying
+    the gateway's guard across that boundary would turn an intentional admin
+    bypass into an open door, letting anyone with no credentials at all drive,
+    stop or inspect any live session whose id they can guess.
+    """
     session = livehost_registry.get(session_id)
     scope = await _caller_user_id(request)
-    if session is None or (scope is not None and session.user_id != scope):
+    if session is None or session.user_id != scope:
         raise HTTPException(status_code=404, detail=f"livehost session '{session_id}' not found")
     return session
 
