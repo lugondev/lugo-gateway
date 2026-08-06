@@ -1536,7 +1536,7 @@ class Upstream:
 Run: `pytest tests/test_upstream.py -v`
 Expected: PASS, 3 passed
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/livehost/upstream.py tests/test_upstream.py tests/fake_gateway.py
@@ -2413,7 +2413,7 @@ Expected: PASS, 3 passed
 Run: `pytest -q && ruff check src tests`
 Expected: all pass
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -2584,7 +2584,7 @@ Start the gateway, start `livehost serve`, open the gateway UI, click through to
 
 Record the result in the commit message. If any leg fails, fix it before proceeding — Task 13 is irreversible.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add .gitmodules servers/livehost-api apps/api_gateway/app/static
@@ -2629,18 +2629,28 @@ git rm -r apps/api_gateway/app/services/livehost \
 
 Remove the livehost page markup from `apps/api_gateway/app/static/index.html`.
 
-- [ ] **Step 4: Find every straggler**
+- [ ] **Step 4: The paid-call-site inventory**
+
+`tests/unit/test_paid_call_site_inventory.py` holds a `_CLASSIFIED` table mapping every paid call site to the test that covers it. Two rows name `api/routes/livehost.py` — `transcribe_bytes` and `reply_stream` — and Task 11 repointed their covering test to `tests/integration/test_livehost_ws_voice.py`, which **this task deletes**.
+
+Delete those two rows. Do not repoint them again: the call sites themselves disappear with `api/routes/livehost.py`, so a row describing them is describing nothing.
+
+This cannot ship broken — `test_no_classified_call_site_has_disappeared` in the same file fails if a classified site vanishes without its row. But it is easy to reach that failure and misread it as a regression, so handle it deliberately rather than discovering it.
+
+- [ ] **Step 5: Find every straggler**
 
 Run: `grep -rn "livehost" apps/ tests/ pyproject.toml --include="*.py" --include="*.html" --include="*.js" --include="*.toml"`
 
+Note that five comments reference `tests/unit/livehost/test_livehost_quota_gate.py`, deleted back in Task 11 — in `api/routes/livehost.py:60` (which goes with the file), `services/conversation/turn_quota.py:23` and `:56`, and `tests/unit/conversation/test_turn_quota.py:5` and `:52`. The last four survive this task and should be corrected to name the tests that actually cover the behaviour now.
+
 Expected: only prose references in comments that explain shared helpers (`turn_quota.py`, `turn_tts.py`, `tts_params.py`, `endpointer.py`, `attribution.py`, `profile_visibility.py`, `pairing.py`, `opus.py`, `session.py`, `sessions.py`, `conversation.py`, `lugo.py`). Those comments name livehost as a second consumer of a shared helper. Update each to say the consumer is now the livehost plugin, reached over `conversation/stream` — do not delete the comments, they explain why the helper was extracted.
 
-- [ ] **Step 5: Run the full suite**
+- [ ] **Step 6: Run the full suite**
 
 Run: `pytest -q && ruff check apps/api_gateway/app tests && ruff format --check apps/api_gateway/app tests`
 Expected: PASS. The route-coverage guard confirms no orphaned `/v1/livehost` classification remains.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A
