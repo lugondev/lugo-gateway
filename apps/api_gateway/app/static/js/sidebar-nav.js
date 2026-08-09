@@ -38,11 +38,14 @@ export async function initSidebar() {
     });
   }
 
-  const validSections = Array.from(document.querySelectorAll(".nav-item")).map((b) =>
+  // Scoped to [data-section]: plugin nav items (injected by plugins-nav.js)
+  // are also `.nav-item` but have no section to switch to — they open their
+  // own page instead, wired up independently by that module.
+  const validSections = Array.from(document.querySelectorAll(".nav-item[data-section]")).map((b) =>
     b.getAttribute("data-section")
   );
 
-  document.querySelectorAll(".nav-item").forEach((btn) => {
+  document.querySelectorAll(".nav-item[data-section]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const section = btn.getAttribute("data-section");
       activateSection(section);
