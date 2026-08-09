@@ -22,3 +22,6 @@
 [submodule "servers/knowledge-api"]
 	path = servers/knowledge-api
 	url = ../knowledge-api
+[submodule "servers/livehost-api"]
+	path = servers/livehost-api
+	url = ../livehost-api
