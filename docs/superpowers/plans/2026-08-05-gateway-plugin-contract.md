@@ -2547,14 +2547,16 @@ cd /Users/lugon/code/speech-text-transformer
 git submodule add ../livehost-api servers/livehost-api
 ```
 
-- [ ] **Step 2: Allow the plugin's origin through CORS**
+- [ ] **Step 2: Confirm CORS already admits the plugin's origin**
 
 The plugin's page calls the gateway cross-origin (Task 9 Step 6). The gateway already runs `CORSMiddleware` with `allow_origins=settings.cors_origins_list`, deliberately outermost so it also wraps `AuthGuardMiddleware`'s 401/403 — `tests/integration/test_cors_ordering.py` and `test_cors_bearer.py` enforce that ordering, so do not move it.
 
-Add the plugin's origin (`http://127.0.0.1:8091` in development) to the setting that feeds `cors_origins_list`. Read `apps/api_gateway/app/core/settings.py` for the field's exact name and separator convention, and set it through the environment rather than editing the default.
+`cors_allow_origins` (`core/settings.py:68`) already defaults to `"*"`, and `.env.example` already ships `CORS_ALLOW_ORIGINS=*` — this predates the plugin work; it is the gateway's existing dev default, not something this task introduces. `allow_credentials=False` is hardcoded in `main.py`, with a comment explaining why: combining `["*"]` with credentials would make Starlette echo back `Allow-Credentials` for any origin, letting any website read a cookie-authenticated response. Because credentials are off, `"*"` here is not the forbidden CORS combination — it is safe for dev.
+
+So in a default dev setup there is nothing to configure. In any environment where `CORS_ALLOW_ORIGINS` has been narrowed from the default, add the plugin's origin (e.g. `http://127.0.0.1:8091`) to that list before proceeding.
 
 Run: `pytest tests/integration/test_cors_ordering.py tests/integration/test_cors_bearer.py -v`
-Expected: PASS — unchanged, since this is configuration.
+Expected: PASS — unaffected either way, since this is configuration.
 
 - [ ] **Step 3: Register the plugin against a running gateway**
 
