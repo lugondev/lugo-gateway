@@ -15,6 +15,7 @@ from app.schemas.auth import (
 from app.services.auth.tokens import (
     ACCESS_TTL_SECONDS,
     issue_access_token,
+    issue_plugin_session_token,
     issue_refresh_token,
     verify_plugin_token,
     verify_refresh_token,
@@ -209,4 +210,18 @@ async def introspect(body: IntrospectRequest, request: Request) -> dict:
         introspect_limiter.charge(key)
         raise AuthError("invalid plugin credentials")
     user_id = verify_plugin_token(body.token, body.plugin)
-    return {"success": True, "data": {"active": user_id is not None, "user_id": user_id}}
+    # session_token: found live -- the ticket this endpoint validates was
+    # designed to survive a browser and a URL, so it is deliberately weak
+    # everywhere except a narrow allowlist (see auth_guard._bearer_actor) and
+    # is not a credential resolve_ws_identity accepts at all. A plugin's own
+    # backend, having just proven it holds a live ticket, needs something
+    # resolve_ws_identity DOES accept to open its upstream conversation
+    # socket -- so mint it here, in the one response that never reaches a
+    # browser. Every introspect call gets one when active, even control.py's
+    # ownership checks that don't need it: signing is cheap, and a second
+    # purpose-built endpoint duplicating this same auth would not be.
+    session_token = issue_plugin_session_token(user_id) if user_id is not None else None
+    return {
+        "success": True,
+        "data": {"active": user_id is not None, "user_id": user_id, "session_token": session_token},
+    }

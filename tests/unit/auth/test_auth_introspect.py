@@ -3,7 +3,11 @@ from fastapi.testclient import TestClient
 
 from app.api.routes.auth import INTROSPECT_MAX_FAILURES
 from app.main import app
-from app.services.auth.tokens import issue_plugin_token
+from app.services.auth.tokens import (
+    issue_plugin_token,
+    verify_access_token,
+    verify_plugin_session_token,
+)
 from app.services.plugins.models import Plugin
 from app.services.plugins.store import plugin_store
 
@@ -30,15 +34,34 @@ def test_a_valid_ticket_resolves_to_its_user():
     with TestClient(app) as client:
         r = _post(client, issue_plugin_token("user-1", "livehost"))
         assert r.status_code == 200
-        assert r.json()["data"] == {"active": True, "user_id": "user-1"}
+        data = r.json()["data"]
+        assert data["active"] is True
+        assert data["user_id"] == "user-1"
+
+
+def test_a_valid_ticket_also_yields_a_session_token_for_the_same_user():
+    """The one thing a plugin's backend needs from this response to open its
+    upstream conversation socket -- and the whole reason session_token exists
+    is that the ticket itself cannot do this job (see auth_guard tests)."""
+    with TestClient(app) as client:
+        r = _post(client, issue_plugin_token("user-1", "livehost"))
+        session_token = r.json()["data"]["session_token"]
+        assert session_token is not None
+        assert verify_plugin_session_token(session_token) == "user-1"
+        # And it must be a genuinely different credential from an access
+        # token -- not something that would also open the bearer path meant
+        # for real logins.
+        assert verify_access_token(session_token) is None
 
 
 def test_a_ticket_for_another_plugin_is_inactive():
     with TestClient(app) as client:
         r = _post(client, issue_plugin_token("user-1", "lugo"))
         assert r.status_code == 200
-        assert r.json()["data"]["active"] is False
-        assert r.json()["data"]["user_id"] is None
+        data = r.json()["data"]
+        assert data["active"] is False
+        assert data["user_id"] is None
+        assert data["session_token"] is None
 
 
 def test_a_wrong_plugin_secret_is_401():
@@ -80,7 +103,9 @@ def test_garbage_token_is_inactive_not_an_error():
     with TestClient(app) as client:
         r = _post(client, "not-a-token")
         assert r.status_code == 200
-        assert r.json()["data"]["active"] is False
+        data = r.json()["data"]
+        assert data["active"] is False
+        assert data["session_token"] is None
 
 
 def test_repeated_wrong_secret_eventually_returns_429_not_401():

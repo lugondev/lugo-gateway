@@ -145,9 +145,7 @@ def test_guard_blocks_options_with_acrm_but_no_origin(client, _with_password):
     # preflight -- CORSMiddleware ignores it (no Origin) and passes it through,
     # so the guard must still classify and deny it. Otherwise this single header
     # re-opens the enumeration oracle.
-    resp = client.options(
-        "/v1/system/status", headers={"Access-Control-Request-Method": "GET"}
-    )
+    resp = client.options("/v1/system/status", headers={"Access-Control-Request-Method": "GET"})
     assert resp.status_code in (401, 403)
 
 
@@ -216,6 +214,84 @@ async def test_resolve_identity_rejects_missing_cookie_and_token(_with_password)
     from app.core.auth_guard import resolve_ws_identity
 
     assert await resolve_ws_identity(_FakeWebSocket()) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_from_a_plugin_session_token(_with_password):
+    """Found live: a plugin's own backend opens its upstream
+    /v1/conversation/stream connection with a plugin session token (minted by
+    POST /api/auth/introspect, server-to-server) in the SAME bearer
+    subprotocol slot a real access token would use. This is the one thing
+    Task 7's Upstream got wrong originally -- the token rode as a `?token=`
+    query param, which resolve_ws_identity never reads at all."""
+    from app.core.auth_guard import resolve_ws_identity
+    from app.services.auth.tokens import issue_plugin_session_token
+
+    user = await user_store.create("toan", "pw")
+    token = issue_plugin_session_token(user["id"])
+    identity = await resolve_ws_identity(_FakeWebSocket(subprotocols=["bearer", token]))
+    assert identity is not None
+    assert identity.user_id == user["id"]
+    # Same guarantee a real bearer session gets: role="user" is not even a
+    # field this identity carries an escalation path for, and it must be
+    # excluded from ws_session_owner_denied's via_login-only admin bypass.
+    assert identity.via_bearer is True
+    assert identity.via_login is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_still_prefers_a_real_access_token(_with_password):
+    """The fallback is additive: verify_access_token is tried first and an
+    ordinary bearer WS connection must keep working unchanged."""
+    from app.core.auth_guard import resolve_ws_identity
+    from app.services.auth.tokens import issue_access_token
+
+    user = await user_store.create("toan", "pw")
+    token = issue_access_token(user["id"])
+    identity = await resolve_ws_identity(_FakeWebSocket(subprotocols=["bearer", token]))
+    assert identity is not None
+    assert identity.user_id == user["id"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_rejects_a_plugin_ticket_directly(_with_password):
+    """The ticket itself (audience-bound to one plugin, designed to survive a
+    browser/URL) must NOT open this socket -- only the session token traded
+    for it server-side may. If this ever passed, the whole point of minting a
+    separate, never-browser-visible credential would be moot."""
+    from app.core.auth_guard import resolve_ws_identity
+    from app.services.auth.tokens import issue_plugin_token
+
+    user = await user_store.create("toan", "pw")
+    ticket = issue_plugin_token(user["id"], "livehost")
+    identity = await resolve_ws_identity(_FakeWebSocket(subprotocols=["bearer", ticket]))
+    assert identity is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_rejects_an_expired_plugin_session_token(
+    _with_password, monkeypatch
+):
+    from app.core.auth_guard import resolve_ws_identity
+    from app.services.auth import tokens
+
+    user = await user_store.create("toan", "pw")
+    token = tokens.issue_plugin_session_token(user["id"])
+    monkeypatch.setattr(tokens, "PLUGIN_SESSION_TTL_SECONDS", -1)
+    identity = await resolve_ws_identity(_FakeWebSocket(subprotocols=["bearer", token]))
+    assert identity is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_identity_rejects_a_plugin_session_token_for_a_disabled_user(_with_password):
+    from app.core.auth_guard import resolve_ws_identity
+    from app.services.auth.tokens import issue_plugin_session_token
+
+    user = await user_store.create("toan", "pw")
+    token = issue_plugin_session_token(user["id"])
+    await user_store.set_fields(user["id"], disabled=True)
+    identity = await resolve_ws_identity(_FakeWebSocket(subprotocols=["bearer", token]))
+    assert identity is None
 
 
 @pytest.mark.asyncio
@@ -312,7 +388,9 @@ async def test_ws_session_owner_denied_fails_closed_for_unclassified_identity(_w
     notice the deny-list wasn't extended."""
     from app.core.auth_guard import WsIdentity, ws_session_owner_denied
 
-    admin = await user_store.create(f"future-source-admin-{uuid.uuid4().hex[:8]}", "pw", role="admin")
+    admin = await user_store.create(
+        f"future-source-admin-{uuid.uuid4().hex[:8]}", "pw", role="admin"
+    )
     victim_sid = "victim-unclassified-" + uuid.uuid4().hex[:8]
     await session_store.create(victim_sid, user_id="someone-else")
 

@@ -9,7 +9,11 @@ from starlette.websockets import WebSocket
 
 from app.core.actor import Actor
 from app.core.settings import settings
-from app.services.auth.tokens import verify_access_token, verify_plugin_token
+from app.services.auth.tokens import (
+    verify_access_token,
+    verify_plugin_session_token,
+    verify_plugin_token,
+)
 
 # Reachable with no credentials at all. Everything NOT classified here or in
 # the user/admin tuples below is denied by default -- see dispatch().
@@ -466,6 +470,18 @@ async def resolve_ws_identity(websocket: WebSocket) -> "WsIdentity | None":
     bearer = _bearer_from_subprotocols(websocket)
     if bearer:
         user_id = verify_access_token(bearer)
+        if user_id is None:
+            # Found live: a plugin's own backend opens ITS upstream
+            # connection to this exact route using a plugin session token
+            # (POST /api/auth/introspect, server-to-server, never seen by a
+            # browser) rather than a real login access token -- see
+            # tokens.py's PLUGIN_SESSION_TTL_SECONDS. Falls back here, after
+            # verify_access_token, rather than replacing it, so an ordinary
+            # user's real bearer session is unaffected. via_bearer=True below
+            # is accurate for this source too: same subprotocol slot, same
+            # role="user" cap, same exclusion from ws_session_owner_denied's
+            # via_login-only admin bypass.
+            user_id = verify_plugin_session_token(bearer)
         if not user_id:
             return None
         user = await user_store.get_by_id(user_id)

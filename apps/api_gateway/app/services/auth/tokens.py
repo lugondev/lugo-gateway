@@ -75,3 +75,28 @@ def issue_plugin_token(user_id: str, plugin: str) -> str:
 
 def verify_plugin_token(token: str, plugin: str) -> str | None:
     return _verify(token, _plugin_salt(plugin), PLUGIN_TICKET_TTL_SECONDS)
+
+
+# A plugin's BACKEND (never the browser) trades an introspected ticket for one
+# of these, server-to-server, to open its own upstream WS connection to
+# /v1/conversation/stream on the user's behalf. Distinct from the plugin
+# ticket above on purpose: that one is designed to survive being handed to a
+# browser and riding in a URL/access-log, so it is deliberately weak outside
+# a narrow allowlist. This one is designed to NEVER leave the plugin's own
+# process -- one HTTPS hop, from POST /api/auth/introspect straight into an
+# in-memory variable used immediately to dial the socket -- so it can afford
+# to carry the same weight as a real access token (verify_ws_identity's
+# bearer path treats it exactly like one) without the same exposure risk.
+# Not plugin-audience-bound like the ticket: once minted it just IS that
+# user, at ordinary user privilege, for one WS connection -- which plugin
+# asked for it doesn't change what it can do.
+PLUGIN_SESSION_TTL_SECONDS = 60
+_PLUGIN_SESSION_SALT = "lugo-plugin-session"
+
+
+def issue_plugin_session_token(user_id: str) -> str:
+    return _issue(user_id, _PLUGIN_SESSION_SALT)
+
+
+def verify_plugin_session_token(token: str) -> str | None:
+    return _verify(token, _PLUGIN_SESSION_SALT, PLUGIN_SESSION_TTL_SECONDS)
