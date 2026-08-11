@@ -218,6 +218,14 @@ class SessionRuntimeConfig:
     # the global default devices rely on. See
     # docs/superpowers/specs/2026-07-28-web-audio-jitter-buffer-design.md.
     opus_pace: bool | None = None
+    # Caller-supplied persona text that replaces profile.system_prompt for
+    # this session only -- never persisted, never touches the profile row.
+    # Lets a plugin (e.g. livehost) offer its own "system prompt" field
+    # without requiring the caller to have edit access to a gateway profile.
+    # base_context (admin-configured guardrails) still always applies on top
+    # of it, same as it does for a profile's own system_prompt -- see
+    # resolve_system_prompt.
+    persona_override: str | None = None
 
 
 class ConversationSession:
@@ -327,6 +335,12 @@ class ConversationSession:
         self.profile = profile
         # Same precedence the two route-level resolutions apply -- llm_config.py.
         llm_base_url, llm_api_key, llm_model, system_prompt = await resolve_llm_config(profile)
+        # cfg.persona_override wins over the profile's own system_prompt, same
+        # precedence relationship a profile already has over the server-wide
+        # default (see resolve_system_prompt) -- one more layer, not a
+        # parallel path.
+        if cfg.persona_override:
+            system_prompt = cfg.persona_override
         voice_optimized = bool(profile and profile.voice_optimized)
 
         self.stt_model_id = cfg.stt_model or resolve_default_stt_model(cfg.stt_engine)

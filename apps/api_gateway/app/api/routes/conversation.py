@@ -497,6 +497,11 @@ async def conversation_stream(websocket: WebSocket) -> None:
         identity_user_id=identity.user_id,
         identity_unauthenticated=identity.unauthenticated,
         opus_pace=opus_pace,
+        # Caller-supplied persona for this session only -- see
+        # SessionRuntimeConfig.persona_override. Only affects the caller's
+        # own conversation; base_context (admin guardrails) still applies on
+        # top regardless.
+        persona_override=q.get("system_prompt") or None,
     )
 
     async def emit(event: str, **payload) -> None:

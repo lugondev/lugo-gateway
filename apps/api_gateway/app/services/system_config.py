@@ -248,7 +248,17 @@ class ConversationTuningConfig(BaseModel):
             "and avoid markdown, bullet points, or code blocks. "
             "Write in complete, flowing sentences ending with a normal period. "
             "Do NOT use ellipses (…) or trailing dots for dramatic pauses, and do NOT put "
-            "line breaks inside a thought or split dialogue across multiple lines."
+            "line breaks inside a thought or split dialogue across multiple lines. "
+            "Default to acting, not interrogating: when a request is broad or underspecified "
+            '(e.g. "what\'s the latest news", "tell me something interesting"), pick a '
+            "reasonable interpretation yourself -- using tools like web_search right away when "
+            "they would help -- and answer immediately. Do not ask the user to narrow down the "
+            "topic, scope, or their preferences before giving a first answer. It is fine to "
+            "offer to go deeper or pivot afterward, but only after you have already given "
+            "real content. Only ask a clarifying question first when the request is genuinely "
+            "ambiguous between distinct actions AND guessing wrong would waste an irreversible "
+            "step (e.g. sending a message, making a purchase) -- never merely to narrow down "
+            "what topic or details to talk about."
         ),
         title="System prompt",
         description="Base instructions given to the LLM for every conversation turn (prepended to any profile-specific prompt).",
@@ -258,19 +268,23 @@ class ConversationTuningConfig(BaseModel):
 
 class PreprocessingConfig(BaseModel):
     stt_vad_enabled: bool = Field(
-        default=False, title="Enable VAD",
+        default=False,
+        title="Enable VAD",
         description="Gate non-speech regions out of audio before transcription.",
     )
     stt_vad_backend: str = Field(
-        default="energy", title="VAD backend",
+        default="energy",
+        title="VAD backend",
         description="Which voice-activity-detection algorithm to use: energy (always available), silero, or pyannote (both need extra dependencies/model download).",
     )
     stt_noise_reduce_enabled: bool = Field(
-        default=False, title="Enable noise reduction",
+        default=False,
+        title="Enable noise reduction",
         description="Apply noise reduction to audio before transcription.",
     )
     stt_noise_reduce_amount: float = Field(
-        default=0.85, title="Noise reduction amount",
+        default=0.85,
+        title="Noise reduction amount",
         description="Strength of noise reduction, from 0 (none) to 1 (maximum).",
     )
 
@@ -350,7 +364,8 @@ class SystemConfigStore:
         except Exception as exc:
             logger.warning(
                 "legacy import: could not parse %s (%s); falling back to defaults, file left untouched",
-                path, exc,
+                path,
+                exc,
             )
             config = SystemConfig()
         else:
