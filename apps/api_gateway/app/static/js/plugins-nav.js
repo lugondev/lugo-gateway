@@ -20,8 +20,27 @@ function pluginLabel(name) {
   return words.length ? words.join(" ") : String(name);
 }
 
-function pluginUiUrl(pluginUrl) {
-  return `${String(pluginUrl).replace(/\/+$/, "")}/ui`;
+function pluginUiUrl(pluginUrl, gatewayOrigin, token) {
+  const url = new URL(`${String(pluginUrl).replace(/\/+$/, "")}/ui`);
+  url.searchParams.set("gateway", gatewayOrigin);
+  url.searchParams.set("token", token);
+  return url.toString();
+}
+
+// The plugin's own page is served cross-origin and has no session cookie of
+// its own, so it cannot authenticate to the gateway on its own -- the
+// gateway has to hand it a ticket. This page's own fetches ARE same-origin
+// (see loadPluginNav below), so this one goes through the browser's session
+// cookie automatically, same as every other admin fetch in this file set.
+async function mintTicket(pluginName) {
+  const resp = await fetch("/v1/plugins/ticket", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plugin: pluginName }),
+  });
+  if (!resp.ok) return null;
+  const body = await resp.json();
+  return body?.data?.token || null;
 }
 
 function addPluginNavItem(name, entry) {
@@ -44,8 +63,25 @@ function addPluginNavItem(name, entry) {
 
   btn.appendChild(icon);
   btn.appendChild(label);
-  btn.addEventListener("click", () => {
-    window.open(pluginUiUrl(entry.url), "_blank", "noopener");
+  const defaultTitle = btn.title;
+  btn.addEventListener("click", async () => {
+    // Guard against a double-click minting two tickets and opening two tabs
+    // while the first request is still in flight.
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try {
+      const token = await mintTicket(name);
+      if (!token) {
+        btn.title = "could not reach the gateway for a ticket -- try again";
+        return;
+      }
+      window.open(pluginUiUrl(entry.url, window.location.origin, token), "_blank", "noopener");
+      btn.title = defaultTitle;
+    } catch {
+      btn.title = "could not reach the gateway for a ticket -- try again";
+    } finally {
+      btn.disabled = false;
+    }
   });
   li.appendChild(btn);
 
