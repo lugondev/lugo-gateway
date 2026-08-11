@@ -9,7 +9,7 @@ from starlette.websockets import WebSocket
 
 from app.core.actor import Actor
 from app.core.settings import settings
-from app.services.auth.tokens import verify_access_token
+from app.services.auth.tokens import verify_access_token, verify_plugin_token
 
 # Reachable with no credentials at all. Everything NOT classified here or in
 # the user/admin tuples below is denied by default -- see dispatch().
@@ -202,18 +202,68 @@ def _classify(path: str, method: str) -> str | None:
     return None
 
 
+# A plugin ticket is single-purpose everywhere else in this design: minted
+# to introspect at POST /api/auth/introspect, and to authenticate a plugin's
+# own control routes. This is the one deliberate widening. A plugin's page is
+# served cross-origin from the plugin itself, carries no session cookie of
+# the gateway's, and otherwise has no way at all to populate a profile/engine
+# dropdown or warm the STT engine before opening the voice socket. These four
+# routes are read-only or idempotent-safe, reveal nothing an ordinary
+# logged-in user couldn't already see, and expose no secret. Scoped to an
+# exact allowlist -- widening this further means touching this dict on
+# purpose, not falling out of some broader rule.
+_PLUGIN_TICKET_BEARER_ROUTES: dict[str, frozenset[str]] = {
+    "/v1/profiles": frozenset({"GET", "HEAD"}),
+    "/v1/tts/profiles": frozenset({"GET", "HEAD"}),
+    "/v1/stt/engines": frozenset({"GET", "HEAD"}),
+    "/v1/stt/warm": frozenset({"POST"}),
+}
+
+
+async def _plugin_ticket_user_id(request: Request, token: str) -> str | None:
+    """Resolve `token` as a plugin ticket, only for the allowlisted routes.
+
+    Still 60 seconds, still audience-bound. Unlike `verify_access_token`, the
+    caller here has no way to know which plugin minted the token, so this
+    tries every registered, enabled plugin's salt -- itsdangerous
+    verification is a cheap HMAC compare per candidate, and there are
+    normally a handful of registered plugins.
+    """
+    from app.services.plugins.store import plugin_store
+
+    path = get_route_path(request.scope)
+    allowed_methods = _PLUGIN_TICKET_BEARER_ROUTES.get(path)
+    if allowed_methods is None or request.method not in allowed_methods:
+        return None
+    for name, entry in plugin_store.list().items():
+        if not entry.enabled:
+            continue
+        user_id = verify_plugin_token(token, name)
+        if user_id:
+            return user_id
+    return None
+
+
 async def _bearer_actor(request: Request) -> "Actor | None":
     """Phân giải danh tính từ Authorization: Bearer. LUÔN trả role="user" --
     role trong token không được đọc, vì không tồn tại. Đây là lý do web client
-    không thể leo thang lên admin dù người dùng là admin trong DB."""
+    không thể leo thang lên admin dù người dùng là admin trong DB.
+
+    Thử `verify_access_token` trước; nếu trượt, thử vé plugin -- nhưng chỉ
+    cho danh sách route hẹp `_PLUGIN_TICKET_BEARER_ROUTES` ở trên. Một access
+    token thật không bao giờ verify được như vé plugin (khác salt), nên thứ
+    tự thử không tạo ra đường tắt nào."""
     from app.services.auth.users import user_store
 
     header = request.headers.get("authorization", "")
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token:
         return None
+    token = token.strip()
 
-    user_id = verify_access_token(token.strip())
+    user_id = verify_access_token(token)
+    if user_id is None:
+        user_id = await _plugin_ticket_user_id(request, token)
     if not user_id:
         return None
 
