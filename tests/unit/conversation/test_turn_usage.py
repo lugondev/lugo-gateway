@@ -1,13 +1,14 @@
 """Task 6 (A1) seam tests for the shared LLM-turn usage recorder
 (services/conversation/turn_usage.py), extracted out of
-api/routes/livehost.py's _record_llm_usage closure and
-services/conversation/session.py's _record_llm_usage method.
+services/conversation/session.py's _record_llm_usage method -- and, before
+the livehost plugin left this repo, its own _record_llm_usage closure too.
 tests/unit/conversation/test_session_usage_metering.py exercises
 ConversationSession._record_llm_usage end to end (unchanged, still the
 pre-extraction contract fence for the session.py call site) -- these tests
-drive the shared helper directly, plus the livehost-only `llm_model`
-override argument that test_session_usage_metering.py has no reason to
-cover."""
+drive the shared helper directly, plus the `llm_model` override argument
+(no current caller passes one; kept for a caller that resolves its own
+model ahead of the turn, the way livehost's closure used to) that
+test_session_usage_metering.py has no reason to cover."""
 
 import pytest
 from sqlalchemy import select
@@ -52,9 +53,11 @@ async def test_record_llm_turn_usage_writes_a_row_from_profile_pins():
 
 @pytest.mark.asyncio
 async def test_record_llm_turn_usage_llm_model_override_wins_like_livehost():
-    """livehost.py's closure passes its own resolved `llm_model` (a registry
-    override the profile alone wouldn't carry) rather than relying purely on
-    profile.llm.model -- same rule as turn_quota's `llm_model` param."""
+    """Pins down the `llm_model` override argument: a resolved model (a
+    registry override the profile alone wouldn't carry) wins over relying
+    purely on profile.llm.model -- same rule as turn_quota's `llm_model`
+    param. No current caller passes one; livehost.py's closure used to,
+    before the livehost plugin left this repo."""
     from app.services.conversation.turn_usage import record_llm_turn_usage
 
     await init_db()

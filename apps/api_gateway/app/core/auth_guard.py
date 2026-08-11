@@ -51,7 +51,6 @@ _USER_PREFIXES = (
     # unauthenticated purely because nobody had listed them anywhere.
     "/v1/events",
     "/v1/conversation",
-    "/v1/livehost",
     "/v1/profiles",
     "/v1/mcp",
     "/v1/stt",

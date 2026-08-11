@@ -12,7 +12,8 @@ router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 # user only ever sees their own sessions. Imported under the private name this
 # module has always exported (api/routes/conversation.py imports it from here,
 # and tests monkeypatch it per-route) -- the body itself now lives in
-# core/actor.py, shared with livehost.py's identical copy.
+# core/actor.py, shared with what used to be livehost.py's identical copy
+# before the livehost plugin left this repo.
 _scope_user_id = scope_user_id
 
 

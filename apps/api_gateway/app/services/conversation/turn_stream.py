@@ -113,9 +113,11 @@ async def stream_reply(
 
     async def _synth(sentence: str):
         # (result, packets, error) -- see turn_tts.synthesize_or_degrade for why
-        # a synthesis failure has to be a value here and not an exception. Only
-        # the pacing loop below is this module's own; livehost paces differently
-        # and deliberately.
+        # a synthesis failure has to be a value here and not an exception. The
+        # pacing loop below is this module's own -- the livehost plugin's own
+        # traffic inherits it too now, reaching this module over
+        # /v1/conversation/stream rather than pacing its own copy the way
+        # api/routes/livehost.py used to before it left this repo.
         return await synthesize_or_degrade(
             sentence,
             provider=session.tts_provider,

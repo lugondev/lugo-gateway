@@ -1,12 +1,15 @@
 """Regression tests for the "session attributed to the wrong person" bug.
 
-conversation_stream (and livehost_stream) already resolve the WS caller's
-identity via resolve_ws_identity(), but historically threw it away when
-recording the session row, using the *profile's owner* (or nobody, when
-there's no profile) instead of the person actually speaking. This meant
-GET /v1/sessions (which scopes by the caller's own user id) could never find
+conversation_stream already resolves the WS caller's identity via
+resolve_ws_identity(), but historically threw it away when recording the
+session row, using the *profile's owner* (or nobody, when there's no
+profile) instead of the person actually speaking. This meant GET
+/v1/sessions (which scopes by the caller's own user id) could never find
 sessions the caller had just created themselves -- the History screen shipped
-as a permanently empty screen.
+as a permanently empty screen. livehost_stream shared this same bug and fix
+back when it lived in this repo as a second call site; it now reaches this
+exact code path as the livehost plugin's own upstream connection, so this
+file's coverage covers it too.
 
 The fix: prefer the authenticated speaker's id. When there is no identity
 (auth disabled / dev mode, or the legacy shared device_auth_token) the
@@ -84,7 +87,6 @@ def _clean_profile_store(tmp_path, monkeypatch):
     monkeypatch.setattr("app.services.profiles.store.profile_store", fresh)
     monkeypatch.setattr("app.services.conversation.session.profile_store", fresh)
     monkeypatch.setattr("app.api.routes.conversation.profile_store", fresh)
-    monkeypatch.setattr("app.api.routes.livehost.profile_store", fresh)
     return fresh
 
 
@@ -148,26 +150,6 @@ def test_ws_conversation_session_owned_by_authenticated_speaker(client, _with_pa
         f"session {session_id} created by user {user_a['id']} was not returned by "
         f"GET /v1/sessions for that same user; got ids={ids}"
     )
-
-
-def test_ws_livehost_session_owned_by_authenticated_speaker(client, _with_password, user_a):
-    """Same bug, same fix, at the second call site (livehost.py)."""
-    token = issue_access_token(user_a["id"])
-    with client.websocket_connect(
-        f"/v1/livehost/stream?{_ENGINE_QS}", subprotocols=["bearer", token]
-    ) as ws:
-        first = ws.receive_json()
-        assert first["event"] == "session_started"
-        session_id = first["session_id"]
-        # No _say_something here: livehost creates its session row up front
-        # (routes/livehost.py) instead of going through ConversationSession's
-        # lazy creation, so there is already something to find.
-
-    resp = client.get("/v1/sessions", headers=_auth(token))
-    assert resp.status_code == 200
-    body = resp.json()
-    ids = [row["id"] for row in body["data"]]
-    assert session_id in ids
 
 
 async def test_ws_conversation_no_identity_naming_a_profile_stays_ownerless(client, _clean_profile_store):

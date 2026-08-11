@@ -3,7 +3,9 @@ the idle-timeout watchdog pattern already used by app.api.routes.lugo
 (lugo_stream's `_watchdog()`): a background asyncio task that wakes on a fixed
 interval and checks a condition, closing the connection if it fails.
 
-Used by the conversation, livehost and stt sockets. NOT by lugo, and that is
+Used by the conversation and stt sockets (the livehost plugin's traffic
+reaches the conversation socket the same way a browser does, so this covers
+it too). NOT by lugo, and that is
 deliberate rather than an oversight waiting to be tidied up -- the two look
 alike and are not:
 

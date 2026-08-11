@@ -221,8 +221,9 @@ async def test_session_start_applies_registry_llm_override_for_profile(monkeypat
     """A profile that picks a Model Registry LLM (base_url/api_key cleared,
     engine+model set -- see profiles.js's registry-select save path) must have
     its responder built from the registry entry's base_url/api_key, exactly
-    like the already-correct conversation.py/livehost.py call sites do. Before
-    this fix, ConversationSession.start() never called
+    like the already-correct conversation.py call site does (and, before the
+    livehost plugin left this repo, its own copy). Before this fix,
+    ConversationSession.start() never called
     resolve_llm_override_from_registry at all, so a registry-backed profile
     silently fell back to the system-wide default LLM base_url while still
     asking for the registry's model name -- producing a bogus offline error

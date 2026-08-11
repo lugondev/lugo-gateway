@@ -48,9 +48,10 @@ def resolve_llm_pair(responder, pinned_engine: str, pinned_model: str) -> tuple[
     profile is where that model came from. Otherwise return a blank engine and
     let resolve_usage_model() derive the engine that owns the model.
 
-    Lives here rather than in each caller because there are four such sites
-    (conversation session, livehost, and both /chat paths) and the rule has to
-    be identical in all of them.
+    Lives here rather than in each caller because there is more than one such
+    site (the conversation session's turn loop, which the livehost plugin's
+    own traffic goes through too, and conversation.py's chat()) and the rule
+    has to be identical in all of them.
     """
     model_id = getattr(responder, "model", "") or pinned_model or ""
     engine = pinned_engine if (model_id and model_id == pinned_model) else ""

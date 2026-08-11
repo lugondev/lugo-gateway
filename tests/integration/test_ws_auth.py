@@ -59,7 +59,6 @@ def _with_password(monkeypatch):
 ROUTES = [
     ("/v1/conversation/stream", "stt_engine=stub-ws-auth-stt&tts_engine=stub-ws-auth-tts"),
     ("/v1/stt/stream", "engine=vosk"),
-    ("/v1/livehost/stream", "stt_engine=stub-ws-auth-stt&tts_engine=stub-ws-auth-tts"),
 ]
 
 

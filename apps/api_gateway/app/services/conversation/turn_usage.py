@@ -1,11 +1,14 @@
 """Shared LLM-turn usage recorder (Task 6 / A1 dedup).
 
 Lifts the identical "responder.last_usage -> resolve_llm_pair -> record_usage"
-best-effort usage row that used to be duplicated in
-``api/routes/livehost.py``'s ``_record_llm_usage`` closure and
-``services/conversation/session.py``'s ``_record_llm_usage`` method -- and,
-found later, twice more inside ``api/routes/conversation.py``'s ``/chat``, once
-per branch of its tool-registry if/else.
+best-effort usage row that used to be duplicated in the livehost plugin's own
+``_record_llm_usage`` closure (back when it lived in this repo, as
+``api/routes/livehost.py``) and ``services/conversation/session.py``'s
+``_record_llm_usage`` method -- and, found later, twice more inside
+``api/routes/conversation.py``'s ``/chat``, once per branch of its
+tool-registry if/else. The livehost plugin's own traffic now reaches
+session.py's copy over /v1/conversation/stream, rather than calling in
+directly.
 Byte-neutral: writes the same usage row, same fields, same fail-open contract
 (metering must never break a turn).
 """

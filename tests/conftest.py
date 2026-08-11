@@ -88,25 +88,26 @@ def _hermetic(monkeypatch):
     monkeypatch.setattr(settings, "warmup_on_startup", False)
 
     # Every WS session spawns an untracked `asyncio.create_task(_warm_and_notify())`
-    # (ConversationSession.__init__, livehost's connect handler) that calls
-    # warm_providers() -> provider.warm() in a thread. Boot-time warmup is
-    # already disabled above, so in tests this per-session warm is never a
-    # no-op cache-hit -- it always attempts a REAL model load for whatever the
-    # default STT/TTS engine is, for any test that doesn't itself override
-    # stt_engine/tts_engine to a stub. That real load can hang (e.g. a model
-    # fetch with no network route in a sandboxed run), and since the task is
-    # never tracked/cancelled, the WS test's TestClient portal thread then
-    # blocks forever joining it on teardown -- indistinguishable from a plain
-    # hung test. Neutralize only these two call sites (both bind the name at
-    # module-import time, so patching source app.services.warmup.warm_providers
-    # wouldn't reach them anyway) -- NOT the source function itself, since
-    # app.main._warm_default_engines() re-imports it fresh per call and
-    # test_warmup.py tests that boot-warmup path directly with spy providers.
+    # (ConversationSession.__init__ -- the livehost plugin reaches this same
+    # code path over /v1/conversation/stream, not a call site of its own
+    # anymore) that calls warm_providers() -> provider.warm() in a thread.
+    # Boot-time warmup is already disabled above, so in tests this
+    # per-session warm is never a no-op cache-hit -- it always attempts a
+    # REAL model load for whatever the default STT/TTS engine is, for any
+    # test that doesn't itself override stt_engine/tts_engine to a stub.
+    # That real load can hang (e.g. a model fetch with no network route in a
+    # sandboxed run), and since the task is never tracked/cancelled, the WS
+    # test's TestClient portal thread then blocks forever joining it on
+    # teardown -- indistinguishable from a plain hung test. Neutralize the
+    # call site (it binds the name at module-import time, so patching source
+    # app.services.warmup.warm_providers wouldn't reach it anyway) -- NOT the
+    # source function itself, since app.main._warm_default_engines()
+    # re-imports it fresh per call and test_warmup.py tests that boot-warmup
+    # path directly with spy providers.
     async def _no_op_warm(*_providers: object) -> None:
         return None
 
     monkeypatch.setattr("app.services.conversation.session.warm_providers", _no_op_warm)
-    monkeypatch.setattr("app.api.routes.livehost.warm_providers", _no_op_warm)
 
     # warmup._ready_ids tracks readiness by id(provider), which is safe in
     # production (providers are long-lived process-wide singletons) but not

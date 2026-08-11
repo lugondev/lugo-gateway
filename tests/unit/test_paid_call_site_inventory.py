@@ -102,14 +102,6 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "seam instead of synthesize()",
         "tests/unit/usage/test_routes_usage_metering.py",
     ),
-    ("api/routes/livehost.py", "transcribe_bytes"): (
-        1, "metered+gated", "livehost voice turn STT",
-        "tests/integration/test_livehost_ws_voice.py",
-    ),
-    ("api/routes/livehost.py", "reply_stream"): (
-        2, "metered+gated", "livehost voice and social turns",
-        "tests/integration/test_livehost_ws_voice.py",
-    ),
     ("services/conversation/session.py", "transcribe_bytes"): (
         1, "metered+gated", "conversation core STT, incl. the fast-path engine switch",
         "tests/unit/conversation/test_session_usage_metering.py",
@@ -126,19 +118,20 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
     ),
     ("services/conversation/turn_tts.py", "render_audio"): (
         1, "metered+gated",
-        "BOTH per-sentence voice paths -- the conversation core (via "
-        "conversation/turn_stream.py) and the livehost socket -- now reach the "
-        "provider through this one helper, which used to be a copy in each. "
-        "Gated by the caller's once-per-turn quota check before any provider is "
-        "touched (llm_turn_quota_blocked in _run_turn; _quota_blocked_now in "
-        "livehost_stream). Metered through the `record_usage` callback the "
-        "caller supplies, because the two attribute the row from different "
-        "state: the session reads its own cfg, the socket its own locals.\n"
-        "NOTE for whoever reads this next: consolidating means THIS test can no "
-        "longer see whether a given caller meters. `record_usage` is a required "
-        "keyword arg with no default, so a new caller has to pass something "
-        "deliberately -- but passing a no-op would be invisible here. Check the "
-        "callback, not just the call site",
+        "The conversation core's per-sentence voice path (conversation/"
+        "turn_stream.py) reaches the provider through this one helper -- "
+        "used to be a second copy in the livehost socket too, before the "
+        "livehost plugin left this repo; its own traffic now reaches this "
+        "same helper over /v1/conversation/stream instead of calling in "
+        "directly. Gated by the caller's once-per-turn quota check before "
+        "any provider is touched (llm_turn_quota_blocked in _run_turn). "
+        "Metered through the `record_usage` callback the caller supplies, "
+        "attributing the row from its own cfg.\n"
+        "NOTE for whoever reads this next: the callback indirection means "
+        "THIS test can no longer see whether a given caller meters. "
+        "`record_usage` is a required keyword arg with no default, so a new "
+        "caller has to pass something deliberately -- but passing a no-op "
+        "would be invisible here. Check the callback, not just the call site",
         "tests/unit/conversation/test_session_usage_metering.py",
     ),
     ("services/tts/base.py", "render_wav"): (

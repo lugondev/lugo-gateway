@@ -5,7 +5,9 @@ Background (docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md,
 finding C2): profiles.py and tts_profiles.py already enforce owner_id
 visibility on every CRUD route (see profiles.py's ``_visible`` /
 tts_profiles.py's ``_visible``, both defined in terms of the predicates
-below). But every consumer -- conversation.py, lugo.py, livehost.py, stt.py,
+below). But every consumer -- conversation.py, lugo.py, livehost.py (before
+the livehost plugin left this repo; its own traffic now reaches
+conversation.py's own check the same way a browser's does), stt.py,
 services/health.py, services/conversation/session.py -- used to resolve the
 name with no check at all, so any signed-up user could name another user's
 private profile and run on that victim's ``llm.api_key``, ``system_prompt``

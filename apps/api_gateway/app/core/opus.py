@@ -173,8 +173,10 @@ def make_decoder_or_downgrade(sample_rate: int, channels: int = 1) -> OpusFrameD
     """A decoder for a client that negotiated Opus, or None on a server with no
     libopus -- in which case the caller falls back to pcm16 so the connection
     still works. Shared by every socket that accepts Opus uplink
-    (services/conversation/session.py, api/routes/livehost.py), which each used
-    to inline this check with its own copy of the warning.
+    (services/conversation/session.py -- the livehost plugin's own traffic
+    reaches this same code path over /v1/conversation/stream, not a call
+    site of its own), which used to inline this check with its own copy of
+    the warning.
 
     opus_available() is read as a module global here rather than imported by
     the caller: that is what makes monkeypatching app.core.opus.opus_available

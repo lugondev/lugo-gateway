@@ -319,8 +319,9 @@ class ConversationSession:
         # llm_api_key, system_prompt and the tool_registry (-> session_started's
         # active_tools) below are ALL derived from `profile`, so this resolution
         # -- not the route-level one -- is what must not hand back a profile the
-        # caller doesn't own. The route (conversation.py/lugo.py/livehost.py)
-        # also gates its own connect-time use of the profile (STT/TTS
+        # caller doesn't own. The route (conversation.py/lugo.py -- and, over
+        # conversation.py, the livehost plugin's own traffic) also gates its
+        # own connect-time use of the profile (STT/TTS
         # resolution, health check), but does not need to additionally null out
         # `cfg.profile_name` for this to be safe: visible_profile_or_none here
         # re-checks visibility against cfg.identity_user_id independently.
@@ -677,9 +678,10 @@ class ConversationSession:
 
         # Best-effort quota gate: ONCE per turn, before anything else (STT/LLM/TTS).
         # quota_gate() itself is fail-open (internal errors log + allow), so only a
-        # genuine over-limit quota raises here. Shared with livehost's/chat()'s own
-        # preflight (Task 6 dedup) -- see turn_quota.py's docstring for the pairing
-        # rule and fail-open contract.
+        # genuine over-limit quota raises here. Shared with chat()'s own preflight
+        # (Task 6 dedup) -- the livehost plugin's turns go through this same
+        # preflight too, over /v1/conversation/stream -- see turn_quota.py's
+        # docstring for the pairing rule and fail-open contract.
         blocked, quota_message = await llm_turn_quota_blocked(
             identity_user_id=cfg.identity_user_id, profile=self.profile, profile_name=cfg.profile_name,
         )

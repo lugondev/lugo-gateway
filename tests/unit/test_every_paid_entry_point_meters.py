@@ -6,10 +6,11 @@ proves the classification is true where a client can reach it. Both are needed:
 the first catches an omission, the second catches a lie.
 
 Deliberately NOT covered here (each has its own dedicated suite, named so a
-reader can check): the conversation core (tests/unit/conversation/test_session_usage_metering.py),
-livehost (tests/unit/livehost/test_livehost_quota_gate.py), and the memory subsystem
-(tests/unit/memory/test_memory_usage_metering.py). Those run over a WebSocket or a
-session teardown that this file's harness cannot drive.
+reader can check): the conversation core (tests/unit/conversation/test_session_usage_metering.py
+-- the livehost plugin's own traffic reaches this exact code path too, over
+/v1/conversation/stream, so this file's coverage covers it as well) and the
+memory subsystem (tests/unit/memory/test_memory_usage_metering.py). Those run
+over a WebSocket or a session teardown that this file's harness cannot drive.
 
 Harness notes (adaptations to the brief, made for reasons already root-caused
 on this branch):

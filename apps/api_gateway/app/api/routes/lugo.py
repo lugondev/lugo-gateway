@@ -114,9 +114,10 @@ def _resolve(profile_name: str | None, caller_id: str | None = None, *, bypass: 
     tts_profile = visible_tts_profile_or_none(
         tts_profile_store.get(tts_name) if tts_name else None, caller_id, bypass=bypass
     )
-    # Same mapping conversation.py/livehost.py use -- see
-    # services/conversation/tts_params.py. No fallback_voice: the Lugo wire has
-    # no query params, so a profile that names no voice leaves it to the engine.
+    # Same mapping conversation.py uses (and, over that route, the livehost
+    # plugin's own traffic) -- see services/conversation/tts_params.py. No
+    # fallback_voice: the Lugo wire has no query params, so a profile that
+    # names no voice leaves it to the engine.
     tts = tts_params_from_profile(tts_profile) or TtsParams(
         engine=system_config_store.get().engines.default_tts_engine,
         model_id="", voice=None, ref_audio_path=None, ref_text=None,

@@ -165,10 +165,12 @@ def build_endpointer(sample_rate: int, conv_cfg) -> VadEndpointer:
 
     `conv_cfg` is system_config_store.get().conversation, read by the CALLER so
     a test monkeypatching that route's own `system_config_store` still decides
-    the tuning. Both voice sockets (services/conversation/session.py,
-    api/routes/livehost.py) used to spell out the same seven-field mapping, so a
-    new tuning knob had to be added twice or it silently applied to one path
-    only."""
+    the tuning. Two voice sockets (services/conversation/session.py, and the
+    livehost plugin's own upstream connection, before it left this repo and
+    started reaching that same session.py code path over
+    /v1/conversation/stream instead) used to each spell out the same
+    seven-field mapping, so a new tuning knob had to be added twice or it
+    silently applied to one path only."""
     return VadEndpointer(
         sample_rate,
         silence_ms=conv_cfg.conversation_silence_ms,

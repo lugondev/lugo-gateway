@@ -1,12 +1,15 @@
 """The TTS knobs one connection runs with, resolved from a TTS profile.
 
-Every voice socket (api/routes/conversation.py, api/routes/livehost.py,
-api/routes/lugo.py) resolves the same thing: a visible TtsProfile, if it pins an
-engine, supplies engine/model/voice/ref-audio/instruct/speed/language; otherwise
-the server default engine does, with the caller's own query params as the only
-other source. Two of those three routes carried a byte-identical copy of the
-mapping and the third a dict-shaped variant of it, so a field added to
-TtsProfile reached some sockets and not others.
+Every voice socket (api/routes/conversation.py, api/routes/lugo.py) resolves
+the same thing: a visible TtsProfile, if it pins an engine, supplies
+engine/model/voice/ref-audio/instruct/speed/language; otherwise the server
+default engine does, with the caller's own query params as the only other
+source. Two of the three routes that shared this originally (the third was
+api/routes/livehost.py, before the livehost plugin left this repo) carried
+a byte-identical copy of the mapping and the third a dict-shaped variant of
+it, so a field added to TtsProfile reached some sockets and not others. The
+livehost plugin's own traffic now resolves this the same way conversation.py's
+does, over /v1/conversation/stream.
 
 Resolving WHICH profile stays at the call site on purpose: each route reads its
 own module-level `tts_profile_store` / `system_config_store`, which is what lets

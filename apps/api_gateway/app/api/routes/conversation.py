@@ -174,10 +174,11 @@ async def chat(
     llm_base_url, llm_api_key, llm_model, system_prompt = await resolve_llm_config(active_profile)
 
     # Quota pre-flight: block BEFORE the responder does any work. Shared with
-    # livehost's/session.py's own preflight (Task 6 dedup) -- see
-    # turn_quota.py's docstring for the pairing rule (same resolver the
-    # record_usage calls below use) and fail-open contract. The responder
-    # doesn't exist yet, so this pre-flight only knows the profile.
+    # session.py's own preflight (Task 6 dedup) -- the livehost plugin's
+    # turns go through that same preflight now, over /v1/conversation/stream
+    # -- see turn_quota.py's docstring for the pairing rule (same resolver
+    # the record_usage calls below use) and fail-open contract. The
+    # responder doesn't exist yet, so this pre-flight only knows the profile.
     blocked, quota_message = await llm_turn_quota_blocked(
         identity_user_id=caller_id, profile=active_profile, profile_name=profile or "",
     )
@@ -379,7 +380,8 @@ async def conversation_stream(websocket: WebSocket) -> None:
         identity.user_id,
         bypass=identity.unauthenticated,
     )
-    # Shared with livehost.py/lugo.py -- see services/conversation/tts_params.py.
+    # Shared with lugo.py (and the livehost plugin's own traffic, which
+    # reaches this same route) -- see services/conversation/tts_params.py.
     # The fallback on the right of `or` is only built when the profile pins no
     # engine, so the config store is still read exactly as lazily as before.
     (

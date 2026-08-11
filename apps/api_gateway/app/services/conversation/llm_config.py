@@ -1,12 +1,15 @@
 """The LLM a profile runs against, resolved once.
 
-Three entry points build a responder from a profile -- the HTTP /chat route,
-the livehost socket, and ConversationSession.start() -- and each spelled out the
-same four-step resolution: read base_url/api_key/model off the profile, then let
-a Model Registry row for (llm.engine, llm.model) override the endpoint and
-credentials, then take the profile's system prompt. Three copies meant a change
-to the precedence rule (which is where provider credentials come from) had to
-land three times to be true everywhere.
+Three entry points used to build a responder from a profile this way -- the
+HTTP /chat route, the livehost socket (before the livehost plugin left this
+repo -- its own traffic now reaches ConversationSession.start() the same way
+a browser's does, over /v1/conversation/stream), and ConversationSession.start()
+-- and each spelled out the same four-step resolution: read
+base_url/api_key/model off the profile, then let a Model Registry row for
+(llm.engine, llm.model) override the endpoint and credentials, then take the
+profile's system prompt. Three copies meant a change to the precedence rule
+(which is where provider credentials come from) had to land three times to
+be true everywhere.
 
 The registry override is looked up here rather than at the call site because it
 is part of the precedence rule, not a decoration on top of it.

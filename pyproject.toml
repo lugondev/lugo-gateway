@@ -98,11 +98,6 @@ omnivoice = [
 voxcpm = [
   "voxcpm>=2.0.3",
 ]
-# TikTok Live co-host ingestion (unofficial API). See
-# docs/superpowers/specs/2026-07-05-livehost-tiktok-cohost-design.md.
-tiktok = [
-  "TikTokLive>=6.6.0",
-]
 # edge-tts — free cloud TTS via Microsoft Edge's Read Aloud service. No API key,
 # no local model, but needs outbound network access; unofficial (reverse-engineered)
 # API, test-UI/batch use only (see docs/superpowers/specs/2026-07-11-edge-tts-provider-design.md).

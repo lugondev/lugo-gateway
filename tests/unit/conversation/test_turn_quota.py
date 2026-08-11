@@ -1,9 +1,10 @@
 """Task 6 (A1) seam tests for the shared LLM-turn quota preflight
-(services/conversation/turn_quota.py), extracted out of api/routes/livehost.py's
-_quota_blocked_for / services/conversation/session.py's _run_turn /
-api/routes/conversation.py's chat(). Mirrors
-tests/unit/livehost/test_livehost_quota_gate.py's two functional tests, which
-remain in place unchanged as the pre-extraction contract fence."""
+(services/conversation/turn_quota.py), extracted out of
+services/conversation/session.py's _run_turn / api/routes/conversation.py's
+chat() -- and, before the livehost plugin left this repo, its own
+_quota_blocked_for wrapper too. The livehost plugin's own traffic now
+reaches session.py's copy of this preflight over /v1/conversation/stream,
+so this file's coverage covers it as well."""
 
 import pytest
 
@@ -47,10 +48,10 @@ async def test_llm_turn_quota_blocked_over_limit_via_profile():
 @pytest.mark.asyncio
 async def test_llm_turn_quota_blocked_fails_open_on_gate_error():
     """quota_gate raising anything other than QuotaExceededError must never
-    block the turn -- passed explicitly here (the way api/routes/livehost.py's
-    _quota_blocked_for wrapper does, so a monkeypatch of ITS module-level
-    `quota_gate` name is honored -- see test_livehost_quota_gate.py's
-    test_livehost_quota_helper_fails_open for that exact idiom)."""
+    block the turn -- passed explicitly here so a monkeypatch of a caller
+    module's own `quota_gate` name is honored (the way api/routes/livehost.py's
+    _quota_blocked_for wrapper used to, before the livehost plugin left this
+    repo)."""
     from app.services.conversation.turn_quota import llm_turn_quota_blocked_for_pins
 
     await init_db()

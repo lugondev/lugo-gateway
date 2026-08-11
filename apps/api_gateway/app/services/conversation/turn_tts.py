@@ -1,21 +1,21 @@
 """Synthesizing one sentence, and degrading instead of unwinding the turn.
 
-Both voice paths -- conversation/turn_stream.py and api/routes/livehost.py --
-feed a sentence iterator through TTS, and both must obey the same rule: a
-failure anywhere in synthesis becomes a value, never an exception. Raising
-propagates out of prefetch_synthesis and unwinds the whole turn, which throws
-away every not-yet-sent sentence's ``response_text`` -- the LLM's words have to
-survive a TTS outage.
+Both voice paths -- conversation/turn_stream.py and, before the livehost
+plugin left this repo, api/routes/livehost.py -- fed a sentence iterator
+through TTS, and both had to obey the same rule: a failure anywhere in
+synthesis becomes a value, never an exception. Raising propagates out of
+prefetch_synthesis and unwinds the whole turn, which throws away every
+not-yet-sent sentence's ``response_text`` -- the LLM's words have to survive
+a TTS outage.
 
-That rule was encoded twice. ``build_tts_request_or_degrade`` already shared the
-construction half; ``synthesize_or_degrade`` now covers the rest of it (provider
-call, metering, Opus encode), so the contract has one home.
-
-Still NOT shared, deliberately: the pacing loop that releases those packets.
-session/turn_stream.py runs one global clock for the whole reply;
-api/routes/livehost.py re-prebuffers per sentence. That is a real behavioural
-difference, not an accident of copying -- see turn_stream.py's pacer comment for
-which one is the fix and why.
+That rule was encoded twice, once per path. ``build_tts_request_or_degrade``
+already shared the construction half; ``synthesize_or_degrade`` now covers
+the rest of it (provider call, metering, Opus encode), so the contract has
+one home. The livehost plugin's own traffic now reaches turn_stream.py's
+copy over /v1/conversation/stream, rather than calling in directly, so this
+module has one caller today -- kept as a shared helper rather than inlined
+back into turn_stream.py, since the contract it encodes (fail-open synthesis)
+is the kind of thing a second caller re-introduces without warning.
 """
 
 from __future__ import annotations
@@ -91,9 +91,8 @@ async def synthesize_or_degrade(
       the audio alone.
 
     ``record_usage`` is an async callable taking the sentence. It is expected to
-    swallow its own errors: metering must never break a turn, and each caller
-    already attributes the row differently (the session reads its own cfg, the
-    livehost socket its own locals).
+    swallow its own errors: metering must never break a turn -- the caller
+    attributes the row from its own cfg (see turn_stream.py).
 
     ``asyncio.CancelledError`` is deliberately re-raised rather than degraded --
     it means barge-in or a superseded turn, which MUST unwind.

@@ -1,7 +1,7 @@
-"""In-memory pending-device-pairing registry -- same pattern as
-app.services.livehost.registry.livehost_registry (a process-global dict is
-fine here: entries are short-lived (~10 min TTL) and losing them on restart
-just means the device retries pair/init).
+"""In-memory pending-device-pairing registry -- same pattern the livehost
+plugin's own registry uses (a process-global dict is fine here: entries are
+short-lived (~10 min TTL) and losing them on restart just means the device
+retries pair/init).
 
 --- C3 hardening -----------------------------------------------------------
 A 6-digit numeric code (1e6 space), a 600s TTL, and no rate limiting anywhere
@@ -107,8 +107,9 @@ independent layers close this:
    in-process sliding-window limiter on both pair/claim (keyed by
    IP + user_id, since claim requires login) and pair/init (keyed by IP).
    This is process-local state, same lifecycle/caveat as the rest of this
-   module and as `app.services.livehost.registry` / `_job_owners`: with more
-   than one uvicorn worker or replica, each process keeps its own counters,
+   module and as `_job_owners` (and the livehost plugin's own registry,
+   external to this repo now): with more than one uvicorn worker or replica,
+   each process keeps its own counters,
    so an attacker who can land requests on N processes effectively gets N x
    the budget. Fine for this deployment (single worker); a multi-worker
    rollout would need to move this to a shared store (e.g. Redis) to keep

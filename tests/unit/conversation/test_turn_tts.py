@@ -1,11 +1,14 @@
 """Task 6 (A1) seam tests for the shared TTS-request build + degrade
 classification (services/conversation/turn_tts.py), extracted out of
-api/routes/livehost.py's and services/conversation/session.py's `_synth`
-closures. The end-to-end degrade contract stays covered by
-tests/unit/livehost/test_livehost_tts_profile.py::test_livehost_bad_ref_audio_path_degrades_to_tts_error
-and tests/unit/conversation/test_session_bad_ref_audio_path_degrades.py --
-both unchanged, still the pre-extraction contract fence. These tests drive
-the extracted builder function directly."""
+services/conversation/session.py's `_synth` closure -- and, before the
+livehost plugin left this repo, api/routes/livehost.py's own copy. The
+end-to-end degrade contract stays covered by
+tests/unit/conversation/test_conversation_tts_profile.py::test_bad_ref_audio_path_degrades_to_tts_error
+(Task 11 retargeted this from the livehost socket to conversation/stream,
+which the livehost plugin's own traffic now reaches too) and
+tests/unit/conversation/test_session_bad_ref_audio_path_degrades.py -- both
+still the pre-extraction contract fence. These tests drive the extracted
+builder function directly."""
 
 from app.schemas.tts import TTSRequest
 from app.services.conversation.turn_tts import build_tts_request_or_degrade

@@ -2,7 +2,8 @@
 
 Lifts the "resolve pinned (engine, model) -> provider_id -> quota_gate"
 check that used to be duplicated, near byte-for-byte, in three places:
-``api/routes/livehost.py``'s ``_quota_blocked_for``,
+the livehost plugin's own stream handler (back when it lived in this repo,
+as ``api/routes/livehost.py``'s ``_quota_blocked_for``),
 ``services/conversation/session.py``'s ``_run_turn``, and
 ``api/routes/conversation.py``'s ``chat()``. All three resolve the same way
 (only pair the profile's engine with a model the profile actually pinned --
@@ -10,6 +11,9 @@ see ``resolve_llm_pair``'s docstring, which applies the identical rule to the
 usage row) and are fail-open the same way: only a genuine
 ``QuotaExceededError`` blocks a turn; any other failure (registry hiccup,
 resolver error) logs and allows, matching ``quota_gate``'s own contract.
+The livehost plugin now reaches this same check by going through
+``session.py``'s ``_run_turn`` over ``/v1/conversation/stream``, rather than
+calling in directly -- it is no longer a call site of its own.
 
 Two entry points:
 
@@ -17,10 +21,7 @@ Two entry points:
   (or None) plus an optional already-resolved model override.
 * ``llm_turn_quota_blocked_for_pins`` -- the raw-pin variant, given an
   already-resolved (engine, model) pair rather than a ``Profile`` object.
-  ``llm_turn_quota_blocked`` delegates here; ``api/routes/livehost.py`` keeps
-  its own ``_quota_blocked_for`` wrapper (same signature as before this
-  refactor) delegating here too, so its direct unit-test coverage
-  (``test_livehost_quota_gate.py``) keeps working unchanged.
+  ``llm_turn_quota_blocked`` delegates here.
 """
 
 from __future__ import annotations
@@ -44,20 +45,18 @@ async def llm_turn_quota_blocked(
 ) -> tuple[bool, str]:
     """(blocked, message) for one LLM turn, resolved off ``profile``'s pins.
 
-    ``llm_model`` is an already-resolved override -- livehost's stream
-    handler computes one from the profile + a registry lookup before the
-    turn starts and passes it here; leave it None to resolve purely from
-    ``profile.llm.model`` (session.py's turn loop, and the profile-based
-    call shape generally).
+    ``llm_model`` is an already-resolved override; leave it None to resolve
+    purely from ``profile.llm.model`` (every current caller -- session.py's
+    turn loop, conversation.py's ``chat()`` -- does). Kept for a caller that
+    resolves its own model ahead of the turn, the way livehost's stream
+    handler used to when it lived in this repo and called in directly with
+    one.
 
     ``quota_gate``: pass explicitly to honor a caller MODULE's own
-    monkeypatch of its ``quota_gate`` name (``api/routes/livehost.py`` keeps
-    `quota_gate` bound at module scope and its tests reassign it directly --
-    see ``test_livehost_quota_gate.py::test_livehost_quota_helper_fails_open``).
-    Left None, this imports the live ``app.services.quota.gate.quota_gate``
-    function-locally on every call (same as session.py/conversation.py
-    already did), so a monkeypatch of THAT module's attribute is still
-    observed.
+    monkeypatch of its ``quota_gate`` name. Left None, this imports the live
+    ``app.services.quota.gate.quota_gate`` function-locally on every call
+    (same as session.py/conversation.py already did), so a monkeypatch of
+    THAT module's attribute is still observed.
     """
     pinned_model = llm_model or ((profile.llm.model if profile else "") or "")
     pinned_engine = ((profile.llm.engine if profile else "") or "") if pinned_model else ""
@@ -80,8 +79,8 @@ async def llm_turn_quota_blocked_for_pins(
     already-resolved (engine, model) pin pair instead of a ``Profile``.
 
     Returns the message rather than raising so each turn path can report it
-    the way that path reports its own failures (livehost: an `error` +
-    `turn_done` event pair; session.py: an `error` event; conversation.py:
+    the way that path reports its own failures (session.py, which the
+    livehost plugin's turns go through too: an `error` event; conversation.py:
     an HTTPException(429) at its own call site).
     """
     try:
