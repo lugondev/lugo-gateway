@@ -8,6 +8,7 @@ import { initChatModes } from "./chat.js";
 import { setStreamUI } from "./stt-stream.js";
 import { setConvUI, loadConversationEngines } from "./conversation.js";
 import { loadLivehostEngines } from "./livehost.js";
+import { loadPluginNav } from "./plugins-nav.js";
 import { loadTtsEngines } from "./tts-engines.js";
 import { loadSystemStatus } from "./system-status.js";
 import { loadModels } from "./model-manager.js";
@@ -29,6 +30,7 @@ import "./usage-me.js";
 import "./quotas.js";
 
 initSidebar();
+loadPluginNav();
 initSystemSubtabs();
 initSttMode();
 initChatModes();

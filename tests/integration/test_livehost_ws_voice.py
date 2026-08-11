@@ -1,3 +1,16 @@
+"""End-to-end livehost voice-turn tests, driven over the real /v1/livehost/stream
+socket with stub STT/TTS providers -- no mocking of livehost.py's own turn
+functions, so a full turn genuinely reaches ``stt_provider.transcribe_bytes``
+and ``responder.reply_stream`` (both metered via ``record_usage`` /
+``record_llm_turn_usage`` directly in api/routes/livehost.py).
+
+Task 11 retired tests/unit/livehost/test_livehost_quota_gate.py, which used to
+be the covering test named for those two call sites in
+tests/unit/test_paid_call_site_inventory.py's _CLASSIFIED table -- not because
+it ever actually called either (it unit-tested the quota-gate helper in
+isolation), but by incidental text match on its own ``record_usage`` import.
+This file is a strictly better anchor: it exercises the calls for real."""
+
 import json
 
 import numpy as np

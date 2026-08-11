@@ -104,11 +104,11 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
     ),
     ("api/routes/livehost.py", "transcribe_bytes"): (
         1, "metered+gated", "livehost voice turn STT",
-        "tests/unit/livehost/test_livehost_quota_gate.py",
+        "tests/integration/test_livehost_ws_voice.py",
     ),
     ("api/routes/livehost.py", "reply_stream"): (
         2, "metered+gated", "livehost voice and social turns",
-        "tests/unit/livehost/test_livehost_quota_gate.py",
+        "tests/integration/test_livehost_ws_voice.py",
     ),
     ("services/conversation/session.py", "transcribe_bytes"): (
         1, "metered+gated", "conversation core STT, incl. the fast-path engine switch",

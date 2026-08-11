@@ -16,6 +16,7 @@ def _reset_auth_limiters() -> None:
     so a budget spent by one test would otherwise 429 an unrelated later test.
     """
     from app.api.routes.auth import (
+        introspect_limiter,
         login_account_limiter,
         login_ip_limiter,
         signup_limiter,
@@ -26,6 +27,7 @@ def _reset_auth_limiters() -> None:
         login_account_limiter,
         login_ip_limiter,
         signup_limiter,
+        introspect_limiter,
         claim_rate_limiter,
         init_rate_limiter,
     ):
@@ -170,6 +172,7 @@ def _tmp_db(tmp_path, monkeypatch):
     from app.core.settings import settings
     from app.services.mcp.server_store import mcp_server_store
     from app.services.model_registry.store import model_registry_store
+    from app.services.plugins.store import plugin_store
     from app.services.profiles.store import profile_store
     from app.services.providers.store import provider_store
     from app.services.quota.store import quota_store
@@ -194,6 +197,7 @@ def _tmp_db(tmp_path, monkeypatch):
     profile_store.invalidate()
     tts_profile_store.invalidate()
     mcp_server_store.invalidate()
+    plugin_store.invalidate()
     # The auth rate limiters (api/routes/auth.py) are process-global sliding
     # windows keyed by client IP, and every TestClient request arrives from the
     # same "testclient" address -- so without this the signup/login budget is
@@ -215,3 +219,4 @@ def _tmp_db(tmp_path, monkeypatch):
     profile_store.invalidate()
     tts_profile_store.invalidate()
     mcp_server_store.invalidate()
+    plugin_store.invalidate()

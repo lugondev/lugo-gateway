@@ -20,6 +20,7 @@ from app.api.routes.lugo import router as lugo_router
 from app.api.routes.mcp import router as mcp_router
 from app.api.routes.memories import router as memories_router
 from app.api.routes.model_registry import router as model_registry_router
+from app.api.routes.plugins import router as plugins_router
 from app.api.routes.profiles import router as profiles_router
 from app.api.routes.providers import router as providers_router
 from app.api.routes.quotas import router as quotas_router
@@ -171,7 +172,9 @@ async def lifespan(app: FastAPI):
     # warm can't block startup forever (health checks); on timeout we serve cold.
     if settings.warmup_on_startup:
         try:
-            await asyncio.wait_for(_warm_default_engines(), timeout=settings.warmup_startup_timeout_s)
+            await asyncio.wait_for(
+                _warm_default_engines(), timeout=settings.warmup_startup_timeout_s
+            )
         except TimeoutError:
             logger.warning(
                 "boot warm-up exceeded %ss — serving anyway; the first turn may be cold",
@@ -310,6 +313,7 @@ app.include_router(model_registry_router)
 app.include_router(providers_router)
 app.include_router(quotas_router)
 app.include_router(usage_router)
+app.include_router(plugins_router)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

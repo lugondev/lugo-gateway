@@ -191,3 +191,58 @@ def test_no_tts_profile_falls_back_to_default_tts_engine(client, _local_hermetic
     assert payload.ref_audio_path is None
     assert payload.instruct is None
     assert payload.speed is None
+
+
+def test_bad_ref_audio_path_degrades_to_tts_error(client, _local_hermetic):
+    """Regression for task-6-fixes-round-1 I2, moved here from livehost's
+    independent _synth (formerly api/routes/livehost.py) in Task 11 -- a
+    second, separately-guarded code path from session.py's conversation turn,
+    now reached from conversation/stream directly (livehost.py's own copy of
+    this guarantee is retired: both sockets drive the same
+    turn_stream.py/synthesize_or_degrade machinery).
+
+    TtsProfile.ref_audio_path is deliberately NOT validated by the model
+    itself (round-2 fix: a field_validator here would also run at DB LOAD
+    time via SqliteBackedStore._ensure(), and one bad/host-mismatched row
+    would then break every other stored profile too -- see
+    profile_models.py's module docstring and test_tts_profile_store.py).
+    The containment check instead lives in the route
+    (api/routes/tts_profiles.py's create/update, a plain 422) and, as the
+    real security boundary, in TTSRequest.ref_audio_path (schemas/tts.py) at
+    every synthesis-time read. So a plain TtsProfile(...) call with a bad
+    path (as below) no longer raises by itself -- this simulates a value
+    that reached the store some other way (bypassing the route, e.g. a
+    legacy row) -- the point is that even then, the turn must degrade to
+    tts_error with the LLM text preserved, not unwind with a bare `error`."""
+    stub_tts, profiles, tts_profiles = _local_hermetic
+    bad_profile = TtsProfile(
+        name="bad-ref", engine="stub-conv-ttsp-tts", voice_mode="clone",
+        ref_audio_path="/etc/passwd", ref_text="x",
+    )
+    tts_profiles.upsert(bad_profile)
+    profiles.upsert(Profile(name="host", tts=TtsConfig(profile_name="bad-ref")))
+
+    url = "/v1/conversation/stream?profile=host&sample_rate=16000"
+    events: list = []
+    with client.websocket_connect(url) as ws:
+        assert ws.receive_json()["event"] == "session_started"
+        ws.send_json({"type": "text", "text": "hello"})
+        for _ in range(20):
+            ev = ws.receive_json()
+            events.append(ev)
+            if ev["event"] == "turn_done":
+                break
+
+    names = [e["event"] for e in events]
+    # The LLM's reply text must survive the TTS failure, not be swallowed --
+    # same "don't lose the reply" contract session.py's degrade path already
+    # has a test for (test_session_bad_ref_audio_path_degrades.py).
+    texts = [e["text"] for e in events if e["event"] == "response_text"]
+    assert texts, names
+    assert all(t for t in texts), texts
+    assert "tts_error" in names, names
+    assert "error" not in names, names
+    tts_error = next(e for e in events if e["event"] == "tts_error")
+    assert "ref_audio_path" in tts_error["message"]
+    assert "artifacts directory" in tts_error["message"]
+    assert not stub_tts.calls, "provider must never be reached -- TTSRequest construction fails first"

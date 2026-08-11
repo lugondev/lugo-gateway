@@ -80,6 +80,12 @@ _USER_EXACT: dict[str, frozenset[str]] = {
     "/v1/model_registry/defaults": frozenset({"GET", "HEAD"}),
     "/v1/devices/mine": frozenset({"GET", "HEAD"}),
     "/v1/devices/pair/claim": frozenset({"POST"}),
+    "/v1/plugins": frozenset({"GET", "HEAD"}),
+    # POST only: GET/PUT/DELETE on this exact string dispatch to the
+    # `/{name}` handlers with name="ticket", and no POST /v1/plugins/{name}
+    # route exists -- so POST here can only ever reach issue_ticket. Same
+    # reasoning as /v1/model_registry/options above.
+    "/v1/plugins/ticket": frozenset({"POST"}),
 }
 # role == "admin" required.
 _ADMIN_PREFIXES = (
@@ -91,6 +97,12 @@ _ADMIN_PREFIXES = (
     "/v1/providers",
     "/v1/usage",
     "/v1/quotas",
+    # Plugin registry: create/update/delete point the browser at an arbitrary
+    # url and hold the secret that authenticates a plugin's introspect calls.
+    # Admin-only, with two exact user carve-outs in _USER_EXACT: reading the
+    # list (the web client needs it to render feature tabs) and minting a
+    # ticket.
+    "/v1/plugins",
     # The internal agent runbook: AGENTS.md + docs/api.md + the full API map,
     # served as one plaintext bundle. Operator documentation, not a public page.
     "/agents-docs",
