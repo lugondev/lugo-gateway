@@ -147,3 +147,15 @@ async def test_create_with_user_id_and_filter(store):
     assert [r["id"] for r in rows] == ["s1"]
     got = await store.get("s1")
     assert got["user_id"] == "user-a"
+
+
+@pytest.mark.asyncio
+async def test_count_matches_list_and_filters_by_user(store):
+    await store.create("s1", user_id="u1")
+    await store.create("s2", user_id="u1")
+    await store.create("s3", user_id="u2")
+
+    assert await store.count() == 3
+    assert await store.count(user_id="u1") == 2
+    assert await store.count(user_id="u2") == 1
+    assert await store.count(user_id="nobody") == 0

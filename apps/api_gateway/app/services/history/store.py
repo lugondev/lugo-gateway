@@ -141,6 +141,22 @@ class SessionStore:
                 out.append(d)
             return out
 
+    async def count(
+        self, profile_id: str | None = None, user_id: str | None = None,
+        source: str | None = None, client_id: str | None = None,
+    ) -> int:
+        async with db_session() as s:
+            q = select(func.count()).select_from(ChatSession)
+            if profile_id is not None:
+                q = q.where(ChatSession.profile_id == profile_id)
+            if user_id is not None:
+                q = q.where(ChatSession.user_id == user_id)
+            if source is not None:
+                q = q.where(ChatSession.source == source)
+            if client_id is not None:
+                q = q.where(ChatSession.client_id == client_id)
+            return (await s.execute(q)).scalar_one()
+
     async def append_message(self, session_id: str, turn: int, role: str, content: str) -> None:
         async with db_session() as s:
             s.add(ChatMessage(session_id=session_id, turn=turn, role=role, content=content))
