@@ -159,3 +159,4 @@ async def test_count_matches_list_and_filters_by_user(store):
     assert await store.count(user_id="u1") == 2
     assert await store.count(user_id="u2") == 1
     assert await store.count(user_id="nobody") == 0
+    assert await store.count(user_id="u1") == len(await store.list(user_id="u1"))

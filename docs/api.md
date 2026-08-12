@@ -52,7 +52,7 @@ reverse proxy — see `docs/runbook.md`.
 
 **Requires a logged-in user (any role):** everything under `/ui`, `/static/`,
 `/v1/events`, `/v1/conversation`, `/v1/livehost`, `/v1/profiles`,
-`/v1/mcp`, `/v1/stt`, `/v1/tts`, `/v1/sessions`, `/v1/devices/mine`
+`/v1/mcp`, `/v1/stt`, `/v1/tts`, `/v1/sessions`, `/v1/stats`, `/v1/devices/mine`
 (including the own-device subresources `POST /v1/devices/mine/{device_id}/revoke`
 and `POST /v1/devices/mine/{device_id}/profile`),
 `/v1/devices/pair/claim`, plus the read-only carve-outs `/v1/model_registry/options`,

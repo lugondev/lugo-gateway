@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,6 +8,8 @@ from app.core.settings import settings
 from app.main import app
 from app.services.auth.devices import device_store
 from app.services.auth.users import user_store
+from app.services.db.engine import db_session
+from app.services.db.models import Device
 from app.services.history.store import session_store
 from app.services.profiles.models import Profile
 from app.services.profiles.store import profile_store
@@ -80,6 +83,29 @@ def test_device_active_recent_reflects_last_seen(client, _with_password):
     device, _token = asyncio.run(device_store.create(me_id, "seen", "serial-seen"))
     asyncio.run(device_store.create(me_id, "unseen", "serial-unseen"))
     asyncio.run(device_store.touch_last_seen(device["id"]))
+
+    resp = client.get("/v1/stats/home")
+    assert resp.status_code == 200
+    data = resp.json()["data"]["devices"]
+    assert data["count"] == 2
+    assert data["active_recent"] == 1
+
+
+def test_device_active_recent_excludes_stale_last_seen(client, _with_password):
+    me_id = _signup_login(client, "sam", role="user")
+
+    fresh, _token = asyncio.run(device_store.create(me_id, "fresh", "serial-fresh"))
+    stale, _token2 = asyncio.run(device_store.create(me_id, "stale", "serial-stale"))
+    asyncio.run(device_store.touch_last_seen(fresh["id"]))
+    asyncio.run(device_store.touch_last_seen(stale["id"]))
+
+    async def _backdate():
+        async with db_session() as s:
+            row = await s.get(Device, stale["id"])
+            row.last_seen_at = datetime.now(timezone.utc) - timedelta(minutes=45)
+            await s.commit()
+
+    asyncio.run(_backdate())
 
     resp = client.get("/v1/stats/home")
     assert resp.status_code == 200

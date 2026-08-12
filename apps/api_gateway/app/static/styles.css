@@ -745,6 +745,9 @@ input[type="radio"] {
 .limit-list .danger {
   color: var(--danger);
 }
+.status-grid .limit-list {
+  grid-column: 1 / -1;
+}
 
 .hidden {
   display: none !important;

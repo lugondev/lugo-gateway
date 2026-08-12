@@ -14,7 +14,7 @@ async function _loadOverview() {
     if (!body.success) throw new Error("failed to load stats");
     const d = body.data;
     host.innerHTML =
-      _tile("Profiles", d.profiles.count) +
+      _tile("Profiles (yours + templates)", d.profiles.count) +
       _tile("Devices", `${d.devices.count} (${d.devices.active_recent} active recently)`) +
       _tile("Sessions", d.sessions.count);
   } catch (error) {
@@ -38,14 +38,15 @@ async function _loadUsageForUser() {
   const host = el("home-usage");
   if (!host) return;
   try {
-    const body = await (await fetch("/v1/usage/me")).json();
+    const month = new Date().toISOString().slice(0, 7);
+    const body = await (await fetch(`/v1/usage/me?period=${month}`)).json();
     if (!body.success) throw new Error("failed to load usage");
     const rows = body.data || [];
     const requests = rows.reduce((s, r) => s + Number(r.count || 0), 0);
     const cost = rows.reduce((s, r) => s + Number(r.cost_usd || 0), 0);
     host.innerHTML =
-      _tile("Requests (all time)", requests) +
-      _tile("Cost (all time)", `$${cost.toFixed(4)}`) +
+      _tile("Requests this month", requests) +
+      _tile("Cost this month", `$${cost.toFixed(4)}`) +
       _renderLimits(body.limits);
   } catch (error) {
     host.innerHTML = _tile("Usage", "error", false);
@@ -77,8 +78,9 @@ async function _loadUsageForAdmin() {
   const host = el("home-usage");
   if (!host) return;
   try {
+    const month = new Date().toISOString().slice(0, 7);
     const [summaryBody, quotasBody] = await Promise.all([
-      (await fetch("/v1/usage/summary?group_by=kind")).json(),
+      (await fetch(`/v1/usage/summary?group_by=kind&period=${month}`)).json(),
       (await fetch("/v1/quotas")).json(),
     ]);
     if (!summaryBody.success) throw new Error("failed to load usage");
@@ -86,10 +88,14 @@ async function _loadUsageForAdmin() {
     const requests = rows.reduce((s, r) => s + Number(r.count || 0), 0);
     const cost = rows.reduce((s, r) => s + Number(r.cost_usd || 0), 0);
     const quotas = quotasBody.success ? quotasBody.data || [] : [];
+    const quotasNote = quotasBody.success
+      ? ""
+      : '<p class="hint error">Quota limits failed to load.</p>';
     host.innerHTML =
-      _tile("Requests (all time)", requests) +
-      _tile("Cost (all time)", `$${cost.toFixed(4)}`) +
-      _renderQuotaLimits(quotas);
+      _tile("Requests this month", requests) +
+      _tile("Cost this month", `$${cost.toFixed(4)}`) +
+      _renderQuotaLimits(quotas) +
+      quotasNote;
   } catch (error) {
     host.innerHTML = _tile("Usage", "error", false);
   }
@@ -117,6 +123,7 @@ async function _loadSystemAndModels() {
       (await fetch("/v1/system/status")).json(),
       (await fetch("/v1/models")).json(),
     ]);
+    if (!statusBody.success || !modelsBody.success) throw new Error("failed to load system status");
     const d = statusBody.data;
     const llm = modelsBody.data.llm;
     const sttOk = (d.stt_engines || []).some((e) => e.available);
@@ -129,14 +136,22 @@ async function _loadSystemAndModels() {
 
     const whisperActive = d.whisper_local?.active_model || "(none)";
     const voskActive = d.vosk?.active_model_present ? "installed" : "not installed";
+    const ttsEngines = modelsBody.data.tts_engines || {};
+    const activeTts =
+      Object.entries(ttsEngines)
+        .filter(([, v]) => v.available)
+        .map(([name]) => name)
+        .join(", ") || "(none)";
     modelsHost.innerHTML =
       _tile("Whisper (local STT)", escapeHtml(whisperActive)) +
       _tile("Vosk (local STT)", escapeHtml(voskActive)) +
+      _tile("STT device", escapeHtml(d.whisper_local?.device || "-")) +
+      _tile("TTS engine", escapeHtml(activeTts)) +
       _tile("LLM active model", escapeHtml(llm.active || "(none)")) +
       _tile("LLM endpoint", llm.remote ? "Cloud API" : `Ollama (${llm.running ? "running" : "idle"})`);
   } catch (error) {
     healthHost.innerHTML = _tile("System health", "error", false);
-    modelsHost.innerHTML = "";
+    modelsHost.innerHTML = _tile("Active models", "error", false);
   }
 }
 
@@ -153,7 +168,7 @@ async function _loadRegistrySummary() {
     });
     const kindTiles = Object.keys(byKind)
       .sort()
-      .map((k) => _tile(k.toUpperCase(), byKind[k]))
+      .map((k) => _tile(escapeHtml(k.toUpperCase()), byKind[k]))
       .join("");
     host.innerHTML = _tile("Total entries", entries.length) + kindTiles;
   } catch (error) {

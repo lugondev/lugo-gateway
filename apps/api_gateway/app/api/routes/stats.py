@@ -27,7 +27,10 @@ _ACTIVE_RECENT_MINUTES = 30
 def _is_recently_active(last_seen_at: str | None) -> bool:
     if not last_seen_at:
         return False
-    seen = datetime.fromisoformat(last_seen_at)
+    try:
+        seen = datetime.fromisoformat(last_seen_at)
+    except (TypeError, ValueError):
+        return False
     return (datetime.now(timezone.utc) - seen).total_seconds() <= _ACTIVE_RECENT_MINUTES * 60
 
 
