@@ -170,9 +170,21 @@ async def lugo_stream(websocket: WebSocket) -> None:
     # Same rule as conversation.py's stream: a paired device's server-side
     # binding outranks the profile its own config declared in the wakeup, and an
     # unbound device is left exactly as it was so existing fleets keep working.
-    profile_name, binding_warning, from_binding = await resolve_bound_profile(
+    profile_name, binding_warning, from_binding, hard_denied = await resolve_bound_profile(
         identity, profile_name
     )
+    if hard_denied:
+        # Ordinary close, NOT 4401/403: the device's token is valid, it's
+        # just never been assigned a profile -- firmware's revoke classifier
+        # only wipes the token on an auth rejection, and reusing that code
+        # here would make it destroy a good token and loop re-pairing
+        # forever without ever fixing the actual (admin-side) problem.
+        await websocket.send_json({
+            "type": "error",
+            "message": "this device is not assigned to a profile; assign one in the admin console",
+        })
+        await websocket.close()
+        return
     if binding_warning:
         await websocket.send_json({"type": "warning", "message": binding_warning})
     profile, stt_engine, language, stt_model, tts, idle = _resolve(

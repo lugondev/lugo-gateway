@@ -1,0 +1,79 @@
+"""A paired device (services.auth.devices) with no profile_id bound must be
+refused at wakeup rather than allowed to run on whatever it requested or on
+server defaults -- see docs/superpowers/specs/2026-08-12-device-profile-pairing-admin-ui-design.md.
+"""
+
+import asyncio
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.core.settings import settings
+from app.main import app
+from app.schemas.stt import STTResult
+from app.services.auth.devices import device_store
+from app.services.auth.users import user_store
+from app.services.profiles.models import Profile
+from app.services.profiles.store import ProfileStore
+from app.services.stt.base import STTProvider
+from app.services.stt.service import stt_service
+from app.services.system_config import system_config_store
+
+
+class _StubSTT(STTProvider):
+    name = "stub-lugo-profile-gate-stt"
+
+    async def transcribe_bytes(self, audio_bytes, language=None, model=None) -> STTResult:
+        return STTResult(engine=self.name, text="", is_final=True)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic(monkeypatch, tmp_path):
+    _real_get = system_config_store.get
+
+    def _get_with_stub():
+        cfg = _real_get()
+        return cfg.model_copy(update={
+            "engines": cfg.engines.model_copy(update={"default_stt_engine": "stub-lugo-profile-gate-stt"}),
+        })
+
+    monkeypatch.setattr(system_config_store, "get", _get_with_stub)
+    monkeypatch.setattr(settings, "admin_password", "s3cret")
+    stt_service.providers["stub-lugo-profile-gate-stt"] = _StubSTT()
+    fresh = ProfileStore(str(tmp_path / "profiles.json"))
+    fresh.upsert(Profile(name="bound-profile"))
+    monkeypatch.setattr("app.api.routes.lugo.profile_store", fresh)
+    yield
+    stt_service.providers.pop("stub-lugo-profile-gate-stt", None)
+    monkeypatch.setattr(settings, "admin_password", "")
+
+
+def test_unbound_paired_device_is_refused_at_wakeup():
+    user = asyncio.run(user_store.create("gate-user-unbound", "pw"))
+    _device, raw_token = asyncio.run(device_store.create(user["id"], "ESP32", "AA:BB:GATE1"))
+
+    client = TestClient(app)
+    with client.websocket_connect(f"/v1/lugo/stream?device_token={raw_token}") as ws:
+        ws.send_json({
+            "type": "wakeup",
+            "audio_params": {"format": "opus", "sample_rate": 16000},
+        })
+        msg = ws.receive_json()
+        assert msg["type"] == "error"
+        assert "profile" in msg["message"]
+
+
+def test_bound_paired_device_still_connects():
+    user = asyncio.run(user_store.create("gate-user-bound", "pw"))
+    _device, raw_token = asyncio.run(
+        device_store.create(user["id"], "ESP32", "AA:BB:GATE2", profile_id="bound-profile")
+    )
+
+    client = TestClient(app)
+    with client.websocket_connect(f"/v1/lugo/stream?device_token={raw_token}") as ws:
+        ws.send_json({
+            "type": "wakeup",
+            "audio_params": {"format": "opus", "sample_rate": 16000},
+        })
+        msg = ws.receive_json()
+        assert msg["type"] == "welcome"

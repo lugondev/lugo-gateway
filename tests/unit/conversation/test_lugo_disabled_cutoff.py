@@ -89,7 +89,9 @@ def test_disabled_owner_cuts_off_paired_device():
     import asyncio
 
     user = asyncio.run(user_store.create("toan", "pw"))
-    device, raw_token = asyncio.run(device_store.create(user["id"], "ESP32", "AA:BB:CC"))
+    device, raw_token = asyncio.run(
+        device_store.create(user["id"], "ESP32", "AA:BB:CC", profile_id="fast")
+    )
 
     client = TestClient(app)
     with client.websocket_connect(f"/v1/lugo/stream?device_token={raw_token}") as ws:
@@ -129,7 +131,9 @@ def test_idle_timeout_zero_never_fires_for_identity_owned_connection(monkeypatch
     monkeypatch.setattr(lugo_module, "profile_store", fresh)
 
     user = asyncio.run(user_store.create("toan2", "pw"))
-    device, raw_token = asyncio.run(device_store.create(user["id"], "ESP32", "AA:BB:DD"))
+    device, raw_token = asyncio.run(
+        device_store.create(user["id"], "ESP32", "AA:BB:DD", profile_id="fast")
+    )
 
     client = TestClient(app)
     with client.websocket_connect(f"/v1/lugo/stream?device_token={raw_token}") as ws:

@@ -199,7 +199,9 @@ def test_lugo_device_paired_to_admin_cannot_resume_other_users_session(client, _
     cookie session, not via the device token -- silently testing the wrong
     code path."""
     admin_id = _as_user(client, "admin")
-    _device, raw_token = asyncio.run(device_store.create(admin_id, "kitchen-esp32", "serial-001"))
+    _device, raw_token = asyncio.run(
+        device_store.create(admin_id, "kitchen-esp32", "serial-001", profile_id="dev")
+    )
 
     victim_sid = "victim-device-session-" + uuid.uuid4().hex[:8]
     asyncio.run(session_store.create(victim_sid, user_id="someone-else"))
@@ -217,7 +219,9 @@ def test_lugo_paired_device_can_still_resume_its_owners_session(client, _with_pa
     resume ITS OWN owner's session -- the fix must not break that. Fresh
     client for the same cookie-vs-device-token reason as the test above."""
     owner_id = _as_user(client, "user")
-    _device, raw_token = asyncio.run(device_store.create(owner_id, "living-room-esp32", "serial-002"))
+    _device, raw_token = asyncio.run(
+        device_store.create(owner_id, "living-room-esp32", "serial-002", profile_id="dev")
+    )
 
     owner_sid = "owner-device-session-" + uuid.uuid4().hex[:8]
     asyncio.run(session_store.create(owner_sid, user_id=owner_id))
@@ -240,7 +244,9 @@ def test_a_reconnecting_device_is_told_the_conversation_it_actually_resumed(clie
     test: the route was sending its own local variable.
     """
     owner_id = _as_user(client, "resume-owner")
-    _device, raw_token = asyncio.run(device_store.create(owner_id, "speaker", "serial-resume"))
+    _device, raw_token = asyncio.run(
+        device_store.create(owner_id, "speaker", "serial-resume", profile_id="dev")
+    )
 
     first = TestClient(app)
     with first.websocket_connect(f"/v1/lugo/stream?device_token={raw_token}") as ws:
