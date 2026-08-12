@@ -15,7 +15,8 @@ class PairClaimRequest(BaseModel):
     # client pairs from inside a profile, so it always knows the answer here, and
     # doing it in one step removes the window where a device exists but answers
     # to nothing. "" (the default) pairs the device unassigned, which is what the
-    # older clients that don't send this field get.
+    # older clients that don't send this field get -- an unassigned device will
+    # not be able to connect until a profile is assigned to it.
     profile_id: str = ""
 
 

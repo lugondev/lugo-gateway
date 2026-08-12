@@ -357,9 +357,13 @@ server defaults, not the profile; see "Profiles" above) — and replies:
 `idle_timeout_s` echoes the profile's `session.idle_timeout_s` (default 30; `0` =
 never auto-disconnect), so the device arms its watchdog from server truth instead
 of a hardcoded value. If `profile` is set but unknown, the server replies
-`{"type":"error","message":"profile '<name>' not found"}` and closes the socket —
-a `wakeup` always resolves or fails loudly, never a silent fallback. Any other
-message, or a binary frame, as the first frame is also an `error` + close.
+`{"type":"error","message":"profile '<name>' not found"}` and closes the socket.
+If the device is *paired* (connected with its own `device_token`) and has no
+profile bound to it server-side, the server replies
+`{"type":"error","message":"this device is not assigned to a profile; assign one
+in the admin console"}` followed by an ordinary close (not a 401/403/4401-style
+close) — a `wakeup` always resolves or fails loudly, never a silent fallback. Any
+other message, or a binary frame, as the first frame is also an `error` + close.
 
 **Binary framing (v3):** audio travels on WebSocket binary frames wrapped in a
 4-byte header — `struct { uint8 type; uint8 reserved; uint16 payload_size

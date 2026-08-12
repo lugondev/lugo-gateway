@@ -187,6 +187,16 @@ async function revokeMyDevice(id) {
 }
 
 async function setMyDeviceProfile(id, profileId) {
+  if (profileId === "") {
+    const ok = await confirmDialog(
+      "Unassign this device from its profile? It will stop connecting until reassigned.",
+      { danger: true }
+    );
+    if (!ok) {
+      renderMyDeviceList();
+      return;
+    }
+  }
   try {
     const resp = await fetch(`/v1/devices/mine/${encodeURIComponent(id)}/profile`, {
       method: "POST",
@@ -198,6 +208,7 @@ async function setMyDeviceProfile(id, profileId) {
       print(el("device-status"), body.detail || "Failed to update profile", true);
       return;
     }
+    print(el("device-status"), "Profile updated");
     await loadMyDevices();
   } catch (error) {
     print(el("device-status"), String(error), true);

@@ -7,6 +7,7 @@ import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from app.core.settings import settings
 from app.main import app
@@ -56,6 +57,11 @@ def test_unbound_paired_device_is_refused(client, _with_password):
         msg = ws.receive_json()
         assert msg["event"] == "error"
         assert "profile" in msg["message"]
+        # The gate must actually refuse the connection, not just announce the
+        # refusal and fall through into full session setup -- see Finding 3 of
+        # the 2026-08-12 whole-branch review.
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
 
 
 def test_bound_paired_device_still_connects(client, _with_password):

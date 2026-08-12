@@ -314,9 +314,21 @@ export async function deleteProfile() {
   try {
     const resp = await fetch(`/v1/profiles/${encodeURIComponent(name)}`, { method: "DELETE" });
     if (!resp.ok) { const b = await resp.json(); print(el("pf-status"), b.detail || "Delete failed", true); return; }
+    const body = await resp.json();
+    const unassigned = body.data?.devices_unassigned || 0;
+    const suffix = unassigned > 0
+      ? ` — ${unassigned} device(s) are now unassigned and will not connect until reassigned`
+      : "";
+    const message = `Deleted "${name}"${suffix}`;
+    print(el("pf-status"), message);
     await loadProfiles();
     el("profile-select").value = "";
     closeProfilePanel();
+    // closeProfilePanel() hides pf-status along with the rest of the panel,
+    // so when there's an unassignment consequence to see, also alert() it --
+    // same pattern this file already uses for must-not-miss notices (see the
+    // profile-edit-btn handler below).
+    if (unassigned > 0) alert(message);
   } catch (error) {
     print(el("pf-status"), String(error), true);
   }

@@ -228,8 +228,10 @@ async def delete_profile(name: str, request: Request) -> dict:
     # pairing token is hardware identity and the profile is a soft setting, so
     # deleting an assistant must never cost the user a trip to the device to
     # re-pair it. Sweeping here also keeps devices.profile_id from dangling at a
-    # name that no longer resolves (every read path tolerates that, but a
-    # dangling name shows up in the UI as an assistant that isn't there).
+    # name that no longer resolves: the WS connect paths (lugo.py,
+    # conversation.py) now refuse an unbound device's connection rather than
+    # tolerating it, and a dangling name would also show up in the UI as an
+    # assistant that isn't there.
     unassigned = await device_store.clear_profile(name)
     return {
         "success": True,

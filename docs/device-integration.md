@@ -68,8 +68,16 @@ Then point the device's WS URL at `?profile=kitchen`. Precedence:
   control panel or `POST /v1/devices/mine/{device_id}/profile`. That assignment WINS: the
   `?profile=` / wakeup `profile` the device sends is ignored, and the server emits a
   `warning` naming both so a stale config file on the device is visible rather than
-  silently void. A device with no assignment keeps using the profile it declares itself,
-  exactly as before — nothing changes for fleets deployed before assignments existed.
+  silently void. A *paired* device with no bound profile is now refused at connect
+  (wakeup): the server sends an explicit `error` and then an ordinary (non-revoking)
+  WebSocket close. Firmware should treat this the same as any other ordinary
+  disconnect — retry/backoff — and must NOT wipe its stored token or attempt to
+  re-pair, since re-pairing cannot fix a missing profile assignment; only an admin
+  binding it in the console can. **Operator note:** before deploying this change to
+  a fleet, check for already-paired devices with no bound profile (query the
+  `devices` table's `profile_id` column, or look for the "Unassigned" indicator in
+  the admin console's My Devices / All Devices tables) and assign them a profile
+  first — this branch auto-deploys to prod on merge to main.
 - **LLM (model/base_url/api_key/system_prompt) and MCP tool servers**: always come from
   the profile when set — there's no device-side query param for these.
 - **TTS**: the profile's `tts.engine`/`tts.voice` are used if set; otherwise the server-wide
