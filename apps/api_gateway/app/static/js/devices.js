@@ -21,7 +21,7 @@ function deviceColumns(includeOwner) {
   return columns;
 }
 
-function renderDevicePairProfileSelect() {
+export function renderDevicePairProfileSelect() {
   const sel = el("device-pair-profile");
   if (!sel) return;
   const prev = sel.value;
