@@ -47,6 +47,25 @@ export async function loadMyDevices() {
   await maybeLoadAllDevices();
 }
 
+function myDeviceProfileColumn() {
+  return {
+    key: "profile",
+    label: "Profile",
+    render: (d) => {
+      const options = ['<option value="">Unassigned</option>']
+        .concat(
+          Object.keys(profileData).sort().map((name) => {
+            const label = escapeHtml(profileData[name]?.owner_id ? `${name} (mine)` : name);
+            const selected = d.profile_id === name ? " selected" : "";
+            return `<option value="${escapeHtml(name)}"${selected}>${label}</option>`;
+          })
+        )
+        .join("");
+      return `<select data-device-profile-select="${escapeHtml(d.id)}">${options}</select>`;
+    },
+  };
+}
+
 function renderMyDeviceList() {
   const host = el("device-mine-list");
   if (!host) return;
@@ -59,6 +78,7 @@ function renderMyDeviceList() {
     emptyMessage: "No devices paired yet.",
     columns: [
       ...deviceColumns(false),
+      myDeviceProfileColumn(),
       {
         key: "actions",
         label: "",
@@ -75,6 +95,11 @@ function renderMyDeviceList() {
 
   table.querySelectorAll("[data-device-revoke-mine]").forEach((btn) =>
     btn.addEventListener("click", () => revokeMyDevice(btn.getAttribute("data-device-revoke-mine")))
+  );
+  table.querySelectorAll("[data-device-profile-select]").forEach((sel) =>
+    sel.addEventListener("change", () =>
+      setMyDeviceProfile(sel.getAttribute("data-device-profile-select"), sel.value)
+    )
   );
 }
 
@@ -150,6 +175,24 @@ async function revokeMyDevice(id) {
     return;
   }
   await loadMyDevices();
+}
+
+async function setMyDeviceProfile(id, profileId) {
+  try {
+    const resp = await fetch(`/v1/devices/mine/${encodeURIComponent(id)}/profile`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile_id: profileId }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      print(el("device-status"), body.detail || "Failed to update profile", true);
+      return;
+    }
+    await loadMyDevices();
+  } catch (error) {
+    print(el("device-status"), String(error), true);
+  }
 }
 
 async function revokeAnyDevice(id) {
