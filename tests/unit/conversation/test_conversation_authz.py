@@ -317,12 +317,22 @@ def test_ws_device_paired_to_admin_never_gets_admin_bypass(client, _with_passwor
 def test_ws_paired_device_can_still_resume_its_owners_session(client, _with_password):
     """The comparison is by user_id, so a device must still be able to
     resume ITS OWN owner's session -- the fix must not break that. Fresh
-    client for the same cookie-vs-device-token reason as the test above."""
+    client for the same cookie-vs-device-token reason as the test above.
+
+    Bound to a real profile because an unbound device is now hard-denied
+    before it ever gets a chance to resume anything (see
+    test_conversation_device_profile_gate.py) -- this test is about the
+    resume ownership check, not the profile gate, so give it a profile."""
     owner_id = _as_user(client, "user")
-    _device, raw_token = asyncio.run(device_store.create(owner_id, "esp32-owner-test", "serial-conv-002"))
+    profile_store.upsert(Profile(name="owner-test-profile", owner_id=owner_id))
+    _device, raw_token = asyncio.run(
+        device_store.create(
+            owner_id, "esp32-owner-test", "serial-conv-002", profile_id="owner-test-profile"
+        )
+    )
 
     owner_sid = "owner-device-conv-" + uuid.uuid4().hex[:8]
-    asyncio.run(session_store.create(owner_sid, user_id=owner_id))
+    asyncio.run(session_store.create(owner_sid, user_id=owner_id, profile_id="owner-test-profile"))
 
     device_client = TestClient(app)
     with device_client.websocket_connect(

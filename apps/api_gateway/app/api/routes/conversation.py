@@ -331,9 +331,18 @@ async def conversation_stream(websocket: WebSocket) -> None:
     # unbound device keeps using its own `?profile=` -- that's what stops this
     # from breaking fleets deployed before bindings existed. The override is
     # announced rather than silent: stale firmware config should be visible.
-    profile_name, binding_warning, _from_binding = await resolve_bound_profile(
+    profile_name, binding_warning, _from_binding, hard_denied = await resolve_bound_profile(
         identity, profile_name
     )
+    if hard_denied:
+        # Ordinary close, NOT 4401/403 -- see lugo.py's identical gate for why:
+        # the token is valid, only the profile assignment is missing.
+        await websocket.send_json({
+            "event": "error",
+            "message": "this device is not assigned to a profile; assign one in the admin console",
+        })
+        await websocket.close()
+        return
     if binding_warning:
         await websocket.send_json({"event": "warning", "message": binding_warning})
     # C2 fix: same rule as HTTP /chat above -- "exists but not yours" must
