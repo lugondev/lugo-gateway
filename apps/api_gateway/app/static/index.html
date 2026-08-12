@@ -415,7 +415,7 @@
                 <h2>My Devices</h2>
                 <button id="device-refresh" class="ghost mini">Refresh</button>
               </div>
-              <p class="hint">Pair an ESP32 or RPi client to your account. Enter the code shown on the device.</p>
+              <p class="hint">Pair an ESP32 or RPi client to your account. Enter the code shown on the device and choose which profile it should run.</p>
               <div id="device-mine-list" class="model-list">
                 <p class="hint">Loading&#8230;</p>
               </div>
@@ -428,6 +428,10 @@
                 <label>
                   Name
                   <input id="device-pair-name" type="text" placeholder="ESP32 desk" />
+                </label>
+                <label>
+                  Profile
+                  <select id="device-pair-profile"></select>
                 </label>
                 <div class="actions end">
                   <button id="device-pair-btn">Pair</button>

@@ -2,6 +2,7 @@ import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
 import { renderDataTable } from "./data-table.js";
 import { fetchAuthStatus } from "./session.js";
 import { confirmDialog } from "./modal.js";
+import { profileData } from "./profiles.js";
 
 export let myDeviceData = [];
 export let allDeviceData = [];
@@ -20,7 +21,22 @@ function deviceColumns(includeOwner) {
   return columns;
 }
 
+function renderDevicePairProfileSelect() {
+  const sel = el("device-pair-profile");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">Select a profile&#8230;</option>';
+  Object.keys(profileData).sort().forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = profileData[name]?.owner_id ? `${name} (mine)` : name;
+    sel.appendChild(opt);
+  });
+  if (profileData[prev]) sel.value = prev;
+}
+
 export async function loadMyDevices() {
+  renderDevicePairProfileSelect();
   try {
     const body = await (await fetch("/v1/devices/mine")).json();
     myDeviceData = body.data || [];
@@ -163,15 +179,20 @@ export async function claimDevice() {
   const status = el("device-status");
   const name = el("device-pair-name").value.trim();
   const code = el("device-pair-code").value.trim();
+  const profileId = el("device-pair-profile").value;
   if (!name || !code) {
     print(status, "Enter both the code shown on the device and a name for it", true);
+    return;
+  }
+  if (!profileId) {
+    print(status, "Choose a profile for this device to run", true);
     return;
   }
   try {
     const resp = await fetch("/v1/devices/pair/claim", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, name }),
+      body: JSON.stringify({ code, name, profile_id: profileId }),
     });
     const body = await resp.json();
     if (!resp.ok) {
@@ -181,6 +202,7 @@ export async function claimDevice() {
     status.textContent = `Paired "${name}"`;
     el("device-pair-name").value = "";
     el("device-pair-code").value = "";
+    el("device-pair-profile").value = "";
     await loadMyDevices();
   } catch (error) {
     print(status, String(error), true);
