@@ -55,7 +55,13 @@
         <nav class="sidebar" id="sidebar">
           <ul class="nav-list">
             <li>
-              <button class="nav-item active" data-section="chat">
+              <button class="nav-item active" data-section="home">
+                <span class="nav-icon">&#8962;</span>
+                <span class="nav-label">Home</span>
+              </button>
+            </li>
+            <li>
+              <button class="nav-item" data-section="chat">
                 <span class="nav-icon">◈</span>
                 <span class="nav-label">Chat</span>
               </button>
@@ -147,8 +153,51 @@
         <!-- ======================== CONTENT ======================== -->
         <main class="content">
 
+          <!-- ============================== HOME (dashboard) ============================== -->
+          <div class="section active" id="section-home">
+            <section class="card">
+              <div class="card-head">
+                <h2>Overview</h2>
+              </div>
+              <div id="home-overview" class="status-grid">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-head">
+                <h2>Usage this month</h2>
+              </div>
+              <div id="home-usage" class="status-grid">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+            </section>
+
+            <section class="card admin-only">
+              <div class="card-head">
+                <h2>System health</h2>
+              </div>
+              <div id="home-health" class="status-grid"></div>
+            </section>
+
+            <section class="card admin-only">
+              <div class="card-head">
+                <h2>Active models</h2>
+              </div>
+              <div id="home-active-models" class="status-grid"></div>
+            </section>
+
+            <section class="card admin-only">
+              <div class="card-head">
+                <h2>Model registry</h2>
+                <button id="home-registry-link" class="ghost mini">Open Model Registry</button>
+              </div>
+              <div id="home-registry" class="status-grid"></div>
+            </section>
+          </div>
+
           <!-- ============================== CHAT (unified) ============================== -->
-          <div class="section active" id="section-chat">
+          <div class="section" id="section-chat">
 
             <!-- Mode selector -->
             <div class="seg" id="chat-mode-seg">

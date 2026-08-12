@@ -1,5 +1,6 @@
 import "./auth.js";
 import { restoreAndBind } from "./helpers.js";
+import { loadHome } from "./home.js";
 import { initSidebar } from "./sidebar-nav.js";
 import { initSystemSubtabs } from "./system-subtabs.js";
 import { loadSttEngines } from "./stt-engines.js";
@@ -29,6 +30,7 @@ import "./usage-me.js";
 import "./quotas.js";
 
 initSidebar();
+loadHome();
 loadPluginNav();
 initSystemSubtabs();
 initSttMode();

@@ -1,4 +1,5 @@
 import { el } from "./helpers.js";
+import { loadHome } from "./home.js";
 import { loadRecommend } from "./model-recommender.js";
 import { loadMcpServers } from "./mcp-servers.js";
 import { loadUsers } from "./users.js";
@@ -18,6 +19,7 @@ function activateSection(section) {
   document.querySelectorAll(".section").forEach((s) => {
     s.classList.toggle("active", s.id === `section-${section}`);
   });
+  if (section === "home") loadHome();
   if (section === "models") loadRecommend();
   if (section === "mcp") loadMcpServers();
   if (section === "users") loadUsers();
