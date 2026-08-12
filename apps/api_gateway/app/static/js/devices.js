@@ -146,7 +146,10 @@ function renderAllDeviceList() {
         label: "",
         headerClass: "dt-actions-cell",
         cellClass: "dt-actions-cell",
-        render: (d) => `<button class="mini danger" data-device-revoke-any="${escapeHtml(d.id)}" ${d.revoked ? "disabled" : ""}>Revoke</button>`,
+        render: (d) => `
+          <button class="mini danger" data-device-revoke-any="${escapeHtml(d.id)}" ${d.revoked ? "disabled" : ""}>Revoke</button>
+          <button class="mini danger" data-device-delete="${escapeHtml(d.id)}" ${!d.revoked ? "disabled" : ""}>Delete</button>
+        `,
       },
     ],
     bulkActions: [
@@ -157,6 +160,9 @@ function renderAllDeviceList() {
 
   table.querySelectorAll("[data-device-revoke-any]").forEach((btn) =>
     btn.addEventListener("click", () => revokeAnyDevice(btn.getAttribute("data-device-revoke-any")))
+  );
+  table.querySelectorAll("[data-device-delete]").forEach((btn) =>
+    btn.addEventListener("click", () => deleteAnyDevice(btn.getAttribute("data-device-delete")))
   );
 }
 
@@ -223,6 +229,21 @@ async function revokeAnyDevice(id) {
     return;
   }
   await maybeLoadAllDevices();
+}
+
+async function deleteAnyDevice(id) {
+  if (!(await confirmDialog("Permanently delete this device? This cannot be undone.", { danger: true }))) return;
+  try {
+    const resp = await fetch(`/v1/devices/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      print(el("device-status"), body.detail || "Delete failed", true);
+      return;
+    }
+    await maybeLoadAllDevices();
+  } catch (error) {
+    print(el("device-status"), String(error), true);
+  }
 }
 
 async function bulkRevokeDevices(ids, isAdminScope) {
