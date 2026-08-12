@@ -56,6 +56,7 @@ _USER_PREFIXES = (
     "/v1/stt",
     "/v1/tts",
     "/v1/sessions",
+    "/v1/stats",
 )
 # User carve-outs that sit INSIDE an admin prefix. Matched EXACTLY (never as a
 # prefix) and BY METHOD, checked BEFORE _ADMIN_PREFIXES. Both properties are

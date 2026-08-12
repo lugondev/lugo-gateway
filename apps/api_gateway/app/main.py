@@ -25,6 +25,7 @@ from app.api.routes.providers import router as providers_router
 from app.api.routes.quotas import router as quotas_router
 from app.api.routes.recommend import router as recommend_router
 from app.api.routes.sessions import router as sessions_router
+from app.api.routes.stats import router as stats_router
 from app.api.routes.stt import router as stt_router
 from app.api.routes.system import router as system_router
 from app.api.routes.tts import router as tts_router
@@ -306,6 +307,7 @@ app.include_router(agents_docs_router)
 app.include_router(profiles_router)
 app.include_router(mcp_router)
 app.include_router(sessions_router)
+app.include_router(stats_router)
 app.include_router(memories_router)
 app.include_router(model_registry_router)
 app.include_router(providers_router)
