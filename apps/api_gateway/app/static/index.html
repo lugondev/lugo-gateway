@@ -444,6 +444,27 @@
                 <h2>All Devices</h2>
               </div>
               <p class="hint">Every paired device, across all accounts.</p>
+              <div class="row tight">
+                <label>
+                  Profile
+                  <select id="device-all-filter-profile">
+                    <option value="">All</option>
+                    <option value="__unassigned__">Unassigned</option>
+                  </select>
+                </label>
+                <label>
+                  Status
+                  <select id="device-all-filter-status">
+                    <option value="">All</option>
+                    <option value="active">Active</option>
+                    <option value="revoked">Revoked</option>
+                  </select>
+                </label>
+                <label>
+                  Search
+                  <input id="device-all-filter-search" type="text" placeholder="name, serial, or owner…" />
+                </label>
+              </div>
               <div id="device-all-list" class="model-list"></div>
             </section>
           </div>

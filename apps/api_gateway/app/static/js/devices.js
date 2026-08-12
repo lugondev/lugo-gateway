@@ -35,6 +35,20 @@ export function renderDevicePairProfileSelect() {
   if (profileData[prev]) sel.value = prev;
 }
 
+function renderAllDeviceFilterProfileOptions() {
+  const sel = el("device-all-filter-profile");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">All</option><option value="__unassigned__">Unassigned</option>';
+  Object.keys(profileData).sort().forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = profileData[name]?.owner_id ? `${name} (mine)` : name;
+    sel.appendChild(opt);
+  });
+  if ([...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
+
 export async function loadMyDevices() {
   renderDevicePairProfileSelect();
   try {
@@ -122,22 +136,41 @@ async function maybeLoadAllDevices() {
   try {
     const body = await (await fetch("/v1/devices")).json();
     allDeviceData = body.data || [];
+    renderAllDeviceFilterProfileOptions();
     renderAllDeviceList();
   } catch {
     /* ignore */
   }
 }
 
+function _filteredAllDeviceData() {
+  const profile = el("device-all-filter-profile")?.value || "";
+  const status = el("device-all-filter-status")?.value || "";
+  const search = (el("device-all-filter-search")?.value || "").trim().toLowerCase();
+  return allDeviceData.filter((d) => {
+    if (profile === "__unassigned__" && d.profile_id) return false;
+    if (profile && profile !== "__unassigned__" && d.profile_id !== profile) return false;
+    if (status === "active" && d.revoked) return false;
+    if (status === "revoked" && !d.revoked) return false;
+    if (search) {
+      const haystack = `${d.name} ${d.serial} ${d.owner_username}`.toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    return true;
+  });
+}
+
 function renderAllDeviceList() {
   const host = el("device-all-list");
   if (!host) return;
 
+  const rows = _filteredAllDeviceData();
   const table = renderDataTable({
     container: host,
-    rows: allDeviceData,
+    rows,
     rowKey: (d) => d.id,
     getRowClass: (d) => (d.revoked ? "dim" : ""),
-    emptyMessage: "No devices paired yet.",
+    emptyMessage: allDeviceData.length ? "No devices match the current filters." : "No devices paired yet.",
     columns: [
       ...deviceColumns(true),
       allDeviceProfileColumn(),
@@ -295,3 +328,6 @@ export async function claimDevice() {
 
 if (el("device-pair-btn")) el("device-pair-btn").addEventListener("click", claimDevice);
 if (el("device-refresh")) el("device-refresh").addEventListener("click", loadMyDevices);
+if (el("device-all-filter-profile")) el("device-all-filter-profile").addEventListener("change", renderAllDeviceList);
+if (el("device-all-filter-status")) el("device-all-filter-status").addEventListener("change", renderAllDeviceList);
+if (el("device-all-filter-search")) el("device-all-filter-search").addEventListener("input", renderAllDeviceList);
