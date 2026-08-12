@@ -103,6 +103,14 @@ function renderMyDeviceList() {
   );
 }
 
+function allDeviceProfileColumn() {
+  return {
+    key: "profile",
+    label: "Profile",
+    render: (d) => (d.profile_id ? escapeHtml(d.profile_id) : '<span class="hint">Unassigned</span>'),
+  };
+}
+
 async function maybeLoadAllDevices() {
   const status = await fetchAuthStatus();
   const section = el("device-all-section");
@@ -132,6 +140,7 @@ function renderAllDeviceList() {
     emptyMessage: "No devices paired yet.",
     columns: [
       ...deviceColumns(true),
+      allDeviceProfileColumn(),
       {
         key: "actions",
         label: "",
