@@ -121,7 +121,11 @@ function allDeviceProfileColumn() {
   return {
     key: "profile",
     label: "Profile",
-    render: (d) => (d.profile_id ? escapeHtml(d.profile_id) : '<span class="hint">Unassigned</span>'),
+    cellClass: "dt-truncate",
+    render: (d) =>
+      d.profile_id
+        ? `<span title="${escapeHtml(d.profile_id)}">${escapeHtml(d.profile_id)}</span>`
+        : '<span class="hint">Unassigned</span>',
   };
 }
 

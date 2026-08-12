@@ -1043,6 +1043,9 @@ input[type="radio"] {
    DATA TABLE
    ================================================================ */
 
+.dt-scroll {
+  overflow-x: auto;
+}
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -1086,6 +1089,12 @@ input[type="radio"] {
 }
 .data-table .dt-actions-cell button + button {
   margin-left: 6px;
+}
+.data-table .dt-truncate {
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .data-table span.danger {
   color: var(--danger);

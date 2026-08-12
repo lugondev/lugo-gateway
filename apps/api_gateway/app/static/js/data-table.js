@@ -116,7 +116,11 @@ export function renderDataTable({
     return detail ? !detail.hidden : false;
   };
 
+  const scroll = document.createElement("div");
+  scroll.className = "dt-scroll";
+  scroll.appendChild(table);
+
   container.innerHTML = "";
-  container.append(toolbar, table);
+  container.append(toolbar, scroll);
   return table;
 }
