@@ -70,7 +70,7 @@ async function _loadUsageForAdminOrUser() {
     await _loadUsageForUser();
     return;
   }
-  await _loadUsageForAdmin();
+  await Promise.all([_loadUsageForAdmin(), _loadSystemAndModels(), _loadRegistrySummary()]);
 }
 
 async function _loadUsageForAdmin() {
@@ -106,4 +106,63 @@ function _renderQuotaLimits(quotas) {
     return `<li class="${over ? "danger" : ""}">${label} — ${escapeHtml(q.period)}: $${spent.toFixed(4)} of $${limit.toFixed(2)}${over ? " - reached" : ""}</li>`;
   });
   return `<ul class="limit-list">${parts.join("")}</ul>`;
+}
+
+async function _loadSystemAndModels() {
+  const healthHost = el("home-health");
+  const modelsHost = el("home-active-models");
+  if (!healthHost || !modelsHost) return;
+  try {
+    const [statusBody, modelsBody] = await Promise.all([
+      (await fetch("/v1/system/status")).json(),
+      (await fetch("/v1/models")).json(),
+    ]);
+    const d = statusBody.data;
+    const llm = modelsBody.data.llm;
+    const sttOk = (d.stt_engines || []).some((e) => e.available);
+    const ttsOk = (d.tts_engines || []).some((e) => e.available);
+
+    healthHost.innerHTML =
+      _tile("STT", sttOk ? "ready" : "not ready", sttOk) +
+      _tile("TTS", ttsOk ? "ready" : "not ready", ttsOk) +
+      _tile("LLM", llm.available ? "ready" : "not ready", llm.available);
+
+    const whisperActive = d.whisper_local?.active_model || "(none)";
+    const voskActive = d.vosk?.active_model_present ? "installed" : "not installed";
+    modelsHost.innerHTML =
+      _tile("Whisper (local STT)", escapeHtml(whisperActive)) +
+      _tile("Vosk (local STT)", escapeHtml(voskActive)) +
+      _tile("LLM active model", escapeHtml(llm.active || "(none)")) +
+      _tile("LLM endpoint", llm.remote ? "Cloud API" : `Ollama (${llm.running ? "running" : "idle"})`);
+  } catch (error) {
+    healthHost.innerHTML = _tile("System health", "error", false);
+    modelsHost.innerHTML = "";
+  }
+}
+
+async function _loadRegistrySummary() {
+  const host = el("home-registry");
+  if (!host) return;
+  try {
+    const body = await (await fetch("/v1/model_registry")).json();
+    if (!body.success) throw new Error("failed to load registry");
+    const entries = body.data || [];
+    const byKind = {};
+    entries.forEach((e) => {
+      byKind[e.kind] = (byKind[e.kind] || 0) + 1;
+    });
+    const kindTiles = Object.keys(byKind)
+      .sort()
+      .map((k) => _tile(k.toUpperCase(), byKind[k]))
+      .join("");
+    host.innerHTML = _tile("Total entries", entries.length) + kindTiles;
+  } catch (error) {
+    host.innerHTML = _tile("Model registry", "error", false);
+  }
+}
+
+if (el("home-registry-link")) {
+  el("home-registry-link").addEventListener("click", () => {
+    document.querySelector('[data-section="model-registry"]')?.click();
+  });
 }
