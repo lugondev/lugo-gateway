@@ -137,6 +137,18 @@ class DeviceStore:
             await s.commit()
             return True
 
+    async def delete(self, device_id: str) -> bool:
+        """Hard-delete a device row. Caller is responsible for checking it's
+        revoked first -- this method does not enforce that, it just removes
+        the row."""
+        async with db_session() as s:
+            row = await s.get(Device, device_id)
+            if row is None:
+                return False
+            await s.delete(row)
+            await s.commit()
+            return True
+
     async def clear_profile(self, profile_id: str) -> int:
         """Unbind every device pointing at `profile_id`; returns how many.
 

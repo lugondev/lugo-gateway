@@ -102,6 +102,38 @@ def test_admin_lists_and_revokes_any_device(client, _logged_in_user):
     assert resp.status_code == 404
 
 
+def test_delete_nonexistent_device_404(client, _logged_in_user):
+    resp = client.delete("/v1/devices/does-not-exist")
+    assert resp.status_code == 404
+
+
+def test_delete_refuses_a_device_that_is_not_revoked(client, _logged_in_user):
+    init = client.post("/v1/devices/pair/init", json={"serial": "S1"}).json()["data"]
+    device = client.post(
+        "/v1/devices/pair/claim", json={"code": init["code"], "name": "dev"}
+    ).json()["data"]
+
+    resp = client.delete(f"/v1/devices/{device['id']}")
+
+    assert resp.status_code == 400
+    # Still there -- a rejected delete must not have removed the row.
+    assert any(d["id"] == device["id"] for d in client.get("/v1/devices").json()["data"])
+
+
+def test_delete_removes_a_revoked_device(client, _logged_in_user):
+    init = client.post("/v1/devices/pair/init", json={"serial": "S1"}).json()["data"]
+    device = client.post(
+        "/v1/devices/pair/claim", json={"code": init["code"], "name": "dev"}
+    ).json()["data"]
+    client.post(f"/v1/devices/{device['id']}/revoke")
+
+    resp = client.delete(f"/v1/devices/{device['id']}")
+
+    assert resp.status_code == 200
+    assert resp.json()["data"] == {"id": device["id"], "deleted": True}
+    assert not any(d["id"] == device["id"] for d in client.get("/v1/devices").json()["data"])
+
+
 def test_pair_claim_without_session_returns_401_not_500(client):
     resp = client.post("/v1/devices/pair/claim", json={"code": "000000", "name": "x"})
     assert resp.status_code == 401

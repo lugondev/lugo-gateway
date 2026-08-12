@@ -184,3 +184,14 @@ async def revoke_any_device(device_id: str) -> dict:
     if not ok:
         raise HTTPException(status_code=404, detail=f"device '{device_id}' not found")
     return {"success": True}
+
+
+@router.delete("/{device_id}")
+async def delete_device(device_id: str) -> dict:
+    device = await device_store.get_by_id(device_id)
+    if device is None:
+        raise HTTPException(status_code=404, detail=f"device '{device_id}' not found")
+    if not device.revoked:
+        raise HTTPException(status_code=400, detail="device must be revoked before it can be deleted")
+    await device_store.delete(device_id)
+    return {"success": True, "data": {"id": device_id, "deleted": True}}
