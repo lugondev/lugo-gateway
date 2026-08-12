@@ -57,7 +57,14 @@ export async function loadHome() {
 }
 
 async function _loadUsageForAdminOrUser() {
-  const status = await fetchAuthStatus();
+  let status;
+  try {
+    status = await fetchAuthStatus();
+  } catch (error) {
+    const host = el("home-usage");
+    if (host) host.innerHTML = _tile("Usage", "error", false);
+    return;
+  }
   const isAdmin = status.authenticated && status.role === "admin";
   if (!isAdmin) {
     await _loadUsageForUser();
