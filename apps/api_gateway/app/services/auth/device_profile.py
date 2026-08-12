@@ -29,8 +29,8 @@ from app.services.auth.devices import device_store
 
 async def resolve_bound_profile(
     identity, requested: str | None
-) -> tuple[str | None, str | None, bool]:
-    """Return (profile_name_to_use, warning_or_None, came_from_binding).
+) -> tuple[str | None, str | None, bool, bool]:
+    """Return (profile_name_to_use, warning_or_None, came_from_binding, hard_denied).
 
     `identity` is a core.auth_guard.WsIdentity; taken structurally rather than by
     import to keep this leaf module out of the auth_guard import cycle.
@@ -39,20 +39,29 @@ async def resolve_bound_profile(
     failure handling than one the CLIENT sent: lugo.py closes the connection on
     an unresolvable client-declared profile, which would turn a stale binding
     into a bricked speaker. Callers use it to fall back to defaults instead.
+
+    The fourth element, `hard_denied`, is True iff this identity is a paired
+    device (`via_device`) with no profile bound. Unlike the gentle from-binding
+    fallback above, this is NOT recoverable by falling back to defaults --
+    callers must refuse the connection outright. A paired device is meant to
+    be centrally assigned; one that never was isn't "usable" and letting it
+    quietly run on whatever it happened to ask for (or on server defaults)
+    hides exactly the state an admin needs to go fix. Never True for any
+    identity that isn't `via_device` -- browsers, the legacy shared fleet
+    token, and dev-mode have no assignment to lack in the first place.
     """
     if not getattr(identity, "via_device", False):
-        return requested, None, False
+        return requested, None, False, False
     device_id = getattr(identity, "device_id", None)
     if not device_id:
-        return requested, None, False
-
+        return requested, None, False, True
     device = await device_store.get_by_id(device_id)
     bound = (device.profile_id or "") if device is not None else ""
     if not bound:
-        return requested, None, False
+        return requested, None, False, True
     if requested and requested != bound:
         return bound, (
             f"this device is assigned to profile '{bound}'; "
             f"ignoring the profile '{requested}' it asked for"
-        ), True
-    return bound, None, True
+        ), True, False
+    return bound, None, True, False
