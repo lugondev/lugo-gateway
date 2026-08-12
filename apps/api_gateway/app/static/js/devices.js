@@ -35,7 +35,7 @@ export function renderDevicePairProfileSelect() {
   if (profileData[prev]) sel.value = prev;
 }
 
-function renderAllDeviceFilterProfileOptions() {
+export function renderAllDeviceFilterProfileOptions() {
   const sel = el("device-all-filter-profile");
   if (!sel) return;
   const prev = sel.value;

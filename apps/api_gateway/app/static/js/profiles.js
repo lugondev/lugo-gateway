@@ -5,7 +5,7 @@ import { setCurrentSessionId } from "./chat.js";
 import { fetchAuthStatus } from "./session.js";
 import { confirmDialog, promptDialog } from "./modal.js";
 import { updateConvEnginesInfo } from "./conversation.js";
-import { renderDevicePairProfileSelect } from "./devices.js";
+import { renderDevicePairProfileSelect, renderAllDeviceFilterProfileOptions } from "./devices.js";
 
 export let profileData = {};
 export let profileEditMode = null; // null | "new" | "<profile-name>"
@@ -27,6 +27,7 @@ export async function loadProfiles() {
     renderProfileSelect();
     renderLivehostProfileSelect();
     renderDevicePairProfileSelect();
+    renderAllDeviceFilterProfileOptions();
   } catch {
     /* ignore */
   }

@@ -1,7 +1,7 @@
 # All Devices: search/filter, and delete for revoked devices
 
 **Date:** 2026-08-12
-**Status:** approved, not yet implemented
+**Status:** implemented
 **Touches:** `apps/api_gateway` static admin UI + gateway route/store. No firmware change.
 
 ## Problem

@@ -1,6 +1,6 @@
 # All Devices: search/filter + revoked-device delete Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add a client-side profile/status/search filter bar to the admin-only All Devices table, and a per-row Delete button that permanently removes a device once it has been revoked.
 
@@ -29,7 +29,7 @@
 - Consumes: `Device` model, `db_session` (both already imported in `services/auth/devices.py`); `device_store` singleton, `HTTPException` (both already imported in `api/routes/devices.py`).
 - Produces: `DeviceStore.delete(device_id: str) -> bool` (True if a row was deleted, False if no such row) — for later tasks/tests to call directly if needed. Route: `DELETE /v1/devices/{device_id}` → `{"success": True, "data": {"id": device_id, "deleted": True}}` on success, 404 if missing, 400 if not yet revoked.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `tests/unit/auth/test_devices_routes.py`, right after `test_admin_lists_and_revokes_any_device` (after line 102):
 
@@ -66,13 +66,13 @@ def test_delete_removes_a_revoked_device(client, _logged_in_user):
     assert not any(d["id"] == device["id"] for d in client.get("/v1/devices").json()["data"])
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd apps/api_gateway && python -m pytest tests/unit/auth/test_devices_routes.py -k test_delete -v` (adjust the path prefix to however this repo's pytest is normally invoked from the root — check for a `pytest.ini`/`pyproject.toml` `testpaths` if `tests/unit/...` isn't directly runnable from repo root).
 
 Expected: all 3 new tests FAIL with 405 Method Not Allowed (no `DELETE` route registered yet).
 
-- [ ] **Step 3: Add `DeviceStore.delete`**
+- [x] **Step 3: Add `DeviceStore.delete`**
 
 In `apps/api_gateway/app/services/auth/devices.py`, add this method to `DeviceStore`, directly after `set_name` (after line 140, before `clear_profile`):
 
@@ -90,7 +90,7 @@ In `apps/api_gateway/app/services/auth/devices.py`, add this method to `DeviceSt
             return True
 ```
 
-- [ ] **Step 4: Add the route**
+- [x] **Step 4: Add the route**
 
 In `apps/api_gateway/app/api/routes/devices.py`, add this route at the end of the file, after `revoke_any_device`:
 
@@ -106,19 +106,19 @@ async def delete_device(device_id: str) -> dict:
     return {"success": True, "data": {"id": device_id, "deleted": True}}
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cd apps/api_gateway && python -m pytest tests/unit/auth/test_devices_routes.py -v`
 
 Expected: all tests in the file PASS, including the 3 new ones and the existing ones (unchanged).
 
-- [ ] **Step 6: Confirm the new route is classified admin-only**
+- [x] **Step 6: Confirm the new route is classified admin-only**
 
 Run: `cd apps/api_gateway && python -m pytest tests/unit/http/test_auth_guard_route_coverage.py -v`
 
 Expected: PASS with no changes to `auth_guard.py` — `/v1/devices/{device_id}` already concretizes under the `_ADMIN_PREFIXES` entry `"/v1/devices"`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/api_gateway/app/services/auth/devices.py apps/api_gateway/app/api/routes/devices.py tests/unit/auth/test_devices_routes.py
@@ -136,7 +136,7 @@ git commit -m "feat(api_gateway): add admin DELETE endpoint for revoked devices"
 - Consumes: `DELETE /v1/devices/{device_id}` from Task 1 (response shape `{"success": true, "data": {"id": ..., "deleted": true}}` on 200; `{"detail": "..."}` on 400/404). Existing module functions: `el`, `print`, `escapeHtml` (from `./helpers.js`), `confirmDialog` (from `./modal.js`), `renderAllDeviceList()`, `maybeLoadAllDevices()`, `allDeviceData` (all already in this file).
 - Produces: `deleteAnyDevice(id: string): Promise<void>` — no other task depends on this.
 
-- [ ] **Step 1: Add the Delete button to the actions column**
+- [x] **Step 1: Add the Delete button to the actions column**
 
 In `apps/api_gateway/app/static/js/devices.js`, in `renderAllDeviceList()` (around line 144-150), change the `actions` column's `render` to include a second button:
 
@@ -153,7 +153,7 @@ In `apps/api_gateway/app/static/js/devices.js`, in `renderAllDeviceList()` (arou
       },
 ```
 
-- [ ] **Step 2: Wire the click handler**
+- [x] **Step 2: Wire the click handler**
 
 Directly below the existing `table.querySelectorAll("[data-device-revoke-any]")...` block inside `renderAllDeviceList()` (around line 158-160), add:
 
@@ -163,7 +163,7 @@ Directly below the existing `table.querySelectorAll("[data-device-revoke-any]").
   );
 ```
 
-- [ ] **Step 3: Add the `deleteAnyDevice` function**
+- [x] **Step 3: Add the `deleteAnyDevice` function**
 
 Directly after `revokeAnyDevice` (after line 226), add:
 
@@ -184,7 +184,7 @@ async function deleteAnyDevice(id) {
 }
 ```
 
-- [ ] **Step 4: Manual verification (no test harness exists for this file)**
+- [x] **Step 4: Manual verification (no test harness exists for this file)**
 
 Start the gateway locally (check `apps/api_gateway`'s README or `Makefile` for the dev-server command used elsewhere in this repo), log in as an admin, pair a throwaway device from another account or the same one, and in the All Devices table:
 - Confirm the Delete button is disabled on an active (non-revoked) row.
@@ -192,7 +192,7 @@ Start the gateway locally (check `apps/api_gateway`'s README or `Makefile` for t
 - Click Delete, confirm the dialog, confirm the row disappears from the table after reload.
 - Reload the page and confirm the device is gone from a fresh `GET /v1/devices` (i.e. it didn't just disappear from stale client state).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api_gateway/app/static/js/devices.js
@@ -211,7 +211,7 @@ git commit -m "feat(admin-ui): add Delete action for revoked devices on All Devi
 - Consumes: `profileData` (from `./profiles.js`, already imported in this file — `{[name]: {owner_id, ...}}`), `allDeviceData` (module-level, already populated by `maybeLoadAllDevices()`), `el` (from `./helpers.js`).
 - Produces: nothing consumed by other tasks — this is the last task.
 
-- [ ] **Step 1: Add the filter bar markup**
+- [x] **Step 1: Add the filter bar markup**
 
 In `apps/api_gateway/app/static/index.html`, inside `#device-all-section` (around line 442-448), insert the filter bar between the hint `<p>` and `#device-all-list`:
 
@@ -246,7 +246,7 @@ In `apps/api_gateway/app/static/index.html`, inside `#device-all-section` (aroun
             </section>
 ```
 
-- [ ] **Step 2: Add `renderAllDeviceFilterProfileOptions`**
+- [x] **Step 2: Add `renderAllDeviceFilterProfileOptions`**
 
 In `apps/api_gateway/app/static/js/devices.js`, directly after `renderDevicePairProfileSelect` (after line 36), add:
 
@@ -266,7 +266,7 @@ function renderAllDeviceFilterProfileOptions() {
 }
 ```
 
-- [ ] **Step 3: Call it from `maybeLoadAllDevices`**
+- [x] **Step 3: Call it from `maybeLoadAllDevices`**
 
 In `maybeLoadAllDevices()` (around line 114-129), call the new function right before `renderAllDeviceList()`:
 
@@ -290,7 +290,7 @@ async function maybeLoadAllDevices() {
 }
 ```
 
-- [ ] **Step 4: Add `_filteredAllDeviceData` and use it in `renderAllDeviceList`**
+- [x] **Step 4: Add `_filteredAllDeviceData` and use it in `renderAllDeviceList`**
 
 Directly above `renderAllDeviceList` (before line 131), add:
 
@@ -358,7 +358,7 @@ function renderAllDeviceList() {
 
 (This folds in Task 2's button/listener additions so the function is written once, in full, here — if Task 2 already landed, this step is just the `rows`/`emptyMessage` change plus keeping the two buttons that are already there.)
 
-- [ ] **Step 5: Wire the filter control listeners**
+- [x] **Step 5: Wire the filter control listeners**
 
 At the bottom of the file, next to the existing guarded listeners (around line 275-276), add:
 
@@ -368,7 +368,7 @@ if (el("device-all-filter-status")) el("device-all-filter-status").addEventListe
 if (el("device-all-filter-search")) el("device-all-filter-search").addEventListener("input", renderAllDeviceList);
 ```
 
-- [ ] **Step 6: Manual verification (no test harness exists for this file)**
+- [x] **Step 6: Manual verification (no test harness exists for this file)**
 
 With the gateway running and at least 2-3 devices paired across different profiles/owners/revoked states:
 - Type a substring of a device name, serial, and owner username (one at a time) into Search; confirm only matching rows remain each time.
@@ -378,7 +378,7 @@ With the gateway running and at least 2-3 devices paired across different profil
 - Clear all filters back to "All"/empty search; confirm the full list returns.
 - Revoke a device while a filter is active that would exclude it once revoked (e.g. Status=Active); confirm the row disappears from the filtered view after the table refreshes, without you having to touch the filter controls again.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/api_gateway/app/static/index.html apps/api_gateway/app/static/js/devices.js
