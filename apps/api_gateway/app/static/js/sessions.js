@@ -1,6 +1,6 @@
 import { el } from "./helpers.js";
-import { chat, setCurrentSessionId, currentSessionId } from "./chat.js";
-import { addBubble } from "./conversation.js";
+import { conversationState, setCurrentSessionId, currentSessionId } from "./conversation.js";
+import { addBubble } from "./voice-stream.js";
 import { confirmDialog } from "./modal.js";
 
 // The profile filter the panel is currently showing. Every bulk/clear action
@@ -21,13 +21,13 @@ function updateToolbarState() {
   btn.textContent = checked ? `Delete selected (${checked})` : "Delete selected";
 }
 
-// If the deletes removed the session currently open in the chat, reset to a
-// fresh, unsaved session so the UI doesn't point at a gone row.
-function resetChatIfSessionGone(deletedIds) {
+// If the deletes removed the session currently open in the conversation, reset
+// to a fresh, unsaved session so the UI doesn't point at a gone row.
+function resetConversationIfSessionGone(deletedIds) {
   if (currentSessionId && deletedIds.includes(currentSessionId)) {
     setCurrentSessionId(null);
-    chat.history = [];
-    const dialogue = el("chat-dialogue");
+    conversationState.history = [];
+    const dialogue = el("conversation-dialogue");
     if (dialogue) dialogue.innerHTML = "";
   }
 }
@@ -96,7 +96,7 @@ async function deleteOne(id) {
   try {
     const resp = await fetch(`/v1/sessions/${id}`, { method: "DELETE" });
     if (!resp.ok && resp.status !== 404) throw new Error(resp.statusText);
-    resetChatIfSessionGone([id]);
+    resetConversationIfSessionGone([id]);
     await renderSessionList();
   } catch (e) {
     reportSessionError(`Failed to delete session: ${e}`);
@@ -114,7 +114,7 @@ async function deleteSelected() {
       body: JSON.stringify({ ids }),
     });
     if (!resp.ok) throw new Error(resp.statusText);
-    resetChatIfSessionGone(ids);
+    resetConversationIfSessionGone(ids);
     await renderSessionList();
   } catch (e) {
     reportSessionError(`Failed to delete selected sessions: ${e}`);
@@ -133,7 +133,7 @@ async function clearSessions(onlyEmpty) {
     // A clear may have removed the open session; reset if it's no longer listed.
     const remaining = await (await fetch(`/v1/sessions${q}`)).json().catch(() => ({ data: [] }));
     const stillThere = (remaining.data || []).some((s) => s.id === currentSessionId);
-    if (currentSessionId && !stillThere) resetChatIfSessionGone([currentSessionId]);
+    if (currentSessionId && !stillThere) resetConversationIfSessionGone([currentSessionId]);
     await renderSessionList();
   } catch (e) {
     reportSessionError(`Failed to clear sessions: ${e}`);
@@ -168,15 +168,15 @@ export async function loadSession(id) {
     reportSessionError(`Failed to load session: ${error}`);
     return;
   }
-  // Only mutate chat state/DOM after the fetch has succeeded.
+  // Only mutate conversation state/DOM after the fetch has succeeded.
   setCurrentSessionId(id);
-  const dlg = el("chat-dialogue");
+  const dlg = el("conversation-dialogue");
   dlg.innerHTML = "";
-  chat.history = [];
+  conversationState.history = [];
   for (const m of body.data.messages || []) {
     if (m.role !== "user" && m.role !== "assistant") continue;
     addBubble(m.role, m.content);
-    chat.history.push({ role: m.role, content: m.content });
+    conversationState.history.push({ role: m.role, content: m.content });
   }
   el("session-panel").classList.add("hidden");
 }
@@ -189,8 +189,8 @@ if (el("session-clear-all-btn")) el("session-clear-all-btn").addEventListener("c
 if (el("session-new-btn")) {
   el("session-new-btn").addEventListener("click", () => {
     setCurrentSessionId(null);
-    chat.history = [];
-    const dialogue = el("chat-dialogue");
+    conversationState.history = [];
+    const dialogue = el("conversation-dialogue");
     if (dialogue) dialogue.innerHTML = "";
   });
 }

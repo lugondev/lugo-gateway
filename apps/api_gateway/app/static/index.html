@@ -61,9 +61,9 @@
               </button>
             </li>
             <li>
-              <button class="nav-item" data-section="chat">
+              <button class="nav-item" data-section="conversation">
                 <span class="nav-icon">◈</span>
-                <span class="nav-label">Chat</span>
+                <span class="nav-label">Conversation</span>
               </button>
             </li>
             <!-- Feature-plugin nav items (e.g. livehost, lugo) are injected here at
@@ -196,11 +196,11 @@
             </section>
           </div>
 
-          <!-- ============================== CHAT (unified) ============================== -->
-          <div class="section" id="section-chat">
+          <!-- ============================== CONVERSATION (unified) ============================== -->
+          <div class="section" id="section-conversation">
 
             <!-- Mode selector -->
-            <div class="seg" id="chat-mode-seg">
+            <div class="seg" id="conversation-mode-seg">
               <button class="seg-btn active" data-mode="text-text">Text&#8594;Text</button>
               <button class="seg-btn" data-mode="voice-voice">Voice&#8594;Voice</button>
               <button class="seg-btn" data-mode="voice-text">Voice&#8594;Text</button>
@@ -243,7 +243,7 @@
                 <h3>Profile Configuration</h3>
                 <button id="profile-close-btn" class="ghost mini">&#10005;</button>
               </div>
-              <p class="hint">After saving, select the profile in the bar above to use it for chat.</p>
+              <p class="hint">After saving, select the profile in the bar above to use it for the conversation.</p>
               <div class="profile-panel-body">
                 <div class="pf-left">
                   <label>
@@ -319,17 +319,17 @@
               </div>
             </div>
 
-            <!-- Main chat card -->
+            <!-- Main conversation card -->
             <section class="card">
               <div class="card-head">
-                <h2 id="chat-section-title">Text Chat</h2>
-                <button id="chat-reset" class="ghost mini">Reset</button>
+                <h2 id="conversation-section-title">Text Conversation</h2>
+                <button id="conversation-reset" class="ghost mini">Reset</button>
               </div>
-              <p class="hint" id="chat-hint">Text chat with the LLM.</p>
+              <p class="hint" id="conversation-hint">Text conversation with the LLM.</p>
               <p class="hint engine-detail" id="conv-engines-info">Active models will appear here when the session starts.</p>
 
               <!-- Unified dialogue area -->
-              <div id="chat-dialogue" class="dialogue"></div>
+              <div id="conversation-dialogue" class="dialogue"></div>
               <audio id="conv-audio" class="player hidden" controls></audio>
 
               <!-- === TEXT→TEXT === -->
@@ -337,10 +337,10 @@
                 <div class="row tight">
                   <label>
                     Message
-                    <textarea id="chat-input" rows="2" placeholder="Type a message and press Enter (Shift+Enter for newline)&#8230;"></textarea>
+                    <textarea id="conversation-input" rows="2" placeholder="Type a message and press Enter (Shift+Enter for newline)&#8230;"></textarea>
                   </label>
                   <div class="actions end">
-                    <button id="chat-send">Send</button>
+                    <button id="conversation-send">Send</button>
                   </div>
                 </div>
               </div>
@@ -729,7 +729,7 @@
                 <h2>Global MCP Servers</h2>
                 <button id="mcp-refresh" class="ghost mini">Refresh</button>
               </div>
-              <p class="hint">MCP (Model Context Protocol) servers provide tools to the LLM. Add servers here globally, then attach them to individual profiles in the Chat section.</p>
+              <p class="hint">MCP (Model Context Protocol) servers provide tools to the LLM. Add servers here globally, then attach them to individual profiles in the Conversation section.</p>
               <div id="mcp-server-list" class="model-list">
                 <p class="hint">Loading&#8230;</p>
               </div>

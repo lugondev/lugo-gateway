@@ -85,20 +85,21 @@ function addPluginNavItem(name, entry) {
   });
   li.appendChild(btn);
 
-  // Keep plugin tabs grouped right after "Chat", same slot the old hardcoded
-  // Livehost tab occupied. Falls back to prepending if that anchor is ever
-  // renamed or removed.
-  const chatLi = list.querySelector('.nav-item[data-section="chat"]')?.closest("li");
+  // Keep plugin tabs grouped right after "Conversation", same slot the old
+  // hardcoded Livehost tab occupied. Falls back to prepending if that anchor
+  // is ever renamed or removed.
+  const conversationLi = list.querySelector('.nav-item[data-section="conversation"]')?.closest("li");
   // NOT `li:has(> .nav-item-plugin):last-of-type` -- :last-of-type restricts
   // candidates to the literal last <li> child of the list regardless of
   // :has(), which in this sidebar is always an admin item (e.g. "system"),
   // never a plugin item, since plugins are inserted mid-list right after
-  // "Chat". That combination silently never matched, so every plugin after
-  // the first landed right after Chat instead of after its predecessor --
-  // reversing registration order. Track the last plugin <li> directly.
+  // "Conversation". That combination silently never matched, so every plugin
+  // after the first landed right after Conversation instead of after its
+  // predecessor -- reversing registration order. Track the last plugin <li>
+  // directly.
   const pluginLis = list.querySelectorAll(".nav-item-plugin");
   const lastPluginLi = pluginLis.length ? pluginLis[pluginLis.length - 1].closest("li") : null;
-  const after = lastPluginLi || chatLi;
+  const after = lastPluginLi || conversationLi;
   if (after && after.nextSibling) list.insertBefore(li, after.nextSibling);
   else if (after) list.appendChild(li);
   else list.insertBefore(li, list.firstChild);

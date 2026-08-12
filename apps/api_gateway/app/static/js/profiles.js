@@ -1,10 +1,10 @@
 import { el, print, restoreAndBind } from "./helpers.js";
 import { mcpServerData } from "./mcp-servers.js";
 import { ttsProfileData } from "./tts-profiles.js";
-import { setCurrentSessionId } from "./chat.js";
+import { setCurrentSessionId } from "./conversation.js";
 import { fetchAuthStatus } from "./session.js";
 import { confirmDialog, promptDialog } from "./modal.js";
-import { updateConvEnginesInfo } from "./conversation.js";
+import { updateConvEnginesInfo } from "./voice-stream.js";
 import { renderDevicePairProfileSelect, renderAllDeviceFilterProfileOptions } from "./devices.js";
 
 export let profileData = {};
@@ -461,7 +461,7 @@ if (el("pf-clone-btn")) el("pf-clone-btn").addEventListener("click", cloneProfil
 if (el("profile-select")) {
   el("profile-select").addEventListener("change", () => {
     setCurrentSessionId(null);
-    const dialogue = el("chat-dialogue");
+    const dialogue = el("conversation-dialogue");
     if (dialogue) dialogue.innerHTML = "";
     updateConvEnginesInfo();
   });

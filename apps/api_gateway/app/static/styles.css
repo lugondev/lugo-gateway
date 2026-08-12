@@ -872,7 +872,7 @@ input[type="radio"] {
 .status-error { color: var(--danger); }
 
 /* ================================================================
-   CHAT BUBBLES
+   CONVERSATION BUBBLES
    ================================================================ */
 
 .dialogue {
@@ -1411,7 +1411,7 @@ tr.dt-detail[hidden] { display: none; }
 }
 
 /* ================================================================
-   MODE PANE (chat card)
+   MODE PANE (conversation card)
    ================================================================ */
 
 .mode-pane {

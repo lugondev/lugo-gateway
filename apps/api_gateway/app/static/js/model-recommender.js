@@ -3,7 +3,7 @@ import { loadModels, useOrActive, dlBtn, modelRow, jobErr } from "./model-manage
 import { loadSystemStatus } from "./system-status.js";
 import { loadSttEngines } from "./stt-engines.js";
 import { loadTtsEngines } from "./tts-engines.js";
-import { loadConversationEngines } from "./conversation.js";
+import { loadConversationEngines } from "./voice-stream.js";
 
 export let recommendData = null;
 export let recommendActions = [];
@@ -165,7 +165,7 @@ el("llm-start").addEventListener("click", async () => {
     }
     const d = body.data;
     hint.textContent = stopping
-      ? "Ollama service stopped — conversation/chat offline until you Start"
+      ? "Ollama service stopped — conversation offline until you Start"
       : `Ollama ready — active: ${d.active}${d.started ? " (started)" : ""}${d.warmed ? " · warmed" : ""}`;
     loadModels();
   } catch (error) {
