@@ -32,6 +32,35 @@ Redis-backed version would be a different implementation anyway.
 
 ---
 
+## 2026-08-14 — `GET /v1/stt/models`: removed
+
+**Decided:** delete the route. Keep `STT_MODEL_CATALOGS`, the data behind it.
+
+**Against:** keeping it "for runtime resolution", which is what the Model Registry
+design said when it stopped using it for dropdowns.
+
+**Why.** It was the last endpoint with no client. It listed selectable model
+variants for local engines, and `GET /v1/model_registry/options?kind=stt`
+superseded it: that one covers the same local variants *plus* remote-engine models
+an admin registered, and filters by what the caller is allowed to pick. The admin
+console already used only the registry endpoint.
+
+`profiles.py` says as much in a comment next to its own use of the catalog —
+"it predates the Model Registry options endpoint". The 2026-07-20 registry design
+kept the route for "runtime resolution and availability checks", but runtime
+resolution never went through HTTP: `apply_stt_model()` and the profile validator
+read `STT_MODEL_CATALOGS` directly. So the route was a migration that stopped one
+step short.
+
+The catalog itself stays and is still load-bearing — boot warm-up applies a model
+through it, and profile save validates variant ids against it.
+
+**What would change it:** a client that needs variant listing without registry
+entries. Prefer extending `options` to that, rather than reviving a second answer
+to the same question.
+
+---
+
 ## 2026-08-14 — `servers/voiceprint-api`: keep vendored, do not wire
 
 **Decided:** leave the submodule in place, do not integrate it into the gateway, and

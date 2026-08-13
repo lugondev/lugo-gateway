@@ -124,17 +124,6 @@ async def list_stt_engines() -> dict:
     return {"success": True, "data": await stt_service.list_engines()}
 
 
-@router.get("/models")
-async def list_stt_models(engine: str) -> dict:
-    from app.services.stt.model_catalog import STT_MODEL_CATALOGS
-
-    registry = STT_MODEL_CATALOGS.get(engine)
-    if registry is None:
-        return {"success": True, "data": {"engine": engine, "supports_variants": False, "models": []}}
-    models = [{**m, "valid": True} for m in registry.list_models()]
-    return {"success": True, "data": {"engine": engine, "supports_variants": True, "models": models}}
-
-
 @router.post("/warm")
 async def warm_engine(
     request: Request, engine: str | None = None, profile: str | None = None, model: str | None = None
