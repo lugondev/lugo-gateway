@@ -1,7 +1,7 @@
 import { el, print, escapeHtml, runBulk, printBulkSummary } from "./helpers.js";
 import { renderDataTable } from "./data-table.js";
 import { fetchAuthStatus } from "./session.js";
-import { confirmDialog } from "./modal.js";
+import { confirmDialog, promptDialog } from "./modal.js";
 import { profileData } from "./profiles.js";
 
 export let myDeviceData = [];
@@ -98,7 +98,10 @@ function renderMyDeviceList() {
         label: "",
         headerClass: "dt-actions-cell",
         cellClass: "dt-actions-cell",
-        render: (d) => `<button class="mini danger" data-device-revoke-mine="${escapeHtml(d.id)}" ${d.revoked ? "disabled" : ""}>Revoke</button>`,
+        render: (d) => `
+          <button class="mini" data-device-rename="${escapeHtml(d.id)}" ${d.revoked ? "disabled" : ""}>Rename</button>
+          <button class="mini danger" data-device-revoke-mine="${escapeHtml(d.id)}" ${d.revoked ? "disabled" : ""}>Revoke</button>
+        `,
       },
     ],
     bulkActions: [
@@ -107,6 +110,9 @@ function renderMyDeviceList() {
   });
   if (!table) return;
 
+  table.querySelectorAll("[data-device-rename]").forEach((btn) =>
+    btn.addEventListener("click", () => renameMyDevice(btn.getAttribute("data-device-rename")))
+  );
   table.querySelectorAll("[data-device-revoke-mine]").forEach((btn) =>
     btn.addEventListener("click", () => revokeMyDevice(btn.getAttribute("data-device-revoke-mine")))
   );
@@ -252,6 +258,41 @@ async function setMyDeviceProfile(id, profileId) {
       return;
     }
     print(el("device-status"), "Profile updated");
+    await loadMyDevices();
+  } catch (error) {
+    print(el("device-status"), String(error), true);
+  }
+}
+
+// Only the owner-scoped route exists: renaming is "what I call my device", not an
+// admin action, so there is no /v1/devices/{id}/name counterpart to offer in the
+// all-devices table. The 128-char cap mirrors the Device.name column -- the server
+// rejects longer, this just says so before the round-trip.
+async function renameMyDevice(id) {
+  const current = myDeviceData.find((d) => d.id === id)?.name || "";
+  const name = await promptDialog("New name for this device:", current);
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) {
+    print(el("device-status"), "Device name cannot be empty", true);
+    return;
+  }
+  if (trimmed.length > 128) {
+    print(el("device-status"), "Device name is too long (max 128 characters)", true);
+    return;
+  }
+  try {
+    const resp = await fetch(`/v1/devices/mine/${encodeURIComponent(id)}/name`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: trimmed }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      print(el("device-status"), body.detail || "Rename failed", true);
+      return;
+    }
+    print(el("device-status"), "Device renamed");
     await loadMyDevices();
   } catch (error) {
     print(el("device-status"), String(error), true);

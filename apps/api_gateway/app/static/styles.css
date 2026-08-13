@@ -946,6 +946,18 @@ input[type="radio"] {
   color: #ff8a8a;
   border-color: rgba(255, 138, 138, 0.38);
 }
+/* Amber "working on it" state — distinct from .mock, which marks a fake engine
+   rather than a real one that just hasn't finished loading. */
+.badge.warn {
+  color: var(--accent-2);
+  border-color: rgba(255, 178, 102, 0.4);
+}
+/* Profile health sits in the profile bar, whose children align to flex-end. */
+.profile-bar .badge {
+  align-self: center;
+  white-space: nowrap;
+  cursor: help;
+}
 
 /* ================================================================
    STATUS GRID

@@ -11,6 +11,72 @@ export let profileData = {};
 export let profileEditMode = null; // null | "new" | "<profile-name>"
 export let llmOptionData = [];
 
+// ---- profile health badge ----
+//
+// GET /v1/profiles/{name}/health pre-flights the STT and TTS a profile would
+// actually use. The same check runs server-side when a session opens and is what
+// really gates it; this only surfaces the answer early, so someone picking a
+// profile finds out it can't start BEFORE they hold down the mic and get silence.
+//
+// Only `unavailable` blocks a session (EngineHealth.blocks_session) -- `not_ready`
+// means the model is still loading and the first turn will just be slow, so it
+// must not read as an error.
+let healthRequestSeq = 0;
+
+const HEALTH_VIEW = {
+  unavailable: { cls: "danger", text: "won't start" },
+  not_ready: { cls: "warn", text: "loading" },
+  ok: { cls: "ok", text: "ready" },
+};
+
+function worstStatus(...statuses) {
+  for (const rank of ["unavailable", "not_ready"]) {
+    if (statuses.includes(rank)) return rank;
+  }
+  return "ok";
+}
+
+export async function refreshProfileHealth() {
+  const badge = el("profile-health");
+  if (!badge) return;
+  const name = el("profile-select")?.value || "";
+  // Every request gets a ticket; only the newest one may paint. Switching
+  // profiles quickly otherwise lets a slow probe for the PREVIOUS profile land
+  // last and label the current one -- the failure mode here is showing "ready"
+  // over a profile that cannot start.
+  const ticket = ++healthRequestSeq;
+
+  if (!name) {
+    badge.hidden = true;
+    return;
+  }
+
+  try {
+    const resp = await fetch(`/v1/profiles/${encodeURIComponent(name)}/health`);
+    if (ticket !== healthRequestSeq) return;
+    if (!resp.ok) {
+      // 404 covers both "deleted" and "not yours"; either way we know nothing
+      // about its health, and a stale badge would be worse than none.
+      badge.hidden = true;
+      return;
+    }
+    const d = (await resp.json()).data || {};
+    if (ticket !== healthRequestSeq) return;
+    const status = worstStatus(d.stt?.status, d.tts?.status);
+    const view = HEALTH_VIEW[status] || HEALTH_VIEW.ok;
+    badge.className = `badge ${view.cls}`;
+    badge.textContent = view.text;
+    badge.title = [
+      `STT (${d.stt?.engine || "?"}): ${d.stt?.status || "?"}${d.stt?.detail ? ` — ${d.stt.detail}` : ""}`,
+      `TTS (${d.tts?.engine || "?"}): ${d.tts?.status || "?"}${d.tts?.detail ? ` — ${d.tts.detail}` : ""}`,
+    ].join("\n");
+    badge.hidden = false;
+  } catch {
+    if (ticket !== healthRequestSeq) return;
+    badge.hidden = true;
+  }
+}
+
 export async function loadLlmOptions() {
   try {
     const body = await (await fetch("/v1/model_registry/options?kind=llm")).json();
@@ -47,6 +113,9 @@ export function renderProfileSelect() {
   if (profileData[prev]) sel.value = prev;
   // Refresh the conversation header so it shows the active profile's models right away.
   updateConvEnginesInfo();
+  // Deliberately not awaited: the probe hits real engines and can take a moment,
+  // and nothing about rendering the dropdown depends on its answer.
+  refreshProfileHealth();
 }
 
 export function renderLivehostProfileSelect() {
@@ -464,5 +533,6 @@ if (el("profile-select")) {
     const dialogue = el("conversation-dialogue");
     if (dialogue) dialogue.innerHTML = "";
     updateConvEnginesInfo();
+    refreshProfileHealth();
   });
 }

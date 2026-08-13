@@ -2,6 +2,7 @@ import { el } from "./helpers.js";
 import { loadHome } from "./home.js";
 import { loadRecommend } from "./model-recommender.js";
 import { loadMcpServers } from "./mcp-servers.js";
+import { loadPluginsAdmin } from "./plugins-admin.js";
 import { loadUsers } from "./users.js";
 import { loadMyDevices } from "./devices.js";
 import { loadModelRegistry } from "./model-registry.js";
@@ -22,6 +23,7 @@ function activateSection(section) {
   if (section === "home") loadHome();
   if (section === "models") loadRecommend();
   if (section === "mcp") loadMcpServers();
+  if (section === "plugins") loadPluginsAdmin();
   if (section === "users") loadUsers();
   if (section === "devices") loadMyDevices();
   if (section === "model-registry") loadModelRegistry();

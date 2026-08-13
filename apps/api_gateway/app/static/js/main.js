@@ -22,6 +22,7 @@ import "./system-config.js";
 import "./tts-batch.js";
 import { resumeLatestSession } from "./sessions.js";
 import "./users.js";
+import "./plugins-admin.js";
 import "./devices.js";
 import "./model-registry.js";
 import "./providers.js";

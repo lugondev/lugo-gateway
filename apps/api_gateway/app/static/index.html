@@ -106,6 +106,12 @@
               </button>
             </li>
             <li class="admin-only">
+              <button class="nav-item" data-section="plugins">
+                <span class="nav-icon">&#9096;</span>
+                <span class="nav-label">Plugins</span>
+              </button>
+            </li>
+            <li class="admin-only">
               <button class="nav-item" data-section="users">
                 <span class="nav-icon">&#9689;</span>
                 <span class="nav-label">Users</span>
@@ -215,6 +221,7 @@
                   <option value="">(none &mdash; server defaults)</option>
                 </select>
               </label>
+              <span id="profile-health" class="badge" hidden></span>
               <div class="profile-bar-btns">
                 <button id="session-list-btn" class="ghost mini">Sessions</button>
                 <button id="session-new-btn" class="ghost mini">New session</button>
@@ -758,6 +765,74 @@
                 </div>
               </div>
               <p id="mcp-status" class="meta"></p>
+            </section>
+          </div>
+
+          <!-- ============================== PLUGINS ============================== -->
+          <div class="section" id="section-plugins">
+            <section class="card">
+              <div class="card-head">
+                <h2>Plugins</h2>
+                <div class="actions">
+                  <button id="plugin-refresh" class="ghost mini">Refresh</button>
+                  <button id="plugin-new-btn" class="mini">+ New</button>
+                </div>
+              </div>
+              <p class="hint">
+                A plugin is a separate service that adds a feature to this console
+                without living in the gateway. Each enabled plugin gets its own nav
+                item, injected at page load. The browser never sends its session
+                cookie to a plugin &#8212; it trades a 60-second ticket, which the
+                plugin resolves against the gateway using the shared secret below.
+              </p>
+              <div id="plugin-list" class="model-list">
+                <p class="hint">Loading&#8230;</p>
+              </div>
+              <p id="plugin-status" class="meta"></p>
+
+              <!-- Editor panel (hidden by default) -->
+              <div class="profile-panel hidden" id="plugin-panel" data-editing="">
+                <div class="profile-panel-hd">
+                  <h3 id="plugin-panel-title">New Plugin</h3>
+                  <button id="plugin-close-btn" class="ghost mini">&#10005;</button>
+                </div>
+                <div class="row tight">
+                  <label>
+                    Name <span class="hint" style="display:inline;margin:0">(slug, cannot be changed later)</span>
+                    <input id="pg-name" type="text" placeholder="livehost" />
+                  </label>
+                  <label>
+                    URL
+                    <input id="pg-url" type="text" placeholder="https://livehost.example.com" />
+                  </label>
+                </div>
+                <div class="row tight">
+                  <label>
+                    Shared secret <span class="hint" style="display:inline;margin:0">(authenticates the plugin's introspect calls)</span>
+                    <input id="pg-secret" type="password" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;" autocomplete="new-password" />
+                  </label>
+                  <label>
+                    Kind
+                    <select id="pg-kind">
+                      <option value="feature">feature</option>
+                      <option value="tools">tools</option>
+                    </select>
+                  </label>
+                  <label class="check">
+                    <input id="pg-enabled" type="checkbox" checked /> Enabled
+                  </label>
+                </div>
+                <h3 class="sub">Mounts</h3>
+                <p class="hint">The paths this plugin serves, advertised to clients so they don't hardcode them.</p>
+                <div id="pg-mounts"></div>
+                <div class="actions">
+                  <button id="pg-mount-add" type="button" class="ghost mini">+ Add mount</button>
+                </div>
+                <div class="actions end">
+                  <button id="plugin-save-btn">Save</button>
+                </div>
+                <p id="plugin-panel-status" class="meta"></p>
+              </div>
             </section>
           </div>
 
