@@ -353,7 +353,7 @@ def test_every_paid_call_site_is_classified():
     assert not unclassified, (
         "New paid call site(s) found. Add each to _CLASSIFIED with a status, a "
         "reason, and a covering test -- and make sure the site actually meters "
-        f"and gates before you call it metered:\n  " + "\n  ".join(map(str, unclassified))
+        "and gates before you call it metered:\n  " + "\n  ".join(map(str, unclassified))
     )
 
 
@@ -363,7 +363,7 @@ def test_no_classified_call_site_has_disappeared():
     gone = sorted(set(_CLASSIFIED) - set(found))
     assert not gone, (
         "These classified call sites no longer exist. Remove their rows so the "
-        f"table keeps describing the real code:\n  " + "\n  ".join(map(str, gone))
+        "table keeps describing the real code:\n  " + "\n  ".join(map(str, gone))
     )
 
 
@@ -378,7 +378,7 @@ def test_call_counts_match_so_an_added_call_cannot_hide():
     ]
     assert not drifted, (
         "Call count changed. If you added a call, meter and gate it, then update "
-        f"the count:\n  " + "\n  ".join(drifted)
+        "the count:\n  " + "\n  ".join(drifted)
     )
 
 
@@ -513,7 +513,7 @@ def test_every_classification_names_a_test_that_exists_and_is_about_this_call():
     assert not missing, "Covering test file(s) do not exist:\n  " + "\n  ".join(missing)
     assert not unrelated, (
         "Covering test file(s) that never mention the call they are named for. "
-        f"Each must contain the method name or 'record_usage' -- add a test there "
+        "Each must contain the method name or 'record_usage' -- add a test there "
         "that exercises that call or asserts its usage row, or point the row at a "
         "test that already does:\n  " + "\n  ".join(unrelated)
     )

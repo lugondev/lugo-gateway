@@ -1,4 +1,3 @@
-import pytest
 from sqlalchemy import select
 
 from app.services.db.engine import db_session, init_db

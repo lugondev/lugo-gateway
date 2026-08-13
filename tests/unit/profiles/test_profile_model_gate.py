@@ -3,7 +3,6 @@ from fastapi.testclient import TestClient
 
 from app.core.settings import settings
 from app.main import app
-from app.services.auth.users import user_store
 from app.services.model_registry.store import ModelRegistryStore
 from app.services.profiles.store import ProfileStore
 

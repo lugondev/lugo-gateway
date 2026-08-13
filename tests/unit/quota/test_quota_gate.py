@@ -2,7 +2,7 @@ import pytest
 from app.services.db.engine import init_db, db_session
 from app.services.db.models import UsageEvent
 from app.services.quota.store import quota_store
-from app.services.quota.gate import quota_gate, QuotaExceededError, current_spend
+from app.services.quota.gate import quota_gate, QuotaExceededError
 
 
 async def _add_cost(user_id, provider_id, cost):

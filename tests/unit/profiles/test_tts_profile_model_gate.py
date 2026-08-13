@@ -5,9 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.core.settings import settings
 from app.main import app
-from app.services.model_registry.seed import seed_installed_models_to_registry
 from app.services.model_registry.store import ModelRegistryStore
-from app.services.tts.profile_models import TtsProfile
 from app.services.tts.profile_store import TtsProfileStore
 
 

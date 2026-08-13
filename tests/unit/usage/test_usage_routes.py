@@ -176,9 +176,9 @@ def test_my_usage_reports_the_callers_own_limits(client, _with_password):
                                    period="monthly"))
 
     body = client.get("/v1/usage/me").json()
-    scopes = sorted((l["scope"], l["limit_usd"]) for l in body["limits"])
+    scopes = sorted((lim["scope"], lim["limit_usd"]) for lim in body["limits"])
     assert scopes == [("global", 50.0), ("user", 5.0)], f"leaked or missing limits: {body['limits']}"
-    assert all("spend_usd" in l for l in body["limits"])
+    assert all("spend_usd" in lim for lim in body["limits"])
     # The existing shape must not change -- the React client reads `data`.
     assert isinstance(body["data"], list)
 
@@ -215,11 +215,11 @@ def test_one_unreadable_spend_does_not_truncate_the_limits_list(client, _with_pa
     monkeypatch.setattr(gate_mod, "current_spend", flaky_spend)
 
     body = client.get("/v1/usage/me").json()
-    scopes = sorted((l["scope"], l["limit_usd"]) for l in body["limits"])
+    scopes = sorted((lim["scope"], lim["limit_usd"]) for lim in body["limits"])
     assert scopes == [("global", 50.0), ("user", 5.0)], (
         f"a failed spend read truncated the list: {body['limits']}"
     )
-    assert all("spend_usd" in l for l in body["limits"])
+    assert all("spend_usd" in lim for lim in body["limits"])
 
 
 async def _record(*, provider_id: str = "", user_id: str = "u-label") -> None:
