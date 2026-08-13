@@ -28,7 +28,6 @@ from app.services.system_config import system_config_store
 from app.services.usage.attribution import resolve_usage_model
 from app.services.usage.recorder import record_usage
 from app.services.vad import apply_vad
-from app.streaming.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/stt", tags=["stt"])
@@ -178,9 +177,8 @@ async def warm_engine(
     return {"success": True, "data": {"engine": engine, "model": model or None, "warmed": callable(warm)}}
 
 
-async def _emit(websocket: WebSocket, channel: str, event: StreamEvent) -> None:
+async def _emit(websocket: WebSocket, event: StreamEvent) -> None:
     await websocket.send_json(event.model_dump(mode="json"))
-    await event_bus.publish(channel, event)
 
 
 @router.websocket("/stream")
@@ -191,7 +189,6 @@ async def stt_stream(websocket: WebSocket) -> None:
         return
     await websocket.accept(subprotocol=ws_subprotocol(websocket))
     session_id = str(uuid.uuid4())
-    channel = f"session:{session_id}"
     sequence = 0
 
     engine = websocket.query_params.get("engine", system_config_store.get().engines.default_stt_engine)
@@ -310,7 +307,6 @@ async def stt_stream(websocket: WebSocket) -> None:
         sequence += 1
         await _emit(
             websocket,
-            channel,
             StreamEvent(
                 event_type=event_type,
                 session_id=session_id,
@@ -406,7 +402,6 @@ async def stt_stream(websocket: WebSocket) -> None:
                 pass
         if watchdog is not None:
             watchdog.cancel()
-        event_bus.close(channel)
         try:
             await websocket.close()
         except RuntimeError:

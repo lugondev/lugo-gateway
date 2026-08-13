@@ -136,8 +136,11 @@ def test_no_admin_prefix_is_shadowed_by_a_user_prefix():
     ("path", "expected"),
     [
         # Surfaces a past task closed.
-        ("/v1/events/sessions/abc", "user"),
-        ("/v1/events/jobs/abc", "user"),
+        # /v1/events used to be here as "user". The SSE route and its event bus
+        # were removed (no first-party client ever subscribed), so the prefix is
+        # unclassified again -- and default-deny now covers it, which
+        # test_auth_guard_default_deny.py asserts directly. Don't re-add a
+        # classification here without re-adding the route.
         ("/agents-docs", "admin"),
         ("/openapi.json", "admin"),
         ("/docs", "admin"),

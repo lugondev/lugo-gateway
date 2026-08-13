@@ -164,22 +164,24 @@ pooling them across pytest's per-test loops corrupts state.
 > `config_profiles` stores an LLM `api_key` inline. Never `SELECT *` that table
 > into a log, a transcript, or an error message.
 
-### Streaming (`app/streaming/event_bus.py`)
+### Streaming — removed
 
-`InMemoryEventBus` gives pub/sub two properties that matter:
+There used to be an `InMemoryEventBus` here, with `GET /v1/events/sessions/{id}`
+serving STT events over SSE. Both are gone.
 
-- **Replay** — bounded per-channel history is replayed to late subscribers, so a
-  subscriber never misses `session_started` to the subscribe-after-publish race.
-- **Terminal close** — `done` closes the channel and wakes subscribers with a
-  sentinel, so the SSE generator stops and memory is reclaimed.
+The bus had genuinely careful properties — bounded per-channel replay so a late
+subscriber never lost `session_started` to the subscribe-after-publish race, and a
+terminal `done` that closed the channel and woke subscribers so memory was
+reclaimed. What it never had was a consumer: an audit of every first-party client
+(admin console, web SPA, RPi, ESP32 firmware) found nothing subscribing, and each
+one reads its events straight off its own WebSocket instead. The only tests
+touching it were authorization tests — it had an IDOR guard protecting a feature
+nobody used.
 
-Only STT streaming publishes to this bus (`session:{id}` channels). Conversation
-audio goes straight to the WebSocket and has no event-bus path.
-
-> **Status: no consumers.** `GET /v1/events/sessions/{id}` is the only reader, and
-> no first-party client subscribes to it — not the admin console, the web SPA, the
-> RPi client, or the ESP32 firmware. It is live, authenticated, and unused. Decide
-> to wire it or remove it rather than leaving it in this state.
+So `/v1/stt/stream` now only sends to its socket. If a fan-out consumer ever
+appears, rebuild for that consumer rather than restoring this: the replay and
+close semantics above are the parts worth copying, and a Redis-backed version
+would be a different implementation anyway.
 
 ### Platform services
 
@@ -209,7 +211,7 @@ audio goes straight to the WebSocket and has no event-bus path.
 2. The route opens a per-connection `STTStream` from the provider.
 3. Vosk emits `partial`/`final` as audio arrives; buffering engines emit one
    `final` on `flush`/`end`.
-4. Events go to the socket and are mirrored to `session:{id}` on the event bus.
+4. Events go to the socket. Nothing else observes them.
 
 ### Conversation reply audio (WebSocket, binary frames)
 
@@ -259,9 +261,6 @@ and is worth knowing before you go looking for the integration:
 
 ## Upgrade paths (not yet implemented)
 
-- **Event bus → Redis Pub/Sub + streams** for multi-worker scale and reconnect
-  replay across processes. `InMemoryEventBus` is the seam — but resolve the
-  no-consumer question above first.
 - **PostgreSQL** — `settings.database_url` already carries it; the sync config
   stores are the part that needs work.
 - **Reliability** — queue, retries, timeouts, circuit breakers around model calls.

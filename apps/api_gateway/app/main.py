@@ -13,7 +13,6 @@ from app.api.routes.agents_docs import router as agents_docs_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.conversation import router as conversation_router
 from app.api.routes.devices import router as devices_router
-from app.api.routes.events import router as events_router
 from app.api.routes.health import router as health_router
 from app.api.routes.lugo import router as lugo_router
 from app.api.routes.mcp import router as mcp_router
@@ -296,7 +295,6 @@ app.include_router(users_router)
 app.include_router(stt_router)
 app.include_router(tts_router)
 app.include_router(tts_profiles_router)
-app.include_router(events_router)
 app.include_router(conversation_router)
 app.include_router(devices_router)
 app.include_router(system_router)

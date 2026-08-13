@@ -66,8 +66,9 @@ cd infra/compose
 docker compose up --build
 ```
 
-Brings up the API (port 8000) and a Redis container (reserved for the future bus
-upgrade; the current in-memory bus does not require it).
+Brings up the API on port 8000. (A Redis container used to ride along, reserved
+for an event-bus upgrade; the bus was removed for want of a consumer, so Redis is
+not part of the running system.)
 
 ## Tests
 
@@ -220,7 +221,6 @@ HF gating. If a selected backend is unavailable it falls back to `energy`.
 | WS `error`: "Vosk model not found" | run `scripts/download_vosk_model.sh` |
 | `/transcribe` 400 "requires WAV PCM16 mono" | convert input, e.g. `ffmpeg -i in.mp3 -ar 16000 -ac 1 -c:a pcm_s16le out.wav` |
 | TTS request fails with 502 | engine failed to load/run — check logs for the underlying error |
-| SSE never closes | fixed — streams close on the terminal `done` event |
 | Browser autoplay blocked | click a control once; chunk audio then plays |
 | Mic capture fails in browser | requires `https://` or `localhost`; grant mic permission |
 

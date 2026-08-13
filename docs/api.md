@@ -51,7 +51,7 @@ their budget. Keying on the client address needs `TRUSTED_PROXY_HOPS` set behind
 reverse proxy — see `docs/runbook.md`.
 
 **Requires a logged-in user (any role):** everything under `/ui`, `/static/`,
-`/v1/events`, `/v1/conversation`, `/v1/profiles`,
+`/v1/conversation`, `/v1/profiles`,
 `/v1/mcp`, `/v1/stt`, `/v1/tts`, `/v1/sessions`, `/v1/stats`, `/v1/devices/mine`
 (including the own-device subresources `POST /v1/devices/mine/{device_id}/revoke`,
 `POST /v1/devices/mine/{device_id}/profile` and
@@ -208,7 +208,6 @@ Engine behavior:
 - **Vosk** decodes incrementally → real `partial` then `final` per utterance.
 - **Whisper / remote** buffer all audio and return a single `final` on flush/end.
 
-Events are also mirrored to the SSE channel `GET /v1/events/sessions/{session_id}`.
 
 ---
 
@@ -573,44 +572,6 @@ framing (see above) now covers streamed, sentence-by-sentence playback without
 ever handing out a file reference.
 
 A failed synthesis returns a JSON error response (502) instead of a placeholder.
-
----
-
-## Events (SSE)
-
-### `GET /v1/events/sessions/{session_id}`
-
-**Requires a logged-in user, and ownership.** A non-admin caller who isn't the
-owner of the session gets `404`, not `403` — indistinguishable from the id
-simply not existing, so a caller can't use the response to fish for which ids
-are valid. Admins (and dev mode with auth disabled) are unscoped.
-
-The session row must already exist. If it doesn't (e.g. the id hasn't been
-created by the producer — the STT WebSocket, see `WS /v1/stt/stream` above —
-yet), the request 404s immediately rather than waiting. **This means
-subscribing *before* the producer creates the session fails outright** — the
-SSE client must wait until the session exists (e.g. until the WS side has
-signaled it) before calling this endpoint; it cannot preemptively subscribe
-and rely on buffered replay to catch the earliest events.
-
-Server-Sent Events stream. Each message is `event: <type>` + `data: <StreamEvent JSON>`.
-
-The bus **buffers** events per channel, so once subscribed, connecting slightly
-after the producer started still replays earlier events on that channel (e.g.
-`session_started`) — this buffering is about timing *after* the channel exists,
-not a way around the "session must already exist" requirement above. The
-stream **closes itself** after a terminal `done` event.
-
-The events mirrored here are the same ones sent over the STT WebSocket —
-`session_started`, `partial`, `final`, `error`, `done` — see the table under
-`WS /v1/stt/stream` above.
-
-> **No first-party consumer.** Nothing subscribes to this today — not the admin
-> console, the web SPA, the RPi client, or the ESP32 firmware; every one of them
-> reads its events straight off its own WebSocket. The route is live and
-> authenticated but unexercised outside its authorization tests, so treat it as
-> unproven rather than supported, and don't build on it without wiring a real
-> consumer first.
 
 ---
 

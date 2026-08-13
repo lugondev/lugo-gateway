@@ -1,7 +1,7 @@
 # AGENTS.md — coding guide for AI agents
 
 Context for an agent writing or modifying code in **speech-text-transformer**: a local
-FastAPI gateway unifying STT, TTS, and a voice Conversation loop (REST / WebSocket / SSE)
+FastAPI gateway unifying STT, TTS, and a voice Conversation loop (REST / WebSocket)
 with a browser playground, serving browsers and IoT devices (ESP32 / Raspberry Pi).
 Served live at `GET /agents-docs` (this file + all of `docs/` concatenated).
 
@@ -49,7 +49,7 @@ Route map — group → router file → what it owns:
 
 | Group | Router | Owns |
 |---|---|---|
-| Core voice | `stt`, `tts`, `tts_profiles`, `conversation`, `events` | transcribe, synthesize, the voice loop, SSE |
+| Core voice | `stt`, `tts`, `tts_profiles`, `conversation` | transcribe, synthesize, the voice loop |
 | Devices | `lugo`, `devices` | the binary device protocol; pairing + device management |
 | Identity | `auth`, `users` | sessions, bearer tokens, plugin tickets, accounts |
 | Config | `profiles`, `memories`, `mcp`, `system` | per-profile config, chat memory, MCP servers, settings |
@@ -83,7 +83,7 @@ via path-param shadowing.
 - **Errors**: raise `AppError` subclasses (→ JSON error via the global handler). In
   request handlers, convert provider exceptions to clean JSON (never leak a plain-text
   500 — clients parse JSON).
-- **API responses**: REST returns `{"success": true, "data": …}`; WS/SSE emit
+- **API responses**: REST returns `{"success": true, "data": …}`; WS emits
   `{"event": …}` / `StreamEvent`. Keep this shape.
 - Match the surrounding code's style; keep comments at the existing density (explain
   *why*, not *what*).
@@ -123,5 +123,8 @@ frames — WAV/MP3 by default or Opus, never a URL). VAD endpointer + barge-in. 
 
 - Endpoints / schemas → `docs/api.md`
 - Components / data flow → `docs/architecture.md`
+- **Why something is the way it is** → `docs/decisions.md`. Read it before
+  "fixing" an absence: several things that look missing are missing on purpose,
+  and it records what would change the answer.
 - Config / env vars / troubleshooting → `docs/runbook.md`
 - Device (RPi/ESP32) protocol + reference client → `docs/device-integration.md`

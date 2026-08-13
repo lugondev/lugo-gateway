@@ -46,10 +46,6 @@ _NO_AUTH_PREFIXES = (
 _USER_PREFIXES = (
     "/ui",
     "/static/",
-    # Live SSE transcript/TTS-result streams. These carry the actual content of
-    # a session (partial + final transcripts, synthesized audio urls); they were
-    # unauthenticated purely because nobody had listed them anywhere.
-    "/v1/events",
     "/v1/conversation",
     "/v1/profiles",
     "/v1/mcp",

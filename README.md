@@ -6,7 +6,7 @@ the browser to ESP32 and Raspberry Pi ([lugo.vn](https://lugo.vn/)).
 
 This repository (`speech-text-transformer`) is LUGO's **gateway**: a local service
 unifying Speech-to-Text, Text-to-Speech, and a voice Conversation loop
-over REST / WebSocket / SSE, with a browser playground. STT: 11 engines — Vosk,
+over REST and WebSocket, with a browser playground. STT: 11 engines — Vosk,
 faster-whisper, Qwen3-ASR (Vietnamese), Apple-GPU MLX (`whisper_mlx`), remote
 OpenAI-compatible, OpenRouter, DashScope, and the containerized model service.
 TTS: 8 engines — OmniVoice, VieNeu, VoxCPM2, Kokoro-Vietnamese, Qwen3-TTS, edge-tts,
@@ -111,7 +111,7 @@ docker compose up --build
 
 ## Documentation
 
-- [docs/api.md](docs/api.md) — full REST / WebSocket / SSE reference and schemas.
+- [docs/api.md](docs/api.md) — full REST / WebSocket reference and schemas.
 - [docs/device-integration.md](docs/device-integration.md) — **Raspberry Pi / ESP32
   voice device guide**: protocol, audio formats, and a runnable reference client.
 - [docs/architecture.md](docs/architecture.md) — components, data flows, upgrade paths.
@@ -119,6 +119,9 @@ docker compose up --build
   model service, its per-engine CPU/GPU compose files, and the `http_stt` /
   `http_tts` remote providers.
 - [docs/runbook.md](docs/runbook.md) — run, configure, troubleshoot.
+- [docs/decisions.md](docs/decisions.md) — choices made deliberately, what they
+  were made against, and what would change them. Worth reading before treating
+  something absent as an oversight.
 
 ## Endpoints
 
@@ -134,7 +137,6 @@ docker compose up --build
 - GET/POST /v1/conversation/llm + POST /v1/conversation/llm/reset (online LLM config)
 - POST /v1/conversation/chat (text chat with the conversation responder)
 - POST /v1/models/{whisper,vieneu,omnivoice,llm,...}/download|select|delete
-- GET /v1/events/sessions/{session_id} (SSE)
 - GET /v1/system/status
 - GET /v1/models
 - POST /v1/models/vosk/download
