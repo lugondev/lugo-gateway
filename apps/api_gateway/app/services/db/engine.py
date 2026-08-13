@@ -139,9 +139,19 @@ async def _ensure_column(conn, table: str, column: str, ddl_type: str) -> None:
 
 
 async def _backfill_null_user_ids(conn, table: str) -> None:
-    """NULL user_id -> '' so rows land in the shared-device bucket and match
-    the composite-key filters. Idempotent."""
-    await conn.exec_driver_sql(f"UPDATE {table} SET user_id = '' WHERE user_id IS NULL")
+    """NULL user_id -> the ownerless subject, so rows are readable at all.
+
+    A NULL is silently excluded by every `user_id == <subject>` scoped query, so
+    a row left NULL is a row nothing can ever find. It lands on ANON_SUBJECT
+    rather than DEV_SUBJECT for the same reason the '' migration does: nothing
+    recorded which case wrote it, and treating old data as real speech is the
+    conservative error. Idempotent.
+    """
+    from app.services.memory.subjects import ANON_SUBJECT
+
+    await conn.exec_driver_sql(
+        f"UPDATE {table} SET user_id = ? WHERE user_id IS NULL", (ANON_SUBJECT,)
+    )
 
 
 async def _ensure_doc_composite_pk(conn) -> None:
@@ -158,10 +168,12 @@ async def _ensure_doc_composite_pk(conn) -> None:
     pk_cols = {r[1] for r in rows if r[5]}  # r[5] = pk position, nonzero => PK member
     if "user_id" in pk_cols:
         return  # already migrated
+    from app.services.memory.subjects import ANON_SUBJECT
+
     await conn.exec_driver_sql("ALTER TABLE memory_profile_docs RENAME TO _mpd_old")
     await conn.exec_driver_sql(
         "CREATE TABLE memory_profile_docs ("
-        "user_id VARCHAR(36) NOT NULL DEFAULT '', "
+        f"user_id VARCHAR(36) NOT NULL DEFAULT '{ANON_SUBJECT}', "
         "profile_id VARCHAR(128) NOT NULL, "
         "content TEXT DEFAULT '', "
         "updated_at DATETIME, "
@@ -169,7 +181,8 @@ async def _ensure_doc_composite_pk(conn) -> None:
     )
     await conn.exec_driver_sql(
         "INSERT INTO memory_profile_docs (user_id, profile_id, content, updated_at) "
-        "SELECT COALESCE(user_id, ''), profile_id, content, updated_at FROM _mpd_old"
+        f"SELECT COALESCE(user_id, '{ANON_SUBJECT}'), profile_id, content, updated_at "
+        "FROM _mpd_old"
     )
     await conn.exec_driver_sql("DROP TABLE _mpd_old")
 

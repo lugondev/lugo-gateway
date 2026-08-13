@@ -54,15 +54,22 @@ async def old_schema_db(tmp_path, monkeypatch):
 
 
 async def test_migration_backfills_and_rebuilds(old_schema_db):
-    from app.services.memory.store import memory_store, profile_doc_store
+    from app.services.memory.store import ANON_SUBJECT, memory_store, profile_doc_store
 
     await db_engine.init_db()
 
-    # memories NULL user backfilled to ''
-    assert [m["content"] for m in await memory_store.list("legacy", user_id="")] == ["device fact"]
+    # NULL user backfilled to the ownerless subject. It used to be '', which is
+    # now legacy: a row left on either NULL or '' is invisible to every scoped
+    # query, so what this pins is "readable at all", not the literal.
+    #
+    # Asserted against ANON_SUBJECT explicitly, NOT via user_id=None: the backfill
+    # always assumes real speech (see docs/decisions.md), while a *read* with no
+    # user resolves by auth mode. On a box with auth disabled those differ, and
+    # that is deliberate -- dev mode must not surface production speech.
+    assert [m["content"] for m in await memory_store.list("legacy", user_id=ANON_SUBJECT)] == ["device fact"]
 
-    # legacy doc preserved under ''
-    assert (await profile_doc_store.get("legacy", user_id=""))["content"] == "old doc"
+    # legacy doc preserved, under that same subject
+    assert (await profile_doc_store.get("legacy", user_id=ANON_SUBJECT))["content"] == "old doc"
 
     # composite PK now allows two users on one profile
     await profile_doc_store.upsert("legacy", "A doc", user_id="user-a")
@@ -75,5 +82,5 @@ async def test_migration_is_idempotent(old_schema_db):
     await db_engine.init_db()
     db_engine._initialized = False
     await db_engine.init_db()  # second run must not raise or duplicate
-    from app.services.memory.store import profile_doc_store
-    assert (await profile_doc_store.get("legacy", user_id=""))["content"] == "old doc"
+    from app.services.memory.store import ANON_SUBJECT, profile_doc_store
+    assert (await profile_doc_store.get("legacy", user_id=ANON_SUBJECT))["content"] == "old doc"

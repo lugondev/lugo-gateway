@@ -67,12 +67,14 @@ async def test_add_with_user_id_roundtrips(store):
 
 
 @pytest.mark.asyncio
-async def test_add_without_user_id_defaults_none(store):
-    # '' (never None) is the store's sentinel for "no attributable user" --
-    # see docs/superpowers/specs/2026-07-17-memory-user-scoping-design.md.
+async def test_add_without_user_id_normalizes_at_the_write_boundary(store):
+    # A named subject (never None, never '') is what "no attributable user"
+    # stores as -- which one depends on auth mode, see services/memory/subjects.py.
     # add() normalizes via _uid() at the write boundary.
+    from app.services.memory.store import DEV_SUBJECT
+
     added = await store.add("profile-a", "likes coffee")
-    assert added["user_id"] == ""
+    assert added["user_id"] == DEV_SUBJECT  # tests run with auth disabled
 
 
 async def test_list_scopes_by_user():
@@ -89,13 +91,16 @@ async def test_list_scopes_by_user():
     assert [m["content"] for m in b] == ["b-fact"]
 
 
-async def test_none_user_normalizes_to_empty_string_bucket():
+async def test_none_user_writes_and_reads_the_same_bucket():
+    """The invariant that matters: whatever None normalizes to, a later read with
+    None must find it. The literal is an implementation detail; a write and a read
+    disagreeing is a silently empty memory."""
     from app.services.memory.store import memory_store
 
     await memory_store.add("dev", "device-fact", user_id=None)
-    rows = await memory_store.list("dev", user_id="")
+    rows = await memory_store.list("dev", user_id=None)
     assert [m["content"] for m in rows] == ["device-fact"]
-    assert rows[0]["user_id"] == ""
+    assert rows[0]["user_id"] not in ("", None)
 
 
 async def test_delete_all_scopes_by_user():
@@ -122,21 +127,22 @@ async def test_update_and_delete_reject_wrong_user():
     assert await memory_store.delete(mid, profile_id="shared", user_id="user-a") is True
 
 
-async def test_raw_memoryitem_without_user_id_defaults_to_empty_string():
+async def test_raw_memoryitem_without_user_id_defaults_to_a_readable_subject():
     """Defense-in-depth: a raw MemoryItem insert that bypasses MemoryStore.add
-    (which normalizes) must still land in the '' bucket, not NULL -- a NULL
-    user_id would be silently excluded by every `== _uid(...)` scoped query."""
+    (which normalizes) must still land on a subject some query can find -- neither
+    NULL nor the legacy '', both of which every `== _uid(...)` filter excludes
+    silently."""
     import uuid
 
     from app.services.db.engine import db_session
     from app.services.db.models import MemoryItem
 
+    from app.services.memory.store import ANON_SUBJECT, memory_store
+
     async with db_session() as s:
         row = MemoryItem(id=str(uuid.uuid4()), profile_id="raw", content="bypass")
         s.add(row)
         await s.commit()
-        assert row.user_id == ""
+        assert row.user_id == ANON_SUBJECT
 
-    from app.services.memory.store import memory_store
-
-    assert [m["content"] for m in await memory_store.list("raw", user_id="")] == ["bypass"]
+    assert [m["content"] for m in await memory_store.list("raw", user_id=ANON_SUBJECT)] == ["bypass"]

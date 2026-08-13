@@ -236,6 +236,14 @@ deployment that knows its `''` rows are purely dev data can delete them instead.
 touches ten rows or a million. What actually accrues is the divergence between the
 two memory implementations — that is the reason to decide, not the data volume.
 
+**One consequence worth knowing before it surprises someone.** The migration and
+the NULL backfill always assign `lugo:anonymous`, but a *read* with no user
+resolves by auth mode. On a box with auth disabled, reads go to `lugo:dev`, so
+pre-existing ownerless memories stop being visible there. That is deliberate — dev
+mode must not surface production speech — but it does mean a developer's own older
+scratch appears to vanish after the first boot on the new code. It is still in the
+table under `lugo:anonymous`; setting an admin password makes it readable again.
+
 **A per-device split was considered and rejected**, not deferred. An earlier draft
 of this entry left it open as a future privacy improvement. It is not one: giving
 each device its own subject would mean two speakers in one house, running one

@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from app.services.memory.subjects import ANON_SUBJECT
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -57,7 +59,12 @@ class MemoryItem(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     profile_id: Mapped[str] = mapped_column(String(128), index=True)
-    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default="", index=True)
+    # Default is the ownerless subject, not "": a raw insert that bypasses
+    # MemoryStore.add must still land somewhere a scoped query can find. See
+    # services/memory/subjects.py.
+    user_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, default=ANON_SUBJECT, index=True
+    )
     content: Mapped[str] = mapped_column(Text)
     source_session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
@@ -70,7 +77,7 @@ class MemoryItem(Base):
 class MemoryProfileDoc(Base):
     __tablename__ = "memory_profile_docs"
 
-    user_id: Mapped[str] = mapped_column(String(36), primary_key=True, default="")
+    user_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=ANON_SUBJECT)
     profile_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     content: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(

@@ -8,10 +8,14 @@ from sqlalchemy import select
 from app.core.timefmt import iso_utc
 from app.services.db.engine import db_session
 from app.services.db.models import MemoryItem, MemoryProfileDoc, utcnow
+from app.services.memory.subjects import ANON_SUBJECT, DEV_SUBJECT, resolve_subject
 
+__all__ = ["ANON_SUBJECT", "DEV_SUBJECT", "MemoryStore", "memory_store", "profile_doc_store"]
 
-def _uid(user_id: str | None) -> str:
-    return user_id or ""
+# The single write/read boundary for the subject axis -- every scoped query and
+# every insert goes through it. See services/memory/subjects.py for why the
+# ownerless case has two values rather than one.
+_uid = resolve_subject
 
 
 def _mem_dict(m: MemoryItem) -> dict:

@@ -141,6 +141,7 @@ async def lifespan(app: FastAPI):
         migrate_stt_local_models_to_registry,
         seed_installed_models_to_registry,
     )
+    from app.services.memory.subject_migration import migrate_ownerless_memory_subject
     from app.services.usage.backfill import migrate_backfill_usage_model_ids
 
     # Runs before the seed/back-fill migrations below and before warm-up so both
@@ -159,6 +160,11 @@ async def lifespan(app: FastAPI):
     # After the registry migrations above, so it sees corrected/fully-migrated
     # registry rows when resolving candidate models.
     await migrate_backfill_usage_model_ids()
+    # Independent of the registry ones -- it only touches the memory tables. Must
+    # run before anything serves a turn, though: the store starts writing the new
+    # sentinel immediately, so a request handled ahead of this would leave rows
+    # split across both the old '' and the new subject.
+    await migrate_ownerless_memory_subject()
 
     if not settings.auth_enabled and settings.app_env != "dev":
         logger.warning(
