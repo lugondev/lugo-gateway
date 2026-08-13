@@ -39,6 +39,27 @@ def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _tamper(token: str) -> str:
+    """Change a token so its signature must fail -- deterministically.
+
+    This used to edit the LAST character, which made the test fail ~6% of runs:
+    an itsdangerous token is `payload.timestamp.signature`, each segment
+    urlsafe-base64 with padding stripped, and a segment whose length isn't a
+    multiple of 4 ends on a character carrying only 2 or 4 significant bits. The
+    leftover bits are discarded on decode, so several distinct final characters
+    decode to identical bytes -- "…HhWA0Y" and "…HhWA0a" are the same signature.
+    Whether the substitution landed in the same equivalence class depended on the
+    random user id in the token, so the test passed or failed by luck.
+
+    The first character of the first segment always carries a full 6 bits, so
+    changing it always changes the decoded payload and always breaks the
+    signature. Editing the payload is also the more faithful attack: it is what
+    someone forging another user's id would actually do.
+    """
+    first, rest = token[0], token[1:]
+    return ("a" if first != "a" else "b") + rest
+
+
 async def test_bearer_grants_user_prefix(client, _with_password, normal_user):
     token = issue_access_token(normal_user["id"])
     resp = client.get("/v1/sessions", headers=_auth(token))
@@ -107,8 +128,7 @@ async def test_invalid_bearer_with_valid_admin_cookie_is_401_on_admin_prefix(
 
 async def test_expired_or_tampered_bearer_with_no_cookie_is_401(client, _with_password, normal_user):
     token = issue_access_token(normal_user["id"])
-    tampered = token[:-1] + ("a" if token[-1] != "a" else "b")
-    resp = client.get("/v1/sessions", headers=_auth(tampered))
+    resp = client.get("/v1/sessions", headers=_auth(_tamper(token)))
     assert resp.status_code == 401
 
 
