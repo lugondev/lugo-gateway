@@ -46,7 +46,8 @@ def test_profile_response_has_resolved_labels(monkeypatch):
 
 def test_unpinned_fields_show_server_default_label(monkeypatch):
     monkeypatch.setattr(settings, "admin_password", "s3cret")
-    client = _client(); _login(client, "u2")
+    client = _client()
+    _login(client, "u2")
     r = client.post("/v1/profiles", json={"name": "p2", "stt": {"language": "vi"}})  # no stt engine/model
     d = r.json()["data"]
     # unpinned -> a "(default)" label or the literal "server default", never blank

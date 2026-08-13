@@ -1,6 +1,5 @@
 import json
 import logging
-from pathlib import Path
 
 from app.services.mcp.models import McpServer
 from app.services.mcp.server_store import McpServerStore

@@ -1,13 +1,15 @@
 import json
-import pytest
 from app.services.conversation.responder import OpenAICompatResponder
 
 
 class _FakeStreamResp:
-    def __init__(self, lines): self._lines = lines; self.status_code = 200
+    def __init__(self, lines):
+        self._lines = lines
+        self.status_code = 200
     def raise_for_status(self): pass
     async def aiter_lines(self):
-        for ln in self._lines: yield ln
+        for ln in self._lines:
+            yield ln
     async def __aenter__(self): return self
     async def __aexit__(self, *a): return False
 

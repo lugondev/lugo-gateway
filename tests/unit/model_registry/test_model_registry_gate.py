@@ -40,7 +40,7 @@ async def test_testing_stage_requires_can_use_testing(store, users):
     regular = await users.create("toan", "pw")
     tester = await users.create("linh", "pw")
     await users.set_fields(tester["id"], can_use_testing=True)
-    created = await store.create("llm", "openrouter", "qwen3-asr-flash", "Qwen3 ASR Flash", stage="testing")
+    await store.create("llm", "openrouter", "qwen3-asr-flash", "Qwen3 ASR Flash", stage="testing")
 
     regular_user = await users.get_by_id(regular["id"])
     tester_user = await users.get_by_id(tester["id"])

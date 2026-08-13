@@ -41,7 +41,7 @@ async def test_delete_all(store):
 
 @pytest.mark.asyncio
 async def test_embedding_persists(store):
-    m = await store.add("pet", "fact", embedding=[0.5, 0.5])
+    await store.add("pet", "fact", embedding=[0.5, 0.5])
     rows = await store.list("pet")
     assert rows[0]["embedding"] == [0.5, 0.5]
 

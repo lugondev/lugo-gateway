@@ -17,7 +17,6 @@ from app.api.routes.auth import (
     login_ip_limiter,
     signup_limiter,
 )
-from app.core.settings import settings
 from app.main import app
 
 

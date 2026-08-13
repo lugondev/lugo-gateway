@@ -5,10 +5,8 @@ Phase 2 (stream): once no tool_calls in response, stream final content normally.
 """
 
 import json
-from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 
 from app.services.conversation.responder import OpenAICompatResponder

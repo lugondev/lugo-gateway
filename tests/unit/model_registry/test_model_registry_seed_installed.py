@@ -1,4 +1,3 @@
-import pytest
 from app.services.model_registry.seed import seed_installed_models_to_registry
 from app.services.model_registry.store import model_registry_store
 

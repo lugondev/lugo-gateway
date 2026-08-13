@@ -1,11 +1,10 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.mcp.models import McpServer
-from app.services.mcp.server_store import McpServerStore, mcp_server_store
+from app.services.mcp.server_store import McpServerStore
 
 
 @pytest.fixture(autouse=True)

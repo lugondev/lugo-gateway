@@ -9,7 +9,6 @@ request and skip the limiter entirely. Hence an explicit hop count, defaulting
 to 0 (= don't trust the header at all).
 """
 
-import pytest
 
 from app.core.client_ip import client_ip
 

@@ -1,7 +1,6 @@
 import asyncio
 from datetime import datetime
 
-import pytest
 
 from app.services.conversation.tools.base import Tool, ToolContext, ToolRegistry, ToolSource
 from app.services.conversation.tools.local import LocalToolSource

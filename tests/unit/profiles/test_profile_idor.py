@@ -29,7 +29,7 @@ from app.core.settings import settings
 from app.main import app
 from app.services.auth.users import user_store
 from app.services.mcp import pool as mcp_pool_module
-from app.services.profiles.models import LlmConfig, Profile, SttConfig, TtsConfig
+from app.services.profiles.models import LlmConfig, Profile, SttConfig
 from app.services.profiles.store import profile_store
 from app.services.tts.profile_models import TtsProfile
 from app.services.tts.profile_store import tts_profile_store

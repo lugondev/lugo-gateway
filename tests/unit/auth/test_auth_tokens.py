@@ -1,4 +1,3 @@
-import pytest
 
 from app.services.auth.tokens import (
     ACCESS_TTL_SECONDS,

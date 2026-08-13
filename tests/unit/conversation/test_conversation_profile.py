@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.services.mcp.models import McpServer
 from app.services.mcp.server_store import McpServerStore
-from app.services.profiles.models import LlmConfig, Profile, TtsConfig
+from app.services.profiles.models import LlmConfig, Profile
 from app.services.profiles.store import ProfileStore
 
 

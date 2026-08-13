@@ -71,7 +71,6 @@ def test_vosk_not_installed_name_is_not_installed(monkeypatch):
 
 
 def test_omnivoice_cached_repo_is_installed(monkeypatch):
-    import app.services.model_registry.availability as availability_mod
 
     monkeypatch.setattr("app.core.hf_cache.repo_cached", lambda repo: repo == "k2-fsa/OmniVoice")
     assert is_artifact_installed("tts", "omnivoice", "k2-fsa/OmniVoice") is True
