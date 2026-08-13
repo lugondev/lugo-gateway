@@ -63,7 +63,7 @@ def test_regular_user_sees_only_their_own_counts(client, _with_password):
 
 
 def test_admin_sees_global_counts(client, _with_password):
-    admin_id = _signup_login(client, "root", role="admin")
+    _signup_login(client, "root", role="admin")
     other_id = _signup_login(client, "user1", role="user")
     client.post("/api/auth/login", json={"username": "root", "password": "pw"})
 
@@ -112,6 +112,58 @@ def test_device_active_recent_excludes_stale_last_seen(client, _with_password):
     data = resp.json()["data"]["devices"]
     assert data["count"] == 2
     assert data["active_recent"] == 1
+
+
+def test_revoked_devices_are_excluded_from_both_counts(client, _with_password):
+    """A revoked device is gone as far as the owner is concerned -- it cannot
+    connect and the Devices tab offers to delete it. Counting it on Home would
+    tell someone they still have hardware paired after they revoked it, and
+    (worse) keep counting it as recently-active for the 30 minutes after, since
+    revoking does not clear last_seen_at."""
+    me_id = _signup_login(client, "mai", role="user")
+
+    keep, _t1 = asyncio.run(device_store.create(me_id, "keep", "serial-keep"))
+    gone, _t2 = asyncio.run(device_store.create(me_id, "gone", "serial-gone"))
+    asyncio.run(device_store.touch_last_seen(keep["id"]))
+    asyncio.run(device_store.touch_last_seen(gone["id"]))
+    assert asyncio.run(device_store.revoke(gone["id"], owner_user_id=me_id))
+
+    data = client.get("/v1/stats/home").json()["data"]["devices"]
+    assert data["count"] == 1, "a revoked device is still counted as paired"
+    assert data["active_recent"] == 1, "a revoked device is still counted as active"
+
+
+def test_admin_profile_count_stays_personal_while_devices_go_global(client, _with_password):
+    """Home scopes an admin's three counts differently on purpose, and the
+    asymmetry looks like a bug until you check the routes behind each tile.
+
+    Devices and sessions have admin-global routes (list_all / scope_user_id), so
+    Home shows an admin the fleet-wide number and the Devices tab agrees.
+    Profiles do NOT: GET /v1/profiles filters by the same `profile_visible`
+    predicate for every role, so an admin's Profiles tab lists only templates
+    plus their own. Making Home's profile tile global to "match" the other two
+    would both disagree with the tab it links to and turn the count into an
+    oracle for how many private profiles other users hold.
+    """
+    other_id = _signup_login(client, "hoa", role="user")
+    admin_id = _signup_login(client, "boss", role="admin")
+
+    profile_store.upsert(Profile(name="hoa-private", owner_id=other_id))
+    profile_store.upsert(Profile(name="boss-private", owner_id=admin_id))
+    profile_store.upsert(Profile(name="shared-template", owner_id=None))
+    asyncio.run(device_store.create(other_id, "hoa-device", "serial-hoa"))
+
+    client.post("/api/auth/login", json={"username": "boss", "password": "pw"})
+    data = client.get("/v1/stats/home").json()["data"]
+
+    assert data["profiles"]["count"] == 2, (
+        "admin's profile count must be their own + templates, never every user's"
+    )
+    listed = len(client.get("/v1/profiles").json()["data"])
+    assert data["profiles"]["count"] == listed, (
+        "Home's profile tile disagrees with the Profiles list it links to"
+    )
+    assert data["devices"]["count"] >= 1, "admin should still see another user's device"
 
 
 def test_login_required(client, _with_password):
