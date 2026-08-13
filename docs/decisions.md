@@ -122,8 +122,64 @@ devices, and both failures are quiet.
 Scope mapping otherwise is clean: `subject = user_id`, `agent = profile_id`.
 memgw's `tenant` dimension has no counterpart here and should be left unset.
 
-**Next step:** decide what the shared-device bucket becomes. Everything else follows
-from that.
+**Next step:** the migration below. Everything else follows from it.
+
+---
+
+## 2026-08-14 — The ownerless memory bucket: `lugo:shared-device` and `lugo:dev`
+
+**Decided:** replace the single empty-string bucket with **two** reserved
+subjects.
+
+| Today | Becomes | What it holds |
+|---|---|---|
+| `""` when `identity_unauthenticated` is `False` | `lugo:shared-device` | real user speech from production hardware on the legacy shared `DEVICE_AUTH_TOKEN` |
+| `""` when `identity_unauthenticated` is `True` | `lugo:dev` | scratch from a local run with auth disabled |
+
+**Against:** one sentinel for both; and naming it after the system
+(`lugo-memory` and similar).
+
+**Why two, not one.** `session.py` already distinguishes these — a device on the
+shared token has `identity_user_id=None` but `identity_unauthenticated=False`,
+because it *is* a real authenticated deployment that simply has no owner to
+attribute to. Only dev mode is genuinely identity-less. The memory store is the
+one place that flattens the distinction, and flattening it puts a laptop's test
+utterances in the same bucket as production fleet speech: same retention, same
+export, same answer to "delete everything you hold about this device". Keeping
+them apart costs one branch on a flag that already exists.
+
+**Why this shape of name.** `subject` answers *whose memories are these*, so the
+value has to name a subject. `lugo-memory` names the subsystem instead, which
+reads as circular ("these memories belong to memory") and would look like a
+username sitting next to real ids.
+
+The three properties that matter:
+
+- **Cannot collide with a real subject.** Real ids are UUIDv4. A colon never
+  appears in one, so anything `lugo:`-prefixed is safe by construction rather
+  than by luck.
+- **Obvious in a raw dump.** Someone reading the table sees `lugo:shared-device`
+  next to `1363bc98-40a4-…` and needs no lookup to know which is which.
+- **Carries provenance off-box.** This matters specifically because of memgw: in
+  proxy mode a subject can be handed to an *external* provider (Mem0, Zep) where
+  it sits beside other applications' subjects. A bare `shared-device` is a string
+  anyone might use; `lugo:shared-device` is not. memgw's `tenant` dimension would
+  normally carry this, but it is stamped from the gateway credential and we leave
+  it unset, so the prefix is what actually carries it.
+
+**Migration.** One idempotent startup migration in the same place as the registry
+ones (`main.py` lifespan), rewriting `memory_items.user_id` from `''`. Existing
+rows cannot be split by flag — nothing recorded which case wrote them — so they
+all become `lugo:shared-device`, the conservative choice: it treats existing data
+as if it were real user speech rather than assuming it was scratch. A deployment
+that knows its `''` rows are purely dev data can delete them instead.
+
+**Explicitly NOT decided here: whether shared-token devices should keep sharing
+one pool.** They do today, and this migration preserves that exactly. Giving each
+device its own subject (`lugo:device:<id>`) would be more private — two speakers
+in different homes on one fleet token currently read each other's memories — but
+it *changes what users experience*, not just where rows live. That belongs in its
+own decision, taken deliberately, not smuggled in through a rename.
 
 ---
 
