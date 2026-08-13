@@ -221,23 +221,39 @@ Effect on the current local database (`data/app.db`): `esp32-assistant` and
 
 ## Admin console
 
-`static/js/profiles.js`:
+There is no profile *table* in this console. `#profile-select` (index.html
+line 220) is doing double duty: it is both the "what does my conversation run
+on" selector **and** the only way to reach Edit/Clone (`profiles.js:521`).
+Filtering shared rows out of it would therefore make them unreachable — the
+one thing a user is supposed to be able to do with them.
 
-- `isTemplate` (line 267) changes from `p.owner_id === null` to `p.shared`.
-- A shared row shows a "Shared" badge and offers **Clone** only; an admin
-  additionally keeps Edit/Delete, and the editor gains a `shared` checkbox
-  visible to admins only.
-- The two profile dropdowns (`renderProfileSelect` line 110,
-  `renderLivehostProfileSelect` line 129) **filter shared rows out** — they
-  pick what a conversation runs on.
+So the two jobs get separated:
 
-`static/js/devices.js`: the three profile pickers (lines 32, 46, 72 — pair
-form, reassign form, per-device select) filter shared rows out for the same
-reason.
+- **`#profile-select` becomes a pure run-selector.** `renderProfileSelect`
+  (line 110) and `renderLivehostProfileSelect` (line 129) filter shared rows
+  out. With only owned rows left, the existing `(mine)` suffix is redundant
+  and is dropped from both.
+- **A new templates picker** is added to the profile bar in `index.html`
+  beside it: `<select id="profile-template-select">` listing shared profiles
+  only, plus a `#profile-template-clone-btn`. Choosing one and clicking Clone
+  reuses the existing `cloneProfile()` path (`POST /v1/profiles/{name}/clone`
+  with a prompted new name), and on success the clone lands in
+  `#profile-select` as a normal owned profile. This is the whole shared-profile
+  user journey, in one place, with nothing else offered on it.
+- `openProfilePanel`'s `isTemplate` (line 267) changes from
+  `p.owner_id === null` to `p.shared`, so an admin editing a shared template
+  still sees Save/Delete and a non-admin does not. The editor gains a
+  `shared` checkbox that is rendered only for an admin.
 
-The existing `(mine)` suffix, which today keys off `owner_id` being truthy,
-is now redundant with the filtering in the pickers and is dropped there; in
-the profile *list* it is replaced by the "Shared" badge.
+`static/js/devices.js`: the two **binding** pickers filter shared rows out —
+`renderDevicePairProfileSelect` (line 32, the pair form) and
+`myDeviceProfileColumn`'s per-device `<select>` (line 72). Both write a
+binding, which the backend now refuses for a shared profile, so offering the
+name would only produce a 400.
+
+`renderAllDeviceFilterProfileOptions` (line 46) is deliberately **left
+alone**: it filters a read-only table rather than writing a binding, and
+after the migration a shared name there simply matches nothing.
 
 ## Testing
 
@@ -257,9 +273,11 @@ the profile *list* it is replaced by the "Shared" badge.
 - **Health** — `GET /{name}/health` still answers for a shared profile.
 - **Migration** — the three branches, plus a second run proving idempotency,
   plus the multi-owner WARNING.
-- **Static UI** — jsdom, following the existing `tests/unit/**/test_static_*.py`
-  pattern: shared row renders Clone-only for a non-admin, and shared names are
-  absent from both dropdowns and the device pickers.
+- **Static UI** — following the existing `tests/unit/**/test_static_*.py`
+  pattern (source assertions over `static/js/*.js` and `index.html`): the
+  templates picker and its Clone button exist and are wired; the run-selector
+  and the two device binding pickers filter on `shared`; the All Devices
+  filter does not.
 
 ## Deployment note
 
