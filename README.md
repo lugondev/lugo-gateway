@@ -6,10 +6,12 @@ the browser to ESP32 and Raspberry Pi ([lugo.vn](https://lugo.vn/)).
 
 This repository (`speech-text-transformer`) is LUGO's **gateway**: a local service
 unifying Speech-to-Text, Text-to-Speech, and a voice Conversation loop
-over REST / WebSocket / SSE, with a browser playground. STT: Vosk, faster-whisper,
-Qwen3-ASR (Vietnamese), Apple-GPU MLX (`whisper_mlx`), remote Whisper. TTS:
-OmniVoice, VieNeu, and more. Conversation: VAD turn-taking + barge-in, local/online
-LLM, PCM or Opus transport.
+over REST / WebSocket / SSE, with a browser playground. STT: 11 engines — Vosk,
+faster-whisper, Qwen3-ASR (Vietnamese), Apple-GPU MLX (`whisper_mlx`), remote
+OpenAI-compatible, OpenRouter, DashScope, and the containerized model service.
+TTS: 8 engines — OmniVoice, VieNeu, VoxCPM2, Kokoro-Vietnamese, Qwen3-TTS, edge-tts,
+and the model service. Conversation: VAD turn-taking + barge-in, local/online LLM,
+PCM or Opus transport.
 
 Beyond the playground it runs a small multi-device voice platform: **bearer/session
 auth** with users and roles, **device pairing** for hardware clients, a unified
@@ -19,7 +21,7 @@ Raspberry Pi and ESP32 clients.
 
 ## Repository & submodules
 
-This repo uses **five git submodules**, so clone recursively (or init after cloning):
+This repo uses **nine git submodules**, so clone recursively (or init after cloning):
 
 ```bash
 git clone --recurse-submodules https://github.com/lugondev/speech-text-transformer.git
@@ -27,13 +29,27 @@ git clone --recurse-submodules https://github.com/lugondev/speech-text-transform
 git submodule update --init --recursive
 ```
 
+Clients — they talk to this gateway:
+
 | Path | Repo | What |
 |---|---|---|
 | `rpi-assistant` | lugondev/rpi-assistant | Raspberry Pi voice client (lugo protocol) |
 | `esp32-assistant` | lugondev/esp32-assistant | ESP-IDF firmware thin client |
 | `lugo-web-client` | lugondev/lugo-web-client | React SPA web client (bearer auth) |
-| `servers/mcp-basic-tools` | lugondev/mcp-basic-tools | Built-in MCP tools server (web_search, fetch, …) |
-| `servers/voiceprint-api` | lugondev/voiceprint-api | 3D-Speaker voiceprint service |
+| `lugo-landing` | lugondev/lugo-landing | Marketing site (Vite + React) |
+
+Services — they run beside the gateway:
+
+| Path | Repo | What | Wired in? |
+|---|---|---|---|
+| `servers/mcp-basic-tools` | lugondev/mcp-basic-tools | Built-in MCP tools server (web_search, fetch, …) | yes, via MCP presets |
+| `servers/livehost-api` | lugondev/livehost-api | TikTok Live co-host, an out-of-process **plugin** | yes, via `/v1/plugins` |
+| `servers/voiceprint-api` | lugondev/voiceprint-api | 3D-Speaker voiceprint service | not yet |
+| `servers/knowledge-api` | lugondev/knowledge-api | Knowledge-base RAG service | not yet |
+| `servers/router-memory-services` | lugondev/router-memory-services | Standalone memory gateway | not yet |
+
+"Not yet" means the service is standalone and complete but the gateway holds no
+reference to it — see [docs/architecture.md](docs/architecture.md#satellite-services).
 
 ## Quick start
 
@@ -126,23 +142,51 @@ docker compose up --build
 
 Platform (auth, devices, profiles, registry, memory):
 
-- POST /api/auth/{signup,login,logout} — session cookie or bearer token
-- GET/POST/PATCH/DELETE /v1/users (admin) — user + role management
+- POST /api/auth/{signup,login,logout,token,refresh,introspect} — session cookie
+  or bearer token; `introspect` is how a plugin resolves a ticket it was handed
+- GET/POST/PATCH /v1/users (admin) — user + role management, incl. disable
 - WS /v1/lugo/stream — the **lugo** binary protocol for RPi / ESP32 clients
 - POST /v1/devices/pair/{init,status,claim} — 8-digit device pairing
-- GET /v1/devices, /v1/devices/mine — paired-device management + revoke
+- GET /v1/devices, /v1/devices/mine — paired-device management + rename + revoke
 - GET/POST/PUT/DELETE /v1/profiles + /v1/profiles/{name}/memories — per-profile
   config (LLM, STT/TTS, MCP servers, memory) and per-user chat memory
+- GET /v1/profiles/{name}/health — pre-flight STT/TTS readiness for one profile
 - GET/POST /v1/model_registry — unified STT/TTS/LLM engine registry (the active
   conversation LLM is the enabled `kind="llm"` entry)
+- GET/POST /v1/providers — upstream provider accounts + their model lists
+- GET/POST /v1/quotas, GET /v1/usage/{me,summary} — spend limits + usage rollups
 - GET/POST /v1/mcp — global + per-profile MCP servers
 - GET /v1/sessions — chat history/session store
-- POST /v1/livehost/... — TikTok Live co-host orchestration
+- GET /v1/stats/home — role-scoped counts for the admin Home tab
+- GET/POST/PUT/DELETE /v1/plugins + POST /v1/plugins/ticket — out-of-process
+  feature plugins (e.g. `servers/livehost-api`) and the ticket a browser trades
+  for a direct connection to one
+- POST /v1/models/install — pip-allowlist install for optional engines
 
-UI playground at `/ui` (same API host), tabbed: **System** (status, model managers for
-Vosk/Whisper/TTS/LLM, VAD+denoise config, online-LLM provider), **Speech →
-Text** (mic record + streaming), **Text → Speech**, **Conversation** (live voice loop,
-shows the active STT/LLM/TTS), and **LLM Chat**.
+Admin console at `/ui` (same API host). The left nav has 16 sections; the ones
+marked *(admin)* are hidden from a `role="user"` session:
+
+| Section | What |
+|---|---|
+| **Home** | landing tab — profile/device/session counts, usage + quota, and *(admin)* system health, active models, registry summary |
+| **Conversation** | live voice loop + text chat; shows the active STT/LLM/TTS. Profile editor and session history open as side panels here |
+| **Devices** | own paired devices, pairing claim, profile binding, revoke; *(admin)* the all-devices table with search/filter |
+| **STT** | mic record, batch transcribe, and the streaming socket |
+| **TTS** | synthesize, voice picker, reference-audio upload for cloning, TTS profiles |
+| **My Usage** | the caller's own spend against their quota |
+| **Models** *(admin)* | download/select/delete for Vosk, Whisper, VieNeu, OmniVoice, LLM, plus the hardware recommender |
+| **MCP** | global + per-profile MCP servers, tool listing, enable/clone |
+| **Plugins** *(admin)* | the out-of-process plugin registry — url, shared secret, mounts, enable/disable |
+| **Users** *(admin)* | accounts, roles, disable, password reset |
+| **Model Registry** *(admin)* | the unified STT/TTS/LLM entry list and its defaults |
+| **Providers** *(admin)* | upstream provider accounts and their model lists |
+| **Usage** *(admin)* | spend rollups across all users |
+| **Pricing** *(admin)* | per-model price table driving cost attribution |
+| **Quotas** *(admin)* | global and per-user spend limits |
+| **System** *(admin)* | status, system settings (79 config fields), VAD + denoise, remote-engine endpoints |
+
+Feature plugins registered in `/v1/plugins` inject their own nav item at load
+time — nothing about them is hardcoded in the page.
 
 ## Streaming protocols
 
@@ -170,15 +214,57 @@ Every TTS request runs real synthesis; a failing engine returns a JSON error
 
 ## STT engine options
 
-- vosk: Local Vosk model.
-- whisper or whisper_local: Local faster-whisper. Defaults to **large-v3-turbo**.
-  CPU on macOS (~3.7s/utterance). For Vietnamese, prefer `qwen3_asr` — it beats
-  faster-whisper on Vietnamese (FLEURS benchmark).
-- **whisper_mlx**: Whisper on the Apple-Silicon **GPU** via MLX — ~0.5s/utterance
+`GET /v1/stt/engines` returns the live list with an `available` flag per engine —
+a heavy or optional engine reports `available: false` (with an install hint)
+rather than failing at call time. 12 names, 11 distinct engines: `whisper_local`
+is an alias of `whisper` and shares its provider instance.
+
+Local:
+
+- **vosk** — local Vosk model. Needs WAV PCM16 mono for the batch endpoint, and is
+  the only engine that decodes incrementally (real partials on `WS /v1/stt/stream`).
+- **whisper** / **whisper_local** — local faster-whisper, defaults to
+  **large-v3-turbo**. CPU on macOS (~3.7s/utterance); CTranslate2 has no GPU there.
+- **whisper_mlx** — Whisper on the Apple-Silicon **GPU** via MLX: ~0.5s/utterance
   (~7× faster than CPU), same accuracy. Mac only; auto-falls back to `whisper`
   elsewhere. Build the model with `scripts/convert_phowhisper_mlx.sh`.
-- whisper_service: Remote OpenAI-compatible Whisper endpoint.
-- eventlab: Remote provider using the same OpenAI-compatible transcription API.
+- **qwen3_asr** — the **default**. Beat faster-whisper on Vietnamese (FLEURS
+  benchmark). MLX on Apple Silicon, `qwen-asr` on an NVIDIA GPU.
+- **qwen3_asr_gguf** — the same model on CPU, as a GGUF subprocess to
+  `qwen3-asr.cpp`. For boxes with no GPU and no Apple Silicon.
+
+Remote:
+
+- **whisper_service** — remote OpenAI-compatible transcription endpoint.
+- **eventlab** — a second remote endpoint on the same OpenAI-compatible API.
+- **qwen3_asr_or** / **whisper_or** — OpenRouter-hosted `qwen3-asr-flash` and
+  `whisper-large-v3-turbo`.
+- **qwencloud** — Alibaba DashScope (`qwen3-asr` and `fun-asr`), both the batch
+  API and the realtime WebSocket.
+- **http_stt** — the one-engine-per-container model service in
+  [apps/model_service](apps/model_service/README.md). Point it at any host running
+  that image.
+
+Endpoints for the remote engines (base url / API key / model) are configured in
+the admin **System** tab (System settings → `remote_stt` group), not `.env`.
+
+## TTS engine options
+
+`GET /v1/tts/engines` returns the live list; `GET /v1/tts/voices?engine=…` returns
+the voices an engine offers and whether it supports reference-audio cloning.
+
+- **omnivoice** — 24kHz, voice cloning via reference audio. Source path set in the
+  admin System tab (System settings → `omnivoice` group).
+- **vieneu** — 48kHz Vietnamese, ~0.4s to first audio.
+- **voxcpm2** — 48kHz, voice cloning and voice-description prompting.
+- **kokoro_vi** — Kokoro-82M fine-tuned for Vietnamese, 24kHz, fixed voicepacks
+  (no cloning).
+- **qwen3_tts_0_6b** / **qwen3_tts_1_7b** — Qwen3-TTS, two sizes.
+- **edge_tts** — Microsoft Edge voices; returns MP3 (`audio/mpeg`), not WAV.
+- **http_tts** — the containerized model service, same as `http_stt` above.
+
+Engines emit different sample rates, so anything re-encoding their output must
+resample (`core/audio.py: wav_file_to_pcm16`).
 
 ## Conversation (voice)
 
@@ -196,15 +282,25 @@ complete WAV or MP3 container per sentence (`?audio_out=wav`, the default), or a
 Opus binary frames (`?audio_out=opus`, for ESP32 / Raspberry Pi) — never a URL, and
 nothing synthesized is persisted to disk. See [docs/api.md](docs/api.md).
 
-Remote engine endpoints (whisper_service, eventlab: base url/API key/model) are
-configured in the admin System tab (System settings > remote_stt group), not .env.
-
-Expected remote API format:
+The API a `whisper_service` / `eventlab` endpoint must expose:
 
 - POST {base_url}/audio/transcriptions
 - multipart file field: file
 - form fields: model, language(optional), response_format=json
 - response json includes text
+
+## Plugins
+
+A **plugin** is a separate service that adds a feature to the console without
+living in this repo — `servers/livehost-api` is the first one. The gateway keeps a
+registry (`/v1/plugins`: name, url, secret, mounts) and the admin console injects a
+nav item per enabled plugin at load time, so adding one needs no change to
+`index.html`.
+
+A browser reaching a plugin does not send its session cookie. It calls
+`POST /v1/plugins/ticket` for a short-lived ticket, hands that to the plugin, and
+the plugin resolves it against `POST /api/auth/introspect` using its registered
+secret. See `docs/superpowers/specs/2026-08-05-gateway-plugin-contract-design.md`.
 
 ## Auth & multi-user
 

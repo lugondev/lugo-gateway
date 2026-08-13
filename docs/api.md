@@ -51,18 +51,27 @@ their budget. Keying on the client address needs `TRUSTED_PROXY_HOPS` set behind
 reverse proxy — see `docs/runbook.md`.
 
 **Requires a logged-in user (any role):** everything under `/ui`, `/static/`,
-`/v1/events`, `/v1/conversation`, `/v1/livehost`, `/v1/profiles`,
+`/v1/events`, `/v1/conversation`, `/v1/profiles`,
 `/v1/mcp`, `/v1/stt`, `/v1/tts`, `/v1/sessions`, `/v1/stats`, `/v1/devices/mine`
-(including the own-device subresources `POST /v1/devices/mine/{device_id}/revoke`
-and `POST /v1/devices/mine/{device_id}/profile`),
+(including the own-device subresources `POST /v1/devices/mine/{device_id}/revoke`,
+`POST /v1/devices/mine/{device_id}/profile` and
+`POST /v1/devices/mine/{device_id}/name`),
 `/v1/devices/pair/claim`, plus the read-only carve-outs `/v1/model_registry/options`,
-`/v1/model_registry/defaults`, and `/v1/usage/me`.
+`/v1/model_registry/defaults`, `/v1/usage/me` and `GET /v1/plugins`, and the
+write carve-out `POST /v1/plugins/ticket`.
 
 **Requires `role == "admin"`:** `/v1/system`, `/v1/models`, `/v1/users`,
 `/v1/devices` (other than the `mine`/`pair/claim` carve-outs above), `/v1/model_registry`
 (other than the `options`/`defaults` carve-outs above), `/v1/providers`, `/v1/usage`
-(other than the `me` carve-out above), `/v1/quotas`, and the documentation/introspection
+(other than the `me` carve-out above), `/v1/quotas`, `/v1/plugins` (other than the
+two carve-outs above), and the documentation/introspection
 surface: `/agents-docs`, `/docs`, `/redoc`, `/openapi.json`.
+
+The user carve-outs sitting inside an admin prefix are matched **exactly and by
+method**, never as a prefix — `GET /v1/model_registry/options` is a user route,
+but `PATCH` on that same string reaches the admin `update_entry(entry_id="options")`
+handler and stays admin-only. Same for `/v1/plugins/ticket`, where only `POST` is
+carved out.
 
 An unauthenticated request gets `401 {"success": false, "error": "login required"}`
 (or a `307` redirect to `/static/login.html` for a browser navigation), and an
@@ -80,6 +89,26 @@ covered by the HTTP middleware above; they resolve identity separately via
 paired-device/fleet token) and, for routes that resume a session by caller-supplied
 id, enforce ownership per-connection (a caller can't attach to another user's
 session by guessing its id).
+
+### Auth endpoints
+
+| route | does |
+|-------|------|
+| `POST /api/auth/signup` | `{username, password}` → creates an account and logs it in (cookie) |
+| `POST /api/auth/login` | `{username, password}` → sets the session cookie |
+| `POST /api/auth/logout` | clears the session cookie |
+| `GET /api/auth/status` | who am I: `{authenticated, username, role, …}`. The console calls this to decide which admin-only nav items to render |
+| `POST /api/auth/token` | `{username, password}` → `{access_token, refresh_token, expires_in}`. Deliberately does **not** set a cookie: this is the bearer path, fully separate from the admin console's |
+| `POST /api/auth/refresh` | `{refresh_token}` → a fresh `{access_token, expires_in}` |
+| `POST /api/auth/introspect` | plugin-only; see [Plugins](#plugins) below |
+
+`POST /api/auth/token` shares one rate limiter with `/login`, on the same key —
+otherwise it would be the same password guess at a different URL.
+
+`/refresh` re-reads the user from the DB every time. That is the **only** chokepoint
+where disabling an account takes effect for a bearer client, because an access token
+itself is verified without a DB lookup. Access-token TTL therefore bounds how long a
+disabled account keeps working.
 
 ---
 
@@ -324,6 +353,47 @@ curl -X POST http://localhost:8000/v1/profiles \
 Then point the device at `?profile=kitchen` instead of setting TTS engine/LLM config
 per-request.
 
+Two more routes on a profile:
+
+| route | does |
+|-------|------|
+| `POST /v1/profiles/{name}/clone` | copy a profile under a new name — how a user derives their own from a shared template |
+| `GET /v1/profiles/{name}/health` | pre-flight the profile's STT and TTS: `{profile, stt: {engine, status, detail}, tts: {…}}` where `status` is `ok` \| `not_ready` (model still loading) \| `unavailable` |
+
+Only `unavailable` blocks a session — `not_ready` just means the model is still
+loading and the first turn will be slow, so don't paint it as an error. The same
+check runs internally when a session opens, and that is where it actually gates a
+connection; this route exists so a client can show a profile as broken *before*
+someone tries to talk to it. Both routes 404 rather than reveal that another
+user's private profile exists.
+
+The admin console consumes this as a badge in the Conversation profile bar
+(`refreshProfileHealth()` in `static/js/profiles.js`). If you build another
+client, note that the probe touches real engines and is therefore slow enough to
+race: guard each `await` with a request ticket, or a probe for the
+previously-selected profile can land last and label the current one — the bad
+direction being a stale "ready" over a profile that cannot start.
+
+### Chat memory — `/v1/profiles/{name}/memories`
+
+Facts the assistant extracted from past conversations. Scoped per **(user, profile)**,
+so two users on one shared template profile never read each other's memories; the
+empty user id is the shared-device bucket.
+
+| route | does |
+|-------|------|
+| `GET /v1/profiles/{name}/memories` | list the caller's memories for this profile |
+| `POST /v1/profiles/{name}/memories` | add one — body `{content}` |
+| `PUT /v1/profiles/{name}/memories/{memory_id}` | edit one — body `{content}` |
+| `DELETE /v1/profiles/{name}/memories/{memory_id}` | delete one |
+| `DELETE /v1/profiles/{name}/memories` | delete all of the caller's memories for this profile → `{deleted: n}` |
+
+Every route 404s when the profile isn't visible to the caller, so probing cannot
+enumerate other users' profile names.
+
+Extraction runs in the background at session teardown, so a fact from the turn you
+just finished may not be listed for a moment.
+
 ### `WS /v1/lugo/stream`
 
 The **Lugo** device protocol — a connect-on-wake WebSocket for ESP32/RPi-class voice
@@ -534,6 +604,13 @@ stream **closes itself** after a terminal `done` event.
 The events mirrored here are the same ones sent over the STT WebSocket —
 `session_started`, `partial`, `final`, `error`, `done` — see the table under
 `WS /v1/stt/stream` above.
+
+> **No first-party consumer.** Nothing subscribes to this today — not the admin
+> console, the web SPA, the RPi client, or the ESP32 firmware; every one of them
+> reads its events straight off its own WebSocket. The route is live and
+> authenticated but unexercised outside its authorization tests, so treat it as
+> unproven rather than supported, and don't build on it without wiring a real
+> consumer first.
 
 ---
 
@@ -766,6 +843,92 @@ Poll this endpoint while a download is active.
 
 > Browse the full Vosk catalog at <https://alphacephei.com/vosk/models>; any name can be
 > downloaded. Whisper sizes: `tiny`, `base`, `small`, `medium`, `large-v3`.
+
+### `POST /v1/models/install`
+
+Runtime `pip install` of an optional engine package — body `{package}`. Two gates,
+both required:
+
+1. **Off by default.** Returns an error unless `ALLOW_RUNTIME_INSTALL=true`. Keep it
+   off on any public deployment.
+2. **Allowlist only.** `package` must be a key in `install_manager.ALLOWLIST`; the
+   value there is the real pip spec. Arbitrary input is never passed to pip.
+
+Validation is synchronous — `403` when runtime install is disabled, `400` when the
+package isn't allowlisted — then the install runs in the background and the call
+returns `{package, state: "installing"}` immediately.
+
+There is no progress endpoint. Poll `GET /v1/stt/engines` or `GET /v1/tts/engines`
+and watch the engine's `available` flag flip; those lists also carry
+`install_package` and `install_enabled`, which is how the console decides whether to
+offer a one-click install at all. `GET /v1/models/recommend` is the usual caller: it
+ranks every engine for this host and hands back the `install_package` for anything
+the hardware could run but that isn't installed.
+
+---
+
+## Console
+
+### `GET /v1/stats/home`
+
+The three counts nothing else exposes, for the console's Home tab. Everything else
+Home renders comes from existing endpoints.
+
+```json
+{ "profiles": {"count": 4},
+  "devices":  {"count": 2, "active_recent": 1},
+  "sessions": {"count": 37} }
+```
+
+Role-scoped: an admin sees global counts, a user sees only their own. `active_recent`
+counts devices seen within 30 minutes — `last_seen_at` is stamped once per WebSocket
+handshake, never on a heartbeat, so this is a **"recently active" proxy, not a live
+online signal**. Don't label it "online" in a UI.
+
+---
+
+## Plugins
+
+A plugin is a separate service that adds a feature to the console without living in
+this repo (`servers/livehost-api` is the first). The gateway stores a registry; the
+console injects a nav item per enabled plugin at load time.
+
+| route | role | does |
+|-------|------|------|
+| `GET /v1/plugins` | user | list visible plugins. `secret` comes back as `***` for non-admins |
+| `POST /v1/plugins` | admin | register one — body `{name, url, secret, enabled, kind, mounts}`. `409` if the name is taken |
+| `GET /v1/plugins/{name}` | admin | fetch one |
+| `PUT /v1/plugins/{name}` | admin | update one |
+| `DELETE /v1/plugins/{name}` | admin | remove one |
+| `POST /v1/plugins/ticket` | user | `{plugin}` → a short-lived ticket for that plugin |
+
+`url` must be `http` or `https`. Each entry in `mounts` is `{path, kind: "ws"|"http",
+public}` — the paths the plugin serves, advertised so a client doesn't hardcode them.
+`kind` on the plugin itself is `feature` or `tools`.
+
+### How a browser reaches a plugin
+
+The browser's session cookie is scoped to the gateway and is never sent to a plugin.
+Instead:
+
+1. Browser calls `POST /v1/plugins/ticket` → a ticket valid for **60 seconds**.
+2. Browser hands the ticket to the plugin.
+3. Plugin calls `POST /api/auth/introspect` with `{plugin, token}` and
+   `Authorization: Bearer <its own secret>` → `{active, user_id, session_token}`.
+
+`introspect` sits under `/api/auth`, which must be reachable without a login, so it
+authenticates the *caller* by the plugin's registered secret — without that, anyone
+who read a ticket out of an access log could resolve it to a `user_id`. An unknown
+plugin, a disabled plugin and a wrong secret all return the same `401`, so an
+unauthenticated caller can't probe which plugins are registered. It is rate-limited
+per `(ip, plugin)`, and only a **wrong secret** is charged: a stale ticket with the
+right secret returns `200 {"active": false}` uncharged, and a correct secret is never
+charged, so a busy plugin can't lock itself out.
+
+`session_token` is minted here because the ticket is deliberately weak (it survives a
+URL) and is not a credential the WebSocket identity resolver accepts. A plugin that
+has just proven it holds a live ticket needs something that *is* accepted to open its
+own upstream conversation socket — and this response never reaches a browser.
 
 ---
 

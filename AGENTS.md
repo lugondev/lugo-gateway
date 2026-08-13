@@ -14,7 +14,10 @@ make test         # pytest          (or: .venv/bin/python -m pytest -q)
 make lint         # ruff            (make fmt to auto-fix)
 ```
 
-- Python venv at `.venv`, Python 3.14. Run from the repo root.
+- Python venv at `.venv`, **Python 3.12**. Run from the repo root. (3.12, not 3.13/3.14:
+  the spacy/ML wheels the STT stack needs don't exist for the newer runtimes yet.
+  `pyproject.toml` only declares `>=3.10`, so nothing stops you creating a venv that
+  then can't install the extras.)
 - Tests are hermetic (`tests/conftest.py`: mock engines on, no external Ollama/models).
   Add fast unit/integration tests; gate Apple-only/opus tests on availability + skip.
 - **Always `make lint` and `make test` before committing.** Commit/push only when asked.
@@ -23,18 +26,45 @@ make lint         # ruff            (make fmt to auto-fix)
 
 ```
 apps/api_gateway/app/
-  main.py                  # FastAPI app + router wiring
-  core/                    # settings.py (pydantic-settings), audio.py, opus.py, errors.py
-  api/routes/              # health, stt, tts, events, conversation, system, ui, agents_docs
+  main.py                  # FastAPI app + middleware order + router wiring + lifespan
+  core/                    # settings.py (pydantic-settings), audio.py, opus.py, errors.py,
+                           # auth_guard.py (default-deny route classifier), actor.py
+  api/routes/              # 24 routers — see the map below
   services/
-    stt/{service.py, base.py, providers/}    # STTService registry + providers
-    tts/{service.py, base.py, providers/}    # TTSService registry + providers
-    conversation/          # endpointer (VAD), responder (LLM / echo)
+    stt/{service.py, base.py, providers/}    # STTService registry + 11 engines
+    tts/{service.py, base.py, providers/}    # TTSService registry + 8 engines
+    conversation/          # session, endpointer (VAD), responder (LLM / echo), tools
+    auth/                  # users, devices, pairing, tokens
+    model_registry/        # unified STT/TTS/LLM entries + boot migrations + seed
+    profiles/, mcp/, memory/, usage/, quota/, providers/, plugins/, history/, db/
     *_models.py            # download/select/delete managers (whisper, llm, tts, vosk)
-  static/                  # index.html + app.js (playground UI)
+  static/                  # index.html + js/ (35 ES modules, admin console)
+apps/model_service/        # one-engine-per-container STT/TTS service (http_stt/http_tts)
 docs/                      # api.md, architecture.md, runbook.md, device-integration.md
-scripts/                   # setup + convert_phowhisper_mlx.sh + rpi_voice_client.py
+docs/superpowers/          # specs/ + plans/ — the design record for most features here
+scripts/                   # setup + convert_phowhisper_mlx.sh + check_system.py
 ```
+
+Route map — group → router file → what it owns:
+
+| Group | Router | Owns |
+|---|---|---|
+| Core voice | `stt`, `tts`, `tts_profiles`, `conversation`, `events` | transcribe, synthesize, the voice loop, SSE |
+| Devices | `lugo`, `devices` | the binary device protocol; pairing + device management |
+| Identity | `auth`, `users` | sessions, bearer tokens, plugin tickets, accounts |
+| Config | `profiles`, `memories`, `mcp`, `system` | per-profile config, chat memory, MCP servers, settings |
+| Models | `model_registry`, `providers`, `recommend` | the unified engine registry, upstream accounts |
+| Money | `usage`, `quotas` | spend attribution and limits |
+| Console | `stats`, `sessions`, `ui`, `health`, `agents_docs` | Home counts, history, static UI |
+| Extension | `plugins` | out-of-process feature plugins + their tickets |
+
+**Adding a router is not just `include_router`.** `core/auth_guard.py` is
+default-deny: an unclassified prefix is refused, and
+`tests/unit/http/test_auth_guard_route_coverage.py` fails until you place the new
+prefix in `_NO_AUTH_PREFIXES`, `_USER_PREFIXES`, `_USER_EXACT` or `_ADMIN_PREFIXES`.
+Read that module's comments before choosing — the exact-vs-prefix and by-method
+rules there exist to stop a user carve-out smuggling a caller into an admin handler
+via path-param shadowing.
 
 ## Core conventions
 

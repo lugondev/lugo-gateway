@@ -11,7 +11,29 @@ the **server** — the device needs only audio I/O, Opus, and a WebSocket.
 └───────────────────────────────────────┘         └─────────────────────────────────────────────────┘
 ```
 
-## 1. Endpoint
+## 0. Which endpoint? Read this first
+
+There are **two** device-capable WebSockets, and the shipping firmware does not use
+the one this guide documents in detail.
+
+| | `WS /v1/lugo/stream` | `WS /v1/conversation/stream` |
+|---|---|---|
+| Used by | **`rpi-assistant` and `esp32-assistant`** — the real devices | the browser playground, the web SPA, `scripts/rpi_voice_client.py` |
+| Config | server-side, from the device's **paired profile** | query params on the URL |
+| Connection | connect-on-wake; stays disconnected while idle, **server** owns the idle-disconnect | always-on for the session |
+| Auth | per-device pairing token (or the `DEVICE_AUTH_TOKEN` stopgap) | cookie / bearer |
+| Profile | **required** — a device not bound to a profile is hard-denied at connect | optional `?profile=` |
+
+**Building new hardware? Use `/v1/lugo/stream`** and read its wire protocol in
+[api.md](api.md#ws-v1lugostream). Check `rpi-assistant/a2a_client/ws_protocol.py` or
+`esp32-assistant/components/ws_client/ws_client.c` for a working implementation.
+
+The rest of this guide covers `/v1/conversation/stream`. Most of it — audio formats,
+Opus framing, turn lifecycle, barge-in — is **shared by both endpoints**, so it is
+still the right background reading; only the connection setup in §1 and the reference
+client in §5 are specific to the older path.
+
+## 1. Endpoint (`/v1/conversation/stream`)
 
 ```
 ws://<server-host>:8000/v1/conversation/stream?<params>
@@ -192,6 +214,10 @@ treats it as barge-in and cancels the reply. To support barge-in (user interrupt
 keep uplinking; a `speech_start` mid-reply yields `aborted` — stop playback on it.
 
 ## 5. Reference client
+
+> This script speaks `/v1/conversation/stream`, the older path — it is a runnable
+> demo of the audio pipeline, **not** the client the shipped Raspberry Pi runs. That
+> one is `rpi-assistant/a2a_client/` and speaks `/v1/lugo/stream` (see §0).
 
 A runnable Python client is in [`scripts/rpi_voice_client.py`](../scripts/rpi_voice_client.py):
 

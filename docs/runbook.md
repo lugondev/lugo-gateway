@@ -4,7 +4,7 @@
 
 ```bash
 cd /Users/lugon/code/speech-text-transformer
-python -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate   # 3.12, see the note below
 pip install -e ".[dev]"
 cp .env.example .env   # then edit as needed
 PYTHONPATH=apps/api_gateway uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -14,6 +14,10 @@ Open the playground at `http://localhost:8000/ui`. Interactive API docs are at `
 
 > Run uvicorn from the repo root: the static mount and `ARTIFACTS_DIR` resolve relative
 > to the working directory.
+
+> **Python 3.12**, not 3.13/3.14. `pyproject.toml` only declares `>=3.10`, so nothing
+> stops you creating a newer venv — it just fails later, when the spacy/ML wheels the
+> STT extras need turn out not to exist for that runtime.
 
 ## Local model setup
 
@@ -69,9 +73,23 @@ upgrade; the current in-memory bus does not require it).
 
 ```bash
 pip install -e ".[dev]"
-pytest          # 25 tests: event bus, segmenter, audio, errors, STT WS, TTS SSE e2e
-ruff check apps tests
+pytest                  # ~2000 tests, ~3.5 min
+ruff check apps tests   # `make lint` runs exactly this scope
 ```
+
+Tests are hermetic (`tests/conftest.py` forces mock engines — no Ollama, no model
+downloads). Apple-only and opus-dependent tests skip when unavailable.
+
+> **Don't run two suites at once.** `tests/concurrency_guard.py` refuses to start
+> while another pytest is alive on the machine, because two concurrent runs of this
+> repo deadlock each other on the shared model/HF caches. It matches on the process
+> command line, so a shell loop that merely *mentions* `python -m pytest` (a wait-for-it
+> script, for instance) will also trip it — kill the stray, or set
+> `PYTEST_ALLOW_CONCURRENT=1` if you are sure.
+
+Submodules carry their own suites and their own virtualenvs; the root `pytest` does
+not reach them. Run each from its own directory (`servers/knowledge-api`,
+`servers/router-memory-services`, …).
 
 ## Configuration
 
