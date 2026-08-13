@@ -213,12 +213,28 @@ The three properties that matter:
   normally carry this, but it is stamped from the gateway credential and we leave
   it unset, so the prefix is what actually carries it.
 
-**Migration.** One idempotent startup migration in the same place as the registry
-ones (`main.py` lifespan), rewriting `memory_items.user_id` from `''`. Existing
-rows cannot be split by flag — nothing recorded which case wrote them — so they
-all become `lugo:anonymous`, the conservative choice: it treats existing data
-as if it were real user speech rather than assuming it was scratch. A deployment
-that knows its `''` rows are purely dev data can delete them instead.
+**Migration.** Three parts, and it is only needed if memgw is actually adopted —
+`''` works fine for the current in-process store.
+
+1. `services/memory/store.py`'s `_uid()` returns `user_id or ""` today. It becomes
+   the sentinel, so new writes land in the right bucket.
+2. `UPDATE memories SET user_id = 'lugo:anonymous' WHERE user_id = ''`.
+3. The same for **`memory_profile_docs`**, which is easy to miss: it is a second
+   table on the same `(user_id, profile_id)` key, holding the compacted
+   per-profile document rather than individual facts. Migrating one and not the
+   other splits a profile's memory in half — the facts move, the summary does
+   not. Note `user_id` is part of that table's **composite primary key**, so this
+   is a PK rewrite, not a plain column update.
+
+Idempotent, in the `main.py` lifespan beside the registry migrations. Existing
+rows cannot be split between the two sentinels — nothing recorded which case wrote
+them — so they all become `lugo:anonymous`, the conservative choice: it treats
+existing data as real user speech rather than assuming it was scratch. A
+deployment that knows its `''` rows are purely dev data can delete them instead.
+
+**The cost of delaying is not row count.** An `UPDATE` is an `UPDATE` whether it
+touches ten rows or a million. What actually accrues is the divergence between the
+two memory implementations — that is the reason to decide, not the data volume.
 
 **A per-device split was considered and rejected**, not deferred. An earlier draft
 of this entry left it open as a future privacy improvement. It is not one: giving
