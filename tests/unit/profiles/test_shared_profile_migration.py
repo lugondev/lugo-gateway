@@ -11,15 +11,18 @@ DESIGN CHANGE: a template with *no* live bound devices used to become shared
 too. Real deployments have working assistants (memory/session history keyed
 by profile NAME) that have no device row bound to them at all -- sharing
 those would have silently made them un-runnable. So a template with no live
-bound devices is now adopted by the first admin (earliest-created user with
-role == "admin") instead, and is left untouched only if no admin exists yet.
-Sharing is now something an admin does deliberately afterwards, not
-something this migration decides on its own.
+bound devices is now adopted by the first ACTIVE admin (earliest-created user
+with role == "admin" and disabled == False -- a disabled admin can't use the
+profile either, so counting one would reproduce the same outage) instead, and
+is left untouched if no active admin exists (whether because none was ever
+created, or because the only admin(s) are disabled). Sharing is now something
+an admin does deliberately afterwards, not something this migration decides
+on its own.
 
 Invariant afterwards: `owner_id is None` no longer always implies `shared is
-True` -- it can also mean "no admin existed yet at migration time", a state
-that is retried (and produces the same no-op) on every later boot until an
-admin is created.
+True` -- it can also mean "no active admin existed yet at migration time", a
+state that is retried (and produces the same no-op) on every later boot
+until an admin exists and is enabled.
 """
 
 import asyncio
@@ -64,6 +67,27 @@ def test_no_admin_exists_leaves_unbound_template_unmigrated(caplog):
     row = profile_store.get(name)
     assert row.owner_id is None, "there's no admin to hand it to yet"
     assert row.shared is False, "must not fall back to sharing it"
+    assert name in caplog.text
+
+
+def test_disabled_admin_does_not_count_leaves_template_unmigrated(caplog):
+    """A disabled admin has had their access withdrawn -- handing them every
+    legacy assistant would make those profiles owned by someone who can't use
+    them, and profile_usable() requires owner_id == caller, so nobody else
+    could run them either. That's the same outage this migration exists to
+    prevent, just reached a different way, so a disabled admin must be
+    treated exactly like "no admin exists"."""
+    admin_id = _make_admin()
+    asyncio.run(user_store.set_fields(admin_id, disabled=True))
+    name = _rand("free")
+    profile_store.upsert(Profile(name=name, owner_id=None))
+
+    with caplog.at_level("INFO"):
+        asyncio.run(migrate_ownerless_profiles())
+
+    row = profile_store.get(name)
+    assert row.owner_id is None, "must not fall back to the disabled admin"
+    assert row.shared is False, "must not fall back to sharing it either"
     assert name in caplog.text
 
 

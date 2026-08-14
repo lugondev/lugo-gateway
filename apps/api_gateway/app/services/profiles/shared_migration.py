@@ -26,11 +26,13 @@ Three outcomes for each legacy row (`owner_id is None and not shared`):
 - two or more distinct live owners -> `shared=True`, `owner_id` stays `None`,
   and a WARNING names the row so an admin can reassign the conflicting
   devices;
-- no live bound devices -> the first admin (earliest-created user with
-  `role == "admin"`) adopts it (`shared=False`); if no admin exists yet (a
-  fresh install with nothing configured), the row is left exactly as it is
-  and re-evaluated on a later boot -- there is deliberately no
-  shared-by-default fallback here.
+- no live bound devices -> the first ACTIVE admin (earliest-created user with
+  `role == "admin"` and `disabled` false -- same condition as
+  `UserStore.count_active_admins()`) adopts it (`shared=False`); if no active
+  admin exists (a fresh install, or every admin account disabled), the row is
+  left exactly as it is and re-evaluated on a later boot -- there is
+  deliberately no shared-by-default fallback here, and no falling back to a
+  disabled admin or to some other non-admin user either.
 
 Idempotent, so it is safe on every boot. The invariant is no longer "owner_id
 is None implies shared" (that stopped holding the moment a no-admin-yet row
@@ -57,13 +59,23 @@ logger = logging.getLogger(__name__)
 
 
 async def _first_admin_id() -> str | None:
-    """Earliest-created user with role == "admin", or None if there isn't one.
+    """Earliest-created ACTIVE admin, or None if there isn't one.
+
+    "Active" matches UserStore.count_active_admins()'s condition (role ==
+    "admin" and not disabled) -- a disabled account has had its access
+    withdrawn, so handing it every legacy assistant would make those
+    profiles owned by someone who cannot use them, and since
+    profile_usable() requires owner_id == caller, nobody else could run them
+    either. That reproduces the exact outage this migration exists to
+    prevent, so a disabled admin must not be treated as available here.
 
     UserStore's only bulk read is `list()` (ordered by username, not
     created_at), so the "earliest" selection happens here rather than
     inventing a new store query.
     """
-    admins = [u for u in await user_store.list() if u["role"] == "admin"]
+    admins = [
+        u for u in await user_store.list() if u["role"] == "admin" and not u["disabled"]
+    ]
     if not admins:
         return None
     return min(admins, key=lambda u: u["created_at"])["id"]

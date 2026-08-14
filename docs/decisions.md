@@ -301,10 +301,16 @@ devices, including `esp32-assistant` (66 sessions of history) plus `dev`,
 session history are keyed by profile *name* rather than by any device link.
 Sharing them would have silently made every one un-runnable, and cloning to
 recover would start empty and orphan that history. So a no-live-devices row
-is instead adopted by the first admin (earliest-created user with
-`role == "admin"`); if no admin exists yet (a fresh install), the row is left
-exactly as it is and re-evaluated on a later boot. The migration now never
-creates a shared row on its own — sharing a profile is a deliberate act an
-admin performs afterwards with the `shared` checkbox.
+is instead adopted by the first *active* admin (earliest-created user with
+`role == "admin"` and not disabled — same condition as
+`UserStore.count_active_admins()`); if no active admin exists (a fresh
+install, or every admin account disabled), the row is left exactly as it is
+and re-evaluated on a later boot. A disabled admin is deliberately excluded:
+handing it the profile would make that profile owned by someone who can't
+use it, and since `profile_usable()` requires `owner_id == caller`, nobody
+else could run it either — the exact outage this migration change exists to
+prevent, reached a different way. The migration now never creates a shared
+row on its own — sharing a profile is a deliberate act an admin performs
+afterwards with the `shared` checkbox.
 
 Spec: `docs/superpowers/specs/2026-08-14-shared-profile-clone-only-design.md`
