@@ -53,7 +53,7 @@ from app.services.mcp.server_store import mcp_server_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
 from app.services.model_registry.store import model_registry_store
-from app.services.profile_visibility import visible_profile_or_none
+from app.services.profile_visibility import usable_profile_or_none
 from app.services.profiles.store import profile_store
 from app.services.stt.model_catalog import resolve_default_stt_model
 from app.services.stt.routing import select_stt_engine
@@ -328,7 +328,9 @@ class ConversationSession:
         # bypass=cfg.identity_unauthenticated preserves the pre-existing
         # dev-mode fallback (identity.unauthenticated -> fully unscoped, see
         # SessionRuntimeConfig.identity_unauthenticated's docstring).
-        profile = visible_profile_or_none(
+        # Shared templates are excluded here as well -- this is the choke
+        # point, so a route that somehow let one through still cannot run on it.
+        profile = usable_profile_or_none(
             profile_store.get(cfg.profile_name) if cfg.profile_name else None,
             cfg.identity_user_id,
             bypass=cfg.identity_unauthenticated,

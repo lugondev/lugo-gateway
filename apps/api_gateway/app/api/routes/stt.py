@@ -140,16 +140,17 @@ async def warm_engine(
     """
     import asyncio
 
-    from app.services.profile_visibility import visible_profile_or_none
+    from app.services.profile_visibility import usable_profile_or_none
     from app.services.profiles.store import profile_store
     from app.services.stt.model_catalog import apply_stt_model
     from app.services.stt.profile import resolve_stt
 
     if not engine:
-        # C2 fix: a profile name the caller can't see must resolve exactly
-        # like an unknown one (fall through to the server default engine),
-        # not leak which STT engine/model another user's private profile pins.
-        prof = visible_profile_or_none(
+        # C2 fix: a profile name the caller can't see -- or a shared template,
+        # which nobody runs on -- must resolve exactly like an unknown one
+        # (fall through to the server default engine), not leak or apply the
+        # engine/model it pins.
+        prof = usable_profile_or_none(
             profile_store.get(profile) if profile else None, current_user_id(request)
         )
         engine, _, resolved_model = resolve_stt(prof)
