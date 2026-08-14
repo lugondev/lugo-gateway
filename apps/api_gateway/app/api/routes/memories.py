@@ -4,7 +4,7 @@ from app.api.routes.profiles import _visible
 from app.core.actor import current_user_id
 from app.schemas.memories import MemoryRequest
 from app.services.memory.store import memory_store
-from app.services.profile_visibility import profile_usable
+from app.services.profile_visibility import is_shared_template, profile_usable
 from app.services.profiles.store import profile_store
 
 router = APIRouter(prefix="/v1/profiles/{name}/memories", tags=["memories"])
@@ -32,12 +32,23 @@ def _require_usable(name: str, request: Request) -> str:
     it (usable(), not merely visible()). A shared template is visible to
     everyone but runnable by nobody -- letting a write land there would
     create rows under a name that profile can never run under (and a clone
-    gets a different name), permanently orphaning them. Same 404-collapsing
-    shape as _require_visible, so this creates no new enumeration oracle: a
-    shared row's existence is already public via GET /v1/profiles, and every
-    other case (missing, someone else's private row) reads identically to
-    before."""
+    gets a different name), permanently orphaning them.
+
+    A shared template gets a NAMED 400, not the generic 404 -- same
+    convention devices.py's _checked_profile_name already uses for the
+    identical situation (binding a device to a template). GET /v1/profiles
+    already lists a shared row to everyone, so naming it leaks nothing, and
+    a caller who can GET .../memories/<name> and see 200 [] a moment before
+    POSTing the same name would find a silent 404 incoherent. Private/missing
+    stays exactly the old 404 with the old message -- that pairing is the
+    no-enumeration-oracle contract, and a shared row's public existence
+    doesn't put it in play."""
     profile = profile_store.get(name)
+    if is_shared_template(profile):
+        raise HTTPException(
+            status_code=400,
+            detail=f"profile '{name}' is a shared template; clone it before using it",
+        )
     user_id = current_user_id(request)
     if profile is None or not profile_usable(profile, user_id):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")

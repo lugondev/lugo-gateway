@@ -133,16 +133,28 @@ def test_writing_to_a_shared_template_is_refused_for_every_role(client, _with_pa
     same asymmetry profile_usable() enforces for running/binding a device.
     Writing here used to succeed and land in the caller's own bucket, but the
     profile that name refers to can never run and a clone gets a different
-    name, so those rows were permanently orphaned. Writes must now be
-    refused with the same 404 shape as a private/missing profile."""
+    name, so those rows were permanently orphaned.
+
+    Refused with a named 400, not the generic 404 -- same convention
+    devices.py's _checked_profile_name already uses for binding a device to
+    a shared template. GET /v1/profiles already lists this row to everyone,
+    so naming it in the rejection leaks nothing, and it would be incoherent
+    for GET .../memories/template-a to return 200 [] while POSTing the same
+    name gets the same 404 as a name that doesn't exist. A private or
+    missing profile is a different story -- see the 404 tests above, which
+    that no-enumeration-oracle contract still requires."""
     _signup_login(client, "root", role="admin")
     client.post("/v1/profiles", json={"name": "template-a", "shared": True})
+    expected_detail = "profile 'template-a' is a shared template; clone it before using it"
 
     # The creating admin gets no special pass -- shared is usable by nobody.
-    assert client.post(_mem_url("template-a"), json={"content": "root-note"}).status_code == 404
+    resp = client.post(_mem_url("template-a"), json={"content": "root-note"})
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == expected_detail
 
     _signup_login(client, "toan", role="user")
     resp = client.post(_mem_url("template-a"), json={"content": "toan-note"})
-    assert resp.status_code == 404
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == expected_detail
     # No memory landed anywhere reachable through this name.
     assert client.get(_mem_url("template-a")).json()["data"] == []
