@@ -81,9 +81,32 @@ def _local_hermetic(monkeypatch, tmp_path):
     fresh = ProfileStore(str(tmp_path / "profiles.json"))
     fresh.upsert(Profile(name="dev", session=SessionConfig(idle_timeout_s=0)))
     monkeypatch.setattr("app.api.routes.lugo.profile_store", fresh)
-    yield
+    yield fresh
     stt_service.providers.pop("stub-lugo-authz-stt", None)
     tts_service.providers.pop("stub-lugo-authz-tts", None)
+
+
+def _own_dev_profile(profiles: ProfileStore, owner_id: str) -> None:
+    """usable_profile_or_none now requires shared or owner match -- the
+    autouse fixture's "dev" profile is ownerless and so no longer usable by
+    anyone (Root Cause A, task-3b-brief.md). Re-bind it to whichever user the
+    calling test just authenticated as, preserving every other field the
+    fixture set (idle_timeout_s=0 in particular -- several tests below depend
+    on it).
+
+    `.invalidate()` first: `fresh` (the autouse fixture's ProfileStore) ran
+    its first write before tests/conftest.py's `_tmp_db` repointed the sync
+    config-store engine at this test's tmp sqlite file, so its in-memory
+    cache is warm against a now-superseded engine. A second `.upsert()`
+    straight onto that stale cache skips `_ensure()` (see
+    app/services/db/config_store.py) and writes through to a table that was
+    never created on the *current* engine -- `.invalidate()` drops the cache
+    so the write re-runs `_ensure()` (and `init_config_tables()`) against
+    whichever engine is live now. Same root cause documented in
+    test_lugo_disabled_cutoff.py's `test_idle_timeout_zero_never_fires_...`
+    comment, worked around there with a dedicated single-write store instead."""
+    profiles.invalidate()
+    profiles.upsert(Profile(name="dev", owner_id=owner_id, session=SessionConfig(idle_timeout_s=0)))
 
 
 @pytest.fixture
@@ -128,13 +151,14 @@ def _wakeup(ws, session_id: str | None = None) -> None:
 # --- Finding A: wakeup's session_id had NO ownership check at all ----------
 
 
-def test_lugo_cannot_resume_another_users_session(client, _with_password):
+def test_lugo_cannot_resume_another_users_session(client, _with_password, _local_hermetic):
     """Reading (or corrupting) another user's history via wakeup.session_id
     is the same IDOR c2ca363 closed on /v1/conversation/stream, left open
     here. bob must get an explicit error (Lugo's own {"type": "error", ...}
     wire shape, NOT conversation.py's {"event": "error", ...}) and the
     connection must close, never a `welcome` for alice's session."""
-    _as_user(client, "user")  # caller is 'bob'
+    bob_id = _as_user(client, "user")
+    _own_dev_profile(_local_hermetic, bob_id)
     alice_sid = "alice-lugo-session-" + uuid.uuid4().hex[:8]
     asyncio.run(session_store.create(alice_sid, user_id="alice-the-victim"))
     asyncio.run(session_store.append_message(alice_sid, 1, "user", "alice's private secret"))
@@ -146,9 +170,10 @@ def test_lugo_cannot_resume_another_users_session(client, _with_password):
         assert msg["message"] == f"Session '{alice_sid}' not found"
 
 
-def test_lugo_can_still_resume_own_session(client, _with_password):
+def test_lugo_can_still_resume_own_session(client, _with_password, _local_hermetic):
     """The fix must not break legitimate same-user resume."""
     bob_id = _as_user(client, "user")
+    _own_dev_profile(_local_hermetic, bob_id)
     bob_sid = "bob-lugo-session-" + uuid.uuid4().hex[:8]
     asyncio.run(session_store.create(bob_sid, user_id=bob_id))
 
@@ -159,8 +184,9 @@ def test_lugo_can_still_resume_own_session(client, _with_password):
         assert msg["session_id"] == bob_sid
 
 
-def test_lugo_admin_can_still_resume_any_session(client, _with_password):
-    _as_user(client, "admin")
+def test_lugo_admin_can_still_resume_any_session(client, _with_password, _local_hermetic):
+    admin_id = _as_user(client, "admin")
+    _own_dev_profile(_local_hermetic, admin_id)
     victim_sid = "victim-lugo-session-" + uuid.uuid4().hex[:8]
     asyncio.run(session_store.create(victim_sid, user_id="someone-else"))
 
@@ -171,10 +197,11 @@ def test_lugo_admin_can_still_resume_any_session(client, _with_password):
         assert msg["session_id"] == victim_sid
 
 
-def test_lugo_unknown_session_id_still_creates_it(client, _with_password):
+def test_lugo_unknown_session_id_still_creates_it(client, _with_password, _local_hermetic):
     """A caller-chosen session_id that doesn't exist yet isn't an IDOR --
     nothing to read. Must keep working exactly as before the fix."""
-    _as_user(client, "user")
+    user_id = _as_user(client, "user")
+    _own_dev_profile(_local_hermetic, user_id)
     fresh_sid = "brand-new-lugo-session-" + uuid.uuid4().hex[:8]
 
     with client.websocket_connect("/v1/lugo/stream") as ws:
@@ -187,7 +214,7 @@ def test_lugo_unknown_session_id_still_creates_it(client, _with_password):
 # --- Finding B: a paired device still got the DB-role admin bypass ---------
 
 
-def test_lugo_device_paired_to_admin_cannot_resume_other_users_session(client, _with_password):
+def test_lugo_device_paired_to_admin_cannot_resume_other_users_session(client, _with_password, _local_hermetic):
     """A device token carries no role, same as a bearer token -- a device
     acts as its owning user, never as an admin, even when that user's DB
     role is "admin". Confirmed pre-fix: this exact setup (ESP32 paired to an
@@ -199,6 +226,7 @@ def test_lugo_device_paired_to_admin_cannot_resume_other_users_session(client, _
     cookie session, not via the device token -- silently testing the wrong
     code path."""
     admin_id = _as_user(client, "admin")
+    _own_dev_profile(_local_hermetic, admin_id)
     _device, raw_token = asyncio.run(
         device_store.create(admin_id, "kitchen-esp32", "serial-001", profile_id="dev")
     )
@@ -214,11 +242,12 @@ def test_lugo_device_paired_to_admin_cannot_resume_other_users_session(client, _
         assert msg["message"] == f"Session '{victim_sid}' not found"
 
 
-def test_lugo_paired_device_can_still_resume_its_owners_session(client, _with_password):
+def test_lugo_paired_device_can_still_resume_its_owners_session(client, _with_password, _local_hermetic):
     """The comparison is by user_id, so a device must still be able to
     resume ITS OWN owner's session -- the fix must not break that. Fresh
     client for the same cookie-vs-device-token reason as the test above."""
     owner_id = _as_user(client, "user")
+    _own_dev_profile(_local_hermetic, owner_id)
     _device, raw_token = asyncio.run(
         device_store.create(owner_id, "living-room-esp32", "serial-002", profile_id="dev")
     )
@@ -234,7 +263,7 @@ def test_lugo_paired_device_can_still_resume_its_owners_session(client, _with_pa
         assert msg["session_id"] == owner_sid
 
 
-def test_a_reconnecting_device_is_told_the_conversation_it_actually_resumed(client, _with_password):
+def test_a_reconnecting_device_is_told_the_conversation_it_actually_resumed(client, _with_password, _local_hermetic):
     """The `welcome` id must be the conversation the server put this connection
     in, not the fresh one it minted before looking.
 
@@ -244,6 +273,7 @@ def test_a_reconnecting_device_is_told_the_conversation_it_actually_resumed(clie
     test: the route was sending its own local variable.
     """
     owner_id = _as_user(client, "resume-owner")
+    _own_dev_profile(_local_hermetic, owner_id)
     _device, raw_token = asyncio.run(
         device_store.create(owner_id, "speaker", "serial-resume", profile_id="dev")
     )

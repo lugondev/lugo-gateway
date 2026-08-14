@@ -85,13 +85,21 @@ def _receive_until(ws, msg_type: str, attempts: int = 20) -> dict:
     raise AssertionError(f"no '{msg_type}' message within {attempts} messages")
 
 
-def test_disabled_owner_cuts_off_paired_device():
+def test_disabled_owner_cuts_off_paired_device(monkeypatch, tmp_path):
     import asyncio
 
     user = asyncio.run(user_store.create("toan", "pw"))
     device, raw_token = asyncio.run(
         device_store.create(user["id"], "ESP32", "AA:BB:CC", profile_id="fast")
     )
+    # profile_visible now requires shared or owner match -- the autouse
+    # fixture's "fast" profile is ownerless and so no longer usable by
+    # anyone. Bind a fresh copy to this test's user, same rationale (and
+    # same dedicated-store technique) as
+    # test_idle_timeout_zero_never_fires_for_identity_owned_connection below.
+    fresh = ProfileStore(str(tmp_path / "profiles_owned.json"))
+    fresh.upsert(Profile(name="fast", owner_id=user["id"], session=SessionConfig(idle_timeout_s=3600)))
+    monkeypatch.setattr("app.api.routes.lugo.profile_store", fresh)
 
     client = TestClient(app)
     with client.websocket_connect(f"/v1/lugo/stream?device_token={raw_token}") as ws:
@@ -126,11 +134,14 @@ def test_idle_timeout_zero_never_fires_for_identity_owned_connection(monkeypatch
     # write on an already-warm store silently skips re-initializing the
     # (possibly-since-reconfigured) backing table. A fresh store's first
     # write always runs _ensure() against whatever engine is currently live.
+    # profile_visible now requires shared or owner match -- bind this
+    # profile to the user created just below rather than leaving it
+    # ownerless (Root Cause A, task-3b-brief.md).
+    user = asyncio.run(user_store.create("toan2", "pw"))
     fresh = ProfileStore(str(tmp_path / "profiles_never_idle.json"))
-    fresh.upsert(Profile(name="fast", session=SessionConfig(idle_timeout_s=0)))
+    fresh.upsert(Profile(name="fast", owner_id=user["id"], session=SessionConfig(idle_timeout_s=0)))
     monkeypatch.setattr(lugo_module, "profile_store", fresh)
 
-    user = asyncio.run(user_store.create("toan2", "pw"))
     device, raw_token = asyncio.run(
         device_store.create(user["id"], "ESP32", "AA:BB:DD", profile_id="fast")
     )
