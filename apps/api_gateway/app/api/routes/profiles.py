@@ -20,6 +20,21 @@ def _mask(profile: Profile) -> dict:
     data = profile.model_dump()
     if data.get("llm", {}).get("api_key"):
         data["llm"]["api_key"] = "***"
+    # F1: list_profiles hands shared rows to EVERY caller (that's the point of
+    # `shared`), so an mcp_servers[].headers value -- typically a bearer token
+    # -- would otherwise go out unmasked to anyone who can list templates. Keys
+    # are left alone: the editor uses them to show which headers exist. Masked
+    # unconditionally, same as llm.api_key above -- see that field's own
+    # preserve-on-blank handling in update_profile for why this does not need
+    # an analogous write-side special case here (non-admin PUTs already
+    # preserve the stored mcp_servers wholesale; admin PUTs send a fresh list
+    # built from the global MCP registry's name+url, which never carries
+    # headers back in the first place).
+    for server in data.get("mcp_servers", []):
+        headers = server.get("headers") or {}
+        for key, value in headers.items():
+            if value:
+                headers[key] = "***"
     return data
 
 
@@ -107,11 +122,21 @@ def _visible(profile: Profile, user_id: str | None) -> bool:
 
 
 def _can_write(profile: Profile, user_id: str | None, role: str) -> bool:
-    """Templates (owner_id is None) may only be modified/deleted by an admin;
-    a user's own row may only be modified/deleted by that user. Distinct from
-    _visible(), which governs read access -- everyone can SEE a template, but
-    only an admin can WRITE to one."""
-    if profile.owner_id is None:
+    """A shared row (clone-only template) may only be modified/deleted by an
+    admin -- ANY admin, not just the one who created it; a non-shared row may
+    only be modified/deleted by its owner. Distinct from _visible(), which
+    governs read access -- everyone can SEE a template, but only an admin can
+    WRITE to one.
+
+    Keyed on `profile.shared`, not `profile.owner_id is None`: ownership and
+    sharing are independent now (owner_id records who created the row, shared
+    admins included), so an admin who creates a shared template and is later
+    demoted to `user` must not keep write access to it by owner match --
+    that's a world-clonable template's llm.base_url/api_key up for grabs.
+    `owner_id is None` is folded into the same branch: it means "nobody owns
+    this row" (dev mode, pre-migration edge cases), which is exactly as
+    templated as `shared` for write purposes."""
+    if profile.shared or profile.owner_id is None:
         return role == "admin"
     return profile.owner_id == user_id
 
@@ -231,7 +256,15 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
         # admin reassign them first. delete_profile has the same concern and
         # solves it by sweeping (clear_profile); sharing must not silently
         # unassign someone's speaker, so it refuses instead.
-        bound = [d["id"] for d in await device_store.list_all() if d["profile_id"] == name]
+        # Revoked devices are excluded: device_store.set_profile refuses a
+        # revoked device, so "reassign them before sharing it" would be
+        # impossible to obey if a revoked device counted here. Matches
+        # shared_migration.py's identical exclusion for the same reason.
+        bound = [
+            d["id"]
+            for d in await device_store.list_all()
+            if not d.get("revoked") and d["profile_id"] == name
+        ]
         if bound:
             raise HTTPException(
                 status_code=409,

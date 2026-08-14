@@ -365,7 +365,10 @@ by anyone, but nothing runs on it: naming it in `?profile=` on the WS or chat
 routes falls back to server defaults with a warning, `/stt/warm` ignores it,
 and binding a device to it returns 400. Only an admin may set, clear, or
 otherwise write a shared profile. Sharing a profile that still has devices
-bound to it returns 409 — reassign them first.
+bound to it returns 409 — reassign them first. Sharing a profile exposes its
+`system_prompt`, `llm.base_url`, and MCP server URLs to every user — only
+`llm.api_key` and `mcp_servers[].headers` values are masked in the API
+response; pick what you share accordingly.
 
 Cloning a shared profile yields a normal, owned, non-shared profile.
 
