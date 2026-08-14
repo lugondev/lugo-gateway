@@ -124,6 +124,24 @@ def test_template_with_two_device_owners_becomes_shared_and_warns(caplog):
     assert "device-b" in caplog.text and serial_b in caplog.text
 
 
+def test_already_shared_ownerless_rows_are_left_alone():
+    """The legacy filter is `owner_id is None and not shared` -- a row that
+    is already shared (e.g. an admin published it deliberately, or a prior
+    boot's multi-owner branch set it) must not be re-touched, even if a
+    device is (still) bound to it: it doesn't match "legacy owner_id is
+    None" any more, it's a template on purpose, and this migration must not
+    silently claim it back for a device owner."""
+    name = _rand("already-shared")
+    profile_store.upsert(Profile(name=name, owner_id=None, shared=True))
+    asyncio.run(device_store.create("alice", "speaker", _rand("serial"), profile_id=name))
+
+    asyncio.run(migrate_ownerless_profiles())
+
+    row = profile_store.get(name)
+    assert row.owner_id is None
+    assert row.shared is True
+
+
 def test_owned_rows_are_left_alone():
     name = _rand("owned")
     profile_store.upsert(Profile(name=name, owner_id="carol"))

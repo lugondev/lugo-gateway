@@ -81,6 +81,20 @@ def test_non_admin_cannot_create_a_shared_profile(client, _with_password):
     assert profile_store.get(name).shared is False
 
 
+def test_non_admin_put_as_create_ignores_shared(client, _with_password):
+    """PUT is upsert-or-create (see test_update_uses_path_name in
+    test_profiles_routes.py); a non-admin hitting a name that doesn't exist
+    yet must not be able to publish a template just by using the create-via-
+    PUT path instead of POST -- same "the field just doesn't take" contract
+    create_profile enforces on its own create path."""
+    _as_user(client, "user")
+    name = _rand("usr")
+    assert not profile_store.exists(name)
+    resp = client.put(f"/v1/profiles/{name}", json={"name": name, "shared": True})
+    assert resp.status_code == 200, resp.text
+    assert profile_store.get(name).shared is False
+
+
 def test_non_admin_cannot_flip_shared_on_their_own_profile(client, _with_password):
     _as_user(client, "user")
     name = _rand("usr")
@@ -169,6 +183,23 @@ def test_unsharing_is_never_blocked_by_devices(client, _with_password):
     assert client.post("/v1/profiles", json={"name": name, "shared": True}).status_code == 200
     assert client.put(f"/v1/profiles/{name}", json={"name": name, "shared": False}).status_code == 200
     assert profile_store.get(name).shared is False
+
+
+def test_admin_can_reassert_shared_on_an_already_shared_profile_with_bound_device(client, _with_password):
+    """The 409 guard (`profile.shared and existing is not None and not
+    existing.shared`) only fires on the transition INTO shared -- a row that
+    is already shared has nothing new put at risk by a PUT that repeats
+    shared=True, even if a device row still points at it. This pins the
+    guard's `not existing.shared` term: deleting that term would make this
+    409 too."""
+    user_id = _as_user(client, "admin")
+    name = _rand("tpl")
+    assert client.post("/v1/profiles", json={"name": name, "shared": True}).status_code == 200
+    asyncio.run(device_store.create(user_id, "speaker", _rand("serial"), profile_id=name))
+
+    resp = client.put(f"/v1/profiles/{name}", json={"name": name, "shared": True})
+    assert resp.status_code == 200, resp.text
+    assert profile_store.get(name).shared is True
 
 
 def test_second_admin_can_write_another_admins_shared_template(client, _with_password):

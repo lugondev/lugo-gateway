@@ -108,13 +108,12 @@ async def migrate_ownerless_profiles() -> None:
     for profile in legacy:
         owners = owners_by_profile.get(profile.name, set())
         if len(owners) == 1:
-            profile.owner_id = next(iter(owners))
-            profile.shared = False
+            updated = profile.model_copy(update={"owner_id": next(iter(owners)), "shared": False})
             logger.info(
                 "profile '%s': ownerless template adopted by its device owner", profile.name
             )
         elif len(owners) >= 2:
-            profile.shared = True
+            updated = profile.model_copy(update={"shared": True})
             bound = devices_by_profile.get(profile.name, [])
             # The operator reading this during the riskiest part of a deploy
             # needs to find these devices without a second lookup -- name/
@@ -151,12 +150,11 @@ async def migrate_ownerless_profiles() -> None:
                     profile.name,
                 )
                 continue
-            profile.owner_id = admin_id
-            profile.shared = False
+            updated = profile.model_copy(update={"owner_id": admin_id, "shared": False})
             logger.info(
                 "profile '%s': no live device is bound to it; adopted by the first "
                 "admin (%s)",
                 profile.name,
                 admin_id,
             )
-        profile_store.upsert(profile)
+        profile_store.upsert(updated)
