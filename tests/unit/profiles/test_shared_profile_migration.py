@@ -2,17 +2,31 @@
 
 The rule exists to keep deployed fleets running: a template that a device is
 already bound to becomes that device owner's private profile, so the speaker
-keeps working across the upgrade. Only templates nobody is running become
-shared.
+keeps working across the upgrade. A template with two or more distinct live
+device owners becomes shared (clone-only) instead, since it can't correctly
+belong to just one of them, and an admin is warned to reassign the
+conflicting devices.
 
-Invariant afterwards, and the reason this is idempotent: `owner_id is None`
-implies `shared is True`.
+DESIGN CHANGE: a template with *no* live bound devices used to become shared
+too. Real deployments have working assistants (memory/session history keyed
+by profile NAME) that have no device row bound to them at all -- sharing
+those would have silently made them un-runnable. So a template with no live
+bound devices is now adopted by the first admin (earliest-created user with
+role == "admin") instead, and is left untouched only if no admin exists yet.
+Sharing is now something an admin does deliberately afterwards, not
+something this migration decides on its own.
+
+Invariant afterwards: `owner_id is None` no longer always implies `shared is
+True` -- it can also mean "no admin existed yet at migration time", a state
+that is retried (and produces the same no-op) on every later boot until an
+admin is created.
 """
 
 import asyncio
 import uuid
 
 from app.services.auth.devices import device_store
+from app.services.auth.users import user_store
 from app.services.profiles.models import Profile
 from app.services.profiles.shared_migration import migrate_ownerless_profiles
 from app.services.profiles.store import profile_store
@@ -22,13 +36,35 @@ def _rand(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:10]}"
 
 
-def test_unbound_template_becomes_shared():
+def _make_admin() -> str:
+    """Create an admin user and return its id."""
+    admin = asyncio.run(user_store.create(_rand("admin"), "password123", role="admin"))
+    return admin["id"]
+
+
+def test_unbound_template_adopted_by_first_admin():
+    admin_id = _make_admin()
     name = _rand("free")
     profile_store.upsert(Profile(name=name, owner_id=None))
+
     asyncio.run(migrate_ownerless_profiles())
+
     row = profile_store.get(name)
-    assert row.shared is True
-    assert row.owner_id is None
+    assert row.owner_id == admin_id, "no fleet depends on it, so an admin adopts it"
+    assert row.shared is False
+
+
+def test_no_admin_exists_leaves_unbound_template_unmigrated(caplog):
+    name = _rand("free")
+    profile_store.upsert(Profile(name=name, owner_id=None))
+
+    with caplog.at_level("INFO"):
+        asyncio.run(migrate_ownerless_profiles())
+
+    row = profile_store.get(name)
+    assert row.owner_id is None, "there's no admin to hand it to yet"
+    assert row.shared is False, "must not fall back to sharing it"
+    assert name in caplog.text
 
 
 def test_template_with_one_device_owner_goes_to_that_owner():
@@ -90,7 +126,15 @@ def test_is_idempotent():
 
 def test_a_revoked_devices_owner_does_not_claim_the_template():
     """A revoked device is not a running fleet member; handing it the profile
-    would give a stranger someone else's llm.api_key."""
+    would give a stranger someone else's llm.api_key.
+
+    An admin is present here so the assertion is unambiguous: if the revoked
+    device were (wrongly) still counted, erin would be the sole live owner
+    and would adopt the profile via the one-owner branch instead of the
+    admin adopting it via the no-live-devices branch -- so this fails loudly
+    if the revoked-device exclusion is ever removed.
+    """
+    admin_id = _make_admin()
     name = _rand("revoked")
     profile_store.upsert(Profile(name=name, owner_id=None))
     asyncio.run(device_store.create("erin", "speaker", _rand("serial"), profile_id=name))
@@ -100,5 +144,6 @@ def test_a_revoked_devices_owner_does_not_claim_the_template():
     asyncio.run(migrate_ownerless_profiles())
 
     row = profile_store.get(name)
-    assert row.shared is True
-    assert row.owner_id is None
+    assert row.owner_id == admin_id, "erin's revoked device must not win the claim"
+    assert row.owner_id != "erin"
+    assert row.shared is False
