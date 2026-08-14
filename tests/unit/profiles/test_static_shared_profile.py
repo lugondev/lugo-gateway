@@ -127,3 +127,30 @@ def test_all_devices_filter_still_lists_every_name(devices_js: str) -> None:
     body = devices_js[devices_js.index("export function renderAllDeviceFilterProfileOptions"):]
     body = body[: body.index("export async function loadMyDevices")]
     assert ".shared" not in body
+
+
+def test_template_edit_btn_exists(index_html: str) -> None:
+    """F2: without this, a shared row's edit panel (and the un-share checkbox
+    in it) is reachable only via direct API calls -- #profile-select filters
+    shared rows out and #profile-template-select offers Clone only."""
+    assert 'id="profile-template-edit-btn"' in index_html
+
+
+def test_template_edit_btn_is_wired_and_admin_gated(profiles_js: str) -> None:
+    # Click handler opens the edit panel on the templates picker's selection,
+    # same shape as the sibling profile-template-clone-btn handler.
+    assert 'el("profile-template-edit-btn")' in profiles_js
+    click_body = profiles_js[profiles_js.rindex('el("profile-template-edit-btn").addEventListener("click"'):]
+    click_body = click_body[: click_body.index(");\n}")]
+    assert 'el("profile-template-select").value' in click_body
+    assert 'openProfilePanel("edit", name)' in click_body
+
+    # F4 makes write access to a shared row admin-only server-side; the button
+    # must be hidden for non-admins rather than offer a control that 404s.
+    # Pin the toggle to inside loadProfiles's own body, the same way
+    # test_templates_picker_is_wired pins renderProfileTemplateSelect()'s call.
+    load_body = profiles_js[profiles_js.index("export async function loadProfiles"):]
+    load_body = load_body[: load_body.index("export function renderProfileSelect")]
+    assert 'el("profile-template-edit-btn").classList.toggle("hidden", !isAdmin);' in load_body, (
+        "profile-template-edit-btn must be hidden for non-admins inside loadProfiles()"
+    )

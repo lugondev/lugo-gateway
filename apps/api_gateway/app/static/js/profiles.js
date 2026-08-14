@@ -95,6 +95,18 @@ export async function loadProfiles() {
     renderProfileTemplateSelect();
     renderDevicePairProfileSelect();
     renderAllDeviceFilterProfileOptions();
+    // F2: the only route to a shared template's edit panel (and the un-share
+    // checkbox in it) besides direct API calls. #profile-select filters shared
+    // rows out and #profile-template-select offers Clone only, so without this
+    // a freshly-migrated shared row is unreachable to un-share from the
+    // console. Write access is admin-only (_can_write in profiles.py), so hide
+    // the button entirely for everyone else rather than offer a control that
+    // 404s.
+    if (el("profile-template-edit-btn")) {
+      const status = await fetchAuthStatus();
+      const isAdmin = !!(status && status.authenticated && status.role === "admin");
+      el("profile-template-edit-btn").classList.toggle("hidden", !isAdmin);
+    }
   } catch {
     /* ignore */
   }
@@ -564,6 +576,13 @@ if (el("profile-template-clone-btn")) {
     const name = el("profile-template-select").value;
     if (!name) { alert("Pick a shared template to clone."); return; }
     cloneProfile(name);
+  });
+}
+if (el("profile-template-edit-btn")) {
+  el("profile-template-edit-btn").addEventListener("click", () => {
+    const name = el("profile-template-select").value;
+    if (!name) { alert("Pick a shared template to edit."); return; }
+    openProfilePanel("edit", name);
   });
 }
 if (el("profile-select")) {
