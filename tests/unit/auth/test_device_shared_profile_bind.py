@@ -64,14 +64,20 @@ def test_reassign_to_a_shared_profile_is_rejected(client, _with_password):
 
     resp = client.post(f"/v1/devices/mine/{device_id}/profile", json={"profile_id": tpl})
     assert resp.status_code == 400, resp.text
-    assert "shared template" in resp.json()["detail"]
-    assert tpl in resp.json()["detail"]
+    assert (
+        resp.json()["detail"]
+        == f"profile '{tpl}' is a shared template; clone it before using it"
+    )
     assert asyncio.run(device_store.get_by_id(device_id)).profile_id == ""
 
 
 def test_reassign_to_someone_elses_private_profile_still_404s(client, _with_password):
-    """Unchanged: the private-profile path must stay a 404 with no name-shaped
-    information beyond the one the caller already typed."""
+    """Unchanged: the private-profile path must stay a 404, and -- the actual
+    invariant, not just its symptom -- indistinguishable from naming a
+    profile that was never created at all: same status, same detail text
+    once the caller-known name is normalized out of each. Same normalization
+    shape as tests/unit/profiles/test_profile_idor.py's
+    test_ws_private_profile_falls_back_like_nonexistent."""
     alice = TestClient(app)
     _as_user(alice, "user")
     private = _rand("priv")
@@ -81,9 +87,21 @@ def test_reassign_to_someone_elses_private_profile_still_404s(client, _with_pass
     asyncio.run(device_store.create(user_id, "speaker", _rand("serial"), profile_id=""))
     device_id = asyncio.run(device_store.list_for_user(user_id))[0]["id"]
 
-    resp = client.post(f"/v1/devices/mine/{device_id}/profile", json={"profile_id": private})
-    assert resp.status_code == 404
-    assert "shared" not in resp.json()["detail"]
+    resp_victim = client.post(
+        f"/v1/devices/mine/{device_id}/profile", json={"profile_id": private}
+    )
+    nonexistent = _rand("ghost")
+    resp_ghost = client.post(
+        f"/v1/devices/mine/{device_id}/profile", json={"profile_id": nonexistent}
+    )
+
+    assert resp_victim.status_code == resp_ghost.status_code == 404
+    detail_victim = resp_victim.json()["detail"]
+    detail_ghost = resp_ghost.json()["detail"]
+    assert "shared" not in detail_victim
+    assert detail_victim.replace(private, "<NAME>") == detail_ghost.replace(
+        nonexistent, "<NAME>"
+    )
 
 
 def test_unassigning_still_works(client, _with_password):
