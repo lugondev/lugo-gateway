@@ -163,7 +163,11 @@ export function renderProfileTemplateSelect() {
     opt.textContent = name;
     sel.appendChild(opt);
   });
-  if (profileData[prev]) sel.value = prev;
+  // prev may no longer be shared (or may have been deleted) -- either way
+  // this select has no <option> for it, so restoring sel.value would just
+  // silently reset the picker to its first option. Only restore when prev is
+  // still a shared row, matching what this select actually lists.
+  if (profileData[prev]?.shared) sel.value = prev;
 }
 
 export function renderProfileTtsSelect() {
