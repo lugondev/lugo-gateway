@@ -797,6 +797,35 @@ Add to `_resolve`'s docstring, after the existing C2 paragraph:
     (2026-08-14 design).
 ```
 
+Then fix the rejection message in the WS handler's `if profile_name and not
+profile:` block (around line 197). Its `else:` arm — a name the CLIENT
+declared, not one the server bound — currently closes with `profile '<name>'
+not found`, which is now false for a shared template the caller can see listed
+by `GET /v1/profiles`. Only the message changes:
+
+```python
+        else:
+            # Client-declared name this route cannot honor. Closing (rather than
+            # the gentle from_binding fallback above) is this site's existing
+            # convention for that case and is left alone -- but a shared template
+            # is not "not found": the caller can see it listed by GET /v1/profiles,
+            # so say what is actually wrong. Any OTHER unresolvable name keeps the
+            # old wording, which must stay indistinguishable between "missing" and
+            # "someone else's" (profile_visibility.py's no-oracle contract).
+            await websocket.send_json({
+                "type": "error",
+                "message": (
+                    f"profile '{profile_name}' is a shared template; clone it before using it"
+                    if is_shared_template(profile_store.get(profile_name))
+                    else f"profile '{profile_name}' not found"
+                ),
+            })
+            await websocket.close()
+            return
+```
+
+Add `is_shared_template` to lugo.py's `profile_visibility` import.
+
 - [ ] **Step 5: Switch stt.py**
 
 At line 143 change the local import to `usable_profile_or_none`, and at line ~152:
