@@ -114,7 +114,7 @@ def test_memories_of_nonexistent_profile_is_404(client, _with_password):
 
 def test_user_can_manage_own_memories_on_template(client, _with_password):
     _signup_login(client, "root", role="admin")
-    client.post("/v1/profiles", json={"name": "template-a"})
+    client.post("/v1/profiles", json={"name": "template-a", "shared": True})
 
     _signup_login(client, "toan", role="user")
     assert client.get(_mem_url("template-a")).status_code == 200
@@ -124,7 +124,7 @@ def test_user_can_manage_own_memories_on_template(client, _with_password):
 
 def test_template_memories_are_isolated_per_user(client, _with_password):
     _signup_login(client, "root", role="admin")
-    client.post("/v1/profiles", json={"name": "template-a"})
+    client.post("/v1/profiles", json={"name": "template-a", "shared": True})
 
     _signup_login(client, "a", role="user")
     client.post(_mem_url("template-a"), json={"content": "a-note"})

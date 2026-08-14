@@ -271,3 +271,46 @@ Status when this was written: `knowledge-api` bumped (clean tree, already pushed
 `esp32-assistant` left stale (37 ahead, 9 unpushed, plus uncommitted work in the
 tree — an `audio_selftest` component whose host test does pass, so it looks close to
 done rather than broken; it needs whoever owns it to call it finished).
+
+---
+
+## 2026-08-14 — Shared profiles are clone-only
+
+`owner_id is None` used to mean both "an admin made it" and "everyone may use
+it". Those are now separate: `owner_id` records who made a profile (admins
+included), and `Profile.shared` marks a clone-only template.
+
+A shared profile is readable and clonable by everyone and runnable by no one —
+including the admin who owns it. That asymmetry is deliberate: a template is a
+starting point to copy, not a live configuration that unrelated users and
+devices run against, each inheriting an `llm.api_key` and `mcp_servers` they
+did not configure.
+
+Legacy ownerless rows are converted on boot
+(`services/profiles/shared_migration.py`). A template exactly one live device
+owner was running becomes that owner's private profile so deployed fleets keep
+working; a template with two or more distinct live owners becomes shared and
+logs a WARNING naming the row so an admin can reassign the conflicting
+devices.
+
+A template with *no* live bound devices does **not** become shared — that was
+the first version of this migration, and it was wrong. Inventorying the real
+`data/app.db` found seven ownerless profiles, all with zero live bound
+devices, including `esp32-assistant` (66 sessions of history) plus `dev`,
+`fast`, and `host` — working assistants, not templates, whose memory and
+session history are keyed by profile *name* rather than by any device link.
+Sharing them would have silently made every one un-runnable, and cloning to
+recover would start empty and orphan that history. So a no-live-devices row
+is instead adopted by the first *active* admin (earliest-created user with
+`role == "admin"` and not disabled — same condition as
+`UserStore.count_active_admins()`); if no active admin exists (a fresh
+install, or every admin account disabled), the row is left exactly as it is
+and re-evaluated on a later boot. A disabled admin is deliberately excluded:
+handing it the profile would make that profile owned by someone who can't
+use it, and since `profile_usable()` requires `owner_id == caller`, nobody
+else could run it either — the exact outage this migration change exists to
+prevent, reached a different way. The migration now never creates a shared
+row on its own — sharing a profile is a deliberate act an admin performs
+afterwards with the `shared` checkbox.
+
+Spec: `docs/superpowers/specs/2026-08-14-shared-profile-clone-only-design.md`

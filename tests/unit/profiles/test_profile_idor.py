@@ -179,20 +179,6 @@ def test_chat_private_profile_never_reaches_responder_construction(client, _with
     assert captured[1] == kwargs
 
 
-def test_chat_template_profile_visible_to_everyone(client, _with_password):
-    """owner_id is None -- visible to everyone, must still work post-fix."""
-    template_name = _rand("shared-template")
-    profile_store.upsert(Profile(name=template_name, owner_id=None))
-
-    _as_user(client, "user")
-    resp = client.post(
-        f"/v1/conversation/chat?profile={template_name}",
-        json={"messages": [{"role": "user", "content": "hi"}]},
-    )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["data"]["profile"] == template_name
-
-
 def test_chat_owner_can_still_use_own_profile(client, _with_password):
     bob_id = _as_user(client, "user")
     own_name = _rand("bobs-own-profile")
@@ -283,22 +269,6 @@ def test_ws_private_profile_tools_never_leak(client, _with_password, monkeypatch
 
     assert started["event"] == "session_started"
     assert "alice-private-tool" not in started["active_tools"]
-
-
-def test_ws_template_profile_visible_to_everyone(client, _with_password):
-    template_name = _rand("shared-template")
-    profile_store.upsert(Profile(
-        name=template_name, owner_id=None, stt=SttConfig(engine="whisper"),
-    ))
-
-    _as_user(client, "user")
-    with client.websocket_connect(
-        f"/v1/conversation/stream?output=text&profile={template_name}"
-    ) as ws:
-        started = ws.receive_json()
-
-    assert started["event"] == "session_started"
-    assert started["stt_engine"] == "whisper"
 
 
 def test_ws_owner_can_still_use_own_profile(client, _with_password):
@@ -409,18 +379,6 @@ def test_lugo_private_profile_indistinguishable_from_nonexistent(client, _with_p
     assert msg_victim["message"].replace(victim_name, "<NAME>") == msg_ghost["message"].replace(
         nonexistent_name, "<NAME>"
     )
-
-
-def test_lugo_template_profile_visible_to_everyone(client, _with_password):
-    template_name = _rand("shared-template")
-    profile_store.upsert(Profile(name=template_name, owner_id=None))
-
-    _as_user(client, "user")
-    with client.websocket_connect("/v1/lugo/stream") as ws:
-        _wakeup(ws, template_name)
-        msg = ws.receive_json()
-
-    assert msg["type"] == "welcome"
 
 
 def test_lugo_owner_can_still_use_own_profile(client, _with_password):

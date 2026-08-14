@@ -10,6 +10,9 @@ class ProfileRequest(BaseModel):
     llm: LlmConfig = LlmConfig()
     system_prompt: str = ""
     voice_optimized: bool = False
+    # Admin-only; silently forced to False for anyone else (see
+    # api/routes/profiles.py), the same way mcp_servers is.
+    shared: bool = False
     stt: SttConfig = SttConfig()
     tts: TtsConfig = TtsConfig()
     mcp_servers: list[McpServer] = []

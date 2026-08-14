@@ -46,6 +46,11 @@ class SessionConfig(BaseModel):
 class Profile(BaseModel):
     name: str
     owner_id: str | None = None
+    # A shared profile is a CLONE-ONLY template: readable by everyone, runnable
+    # by no one (not even its owner), bindable to no device, writable only by an
+    # admin. See services/profile_visibility.py for the three predicates and
+    # docs/superpowers/specs/2026-08-14-shared-profile-clone-only-design.md.
+    shared: bool = False
     nickname: str = ""
     llm: LlmConfig = LlmConfig()
     system_prompt: str = ""

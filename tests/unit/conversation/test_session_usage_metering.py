@@ -82,8 +82,12 @@ async def test_audio_turn_records_stt_llm_tts_usage(monkeypatch, tmp_path):
     # HTTP call), but engine/model are still set so the LLM usage row has real
     # attribution values (record_usage reads profile.llm.engine/.model, not
     # the responder).
+    # usable_profile_or_none now requires shared or owner match -- bind the
+    # profile to the same identity_user_id _cfg() authenticates as ("user-42"),
+    # matching Root Cause A of task-3b-brief.md.
     fresh_profiles.upsert(Profile(
         name="metered-profile",
+        owner_id="user-42",
         llm=LlmConfig(base_url="", api_key="", model="echo-model", engine="echo-engine"),
     ))
 
@@ -324,8 +328,12 @@ async def test_profile_pinned_model_used_when_responder_has_no_model_attr(
     tts_service.providers["stub-attr2-tts"] = _StubTTS()
     fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
     monkeypatch.setattr("app.services.conversation.session.profile_store", fresh_profiles)
+    # usable_profile_or_none now requires shared or owner match -- bind the
+    # profile to the same identity_user_id _cfg() authenticates as ("user-42"),
+    # matching Root Cause A of task-3b-brief.md.
     fresh_profiles.upsert(Profile(
         name="attr2-profile",
+        owner_id="user-42",
         llm=LlmConfig(model="pinned-model", engine="pinned-engine"),
     ))
     try:

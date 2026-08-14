@@ -43,7 +43,11 @@ from app.services.history.store import session_store
 from app.services.memory.extractor import memory_extractor
 from app.services.memory.retriever import inject_memories, memory_retriever
 from app.services.auth.device_profile import resolve_bound_profile
-from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
+from app.services.profile_visibility import (
+    is_shared_template,
+    usable_profile_or_none,
+    visible_tts_profile_or_none,
+)
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
 from app.services.stt.service import stt_service
@@ -165,11 +169,12 @@ async def chat(
             if scope is not None and existing_sess.get("user_id") != scope:
                 raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found")
 
-    # C2 fix: visible_profile_or_none() collapses "doesn't exist" and "exists
+    # C2 fix: usable_profile_or_none() collapses "doesn't exist" and "exists
     # but belongs to someone else" to the same None -- caller must never run
     # on another user's llm.api_key/system_prompt/mcp_servers (see
-    # docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md).
-    active_profile = visible_profile_or_none(profile_store.get(profile) if profile else None, caller_id)
+    # docs/superpowers/specs/2026-07-29-adversarial-audit-findings.md). It also
+    # excludes shared templates, which nobody runs on (2026-08-14 design).
+    active_profile = usable_profile_or_none(profile_store.get(profile) if profile else None, caller_id)
     # Same precedence the WS paths apply -- services/conversation/llm_config.py.
     llm_base_url, llm_api_key, llm_model, system_prompt = await resolve_llm_config(active_profile)
 
@@ -351,15 +356,20 @@ async def conversation_stream(websocket: WebSocket) -> None:
     # pre-existing dev-mode fallback (settings.auth_enabled False -- see
     # WsIdentity.unauthenticated's docstring in auth_guard.py and
     # ws_session_owner_denied, which applies the identical bypass).
-    profile = visible_profile_or_none(
-        profile_store.get(profile_name) if profile_name else None,
+    requested_row = profile_store.get(profile_name) if profile_name else None
+    profile = usable_profile_or_none(
+        requested_row,
         identity.user_id,
         bypass=identity.unauthenticated,
     )
     if profile_name and not profile:
         await websocket.send_json({
             "event": "warning",
-            "message": f"profile '{profile_name}' not found, using defaults",
+            "message": (
+                f"profile '{profile_name}' is a shared template; clone it before using it"
+                if is_shared_template(requested_row)
+                else f"profile '{profile_name}' not found, using defaults"
+            ),
         })
 
     # Cross-profile resume: checked here rather than next to the ownership check

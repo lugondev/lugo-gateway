@@ -20,6 +20,21 @@ def _mask(profile: Profile) -> dict:
     data = profile.model_dump()
     if data.get("llm", {}).get("api_key"):
         data["llm"]["api_key"] = "***"
+    # F1: list_profiles hands shared rows to EVERY caller (that's the point of
+    # `shared`), so an mcp_servers[].headers value -- typically a bearer token
+    # -- would otherwise go out unmasked to anyone who can list templates. Keys
+    # are left alone: the editor uses them to show which headers exist. Masked
+    # unconditionally, same as llm.api_key above -- see that field's own
+    # preserve-on-blank handling in update_profile for why this does not need
+    # an analogous write-side special case here (non-admin PUTs already
+    # preserve the stored mcp_servers wholesale; admin PUTs send a fresh list
+    # built from the global MCP registry's name+url, which never carries
+    # headers back in the first place).
+    for server in data.get("mcp_servers", []):
+        headers = server.get("headers") or {}
+        for key, value in headers.items():
+            if value:
+                headers[key] = "***"
     return data
 
 
@@ -107,11 +122,21 @@ def _visible(profile: Profile, user_id: str | None) -> bool:
 
 
 def _can_write(profile: Profile, user_id: str | None, role: str) -> bool:
-    """Templates (owner_id is None) may only be modified/deleted by an admin;
-    a user's own row may only be modified/deleted by that user. Distinct from
-    _visible(), which governs read access -- everyone can SEE a template, but
-    only an admin can WRITE to one."""
-    if profile.owner_id is None:
+    """A shared row (clone-only template) may only be modified/deleted by an
+    admin -- ANY admin, not just the one who created it; a non-shared row may
+    only be modified/deleted by its owner. Distinct from _visible(), which
+    governs read access -- everyone can SEE a template, but only an admin can
+    WRITE to one.
+
+    Keyed on `profile.shared`, not `profile.owner_id is None`: ownership and
+    sharing are independent now (owner_id records who created the row, shared
+    admins included), so an admin who creates a shared template and is later
+    demoted to `user` must not keep write access to it by owner match --
+    that's a world-clonable template's llm.base_url/api_key up for grabs.
+    `owner_id is None` is folded into the same branch: it means "nobody owns
+    this row" (dev mode, pre-migration edge cases), which is exactly as
+    templated as `shared` for write purposes."""
+    if profile.shared or profile.owner_id is None:
         return role == "admin"
     return profile.owner_id == user_id
 
@@ -136,18 +161,23 @@ async def create_profile(payload: ProfileRequest, request: Request) -> dict:
     if profile_store.exists(payload.name):
         raise HTTPException(status_code=409, detail=f"'{payload.name}' already exists")
     is_admin = current_role(request) == "admin"
-    owner_id = None if is_admin else current_user_id(request)
+    # Ownership and sharing are independent now. This used to read
+    # `None if is_admin else current_user_id(...)`, which meant an admin could
+    # not own a profile at all -- every one they made was a template. See
+    # docs/superpowers/specs/2026-08-14-shared-profile-clone-only-design.md.
+    owner_id = current_user_id(request)
     data = payload.model_dump()
     if not is_admin:
         # C1: mcp_servers carries an arbitrary url+headers that
         # _build_tool_registry fetches and reflects into the LLM turn -- the
         # same SSRF-with-reflection primitive Task 6 gated on /v1/mcp/servers
         # for admins only. A non-admin setting it here would fully bypass that
-        # gate. Silently drop rather than 403: matches how templates already
-        # behave for a non-admin (mcp_servers is simply not theirs to set),
-        # and doesn't need a special error path in the profile editor UI --
-        # the field just doesn't take, same as owner_id below.
+        # gate. Silently drop rather than 403: doesn't need a special error path
+        # in the profile editor UI -- the field just doesn't take.
         data["mcp_servers"] = []
+        # Same "the field just doesn't take" treatment: publishing a template is
+        # an admin act.
+        data["shared"] = False
     profile = Profile(**data, owner_id=owner_id)
     acting_user = await _resolve_acting_user(request)
     await _validate_profile_models(profile, acting_user)
@@ -195,17 +225,54 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
         if not is_admin:
             # C1: a non-admin PUT must not be able to add/change mcp_servers
             # (same SSRF-with-reflection gate as create_profile below). Silently
-            # preserve whatever was already stored rather than 403 -- the request
-            # body's mcp_servers just doesn't take, mirroring create's drop-to-[]
-            # and requiring no special client-side error handling.
+            # preserve whatever was already stored rather than 403.
             data["mcp_servers"] = [s.model_dump() for s in existing.mcp_servers]
+            # Same for shared: only an admin publishes or withdraws a template.
+            # Preserved, not forced False -- ProfileRequest.shared defaults to
+            # False, so forcing would let any non-admin edit un-share a row.
+            data["shared"] = existing.shared
+        elif "shared" not in payload.model_fields_set:
+            # An ADMIN who simply didn't send the field must not un-share either.
+            # `shared: bool = False` gives model_dump() no way to tell "omitted"
+            # from "explicitly false" -- both arrive as False -- so a client built
+            # before this feature would silently withdraw a template just by
+            # editing an unrelated field. model_fields_set is pydantic's record of
+            # which keys the request actually carried, so this fires only on true
+            # omission; an explicit `"shared": false` still flows through and
+            # un-shares. Same preserve-on-omit shape as the api_key handling above.
+            data["shared"] = existing.shared
     else:
-        data["owner_id"] = None if is_admin else current_user_id(request)
+        data["owner_id"] = current_user_id(request)
         if not is_admin:
             data["mcp_servers"] = []
+            data["shared"] = False
     profile = Profile(**data)
     acting_user = await _resolve_acting_user(request)
     await _validate_profile_models(profile, acting_user)
+    if profile.shared and existing is not None and not existing.shared:
+        # Sharing a profile that devices still point at would leave those
+        # devices bound to something they may no longer run -- they would
+        # silently fall back to server defaults on the next connect. Make the
+        # admin reassign them first. delete_profile has the same concern and
+        # solves it by sweeping (clear_profile); sharing must not silently
+        # unassign someone's speaker, so it refuses instead.
+        # Revoked devices are excluded: device_store.set_profile refuses a
+        # revoked device, so "reassign them before sharing it" would be
+        # impossible to obey if a revoked device counted here. Matches
+        # shared_migration.py's identical exclusion for the same reason.
+        bound = [
+            d["id"]
+            for d in await device_store.list_all()
+            if not d.get("revoked") and d["profile_id"] == name
+        ]
+        if bound:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"'{name}' still has {len(bound)} device(s) bound to it "
+                    f"({', '.join(bound)}); reassign them before sharing it"
+                ),
+            )
     profile_store.upsert(profile)
     return {"success": True, "data": await _with_labels(profile)}
 
@@ -252,6 +319,9 @@ async def clone_profile(name: str, payload: CloneRequest, request: Request) -> d
     data = source.model_dump()
     data["name"] = payload.new_name
     data["owner_id"] = user_id
+    # A clone is a working profile, never another template -- even when an admin
+    # clones a shared row.
+    data["shared"] = False
     if current_role(request) != "admin":
         # C1: cloning an admin template that has mcp_servers must not hand the
         # cloning user a live copy of servers they couldn't have set

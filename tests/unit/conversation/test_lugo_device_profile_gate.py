@@ -69,11 +69,26 @@ def test_unbound_paired_device_is_refused_at_wakeup():
             ws.receive_json()
 
 
-def test_bound_paired_device_still_connects():
+def test_bound_paired_device_still_connects(monkeypatch, tmp_path):
     user = asyncio.run(user_store.create("gate-user-bound", "pw"))
     _device, raw_token = asyncio.run(
         device_store.create(user["id"], "ESP32", "AA:BB:GATE2", profile_id="bound-profile")
     )
+    # profile_visible now requires shared or owner match -- bind the profile
+    # to the same user whose device is paired to it, mirroring how a real
+    # user's own profile would be bound (not shared -- a shared profile is
+    # not runnable at all, see Root Cause A in task-3b-brief.md).
+    #
+    # Use a dedicated, single-write ProfileStore for this test rather than a
+    # second upsert on the autouse fixture's already-warmed store: see
+    # test_lugo_disabled_cutoff.py's identical comment -- SqliteBackedStore
+    # caches after its first _ensure(), so a second write on an already-warm
+    # store silently skips re-initializing the (possibly-since-reconfigured)
+    # backing table. A fresh store's first write always runs _ensure()
+    # against whatever engine is currently live.
+    fresh = ProfileStore(str(tmp_path / "profiles_bound.json"))
+    fresh.upsert(Profile(name="bound-profile", owner_id=user["id"]))
+    monkeypatch.setattr("app.api.routes.lugo.profile_store", fresh)
 
     client = TestClient(app)
     with client.websocket_connect(f"/v1/lugo/stream?device_token={raw_token}") as ws:

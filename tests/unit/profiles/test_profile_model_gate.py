@@ -130,6 +130,7 @@ def test_profile_clone_rejects_model_disabled_after_template_was_created(client,
     resp = client.post("/v1/profiles", json={
         "name": "template-a",
         "llm": {"engine": "openrouter", "model": "qwen3-asr-flash", "base_url": "https://x", "api_key": ""},
+        "shared": True,
     })
     assert resp.status_code == 200
 

@@ -30,7 +30,11 @@ from app.services.conversation.tools.device_mcp import (
 )
 from app.services.health import check_resolved_engines
 from app.services.auth.device_profile import resolve_bound_profile
-from app.services.profile_visibility import visible_profile_or_none, visible_tts_profile_or_none
+from app.services.profile_visibility import (
+    is_shared_template,
+    usable_profile_or_none,
+    visible_tts_profile_or_none,
+)
 from app.services.profiles.store import profile_store
 from app.services.stt.profile import resolve_stt
 from app.services.system_config import system_config_store
@@ -92,7 +96,7 @@ def refreshes_idle(event: str, payload: dict) -> bool:
 def _resolve(profile_name: str | None, caller_id: str | None = None, *, bypass: bool = False):
     """Resolve engines/tts params from a profile (server owns everything).
 
-    C2 fix: visible_profile_or_none()/visible_tts_profile_or_none() collapse
+    C2 fix: usable_profile_or_none()/visible_tts_profile_or_none() collapse
     "doesn't exist" and "exists but belongs to someone else" to the same
     None, so a device authenticated as `caller_id` can never stream against
     another user's private profile (its llm.api_key/system_prompt) or tts
@@ -101,8 +105,12 @@ def _resolve(profile_name: str | None, caller_id: str | None = None, *, bypass: 
     `bypass` is for the pre-existing dev-mode fallback only (see
     resolve_visible_profile's docstring / WsIdentity.unauthenticated);
     callers not resolving a real WS identity leave it False.
+
+    Shared templates resolve to None here too: they are clone-only, so a
+    device that names one runs on server defaults rather than on the template
+    (2026-08-14 design).
     """
-    profile = visible_profile_or_none(
+    profile = usable_profile_or_none(
         profile_store.get(profile_name) if profile_name else None, caller_id, bypass=bypass
     )
     # Resolve STT from the profile's SttConfig (engine/language or a language
@@ -201,9 +209,21 @@ async def lugo_stream(websocket: WebSocket) -> None:
             })
             profile_name = None
         else:
-            await websocket.send_json(
-                {"type": "error", "message": f"profile '{profile_name}' not found"}
-            )
+            # Client-declared name this route cannot honor. Closing (rather than
+            # the gentle from_binding fallback above) is this site's existing
+            # convention for that case and is left alone -- but a shared template
+            # is not "not found": the caller can see it listed by GET /v1/profiles,
+            # so say what is actually wrong. Any OTHER unresolvable name keeps the
+            # old wording, which must stay indistinguishable between "missing" and
+            # "someone else's" (profile_visibility.py's no-oracle contract).
+            await websocket.send_json({
+                "type": "error",
+                "message": (
+                    f"profile '{profile_name}' is a shared template; clone it before using it"
+                    if is_shared_template(profile_store.get(profile_name))
+                    else f"profile '{profile_name}' not found"
+                ),
+            })
             await websocket.close()
             return
 

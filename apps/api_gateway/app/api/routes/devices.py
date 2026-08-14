@@ -12,7 +12,7 @@ from app.schemas.devices import (
 from app.services.auth.device_naming import default_device_name
 from app.services.auth.devices import device_store
 from app.services.auth.pairing import claim_rate_limiter, init_rate_limiter, pending_pairings
-from app.services.profile_visibility import visible_profile_or_none
+from app.services.profile_visibility import is_shared_template, usable_profile_or_none
 from app.services.profiles.store import profile_store
 
 router = APIRouter(prefix="/v1/devices", tags=["devices"])
@@ -26,7 +26,7 @@ def _client_ip(request: Request) -> str:
 
 
 def _checked_profile_name(profile_id: str, user_id: str) -> str:
-    """Return `profile_id` if this user may bind a device to it, else 404.
+    """Return `profile_id` if this user may bind a device to it, else raise.
 
     This is THE choke point for the bind path. A device identity resolves to its
     owner's user_id (core/auth_guard.resolve_ws_identity), so a binding the owner
@@ -35,10 +35,25 @@ def _checked_profile_name(profile_id: str, user_id: str) -> str:
     services/profile_visibility.py exists to close. "Belongs to someone else"
     collapses into the same 404 as "doesn't exist", per that module's contract:
     the pair of them must stay indistinguishable so this doesn't become a
-    profile-name enumeration oracle."""
+    profile-name enumeration oracle.
+
+    A SHARED template is the one case that gets a real message instead. It is
+    clone-only (2026-08-14 design) and GET /v1/profiles already lists it to
+    every caller, so naming it leaks nothing -- and a silent 404 on a name the
+    admin can see in their own picker would just look broken.
+    """
     if not profile_id:
         return ""  # unassigned is always allowed
-    if visible_profile_or_none(profile_store.get(profile_id), user_id) is None:
+    row = profile_store.get(profile_id)
+    if is_shared_template(row):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"profile '{profile_id}' is a shared template; "
+                f"clone it before using it"
+            ),
+        )
+    if usable_profile_or_none(row, user_id) is None:
         raise HTTPException(status_code=404, detail=f"profile '{profile_id}' not found")
     return profile_id
 

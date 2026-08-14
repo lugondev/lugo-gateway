@@ -227,6 +227,11 @@
                 <button id="session-new-btn" class="ghost mini">New session</button>
                 <button id="profile-edit-btn" class="ghost mini">Edit</button>
                 <button id="profile-new-btn" class="mini">+ New</button>
+                <select id="profile-template-select" title="Shared templates — clone one to use it">
+                  <option value="">Shared templates&#8230;</option>
+                </select>
+                <button id="profile-template-clone-btn" class="ghost mini">Clone template</button>
+                <button id="profile-template-edit-btn" class="ghost mini hidden">Edit template</button>
               </div>
             </div>
 
@@ -267,6 +272,9 @@
                   </label>
                   <label class="check">
                     <input type="checkbox" id="pf-voice-optimized" /> Voice-optimized responses (limit special characters so TTS reads cleanly)
+                  </label>
+                  <label class="check hidden" id="pf-shared-label">
+                    <input type="checkbox" id="pf-shared" /> Shared template (clone-only, admin)
                   </label>
                   <p class="field-label">MCP Servers (per-profile)</p>
                   <div id="pf-mcp-list" class="pf-mcp-list"></div>

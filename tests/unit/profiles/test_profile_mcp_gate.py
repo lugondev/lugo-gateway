@@ -128,7 +128,7 @@ def test_nonadmin_clone_of_admin_template_drops_mcp_servers(client):
     _as_user(admin_client, "admin")
     template_name = "tmpl-" + uuid.uuid4().hex[:8]
     good_server = {"name": "internal", "url": "https://internal.example/mcp", "headers": {}}
-    create = admin_client.post("/v1/profiles", json={"name": template_name, "mcp_servers": [good_server]})
+    create = admin_client.post("/v1/profiles", json={"name": template_name, "mcp_servers": [good_server], "shared": True})
     assert create.status_code == 200, create.text
     assert len(create.json()["data"]["mcp_servers"]) == 1
 

@@ -86,8 +86,13 @@ async def test_refresh_memory_threads_session_identity_into_get_context(monkeypa
 
     fresh_profiles = ProfileStore(str(tmp_path / "profiles.json"))
     monkeypatch.setattr(session_module, "profile_store", fresh_profiles)
+    # usable_profile_or_none now requires shared or owner match -- bind the
+    # profile to the same identity_user_id the session below authenticates
+    # as, matching Root Cause A of task-3b-brief.md (an ownerless profile is
+    # no longer visible/usable to anyone).
     fresh_profiles.upsert(Profile(
         name="refresh-mem-profile",
+        owner_id="user-xyz-123",
         llm=LlmConfig(base_url="https://api.example.com/v1", api_key="k", model="test-model"),
     ))
 
