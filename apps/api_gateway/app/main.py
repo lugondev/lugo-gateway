@@ -142,6 +142,7 @@ async def lifespan(app: FastAPI):
         seed_installed_models_to_registry,
     )
     from app.services.memory.subject_migration import migrate_ownerless_memory_subject
+    from app.services.profiles.shared_migration import migrate_ownerless_profiles
     from app.services.usage.backfill import migrate_backfill_usage_model_ids
 
     # Runs before the seed/back-fill migrations below and before warm-up so both
@@ -165,6 +166,11 @@ async def lifespan(app: FastAPI):
     # sentinel immediately, so a request handled ahead of this would leave rows
     # split across both the old '' and the new subject.
     await migrate_ownerless_memory_subject()
+    # Independent of the registry migrations -- it only touches profile rows and
+    # reads the device table. Must run before anything serves a turn: until it
+    # does, legacy ownerless templates are visible-but-unusable to everyone, so
+    # a request handled ahead of it would fall back to server defaults.
+    await migrate_ownerless_profiles()
 
     if not settings.auth_enabled and settings.app_env != "dev":
         logger.warning(
