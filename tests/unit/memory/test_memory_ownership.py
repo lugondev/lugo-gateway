@@ -112,26 +112,37 @@ def test_memories_of_nonexistent_profile_is_404(client, _with_password):
     assert client.delete(_mem_url("khong-ton-tai")).status_code == 404
 
 
-def test_user_can_manage_own_memories_on_template(client, _with_password):
+def test_reads_of_a_shared_template_are_allowed_but_always_empty(client, _with_password):
+    """A shared template is visible (GET /v1/profiles already lists it to
+    everyone), so reading its memory bucket is allowed and simply reflects
+    reality: nobody can ever write to it (see the write-refusal tests below),
+    so the bucket stays empty forever. Returning [] here is more honest than
+    a 404."""
     _signup_login(client, "root", role="admin")
     client.post("/v1/profiles", json={"name": "template-a", "shared": True})
 
     _signup_login(client, "toan", role="user")
-    assert client.get(_mem_url("template-a")).status_code == 200
-    assert client.post(_mem_url("template-a"), json={"content": "toan-note"}).status_code == 200
-    assert [m["content"] for m in client.get(_mem_url("template-a")).json()["data"]] == ["toan-note"]
+    resp = client.get(_mem_url("template-a"))
+    assert resp.status_code == 200
+    assert resp.json()["data"] == []
 
 
-def test_template_memories_are_isolated_per_user(client, _with_password):
+def test_writing_to_a_shared_template_is_refused_for_every_role(client, _with_password):
+    """A shared profile is a clone-only template: runnable (and thus
+    writable-to-memory) by nobody, not even the admin who created it -- the
+    same asymmetry profile_usable() enforces for running/binding a device.
+    Writing here used to succeed and land in the caller's own bucket, but the
+    profile that name refers to can never run and a clone gets a different
+    name, so those rows were permanently orphaned. Writes must now be
+    refused with the same 404 shape as a private/missing profile."""
     _signup_login(client, "root", role="admin")
     client.post("/v1/profiles", json={"name": "template-a", "shared": True})
 
-    _signup_login(client, "a", role="user")
-    client.post(_mem_url("template-a"), json={"content": "a-note"})
+    # The creating admin gets no special pass -- shared is usable by nobody.
+    assert client.post(_mem_url("template-a"), json={"content": "root-note"}).status_code == 404
 
-    _signup_login(client, "b", role="user")
+    _signup_login(client, "toan", role="user")
+    resp = client.post(_mem_url("template-a"), json={"content": "toan-note"})
+    assert resp.status_code == 404
+    # No memory landed anywhere reachable through this name.
     assert client.get(_mem_url("template-a")).json()["data"] == []
-    client.post(_mem_url("template-a"), json={"content": "b-note"})
-
-    _signup_login(client, "a", role="user")
-    assert [m["content"] for m in client.get(_mem_url("template-a")).json()["data"]] == ["a-note"]
