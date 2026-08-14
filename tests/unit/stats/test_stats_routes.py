@@ -42,7 +42,7 @@ def test_regular_user_sees_only_their_own_counts(client, _with_password):
 
     profile_store.upsert(Profile(name="toan-profile", owner_id=me_id))
     profile_store.upsert(Profile(name="khoa-profile", owner_id=other_id))
-    profile_store.upsert(Profile(name="template", owner_id=None))
+    profile_store.upsert(Profile(name="template", owner_id=None, shared=True))
 
     asyncio.run(device_store.create(me_id, "my-esp32", "serial-a"))
     asyncio.run(device_store.create(other_id, "their-esp32", "serial-b"))
@@ -150,7 +150,7 @@ def test_admin_profile_count_stays_personal_while_devices_go_global(client, _wit
 
     profile_store.upsert(Profile(name="hoa-private", owner_id=other_id))
     profile_store.upsert(Profile(name="boss-private", owner_id=admin_id))
-    profile_store.upsert(Profile(name="shared-template", owner_id=None))
+    profile_store.upsert(Profile(name="shared-template", owner_id=None, shared=True))
     asyncio.run(device_store.create(other_id, "hoa-device", "serial-hoa"))
 
     client.post("/api/auth/login", json={"username": "boss", "password": "pw"})

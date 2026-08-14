@@ -12,8 +12,6 @@ implies `shared is True`.
 import asyncio
 import uuid
 
-import pytest
-
 from app.services.auth.devices import device_store
 from app.services.profiles.models import Profile
 from app.services.profiles.shared_migration import migrate_ownerless_profiles
