@@ -501,8 +501,18 @@ async def conversation_stream(websocket: WebSocket) -> None:
             await websocket.close()
             return
 
+    # Do not tag the session/memories with a shared template's name: it can
+    # never run (profile_usable() forbids it), so `profile` above already
+    # resolved to None and this turn is running on server defaults. Passing
+    # the raw name through here would still record sessions/memories under
+    # that template's name, orphaning them (the template can't run, and a
+    # clone gets a different name). Same is_shared_template(requested_row)
+    # check the warning branch above already uses. An unresolvable-for-any-
+    # other-reason name (typo, someone else's private profile) is left as-is
+    # -- that shape predates this feature.
+    session_profile_name = None if is_shared_template(requested_row) else profile_name
     cfg = SessionRuntimeConfig(
-        session_id=session_id, profile_name=profile_name, stt_engine=stt_engine,
+        session_id=session_id, profile_name=session_profile_name, stt_engine=stt_engine,
         language=language, tts_engine=tts_engine, voice=voice,
         ref_audio_path=ref_audio_path, ref_text=ref_text, tts_instruct=tts_instruct,
         tts_speed=tts_speed, tts_language=tts_language, sample_rate=sample_rate,
