@@ -221,12 +221,35 @@ def is_shared_template(profile: Profile | None) -> bool:
 Run: `python -m pytest tests/unit/profiles/test_profile_visibility_predicates.py -q`
 Expected: PASS (12 passed).
 
+- [ ] **Step 5b: Delete the two tests whose subject this change removes**
+
+Widening `profile_visible` makes these two fail, in
+`tests/unit/profiles/test_profile_idor.py`:
+
+- `test_ws_template_profile_visible_to_everyone`
+- `test_lugo_template_profile_visible_to_everyone`
+
+Both assert that an `owner_id=None` template is **usable** by any signed-in
+user at the WS layer. That is precisely the behavior this feature deletes, so
+they are not stale fixtures to patch — their subject is gone. Delete both.
+
+Do not patch them to `shared=True` instead: that would make them assert, for
+the length of one task, that a shared profile is runnable — which the spec
+forbids — and they would have to be inverted again two tasks later. Task 3's
+new `test_shared_profile_not_runnable.py` is their replacement and asserts the
+opposite, correct rule. The "shared is readable by everyone" half they also
+covered is now covered by this task's own predicate table.
+
+Run: `python -m pytest tests/unit/profiles/test_profile_idor.py -q`
+Expected: PASS, with two fewer tests than before.
+
 - [ ] **Step 6: Commit**
 
 ```bash
 git add apps/api_gateway/app/services/profiles/models.py \
         apps/api_gateway/app/services/profile_visibility.py \
-        tests/unit/profiles/test_profile_visibility_predicates.py
+        tests/unit/profiles/test_profile_visibility_predicates.py \
+        tests/unit/profiles/test_profile_idor.py
 git -c user.name=lugondev -c user.email=lugondev@gmail.com commit -m "feat(profiles): add Profile.shared and the usable/visible predicate split"
 ```
 
@@ -466,6 +489,16 @@ Replace the `if not is_admin:` block inside `if existing:` with:
             # Same for shared: only an admin publishes or withdraws a template.
             # Preserved, not forced False -- ProfileRequest.shared defaults to
             # False, so forcing would let any non-admin edit un-share a row.
+            data["shared"] = existing.shared
+        elif "shared" not in payload.model_fields_set:
+            # An ADMIN who simply didn't send the field must not un-share either.
+            # `shared: bool = False` gives model_dump() no way to tell "omitted"
+            # from "explicitly false" -- both arrive as False -- so a client built
+            # before this feature would silently withdraw a template just by
+            # editing an unrelated field. model_fields_set is pydantic's record of
+            # which keys the request actually carried, so this fires only on true
+            # omission; an explicit `"shared": false` still flows through and
+            # un-shares. Same preserve-on-omit shape as the api_key handling above.
             data["shared"] = existing.shared
 ```
 
