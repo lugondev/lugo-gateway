@@ -92,6 +92,7 @@ export async function loadProfiles() {
     profileData = body.data || {};
     renderProfileSelect();
     renderLivehostProfileSelect();
+    renderProfileTemplateSelect();
     renderDevicePairProfileSelect();
     renderAllDeviceFilterProfileOptions();
   } catch {
@@ -104,10 +105,13 @@ export function renderProfileSelect() {
   if (!sel) return;
   const prev = sel.value;
   sel.innerHTML = '<option value="">(none — server defaults)</option>';
-  Object.keys(profileData).sort().forEach((name) => {
+  // Shared templates are clone-only -- this dropdown picks what a conversation
+  // RUNS on, and the server refuses to run one. They live in
+  // #profile-template-select instead.
+  Object.keys(profileData).sort().filter((n) => !profileData[n]?.shared).forEach((name) => {
     const opt = document.createElement("option");
     opt.value = name;
-    opt.textContent = profileData[name]?.owner_id ? `${name} (mine)` : name;
+    opt.textContent = name;
     sel.appendChild(opt);
   });
   if (profileData[prev]) sel.value = prev;
@@ -123,14 +127,31 @@ export function renderLivehostProfileSelect() {
   if (!sel) return;
   const prev = sel.value;
   sel.innerHTML = '<option value="">(none — server defaults)</option>';
-  Object.keys(profileData).sort().forEach((name) => {
+  // Shared templates are clone-only -- this dropdown picks what a conversation
+  // RUNS on, and the server refuses to run one. They live in
+  // #profile-template-select instead.
+  Object.keys(profileData).sort().filter((n) => !profileData[n]?.shared).forEach((name) => {
     const opt = document.createElement("option");
     opt.value = name;
-    opt.textContent = profileData[name]?.owner_id ? `${name} (mine)` : name;
+    opt.textContent = name;
     sel.appendChild(opt);
   });
   if (profileData[prev]) sel.value = prev;
   restoreAndBind("lh-profile");
+}
+
+export function renderProfileTemplateSelect() {
+  const sel = el("profile-template-select");
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">Shared templates&#8230;</option>';
+  Object.keys(profileData).sort().filter((n) => profileData[n]?.shared).forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  });
+  if (profileData[prev]) sel.value = prev;
 }
 
 export function renderProfileTtsSelect() {
@@ -227,6 +248,9 @@ export async function openProfilePanel(mode, name) {
   renderProfileTtsSelect();
   await loadLlmOptions();
 
+  const status = await fetchAuthStatus();
+  const isAdmin = !!(status && status.authenticated && status.role === "admin");
+
   if (mode === "new") {
     el("pf-name").value = "";
     el("pf-name").disabled = false;
@@ -244,6 +268,8 @@ export async function openProfilePanel(mode, name) {
     el("pf-mem-enabled").checked = true;
     el("pf-mem-mode").value = "all";
     el("pf-mem-list").innerHTML = "";
+    if (el("pf-shared")) el("pf-shared").checked = false;
+    if (el("pf-shared-label")) el("pf-shared-label").classList.toggle("hidden", !isAdmin);
   } else {
     const p = profileData[name];
     if (!p) return;
@@ -262,15 +288,17 @@ export async function openProfilePanel(mode, name) {
     el("pf-mem-mode").value = p.memory?.mode || "all";
     loadMemories(name);
 
-    // Templates (owner_id === null) are read-only for non-admins: the server
-    // 404s Save/Delete on them anyway, so hide those controls and offer Clone only.
-    const isTemplate = p.owner_id === null || p.owner_id === undefined;
-    const status = await fetchAuthStatus();
-    const isAdmin = !!(status && status.authenticated && status.role === "admin");
+    // Shared templates are read-only for non-admins: the server 404s
+    // Save/Delete on them anyway, so hide those controls and offer Clone only.
+    const isTemplate = !!p.shared;
     const hideWriteControls = isTemplate && !isAdmin;
     el("pf-save-btn").classList.toggle("hidden", hideWriteControls);
     el("pf-delete-btn").classList.toggle("hidden", hideWriteControls);
     if (el("pf-clone-btn")) el("pf-clone-btn").classList.remove("hidden");
+    // Publishing a template is an admin act; the server silently drops the
+    // field for anyone else, so don't offer a control that does nothing.
+    if (el("pf-shared-label")) el("pf-shared-label").classList.toggle("hidden", !isAdmin);
+    if (el("pf-shared")) el("pf-shared").checked = !!p.shared;
   }
 
   el("pf-status").textContent = "";
@@ -326,6 +354,7 @@ export async function saveProfile() {
     })(),
     system_prompt: el("pf-system-prompt").value,
     voice_optimized: el("pf-voice-optimized")?.checked ?? false,
+    shared: el("pf-shared")?.checked ?? false,
     stt: {
       ...readProfileSttSelection(),
       language: el("pf-stt-language")?.value.trim() || "",
@@ -404,8 +433,8 @@ export async function deleteProfile() {
   }
 }
 
-export async function cloneProfile() {
-  const name = el("pf-name").value.trim();
+export async function cloneProfile(sourceName) {
+  const name = sourceName || profileEditMode;
   if (!name) return;
   const new_name = await promptDialog(`Clone "${name}" as:`, `${name}-copy`);
   if (!new_name || !new_name.trim()) return;
@@ -526,7 +555,17 @@ if (el("profile-close-btn")) el("profile-close-btn").addEventListener("click", c
 if (el("pf-cancel-btn")) el("pf-cancel-btn").addEventListener("click", closeProfilePanel);
 if (el("pf-save-btn")) el("pf-save-btn").addEventListener("click", saveProfile);
 if (el("pf-delete-btn")) el("pf-delete-btn").addEventListener("click", deleteProfile);
-if (el("pf-clone-btn")) el("pf-clone-btn").addEventListener("click", cloneProfile);
+// Not `addEventListener("click", cloneProfile)`: the listener would pass the
+// click Event as cloneProfile's sourceName argument, which is truthy and
+// would short-circuit the `sourceName || profileEditMode` fallback below.
+if (el("pf-clone-btn")) el("pf-clone-btn").addEventListener("click", () => cloneProfile());
+if (el("profile-template-clone-btn")) {
+  el("profile-template-clone-btn").addEventListener("click", () => {
+    const name = el("profile-template-select").value;
+    if (!name) { alert("Pick a shared template to clone."); return; }
+    cloneProfile(name);
+  });
+}
 if (el("profile-select")) {
   el("profile-select").addEventListener("change", () => {
     setCurrentSessionId(null);

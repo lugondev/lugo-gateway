@@ -26,10 +26,12 @@ export function renderDevicePairProfileSelect() {
   if (!sel) return;
   const prev = sel.value;
   sel.innerHTML = '<option value="">Select a profile&#8230;</option>';
-  Object.keys(profileData).sort().forEach((name) => {
+  // Shared templates are clone-only, so the bind endpoint 400s on them --
+  // offering the name would only produce an error.
+  Object.keys(profileData).sort().filter((n) => !profileData[n]?.shared).forEach((name) => {
     const opt = document.createElement("option");
     opt.value = name;
-    opt.textContent = profileData[name]?.owner_id ? `${name} (mine)` : name;
+    opt.textContent = name;
     sel.appendChild(opt);
   });
   if (profileData[prev]) sel.value = prev;
@@ -68,11 +70,13 @@ function myDeviceProfileColumn() {
     render: (d) => {
       const options = ['<option value="">Unassigned</option>']
         .concat(
-          Object.keys(profileData).sort().map((name) => {
-            const label = escapeHtml(profileData[name]?.owner_id ? `${name} (mine)` : name);
-            const selected = d.profile_id === name ? " selected" : "";
-            return `<option value="${escapeHtml(name)}"${selected}>${label}</option>`;
-          })
+          Object.keys(profileData).sort()
+            .filter((name) => !profileData[name]?.shared)
+            .map((name) => {
+              const label = escapeHtml(name);
+              const selected = d.profile_id === name ? " selected" : "";
+              return `<option value="${escapeHtml(name)}"${selected}>${label}</option>`;
+            })
         )
         .join("");
       return `<select data-device-profile-select="${escapeHtml(d.id)}">${options}</select>`;
