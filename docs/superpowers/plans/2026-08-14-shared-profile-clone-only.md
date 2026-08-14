@@ -527,26 +527,69 @@ error is safe precisely because GET /v1/profiles already lists it to everyone,
 and that reasoning must not leak onto private rows.
 """
 
+from app.services.profiles.models import LlmConfig, Profile
+from app.services.profiles.store import profile_store
+
 SHARED_MSG = "shared template"
 
 
 def _make_shared_template(name: str) -> None:
-    admin = TestClient(app)
-    _as_user(admin, "admin")
-    assert admin.post("/v1/profiles", json={"name": name, "shared": True}).status_code == 200
+    """Written straight to the store, like test_profile_idor.py does. Going
+    through the admin HTTP route would couple these tests to Task 2's payload
+    handling for no gain -- what is under test here is the CONSUMERS."""
+    profile_store.upsert(Profile(
+        name=name,
+        owner_id="some-admin",
+        shared=True,
+        system_prompt="TEMPLATE SYSTEM PROMPT -- MUST NOT BE USED",
+        llm=LlmConfig(
+            base_url="https://template-llm.example/v1",
+            api_key="template-secret-api-key",
+            model="template-model",
+        ),
+    ))
 
 
-def test_http_chat_falls_back_to_defaults_on_a_shared_profile(client, _with_password):
-    _as_user(client, "user")
+def test_http_chat_never_runs_on_a_shared_template(client, _with_password, monkeypatch):
+    """Spy on build_responder_ex to observe exactly what the route resolved --
+    the same technique as test_profile_idor.py's
+    test_chat_private_profile_never_reaches_responder_construction. The spy
+    REPLACES build_responder_ex and never calls through, so the template's
+    base_url can never produce a real network call.
+
+    Note the request shape: `?profile=` is a QUERY param and the body is
+    `{"messages": [...]}` -- see the existing /chat tests.
+    """
+    import app.api.routes.conversation as conversation_route
+
     tpl = _rand("tpl")
     _make_shared_template(tpl)
-    resp = client.post("/v1/conversation/chat", json={"message": "hi", "profile": tpl})
+    _as_user(client, "user")
+
+    captured: list[dict] = []
+
+    class _StubResponder:
+        async def reply(self, history):
+            return "ok"
+
+        async def aclose(self):
+            return None
+
+    async def _spy(**kwargs):
+        captured.append(kwargs)
+        return _StubResponder()
+
+    monkeypatch.setattr(conversation_route, "build_responder_ex", _spy)
+
+    resp = client.post(
+        f"/v1/conversation/chat?profile={tpl}",
+        json={"messages": [{"role": "user", "content": "hi"}]},
+    )
     assert resp.status_code == 200, resp.text
-    # The turn runs, but never on the template.
-    assert resp.json()["data"].get("profile") in (None, "", tpl)
-    # Nothing from the template's config reached the turn: assert via the store
-    # instead of the response body, which does not echo llm config.
-    assert profile_store.get(tpl).shared is True
+    assert captured, "the route never built a responder"
+    assert captured[0]["api_key"] != "template-secret-api-key"
+    assert captured[0]["system_prompt"] != "TEMPLATE SYSTEM PROMPT -- MUST NOT BE USED"
+    assert "template-secret-api-key" not in resp.text
 
 
 def test_ws_conversation_warns_and_uses_defaults_on_a_shared_profile(client, _with_password):
@@ -592,25 +635,31 @@ def test_ws_conversation_keeps_the_old_message_for_someone_elses_private_profile
 
 def test_stt_warm_ignores_a_shared_profile(client, _with_password):
     """Falls through to the server default engine, exactly as an unknown name
-    does -- the template's pinned engine/model must not be applied."""
-    _as_user(client, "user")
+    does -- the template's pinned engine/model must not be applied.
+
+    `POST /v1/stt/warm?profile=` returns
+    {"data": {"engine": ..., "model": ..., "warmed": ...}} (stt.py's
+    warm_engine). Asserted against the server default read from the config
+    store rather than a hardcoded engine name, so a change to the hermetic
+    test config cannot turn this green by accident.
+    """
+    from app.services.system_config import system_config_store
+
     tpl = _rand("tpl")
-    admin = TestClient(app)
-    _as_user(admin, "admin")
-    assert admin.post(
-        "/v1/profiles",
-        json={"name": tpl, "shared": True, "stt": {"engine": "vosk", "language": "vi"}},
-    ).status_code == 200
+    profile_store.upsert(Profile(
+        name=tpl, owner_id="some-admin", shared=True,
+        stt=SttConfig(engine="vosk", language="vi"),
+    ))
+    _as_user(client, "user")
 
     resp = client.post(f"/v1/stt/warm?profile={tpl}")
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"]["engine"] != "vosk", "the template's engine leaked into the warm"
+    assert resp.json()["data"]["engine"] == system_config_store.get().engines.default_stt_engine
 ```
 
-Check `/v1/stt/warm`'s actual method, query shape and response body first with
-`sed -n 120,175p apps/api_gateway/app/api/routes/stt.py`, and adjust the last
-test to match (it may be a GET, and the default engine in the hermetic test
-config may differ — assert "not the template's engine", never a hardcoded name).
+Add `SttConfig` to the `app.services.profiles.models` import at the top of the
+file.
 
 - [ ] **Step 2: Run test to verify it fails**
 
