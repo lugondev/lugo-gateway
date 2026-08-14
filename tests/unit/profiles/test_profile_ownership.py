@@ -46,11 +46,26 @@ def _minimal_profile(name: str) -> dict:
     return {"name": name}
 
 
-def test_admin_created_profile_is_a_template(client, _with_password):
+def test_admin_created_profile_is_owned_not_a_template(client, _with_password):
+    # Ownership and sharing are now independent (feat/shared-profile-clone-only,
+    # Task 2): an admin POST with no `shared` flag is a normal owned profile,
+    # not an implicit template. See test_admin_created_shared_profile_is_a_template
+    # below for the explicit-opt-in template case.
     _signup_login(client, "root", role="admin")
     resp = client.post("/v1/profiles", json=_minimal_profile("shared"))
     assert resp.status_code == 200
-    assert resp.json()["data"]["owner_id"] is None
+    body = resp.json()["data"]
+    assert body["owner_id"] is not None
+    assert body["shared"] is False
+
+
+def test_admin_created_shared_profile_is_a_template(client, _with_password):
+    _signup_login(client, "root", role="admin")
+    resp = client.post("/v1/profiles", json={**_minimal_profile("shared"), "shared": True})
+    assert resp.status_code == 200
+    body = resp.json()["data"]
+    assert body["shared"] is True
+    assert body["owner_id"] is not None
 
 
 def test_user_created_profile_is_owned(client, _with_password):
@@ -63,7 +78,7 @@ def test_user_created_profile_is_owned(client, _with_password):
 
 def test_list_shows_templates_and_own_but_not_others(client, _with_password):
     _signup_login(client, "root", role="admin")
-    client.post("/v1/profiles", json=_minimal_profile("template-a"))
+    client.post("/v1/profiles", json={**_minimal_profile("template-a"), "shared": True})
 
     _signup_login(client, "a", role="user")
     client.post("/v1/profiles", json=_minimal_profile("a-private"))
@@ -85,7 +100,7 @@ def test_get_other_users_private_profile_is_404(client, _with_password):
 
 def test_clone_template_creates_owned_copy(client, _with_password):
     _signup_login(client, "root", role="admin")
-    client.post("/v1/profiles", json=_minimal_profile("template-a"))
+    client.post("/v1/profiles", json={**_minimal_profile("template-a"), "shared": True})
 
     _signup_login(client, "toan", role="user")
     resp = client.post("/v1/profiles/template-a/clone", json={"new_name": "toan-copy"})
@@ -109,7 +124,7 @@ def test_clone_nonexistent_or_invisible_is_404(client, _with_password):
 
 def test_clone_name_collision_is_409(client, _with_password):
     _signup_login(client, "root", role="admin")
-    client.post("/v1/profiles", json=_minimal_profile("template-a"))
+    client.post("/v1/profiles", json={**_minimal_profile("template-a"), "shared": True})
 
     _signup_login(client, "toan", role="user")
     client.post("/v1/profiles", json=_minimal_profile("taken"))
@@ -131,7 +146,7 @@ def test_create_rejects_name_taken_by_another_users_private_profile(client, _wit
 
 def test_clone_rejects_new_name_taken_by_another_users_private_profile(client, _with_password):
     _signup_login(client, "root", role="admin")
-    client.post("/v1/profiles", json=_minimal_profile("template-a"))
+    client.post("/v1/profiles", json={**_minimal_profile("template-a"), "shared": True})
 
     _signup_login(client, "a", role="user")
     client.post("/v1/profiles", json=_minimal_profile("a-secret"))
@@ -143,7 +158,7 @@ def test_clone_rejects_new_name_taken_by_another_users_private_profile(client, _
 
 def test_regular_user_cannot_update_or_delete_admin_template(client, _with_password):
     _signup_login(client, "root", role="admin")
-    client.post("/v1/profiles", json=_minimal_profile("template-a"))
+    client.post("/v1/profiles", json={**_minimal_profile("template-a"), "shared": True})
 
     _signup_login(client, "mallory", role="user")
     resp = client.put("/v1/profiles/template-a", json=_minimal_profile("template-a"))
