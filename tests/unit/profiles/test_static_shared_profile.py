@@ -93,7 +93,15 @@ def test_shared_checkbox_is_admin_only(profiles_js: str, index_html: str) -> Non
     assert 'id="pf-shared"' in index_html
     body = profiles_js[profiles_js.index("export async function openProfilePanel"):]
     body = body[: body.index("export function closeProfilePanel")]
-    assert "isAdmin" in body and "pf-shared" in body
+    # Pin the literal toggle expression, not just "isAdmin" and "pf-shared"
+    # appearing somewhere in the function -- both survive elsewhere in the body
+    # (e.g. the pf-shared VALUE assignment, or the isAdmin computation itself),
+    # so a bare substring check on each independently cannot fail even if the
+    # admin-only toggle for pf-shared-label is deleted outright.
+    assert 'el("pf-shared-label").classList.toggle("hidden", !isAdmin);' in body, (
+        "pf-shared-label must be hidden for non-admins via the exact "
+        "classList.toggle(\"hidden\", !isAdmin) expression"
+    )
 
 
 def test_device_binding_pickers_exclude_shared(devices_js: str) -> None:
