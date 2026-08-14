@@ -13,9 +13,12 @@ name with no check at all, so any signed-up user could name another user's
 private profile and run on that victim's ``llm.api_key``, ``system_prompt``
 and private ``mcp_servers``.
 
-A profile/tts-profile is visible to a caller iff it's a template
-(``owner_id is None`` -- visible to everyone) or the caller owns it
-(``owner_id == caller_id``).
+A Profile is visible to a caller iff it's shared (a clone-only template --
+visible to everyone) or the caller owns it. A TtsProfile keeps the older rule
+(``owner_id is None`` = template) -- it has no ``shared`` flag and is out of
+scope for the 2026-08-14 design.
+
+Visibility is not permission to RUN: see profile_usable() below.
 
 Deliberately just the predicate + a tiny "collapse to None" wrapper here, NOT
 a resolve-by-name-from-the-global-store helper: every consumer site keeps
@@ -41,7 +44,17 @@ from app.services.tts.profile_models import TtsProfile
 
 
 def profile_visible(profile: Profile, caller_id: str | None) -> bool:
-    return profile.owner_id is None or profile.owner_id == caller_id
+    """Read access: a shared template is readable by everyone, and your own
+    rows are readable by you.
+
+    `owner_id is None` is deliberately NOT a visibility grant any more. It used
+    to be the entire definition of "template"; it now means only "nobody owns
+    this row", and the boot migration (services/profiles/shared_migration.py)
+    guarantees every such row is also `shared`. The one case that reaches here
+    unmigrated is dev mode (settings.auth_enabled False), where caller_id is
+    None too and the ownership arm matches.
+    """
+    return profile.shared or profile.owner_id == caller_id
 
 
 def tts_profile_visible(profile: TtsProfile, caller_id: str | None) -> bool:
@@ -79,3 +92,41 @@ def visible_tts_profile_or_none(
     if bypass or tts_profile_visible(profile, caller_id):
         return profile
     return None
+
+
+def profile_usable(profile: Profile, caller_id: str | None) -> bool:
+    """May this caller RUN on this profile (conversation, WS, /stt/warm,
+    session resume, device binding)?
+
+    Strictly narrower than profile_visible(): a shared template is visible to
+    everyone and usable by nobody -- including the admin whose owner_id is on
+    it. That asymmetry IS the feature: a shared profile exists to be cloned,
+    and a clone is what you run."""
+    return not profile.shared and profile.owner_id == caller_id
+
+
+def usable_profile_or_none(
+    profile: Profile | None, caller_id: str | None, *, bypass: bool = False
+) -> Profile | None:
+    """usable() counterpart of visible_profile_or_none, with the identical
+    "collapse to None" contract.
+
+    `bypass` keeps its existing single legitimate caller (dev mode's
+    WsIdentity.unauthenticated -- see visible_profile_or_none). It waives the
+    OWNERSHIP half only: `shared` is not an ownership question, so a bypassing
+    caller still may not run on a template."""
+    if profile is None or profile.shared:
+        return None
+    if bypass or profile_usable(profile, caller_id):
+        return profile
+    return None
+
+
+def is_shared_template(profile: Profile | None) -> bool:
+    """True for a row every caller can already see listed by GET /v1/profiles.
+
+    Call sites use this to decide whether they may NAME the profile in a
+    rejection message. The no-enumeration-oracle contract at the top of this
+    module governs "missing" vs "someone else's" and is untouched -- a shared
+    row's existence is public, so saying so leaks nothing."""
+    return profile is not None and profile.shared
