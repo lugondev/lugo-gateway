@@ -154,3 +154,20 @@ def test_template_edit_btn_is_wired_and_admin_gated(profiles_js: str) -> None:
     assert 'el("profile-template-edit-btn").classList.toggle("hidden", !isAdmin);' in load_body, (
         "profile-template-edit-btn must be hidden for non-admins inside loadProfiles()"
     )
+
+
+def test_clone_profile_alerts_on_failure_with_source_name(profiles_js: str) -> None:
+    """F6: cloning FROM the templates picker passes an explicit sourceName and
+    never opens #profile-panel, so a print(el("pf-status"), ...) failure
+    message (the panel-Clone-button behavior) would be invisible. Pin the
+    literal ternary, not just "alert(" and "print(" appearing somewhere in the
+    function -- a version that always alerts (breaking the panel's own Clone
+    button, which has a visible pf-status line) would still satisfy a bare
+    substring check on each independently."""
+    body = profiles_js[profiles_js.index("export async function cloneProfile"):]
+    body = body[: body.index("export async function loadMemories")]
+    assert "sourceName\n    ? (message) => alert(message)" in body, (
+        "the failure reporter must branch on sourceName: alert() when clone was "
+        "invoked from the templates picker, print(pf-status) otherwise"
+    )
+    assert 'reportFailure(body.detail || "Clone failed")' in body

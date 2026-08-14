@@ -448,6 +448,15 @@ export async function deleteProfile() {
 export async function cloneProfile(sourceName) {
   const name = sourceName || profileEditMode;
   if (!name) return;
+  // F6: cloning FROM the templates picker (sourceName set) never opens
+  // #profile-panel, so print(el("pf-status"), ...) below writes into a status
+  // line the user cannot see -- a 409 name collision (the likeliest failure
+  // on this flow) would otherwise produce no visible change at all. Calls
+  // with no sourceName (the panel's own Clone button, profileEditMode already
+  // open) keep the original print()-only behavior unchanged.
+  const reportFailure = sourceName
+    ? (message) => alert(message)
+    : (message) => print(el("pf-status"), message, true);
   const new_name = await promptDialog(`Clone "${name}" as:`, `${name}-copy`);
   if (!new_name || !new_name.trim()) return;
   try {
@@ -457,12 +466,12 @@ export async function cloneProfile(sourceName) {
       body: JSON.stringify({ new_name: new_name.trim() }),
     });
     const body = await resp.json();
-    if (!resp.ok) { print(el("pf-status"), body.detail || "Clone failed", true); return; }
+    if (!resp.ok) { reportFailure(body.detail || "Clone failed"); return; }
     await loadProfiles();
     el("profile-select").value = new_name.trim();
     closeProfilePanel();
   } catch (error) {
-    print(el("pf-status"), String(error), true);
+    reportFailure(String(error));
   }
 }
 
