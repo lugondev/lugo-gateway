@@ -359,6 +359,16 @@ Two more routes on a profile:
 | `POST /v1/profiles/{name}/clone` | copy a profile under a new name — how a user derives their own from a shared template |
 | `GET /v1/profiles/{name}/health` | pre-flight the profile's STT and TTS: `{profile, stt: {engine, status, detail}, tts: {…}}` where `status` is `ok` \| `not_ready` (model still loading) \| `unavailable` |
 
+`shared` (boolean, admin-only) marks a profile as a **clone-only template**.
+A shared profile is listed to and readable by every caller and can be cloned
+by anyone, but nothing runs on it: naming it in `?profile=` on the WS or chat
+routes falls back to server defaults with a warning, `/stt/warm` ignores it,
+and binding a device to it returns 400. Only an admin may set, clear, or
+otherwise write a shared profile. Sharing a profile that still has devices
+bound to it returns 409 — reassign them first.
+
+Cloning a shared profile yields a normal, owned, non-shared profile.
+
 Only `unavailable` blocks a session — `not_ready` just means the model is still
 loading and the first turn will be slow, so don't paint it as an error. The same
 check runs internally when a session opens, and that is where it actually gates a

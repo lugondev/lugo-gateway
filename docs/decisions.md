@@ -271,3 +271,24 @@ Status when this was written: `knowledge-api` bumped (clean tree, already pushed
 `esp32-assistant` left stale (37 ahead, 9 unpushed, plus uncommitted work in the
 tree — an `audio_selftest` component whose host test does pass, so it looks close to
 done rather than broken; it needs whoever owns it to call it finished).
+
+---
+
+## 2026-08-14 — Shared profiles are clone-only
+
+`owner_id is None` used to mean both "an admin made it" and "everyone may use
+it". Those are now separate: `owner_id` records who made a profile (admins
+included), and `Profile.shared` marks a clone-only template.
+
+A shared profile is readable and clonable by everyone and runnable by no one —
+including the admin who owns it. That asymmetry is deliberate: a template is a
+starting point to copy, not a live configuration that unrelated users and
+devices run against, each inheriting an `llm.api_key` and `mcp_servers` they
+did not configure.
+
+Legacy ownerless rows are converted on boot
+(`services/profiles/shared_migration.py`). A template exactly one live device
+owner was running becomes that owner's private profile so deployed fleets keep
+working; only templates nobody ran became shared.
+
+Spec: `docs/superpowers/specs/2026-08-14-shared-profile-clone-only-design.md`
