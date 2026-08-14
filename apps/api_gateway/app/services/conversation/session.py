@@ -323,7 +323,7 @@ class ConversationSession:
         # conversation.py, the livehost plugin's own traffic) also gates its
         # own connect-time use of the profile (STT/TTS
         # resolution, health check), but does not need to additionally null out
-        # `cfg.profile_name` for this to be safe: visible_profile_or_none here
+        # `cfg.profile_name` for this to be safe: usable_profile_or_none here
         # re-checks visibility against cfg.identity_user_id independently.
         # bypass=cfg.identity_unauthenticated preserves the pre-existing
         # dev-mode fallback (identity.unauthenticated -> fully unscoped, see

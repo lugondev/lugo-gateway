@@ -194,3 +194,54 @@ def test_stt_warm_ignores_a_shared_profile(client, _with_password):
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"]["engine"] != "whisper", "the template's engine leaked into the warm"
     assert resp.json()["data"]["engine"] == system_config_store.get().engines.default_stt_engine
+
+
+# --- Lugo /v1/lugo/stream (client-declared ?profile=, not a device binding) --
+
+
+def _wakeup(ws, profile_name: str) -> None:
+    ws.send_json({
+        "type": "wakeup", "profile": profile_name,
+        "audio_params": {"format": "opus", "sample_rate": 16000},
+    })
+
+
+def test_lugo_client_declared_shared_profile_closes_with_a_named_error(client, _with_password):
+    """The lugo wire's client-declared-name branch (as opposed to a device's
+    server-side profile binding) closes the connection on a name it cannot
+    honor -- that close is this route's pre-existing convention and is not
+    changed by this task. But a shared template is not "not found": it's
+    listed by GET /v1/profiles to everyone, so the close message must say
+    what is actually wrong, the same way the conversation WS warning does."""
+    _as_user(client, "user")
+    tpl = _rand("tpl")
+    _make_shared_template(tpl)
+
+    with client.websocket_connect("/v1/lugo/stream") as ws:
+        _wakeup(ws, tpl)
+        msg = ws.receive_json()
+
+    assert msg["type"] == "error"
+    assert SHARED_MSG in msg["message"]
+    assert tpl in msg["message"], "a shared name is public; say which one"
+
+
+def test_lugo_client_declared_private_profile_keeps_the_old_message(client, _with_password):
+    """The no-oracle half on the same path: someone else's private profile
+    must stay byte-identical (modulo the caller-known name) to a name that
+    was never created -- and must never say "shared template"."""
+    alice = TestClient(app)
+    _as_user(alice, "user")
+    private = _rand("priv")
+    assert alice.post("/v1/profiles", json={"name": private}).status_code == 200
+
+    _as_user(client, "user")
+    ghost = _rand("ghost")
+
+    def _first_error(name: str) -> str:
+        with client.websocket_connect("/v1/lugo/stream") as ws:
+            _wakeup(ws, name)
+            return ws.receive_json()["message"]
+
+    assert _first_error(private).replace(private, "X") == _first_error(ghost).replace(ghost, "X")
+    assert SHARED_MSG not in _first_error(private)
