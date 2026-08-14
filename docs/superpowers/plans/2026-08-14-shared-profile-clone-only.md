@@ -137,7 +137,43 @@ In `apps/api_gateway/app/services/profiles/models.py`, inside `class Profile`, d
     shared: bool = False
 ```
 
-- [ ] **Step 4: Add the predicates**
+- [ ] **Step 4a: Widen `profile_visible` so a shared row is visible to everyone**
+
+A shared profile keeps the `owner_id` of the admin who made it, so the existing
+`owner_id is None or owner_id == caller` rule would hide it from everyone else —
+the exact opposite of what a template is for. Replace `profile_visible`'s body
+(leave `tts_profile_visible` alone; `TtsProfile` has no `shared` field):
+
+```python
+def profile_visible(profile: Profile, caller_id: str | None) -> bool:
+    """Read access: a shared template is readable by everyone, and your own
+    rows are readable by you.
+
+    `owner_id is None` is deliberately NOT a visibility grant any more. It used
+    to be the entire definition of "template"; it now means only "nobody owns
+    this row", and the boot migration (services/profiles/shared_migration.py)
+    guarantees every such row is also `shared`. The one case that reaches here
+    unmigrated is dev mode (settings.auth_enabled False), where caller_id is
+    None too and the ownership arm matches.
+    """
+    return profile.shared or profile.owner_id == caller_id
+```
+
+Also update the module docstring's rule sentence — it currently reads "A
+profile/tts-profile is visible to a caller iff it's a template (``owner_id is
+None`` -- visible to everyone) or the caller owns it." Replace that paragraph
+with:
+
+```
+A Profile is visible to a caller iff it's shared (a clone-only template --
+visible to everyone) or the caller owns it. A TtsProfile keeps the older rule
+(``owner_id is None`` = template) -- it has no ``shared`` flag and is out of
+scope for the 2026-08-14 design.
+
+Visibility is not permission to RUN: see profile_usable() below.
+```
+
+- [ ] **Step 4b: Append the new predicates**
 
 Append to `apps/api_gateway/app/services/profile_visibility.py`:
 
