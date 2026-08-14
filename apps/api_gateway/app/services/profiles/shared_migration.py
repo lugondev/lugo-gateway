@@ -37,14 +37,14 @@ async def migrate_ownerless_profiles() -> None:
     # Revoked devices are excluded deliberately -- a revoked device is not a
     # running fleet member, and letting its owner claim the profile would hand
     # a stranger the row's llm.api_key.
-    devices_by_profile: dict[str, list[str]] = {}
+    devices_by_profile: dict[str, list[dict]] = {}
     owners_by_profile: dict[str, set[str]] = {}
     for d in await device_store.list_all():
         if d.get("revoked"):
             continue
         name = d.get("profile_id") or ""
         if name:
-            devices_by_profile.setdefault(name, []).append(d["id"])
+            devices_by_profile.setdefault(name, []).append(d)
             owners_by_profile.setdefault(name, set()).add(d["user_id"])
 
     for profile in legacy:
@@ -58,13 +58,22 @@ async def migrate_ownerless_profiles() -> None:
         else:
             profile.shared = True
             if owners:
+                bound = devices_by_profile.get(profile.name, [])
+                # The operator reading this during the riskiest part of a
+                # deploy needs to find these devices without a second lookup
+                # -- name/serial are already in the dict device_store hands
+                # back (_device_dict), so include them instead of sending the
+                # reader on a raw-id hunt.
+                device_desc = ", ".join(
+                    f"{d['id']} ({d.get('name') or '?'}/{d.get('serial') or '?'})" for d in bound
+                )
                 logger.warning(
                     "profile '%s' is now a clone-only shared template but %d device(s) "
                     "across %d different owners are still bound to it (%s); those devices "
                     "will fall back to server defaults until an admin reassigns them",
                     profile.name,
-                    len(devices_by_profile.get(profile.name, [])),
+                    len(bound),
                     len(owners),
-                    ", ".join(devices_by_profile.get(profile.name, [])),
+                    device_desc,
                 )
         profile_store.upsert(profile)

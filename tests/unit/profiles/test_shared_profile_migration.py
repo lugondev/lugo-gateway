@@ -46,8 +46,10 @@ def test_template_with_one_device_owner_goes_to_that_owner():
 def test_template_with_two_device_owners_becomes_shared_and_warns(caplog):
     name = _rand("multi")
     profile_store.upsert(Profile(name=name, owner_id=None))
-    asyncio.run(device_store.create("alice", "a", _rand("serial"), profile_id=name))
-    asyncio.run(device_store.create("bob", "b", _rand("serial"), profile_id=name))
+    serial_a = _rand("serial")
+    serial_b = _rand("serial")
+    asyncio.run(device_store.create("alice", "device-a", serial_a, profile_id=name))
+    asyncio.run(device_store.create("bob", "device-b", serial_b, profile_id=name))
 
     with caplog.at_level("WARNING"):
         asyncio.run(migrate_ownerless_profiles())
@@ -56,6 +58,10 @@ def test_template_with_two_device_owners_becomes_shared_and_warns(caplog):
     assert row.shared is True
     assert row.owner_id is None
     assert name in caplog.text, "an admin has to be told which bindings to fix"
+    # The operator reading this warning during a deploy needs to identify the
+    # devices without a second lookup -- raw device ids alone aren't enough.
+    assert "device-a" in caplog.text and serial_a in caplog.text
+    assert "device-b" in caplog.text and serial_b in caplog.text
 
 
 def test_owned_rows_are_left_alone():
