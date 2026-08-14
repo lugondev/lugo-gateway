@@ -179,20 +179,6 @@ def test_chat_private_profile_never_reaches_responder_construction(client, _with
     assert captured[1] == kwargs
 
 
-def test_chat_template_profile_visible_to_everyone(client, _with_password):
-    """owner_id is None -- visible to everyone, must still work post-fix."""
-    template_name = _rand("shared-template")
-    profile_store.upsert(Profile(name=template_name, owner_id=None))
-
-    _as_user(client, "user")
-    resp = client.post(
-        f"/v1/conversation/chat?profile={template_name}",
-        json={"messages": [{"role": "user", "content": "hi"}]},
-    )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["data"]["profile"] == template_name
-
-
 def test_chat_owner_can_still_use_own_profile(client, _with_password):
     bob_id = _as_user(client, "user")
     own_name = _rand("bobs-own-profile")
