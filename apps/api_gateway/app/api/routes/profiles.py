@@ -207,16 +207,14 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
             # False, so forcing would let any non-admin edit un-share a row.
             data["shared"] = existing.shared
         elif "shared" not in payload.model_fields_set:
-            # DEVIATION from task-2-brief.md's literal code block: the brief only
-            # special-cases the non-admin branch, but `shared: bool = False` gives
-            # model_dump() no way to distinguish "omitted from the request" from
-            # "explicitly set to False" -- both look like False. Without this, an
-            # admin PUT from a client built before this feature (which never sends
-            # `shared` at all) would silently un-share a template just by editing
-            # an unrelated field. model_fields_set is pydantic's per-request
-            # tracking of which fields were actually present in the payload, so
-            # this only fires on true omission -- an explicit `"shared": false`
-            # still flows through untouched (see test_admin_update_can_flip_shared_both_ways).
+            # An ADMIN who simply didn't send the field must not un-share either.
+            # `shared: bool = False` gives model_dump() no way to tell "omitted"
+            # from "explicitly false" -- both arrive as False -- so a client built
+            # before this feature would silently withdraw a template just by
+            # editing an unrelated field. model_fields_set is pydantic's record of
+            # which keys the request actually carried, so this fires only on true
+            # omission; an explicit `"shared": false` still flows through and
+            # un-shares. Same preserve-on-omit shape as the api_key handling above.
             data["shared"] = existing.shared
     else:
         data["owner_id"] = current_user_id(request)
