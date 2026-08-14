@@ -38,17 +38,48 @@ def test_templates_picker_is_wired(profiles_js: str) -> None:
     assert "renderProfileTemplateSelect" in profiles_js
     assert 'el("profile-template-clone-btn")' in profiles_js
 
+    # Defining the renderer is not enough to prove it runs: `renderProfileTemplateSelect`
+    # appears in the assertions above merely because it's the function's own
+    # definition. If loadProfiles() never calls it, #profile-template-select stays
+    # permanently empty -- so pin the call to inside loadProfiles's own body.
+    body = profiles_js[profiles_js.index("export async function loadProfiles"):]
+    body = body[: body.index("export function renderProfileSelect")]
+    assert "renderProfileTemplateSelect()" in body, (
+        "renderProfileTemplateSelect is defined but loadProfiles() never calls it -- "
+        "the templates dropdown would never populate"
+    )
+
 
 def test_run_selector_excludes_shared(profiles_js: str) -> None:
     body = profiles_js[profiles_js.index("export function renderProfileSelect"):]
     body = body[: body.index("export function renderLivehostProfileSelect")]
-    assert ".shared" in body, "renderProfileSelect never looks at the shared flag"
+    # Pin the literal negated predicate, not just ".shared" appearing somewhere --
+    # a flipped filter (showing ONLY shared, unrunnable profiles) would still
+    # satisfy a bare ".shared" substring check.
+    assert ".filter((n) => !profileData[n]?.shared)" in body, (
+        "renderProfileSelect must filter shared profiles OUT via a negated predicate"
+    )
 
 
 def test_livehost_selector_excludes_shared(profiles_js: str) -> None:
     body = profiles_js[profiles_js.index("export function renderLivehostProfileSelect"):]
     body = body[: body.index("export function renderProfileTtsSelect")]
-    assert ".shared" in body
+    assert ".filter((n) => !profileData[n]?.shared)" in body, (
+        "renderLivehostProfileSelect must filter shared profiles OUT via a negated predicate"
+    )
+
+
+def test_templates_picker_includes_shared(profiles_js: str) -> None:
+    """The templates picker is the mirror image of the run/bind selectors: it
+    must show ONLY shared profiles. A stray `!` here would invert it to hide
+    the one thing users are supposed to clone."""
+    body = profiles_js[profiles_js.index("export function renderProfileTemplateSelect"):]
+    body = body[: body.index("export function renderProfileTtsSelect")]
+    assert ".filter((n) => profileData[n]?.shared)" in body
+    assert ".filter((n) => !profileData[n]?.shared)" not in body, (
+        "renderProfileTemplateSelect must NOT use the negated predicate -- that "
+        "would hide shared templates instead of showing only them"
+    )
 
 
 def test_edit_panel_keys_readonly_off_shared_not_owner_id(profiles_js: str) -> None:
@@ -68,11 +99,18 @@ def test_shared_checkbox_is_admin_only(profiles_js: str, index_html: str) -> Non
 def test_device_binding_pickers_exclude_shared(devices_js: str) -> None:
     pair = devices_js[devices_js.index("export function renderDevicePairProfileSelect"):]
     pair = pair[: pair.index("export function renderAllDeviceFilterProfileOptions")]
-    assert ".shared" in pair
+    assert ".filter((n) => !profileData[n]?.shared)" in pair, (
+        "renderDevicePairProfileSelect must filter shared profiles OUT via a negated predicate"
+    )
 
+    # Bound to the next function by name, not a magic byte count -- a fixed
+    # slice silently stops checking anything once an earlier edit pushes the
+    # filter line past it.
     per_device = devices_js[devices_js.index("function myDeviceProfileColumn"):]
-    per_device = per_device[:600]
-    assert ".shared" in per_device
+    per_device = per_device[: per_device.index("function renderMyDeviceList")]
+    assert ".filter((name) => !profileData[name]?.shared)" in per_device, (
+        "myDeviceProfileColumn must filter shared profiles OUT via a negated predicate"
+    )
 
 
 def test_all_devices_filter_still_lists_every_name(devices_js: str) -> None:
