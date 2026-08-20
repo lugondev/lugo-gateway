@@ -266,6 +266,27 @@ class ConversationTuningConfig(BaseModel):
     )
 
 
+class KnowledgeServiceConfig(BaseModel):
+    base_url: str = Field(
+        default="",
+        title="Knowledge base URL",
+        description="Root URL of the kbase service. Empty disables the search_knowledge tool everywhere, whatever a profile asks for.",
+        json_schema_extra={"subgroup": "Knowledge base"},
+    )
+    api_key: str = Field(
+        default="",
+        title="Knowledge base API key",
+        description="Bearer credential for kbase. kbase maps it to a tenant, so this decides which collections are reachable at all.",
+        json_schema_extra={"subgroup": "Knowledge base"},
+    )
+    timeout_seconds: float = Field(
+        default=10.0,
+        title="Knowledge search timeout (s)",
+        description="A search runs inside a conversational turn, so this is latency the user hears. On timeout the tool fails open and the turn continues.",
+        json_schema_extra={"subgroup": "Knowledge base", "unit": "s"},
+    )
+
+
 class PreprocessingConfig(BaseModel):
     stt_vad_enabled: bool = Field(
         default=False,
@@ -294,6 +315,7 @@ class SystemConfig(BaseModel):
     engines: EngineDefaults = EngineDefaults()
     conversation: ConversationTuningConfig = ConversationTuningConfig()
     preprocessing: PreprocessingConfig = PreprocessingConfig()
+    knowledge: KnowledgeServiceConfig = KnowledgeServiceConfig()
 
 
 class SystemConfigStore:

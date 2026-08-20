@@ -39,6 +39,23 @@ class MemoryConfig(BaseModel):
     dedup_threshold: float = 0.92   # cosine >= this => treat new fact as duplicate
 
 
+class KnowledgeConfig(BaseModel):
+    enabled: bool = False       # off unless asked for: every existing profile is unchanged
+    collection: str = ""        # which kbase collection this persona reads
+    # What is in that collection, in the operator's own words. This becomes the
+    # tool's description, and it is the only thing the model uses to decide
+    # whether to call it. A generic description is the difference between a tool
+    # that fires on "cảm ơn" and one that never fires when it matters.
+    description: str = ""
+    top_k: int = 5
+    min_score: float = 0.35     # kbase's own default
+    # Declared, not observed: the embedding happens inside kbase under its own
+    # KB_EMBED_MODEL, and /v1/search does not name the model. record_usage needs
+    # it to find the Model Registry row that carries the price -- a blank one
+    # silently costs $0 forever. Must match kbase's KB_EMBED_MODEL.
+    embed_model: str = ""
+
+
 class SessionConfig(BaseModel):
     idle_timeout_s: int = 30    # seconds of inactivity before the server disconnects; 0 = never
 
@@ -61,4 +78,5 @@ class Profile(BaseModel):
     tts: TtsConfig = TtsConfig()
     mcp_servers: list[McpServer] = []
     memory: MemoryConfig = MemoryConfig()
+    knowledge: KnowledgeConfig = KnowledgeConfig()
     session: SessionConfig = SessionConfig()
