@@ -38,6 +38,10 @@ const GROUPS = [
   { key: "engines", label: "Engine Defaults", open: true },
   { key: "conversation", label: "Conversation Tuning", open: false },
   { key: "preprocessing", label: "Preprocessing (VAD/Noise)", open: false },
+  // A SystemConfig group missing from this list renders nowhere, however much
+  // title/description/subgroup metadata the backend exposes for it. See
+  // tests/unit/test_static_system_config_groups.py.
+  { key: "knowledge", label: "Knowledge Base (search_knowledge tool)", open: false },
 ];
 
 // Engine-name fields must be picked from the live engine lists, not typed

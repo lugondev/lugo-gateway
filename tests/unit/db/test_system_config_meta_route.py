@@ -1,12 +1,32 @@
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from app.main import app
+from app.services.system_config import SystemConfig
 
 
-def test_meta_endpoint_covers_all_three_remaining_groups():
+def _config_groups() -> set[str]:
+    """Every nested model on SystemConfig -- i.e. every group with fields to render."""
+    return {
+        name
+        for name, info in SystemConfig.model_fields.items()
+        if isinstance(info.annotation, type) and issubclass(info.annotation, BaseModel)
+    }
+
+
+def test_meta_endpoint_covers_every_group_on_system_config():
+    """Derived, never a literal.
+
+    This assertion used to hard-code {engines, conversation, preprocessing}. A
+    whole new group (`knowledge`) was added to SystemConfig with full
+    title/description/subgroup metadata, rendered in no UI at all, and this
+    test stayed green -- because the literal it compared against was itself the
+    thing that needed updating. Deriving from model_fields means the next group
+    added fails here until _field_meta is told about it.
+    """
     client = TestClient(app)
     data = client.get("/v1/system/config/meta").json()["data"]
-    assert set(data.keys()) == {"engines", "conversation", "preprocessing"}
+    assert set(data.keys()) == _config_groups()
 
 
 def test_meta_endpoint_has_no_stale_field_names():

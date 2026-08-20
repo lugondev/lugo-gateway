@@ -1,7 +1,14 @@
 from pydantic import BaseModel
 
 from app.services.mcp.models import McpServer
-from app.services.profiles.models import LlmConfig, MemoryConfig, SessionConfig, SttConfig, TtsConfig
+from app.services.profiles.models import (
+    KnowledgeConfig,
+    LlmConfig,
+    MemoryConfig,
+    SessionConfig,
+    SttConfig,
+    TtsConfig,
+)
 
 
 class ProfileRequest(BaseModel):
@@ -17,4 +24,11 @@ class ProfileRequest(BaseModel):
     tts: TtsConfig = TtsConfig()
     mcp_servers: list[McpServer] = []
     memory: MemoryConfig = MemoryConfig()
+    # Omitting this key on PUT PRESERVES the stored block rather than resetting
+    # it (see update_profile), the same shape `shared` and `llm.api_key` use.
+    # No client written before this branch sends it -- static/js/profiles.js
+    # included -- so resetting would mean every unrelated profile save silently
+    # switched the knowledge base back off. An explicit block still replaces
+    # wholesale, so it remains turn-off-able.
+    knowledge: KnowledgeConfig = KnowledgeConfig()
     session: SessionConfig = SessionConfig()

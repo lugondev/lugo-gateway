@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.services.mcp.models import McpServer
 
@@ -47,8 +47,13 @@ class KnowledgeConfig(BaseModel):
     # whether to call it. A generic description is the difference between a tool
     # that fires on "cảm ơn" and one that never fires when it matters.
     description: str = ""
-    top_k: int = 5
-    min_score: float = 0.35     # kbase's own default
+    # Bounded to exactly what kbase's SearchRequest accepts (limit 1..50,
+    # min_score 0.0..1.0 -- servers/knowledge-api/src/kbase/types.py). Unbounded
+    # here meant an out-of-range value stored once 422'd on EVERY call, and the
+    # tool fails open, so the only symptom was an assistant that never cites
+    # anything. A bound turns that into a 422 on the one PUT that caused it.
+    top_k: int = Field(default=5, ge=1, le=50)
+    min_score: float = Field(default=0.35, ge=0.0, le=1.0)  # kbase's own default
     # Declared, not observed: the embedding happens inside kbase under its own
     # KB_EMBED_MODEL, and /v1/search does not name the model. record_usage needs
     # it to find the Model Registry row that carries the price -- a blank one

@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from app.services.conversation.tools.base import ToolContext
-from app.services.conversation.tools.knowledge import MAX_CHARS, KnowledgeToolSource
+from app.services.conversation.tools.knowledge import (
+    MAX_CHARS,
+    NO_HITS,
+    KnowledgeToolSource,
+)
 from app.services.knowledge.client import KnowledgeUnavailable
 from app.services.profiles.models import KnowledgeConfig, Profile
 
@@ -97,3 +101,74 @@ async def test_an_unexpected_error_also_fails_open():
     out = await src.list_tools()[0].run({"query": "q"}, _ctx())
     assert "boom" not in out
     assert out.strip()
+
+
+async def test_an_oversized_first_hit_does_not_hide_the_rest():
+    """The proven case. `_render` used to `break` on the first hit that did not
+    fit, so a single long chunk left `parts` empty, `_render` returned "", and
+    `_run` fell through to NO_HITS -- the tool reported "no matching documents"
+    while holding a perfectly usable second one. `break` also discarded every
+    later hit."""
+    hits = [_hit(text="x" * 2500, heading="Dài"), _hit(text="Mười hai tháng.", heading="Bảo hành")]
+    src = KnowledgeToolSource(_profile(), FakeClient(hits=hits, tokens=4), user_id="u")
+    out = await src.list_tools()[0].run({"query": "q"}, _ctx())
+    assert out != NO_HITS
+    assert "Mười hai tháng." in out
+    assert len(out) <= MAX_CHARS
+
+
+async def test_an_oversized_hit_is_truncated_at_a_line_boundary_never_mid_line():
+    """Spec, *Result shape*: truncated at a line boundary, never mid-line."""
+    lines = [f"dòng số {i:03d} " + "y" * 60 for i in range(60)]
+    src = KnowledgeToolSource(_profile(), FakeClient(hits=[_hit(text="\n".join(lines))]), user_id="u")
+    out = await src.list_tools()[0].run({"query": "q"}, _ctx())
+    assert len(out) <= MAX_CHARS
+    body = [ln for ln in out.splitlines() if ln and not ln.startswith("###")]
+    assert body, "the hit was dropped entirely instead of truncated"
+    # Every rendered line is a whole source line: nothing was cut mid-line.
+    assert all(ln in lines for ln in body)
+    assert len(body) < len(lines), "nothing was actually truncated -- test is not exercising it"
+
+
+async def test_hits_after_an_oversized_one_still_render():
+    hits = [
+        _hit(text="a" * 1200, heading="H0"),
+        _hit(text="b" * 1500, heading="H1"),   # cannot fit in what is left
+        _hit(text="ngắn gọn", heading="H2"),   # but this still can
+    ]
+    src = KnowledgeToolSource(_profile(), FakeClient(hits=hits), user_id="u")
+    out = await src.list_tools()[0].run({"query": "q"}, _ctx())
+    assert "ngắn gọn" in out
+    assert len(out) <= MAX_CHARS
+
+
+async def test_hits_that_cannot_be_rendered_are_not_reported_as_no_hits():
+    """A single unbreakable oversized chunk: honest about what happened rather
+    than claiming the knowledge base holds nothing."""
+    src = KnowledgeToolSource(_profile(), FakeClient(hits=[_hit(text="z" * 5000)]), user_id="u")
+    out = await src.list_tools()[0].run({"query": "q"}, _ctx())
+    assert out.strip()
+    assert out != NO_HITS
+
+
+async def test_a_non_string_query_never_escapes_as_an_exception():
+    """The spec mandates never-an-exception for this tool. `query.strip()` sat
+    outside the try, so {"query": 123} reached ToolRegistry.run's generic
+    handler as "'int' object has no attribute 'strip'"."""
+    src = KnowledgeToolSource(_profile(), FakeClient(hits=[_hit()]), user_id="u")
+    out = await src.list_tools()[0].run({"query": 123}, _ctx())
+    assert out.strip()
+
+
+async def test_a_non_object_arguments_blob_never_escapes_as_an_exception():
+    src = KnowledgeToolSource(_profile(), FakeClient(hits=[_hit()]), user_id="u")
+    out = await src.list_tools()[0].run("not an object", _ctx())
+    assert out.strip()
+
+
+async def test_a_structured_query_value_is_refused_not_stringified():
+    src = KnowledgeToolSource(_profile(), FakeClient(hits=[_hit()]), user_id="u")
+    client = src._client
+    out = await src.list_tools()[0].run({"query": {"text": "q"}}, _ctx())
+    assert out.strip()
+    assert client.calls == []

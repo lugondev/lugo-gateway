@@ -21,6 +21,7 @@ from app.services.llm_models import llm_manager
 from app.services.system_config import (
     ConversationTuningConfig,
     EngineDefaults,
+    KnowledgeServiceConfig,
     PreprocessingConfig,
     SystemConfig,
     system_config_store,
@@ -117,13 +118,53 @@ async def get_system_config_meta() -> dict:
             "engines": _field_meta(EngineDefaults),
             "conversation": _field_meta(ConversationTuningConfig),
             "preprocessing": _field_meta(PreprocessingConfig),
+            # Every nested model on SystemConfig must appear here or its fields
+            # render in no UI at all -- title/description/subgroup metadata is
+            # necessary but not sufficient. test_system_config_meta_route.py
+            # derives the expected set from SystemConfig.model_fields so a new
+            # group cannot repeat that.
+            "knowledge": _field_meta(KnowledgeServiceConfig),
         },
     }
 
 
+MASK = "***"
+# (group, field) holding a credential. knowledge.api_key is the first secret to
+# live in SystemConfig; this route used to return model_dump() verbatim, so it
+# went out in plaintext. Admin-only is not the same as safe -- admin responses
+# reach logs, screenshots and bug reports. Same convention as routes/profiles.py
+# (llm.api_key), routes/model_registry.py, routes/providers.py, routes/mcp.py.
+_SECRET_FIELDS = (("knowledge", "api_key"),)
+
+
+def _masked(data: dict) -> dict:
+    """model_dump() with every credential replaced by MASK. Mutates the dump,
+    which is a fresh dict per call -- never the cached SystemConfig itself."""
+    for group, field in _SECRET_FIELDS:
+        block = data.get(group)
+        if isinstance(block, dict) and block.get(field):
+            block[field] = MASK
+    return data
+
+
+def _drop_echoed_masks(raw: dict) -> None:
+    """Delete any credential the client sent back as MASK, so the deep merge
+    keeps the stored one.
+
+    Read-modify-write is exactly what the admin UI's group Save button does:
+    GET the config, change one field, PUT the whole thing. Without this, the
+    mask itself gets stored as the real key -- the documented plugin bug, where
+    reading /v1/plugins and writing it back overwrote the secret with "***".
+    """
+    for group, field in _SECRET_FIELDS:
+        block = raw.get(group)
+        if isinstance(block, dict) and block.get(field) == MASK:
+            block.pop(field)
+
+
 @router.get("/system/config")
 async def get_system_config() -> dict:
-    return {"success": True, "data": system_config_store.get().model_dump()}
+    return {"success": True, "data": _masked(system_config_store.get().model_dump())}
 
 
 @router.put("/system/config")
@@ -138,6 +179,7 @@ async def set_system_config(request: Request) -> dict:
         raw = await request.json()
         if not isinstance(raw, dict):
             raise ValueError("request body must be a JSON object")
+        _drop_echoed_masks(raw)
         deep_merged = _deep_merge(current.model_dump(), raw)
         payload = SystemConfig.model_validate(deep_merged)
     except (ValueError, pydantic.ValidationError) as exc:
@@ -147,7 +189,7 @@ async def set_system_config(request: Request) -> dict:
         # instead of letting a malformed body fall through as a bare 500.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     new_config = system_config_store.set(payload)
-    return {"success": True, "data": new_config.model_dump()}
+    return {"success": True, "data": _masked(new_config.model_dump())}
 
 
 @router.get("/models")

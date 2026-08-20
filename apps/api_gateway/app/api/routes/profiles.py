@@ -222,6 +222,14 @@ async def update_profile(name: str, payload: ProfileRequest, request: Request) -
         # that doesn't re-enter the key must NOT wipe it.
         if not data.get("llm", {}).get("api_key") and existing.llm.api_key:
             data.setdefault("llm", {})["api_key"] = existing.llm.api_key
+        if "knowledge" not in payload.model_fields_set:
+            # Preserve-on-omit, same shape as `shared` below. PUT is
+            # full-replace and no client written before this branch sends a
+            # knowledge block -- static/js/profiles.js builds its payload field
+            # by field and has no widget for it -- so resetting on omission
+            # would let any unrelated profile save silently switch the
+            # knowledge base back off. An explicit block still overwrites.
+            data["knowledge"] = existing.knowledge.model_dump()
         if not is_admin:
             # C1: a non-admin PUT must not be able to add/change mcp_servers
             # (same SSRF-with-reflection gate as create_profile below). Silently

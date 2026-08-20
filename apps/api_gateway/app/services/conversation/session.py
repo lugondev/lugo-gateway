@@ -106,12 +106,18 @@ async def _build_tool_registry(
                 end_conversation=can_hang_up,
             )
         )
-    # Three switches, all required: the service must exist, the persona must
-    # want it, and it must name a collection. Any one missing means no tool
-    # rather than a tool that fails on every call.
+    # Four switches, all required: the service must exist, it must be reachable
+    # with a credential, the persona must want it, and it must name a
+    # collection. Any one missing means no tool rather than a tool that fails on
+    # every call -- and api_key belongs in that list, not outside it: kbase's
+    # auth middleware rejects every request without a valid bearer key, so a
+    # base_url with a blank key registers a tool that sends no Authorization
+    # header and 401s on every single call. Fail-open then means the assistant
+    # answers anyway and logs forever, with the operator's only signal being
+    # that it never cites anything.
     kb_cfg = system_config_store.get().knowledge
     kn = getattr(profile, "knowledge", None) if profile else None
-    if kb_cfg.base_url and kn and kn.enabled and kn.collection:
+    if kb_cfg.base_url and kb_cfg.api_key and kn and kn.enabled and kn.collection:
         knowledge_client.configure(
             base_url=kb_cfg.base_url,
             api_key=kb_cfg.api_key,
