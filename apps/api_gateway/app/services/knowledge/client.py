@@ -63,13 +63,22 @@ class KnowledgeClient:
             )
             resp.raise_for_status()
             body = resp.json()
-        except (httpx.HTTPError, ValueError) as exc:
+            if not isinstance(body, dict):
+                raise ValueError("knowledge search returned a non-object body")
+            raw_hits = body.get("chunks") or []
+            if not isinstance(raw_hits, list) or not all(isinstance(hit, dict) for hit in raw_hits):
+                raise ValueError("knowledge search returned malformed chunks")
+            raw_usage = body.get("usage") or {}
+            if not isinstance(raw_usage, dict):
+                raise ValueError("knowledge search returned malformed usage")
+            tokens = int(raw_usage.get("prompt_tokens") or 0)
+        except (httpx.HTTPError, ValueError, TypeError) as exc:
+            # Every failure mode -- transport, status, decode, and shape --
+            # collapses to this one exception. Nothing past this boundary is
+            # allowed to see a raw httpx or parse error: that text carries the
+            # base URL, and a tool result built from it may be read aloud.
             raise KnowledgeUnavailable(f"knowledge search failed: {exc}") from exc
-        if not isinstance(body, dict):
-            raise KnowledgeUnavailable("knowledge search returned a non-object body")
-        hits = body.get("chunks") or []
-        tokens = int((body.get("usage") or {}).get("prompt_tokens") or 0)
-        return list(hits), tokens
+        return list(raw_hits), tokens
 
     async def aclose(self) -> None:
         await self._client.aclose()
