@@ -254,7 +254,7 @@ async def chat(
         system_prompt=system_prompt,
         voice_optimized=bool(active_profile and active_profile.voice_optimized),
     )
-    tool_registry = await _build_tool_registry(active_profile)
+    tool_registry = await _build_tool_registry(active_profile, identity_user_id=caller_id or "")
     try:
         if tool_registry:
             parts = [

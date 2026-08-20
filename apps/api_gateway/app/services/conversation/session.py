@@ -42,12 +42,14 @@ from app.services.conversation.responder import (
     resolve_system_prompt,
 )
 from app.services.conversation.tools.base import ToolContext, ToolRegistry, ToolSource
+from app.services.conversation.tools.knowledge import KnowledgeToolSource
 from app.services.conversation.tools.local import LocalToolSource
 from app.services.conversation.tools.mcp import McpToolSource
 from app.services.conversation.turn_quota import llm_turn_quota_blocked
 from app.services.conversation.turn_stream import stream_reply
 from app.services.conversation.turn_usage import record_llm_turn_usage
 from app.services.history.store import session_store
+from app.services.knowledge.client import knowledge_client
 from app.services.mcp.pool import mcp_pool
 from app.services.mcp.server_store import mcp_server_store
 from app.services.memory.extractor import memory_extractor
@@ -71,7 +73,9 @@ EmitFn = Callable[..., Awaitable[None]]  # emit(event: str, **payload)
 EmitAudioFn = Callable[[bytes], Awaitable[None]]  # emit_audio(opus_packet: bytes)
 
 
-async def _build_tool_registry(profile, can_hang_up: bool = False) -> ToolRegistry | None:
+async def _build_tool_registry(
+    profile, can_hang_up: bool = False, identity_user_id: str = ""
+) -> ToolRegistry | None:
     """Merge global + per-profile MCP servers (profile wins on name collision),
     skip disabled entries, and fetch each enabled server's tools.
 
@@ -101,6 +105,20 @@ async def _build_tool_registry(profile, can_hang_up: bool = False) -> ToolRegist
                 utilities=settings.conversation_tools_enabled,
                 end_conversation=can_hang_up,
             )
+        )
+    # Three switches, all required: the service must exist, the persona must
+    # want it, and it must name a collection. Any one missing means no tool
+    # rather than a tool that fails on every call.
+    kb_cfg = system_config_store.get().knowledge
+    kn = getattr(profile, "knowledge", None) if profile else None
+    if kb_cfg.base_url and kn and kn.enabled and kn.collection:
+        knowledge_client.configure(
+            base_url=kb_cfg.base_url,
+            api_key=kb_cfg.api_key,
+            timeout=kb_cfg.timeout_seconds,
+        )
+        tool_sources.append(
+            KnowledgeToolSource(profile, knowledge_client, user_id=identity_user_id)
         )
     # Concurrently, and under one deadline. This ran a `for` loop of awaits, so N
     # configured servers cost N round trips end to end -- all of it sitting
@@ -378,7 +396,9 @@ class ConversationSession:
             can_hang_up=cfg.want_audio,
         )
 
-        self.tool_registry = await _build_tool_registry(profile, can_hang_up=cfg.want_audio)
+        self.tool_registry = await _build_tool_registry(
+            profile, can_hang_up=cfg.want_audio, identity_user_id=cfg.identity_user_id or ""
+        )
 
         # Friendly labels for the UI: the Model Registry is the single source of
         # truth every profile/service select reads, so the chat header must show

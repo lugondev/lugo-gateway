@@ -36,6 +36,7 @@ APP = Path(__file__).resolve().parents[2] / "apps" / "api_gateway" / "app"
 _PROVIDER_METHODS = {
     "transcribe_bytes", "reply_stream", "reply", "open_stream",
     "embed_texts", "embed_texts_with_usage", "render_wav", "render_audio",
+    "search_with_usage",
 }
 
 # Bucket 2: on a provider ABC, but reaches no paid inference -- capability
@@ -48,6 +49,7 @@ _FREE_PROVIDER_METHODS = {
     "list_voices": "voice catalog; a remote engine fetches a list, not synthesis",
     "supports_voice_clone": "capability flag",
     "aclose": "releases the HTTP client / socket",
+    "configure": "re-points KnowledgeClient at the configured base_url/api_key/timeout; no request leaves the process",
 }
 
 # Bucket 3: real synthesis or inference, but NOT scanned as its own call site.
@@ -211,6 +213,12 @@ _CLASSIFIED: dict[tuple[str, str], tuple[int, str, str, str]] = {
         "transcribe_bytes above",
         "tests/unit/model_registry/test_model_registry_test_call_metering.py",
     ),
+    ("services/conversation/tools/knowledge.py", "search_with_usage"): (
+        1, "metered+gated",
+        "search_knowledge tool: kbase embeds the query on every call, so an "
+        "LLM-invoked lookup is provider spend. Metered after the call returns.",
+        "tests/unit/usage/test_knowledge_usage_metering.py",
+    ),
 }
 
 _VALID_STATUSES = {
@@ -236,14 +244,20 @@ def _provider_abstraction_surface() -> dict[str, str]:
     is only ever obtained from ``STTProvider.open_stream``, which is classified,
     so a stream's whole lifetime -- and its spend -- is attributed at that call
     site. That is exactly how the services/stt/base.py row already reads.
+
+    KnowledgeClient has no ABC -- kbase has exactly one client, the way the
+    embedder has exactly one module -- but unlike the embedder it IS a class,
+    so it is scanned the same way as the ABCs above rather than through the
+    embedder's module-level branch.
     """
     from app.services.conversation.responder import Responder
+    from app.services.knowledge.client import KnowledgeClient
     from app.services.memory import embedder
     from app.services.stt.base import STTProvider
     from app.services.tts.base import RenderingTTSProvider, TTSProvider
 
     surface: dict[str, str] = {}
-    for cls in (STTProvider, TTSProvider, RenderingTTSProvider, Responder):
+    for cls in (STTProvider, TTSProvider, RenderingTTSProvider, Responder, KnowledgeClient):
         for name, attr in vars(cls).items():
             if name.startswith("_") or not callable(attr):
                 continue
