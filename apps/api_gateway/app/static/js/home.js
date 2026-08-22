@@ -6,6 +6,11 @@ function _tile(label, value, ok) {
   return `<div class="stat ${cls}"><span>${label}</span><strong>${value}</strong></div>`;
 }
 
+function _short(text, max = 40) {
+  const s = String(text);
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
 async function _loadOverview() {
   const host = el("home-overview");
   if (!host) return;
@@ -134,8 +139,14 @@ async function _loadSystemAndModels() {
       _tile("TTS", ttsOk ? "ready" : "not ready", ttsOk) +
       _tile("LLM", llm.available ? "ready" : "not ready", llm.available);
 
-    const whisperActive = d.whisper_local?.active_model || "(none)";
-    const voskActive = d.vosk?.active_model_present ? "installed" : "not installed";
+    // No engine is privileged here: every available STT engine is listed the same
+    // way, with whatever model/endpoint detail it reports about itself.
+    const activeSttEngines = (d.stt_engines || []).filter((e) => e.available);
+    const activeStt =
+      activeSttEngines
+        .map((e) => (e.detail ? `${e.engine} (${_short(e.detail)})` : e.engine))
+        .join(", ") || "(none)";
+    const localStt = activeSttEngines.some((e) => e.mode === "local");
     const ttsEngines = modelsBody.data.tts_engines || {};
     const activeTts =
       Object.entries(ttsEngines)
@@ -143,9 +154,8 @@ async function _loadSystemAndModels() {
         .map(([name]) => name)
         .join(", ") || "(none)";
     modelsHost.innerHTML =
-      _tile("Whisper (local STT)", escapeHtml(whisperActive)) +
-      _tile("Vosk (local STT)", escapeHtml(voskActive)) +
-      _tile("STT device", escapeHtml(d.whisper_local?.device || "-")) +
+      _tile("STT engine", escapeHtml(activeStt)) +
+      (localStt ? _tile("Local STT device", escapeHtml(d.whisper_local?.device || "-")) : "") +
       _tile("TTS engine", escapeHtml(activeTts)) +
       _tile("LLM active model", escapeHtml(llm.active || "(none)")) +
       _tile("LLM endpoint", llm.remote ? "Cloud API" : `Ollama (${llm.running ? "running" : "idle"})`);
