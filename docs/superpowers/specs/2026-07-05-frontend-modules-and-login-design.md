@@ -11,7 +11,7 @@ sidebar nav. State is mostly already scoped per-section (each section owns its o
 `let`/`const` state), which makes the split tractable.
 
 Separately, the control panel is planned to get a login gate before broader use (currently
-anyone who can reach the deployed URL, e.g. `x.hejito.com`, can use the full admin UI). There is
+anyone who can reach the deployed URL can use the full admin UI). There is
 no user/auth model in the backend today.
 
 ## Scope

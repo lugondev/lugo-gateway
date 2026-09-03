@@ -110,7 +110,7 @@ One-way, idempotent, consistent with the existing migration set.
 Measured local state: `memories` holds 10 rows, all `user_id IS NULL`, all on
 `esp32-assistant` / `rpi-assistant` — devices on the shared token. They belong in
 the `''` bucket already, so no data actually moves. `memory_profile_docs` is
-empty locally, but production (`x.hejito.com`) may hold rows, so the rebuild is
+empty locally, but production may hold rows, so the rebuild is
 written for real data rather than assumed empty.
 
 ## Consequences
