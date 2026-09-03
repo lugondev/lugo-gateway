@@ -16,7 +16,7 @@ PY="${PYTHON:-python}"   # install into THIS interpreter (use system python on C
 
 usage() {
   cat <<'EOF'
-Setup wizard for speech-text-transformer.
+Setup wizard for lugo-gateway.
 
 Options (tick what you want):
   --gpu-tts          Install torch so VieNeu's v3turbo runs on CUDA instead of ONNX/CPU — NVIDIA only

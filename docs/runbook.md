@@ -3,7 +3,7 @@
 ## Run locally
 
 ```bash
-cd /Users/lugon/code/speech-text-transformer
+cd /Users/lugon/code/lugo-gateway
 python3.12 -m venv .venv && source .venv/bin/activate   # 3.12, see the note below
 pip install -e ".[dev]"
 cp .env.example .env   # then edit as needed

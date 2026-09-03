@@ -17,7 +17,7 @@ directory `fly.toml` lives in. Since this `fly.toml` no longer sits at the
 repo root, always deploy from the repo root with both flags:
 
 ```bash
-cd /Users/lugon/code/speech-text-transformer
+cd /Users/lugon/code/lugo-gateway
 export FLY_API_TOKEN=...   # never commit this
 fly deploy . --config infra/fly/model-service/fly.toml
 ```

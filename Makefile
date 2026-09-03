@@ -1,4 +1,4 @@
-# speech-text-transformer — service & dev tasks
+# lugo-gateway — service & dev tasks
 # Usage: `make help`
 
 # ---- Config (override on the CLI, e.g. `make start PORT=9000`) ----
@@ -26,7 +26,7 @@ export PYTHONPATH
 # ---- Help ----
 .PHONY: help
 help: ## Show this help
-	@echo "speech-text-transformer — make targets:"
+	@echo "lugo-gateway — make targets:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 

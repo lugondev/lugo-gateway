@@ -1,6 +1,6 @@
 # AGENTS.md — coding guide for AI agents
 
-Context for an agent writing or modifying code in **speech-text-transformer**: a local
+Context for an agent writing or modifying code in **lugo-gateway**: a local
 FastAPI gateway unifying STT, TTS, and a voice Conversation loop (REST / WebSocket)
 with a browser playground, serving browsers and IoT devices (ESP32 / Raspberry Pi).
 Served live at `GET /agents-docs` (this file + all of `docs/` concatenated).

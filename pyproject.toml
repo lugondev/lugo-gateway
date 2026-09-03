@@ -1,5 +1,5 @@
 [project]
-name = "speech-text-transformer"
+name = "lugo-gateway"
 version = "0.1.0"
 description = "STT + TTS streaming platform foundation"
 readme = "README.md"

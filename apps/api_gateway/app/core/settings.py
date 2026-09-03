@@ -59,7 +59,7 @@ def resolve_sqlite_url(url: str, root: Path = APP_ROOT) -> str:
 
 
 class Settings(BaseSettings):
-    app_name: str = "speech-text-transformer"
+    app_name: str = "lugo-gateway"
     app_env: str = "dev"
     app_host: str = "0.0.0.0"
     app_port: int = 8000

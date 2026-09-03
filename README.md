@@ -4,7 +4,7 @@
 companion that remembers, talks, acts, and grows with you across every device, from
 the browser to ESP32 and Raspberry Pi ([lugo.vn](https://lugo.vn/)).
 
-This repository (`speech-text-transformer`) is LUGO's **gateway**: a local service
+This repository (`lugo-gateway`) is LUGO's **gateway**: a local service
 unifying Speech-to-Text, Text-to-Speech, and a voice Conversation loop
 over REST and WebSocket, with a browser playground. STT: 11 engines — Vosk,
 faster-whisper, Qwen3-ASR (Vietnamese), Apple-GPU MLX (`whisper_mlx`), remote
@@ -24,7 +24,7 @@ Raspberry Pi and ESP32 clients.
 This repo uses **nine git submodules**, so clone recursively (or init after cloning):
 
 ```bash
-git clone --recurse-submodules https://github.com/lugondev/speech-text-transformer.git
+git clone --recurse-submodules https://github.com/lugondev/lugo-gateway.git
 # or, in an existing clone:
 git submodule update --init --recursive
 ```
@@ -70,7 +70,7 @@ make help        # all targets
 ### Local Python
 
 ```bash
-cd /Users/lugon/code/speech-text-transformer
+cd /Users/lugon/code/lugo-gateway
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
@@ -96,7 +96,7 @@ installed.
 ### Setup local Vosk and Whisper
 
 ```bash
-cd /Users/lugon/code/speech-text-transformer
+cd /Users/lugon/code/lugo-gateway
 ./scripts/setup_local_stt.sh
 ```
 
@@ -105,7 +105,7 @@ This script installs dependencies, downloads a Vosk model, and warms up the loca
 ### Docker Compose
 
 ```bash
-cd /Users/lugon/code/speech-text-transformer/infra/compose
+cd /Users/lugon/code/lugo-gateway/infra/compose
 docker compose up --build
 ```
 
