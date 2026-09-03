@@ -29,24 +29,34 @@ git clone --recurse-submodules https://github.com/lugondev/lugo-gateway.git
 git submodule update --init --recursive
 ```
 
+One of the nine, `lugo-landing`, is a **private** repo. Everything else is public, so
+outside contributors should skip it rather than fight the auth prompt:
+
+```bash
+git clone https://github.com/lugondev/lugo-gateway.git && cd lugo-gateway
+git -c submodule.lugo-landing.update=none submodule update --init --recursive
+```
+
+It is the marketing site — nothing in the gateway depends on it.
+
 Clients — they talk to this gateway:
 
 | Path | Repo | What |
 |---|---|---|
-| `rpi-assistant` | lugondev/rpi-assistant | Raspberry Pi voice client (lugo protocol) |
-| `esp32-assistant` | lugondev/esp32-assistant | ESP-IDF firmware thin client |
-| `lugo-web-client` | lugondev/lugo-web-client | React SPA web client (bearer auth) |
-| `lugo-landing` | lugondev/lugo-landing | Marketing site (Vite + React) |
+| `rpi-assistant` | [lugondev/rpi-assistant](https://github.com/lugondev/rpi-assistant) | Raspberry Pi voice client (lugo protocol) |
+| `esp32-assistant` | [lugondev/esp32-assistant](https://github.com/lugondev/esp32-assistant) | ESP-IDF firmware thin client |
+| `lugo-web-client` | [lugondev/lugo-web-client](https://github.com/lugondev/lugo-web-client) | React SPA web client (bearer auth) |
+| `lugo-landing` | lugondev/lugo-landing *(private)* | Marketing site (Vite + React) |
 
 Services — they run beside the gateway:
 
 | Path | Repo | What | Wired in? |
 |---|---|---|---|
-| `servers/mcp-basic-tools` | lugondev/mcp-basic-tools | Built-in MCP tools server (web_search, fetch, …) | yes, via MCP presets |
-| `servers/livehost-api` | lugondev/livehost-api | TikTok Live co-host, an out-of-process **plugin** | yes, via `/v1/plugins` |
-| `servers/voiceprint-api` | lugondev/voiceprint-api | 3D-Speaker voiceprint service | not yet |
-| `servers/knowledge-api` | lugondev/knowledge-api | Knowledge-base RAG service | not yet |
-| `servers/router-memory-services` | lugondev/router-memory-services | Standalone memory gateway | not yet |
+| `servers/mcp-basic-tools` | [lugondev/mcp-basic-tools](https://github.com/lugondev/mcp-basic-tools) | Built-in MCP tools server (web_search, fetch, …) | yes, via MCP presets |
+| `servers/livehost-api` | [lugondev/livehost-api](https://github.com/lugondev/livehost-api) | TikTok Live co-host, an out-of-process **plugin** | yes, via `/v1/plugins` |
+| `servers/voiceprint-api` | [lugondev/voiceprint-api](https://github.com/lugondev/voiceprint-api) | 3D-Speaker voiceprint service | not yet |
+| `servers/knowledge-api` | [lugondev/knowledge-api](https://github.com/lugondev/knowledge-api) | Knowledge-base RAG service | not yet |
+| `servers/router-memory-services` | [lugondev/router-memory-services](https://github.com/lugondev/router-memory-services) | Standalone memory gateway | not yet |
 
 "Not yet" means the service is standalone and complete but the gateway holds no
 reference to it — see [docs/architecture.md](docs/architecture.md#satellite-services).
