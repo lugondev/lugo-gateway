@@ -29,15 +29,7 @@ git clone --recurse-submodules https://github.com/lugondev/lugo-gateway.git
 git submodule update --init --recursive
 ```
 
-One of the nine, `lugo-landing`, is a **private** repo. Everything else is public, so
-outside contributors should skip it rather than fight the auth prompt:
-
-```bash
-git clone https://github.com/lugondev/lugo-gateway.git && cd lugo-gateway
-git -c submodule.lugo-landing.update=none submodule update --init --recursive
-```
-
-It is the marketing site — nothing in the gateway depends on it.
+All nine are public, so a plain recursive clone works with no credentials.
 
 Clients — they talk to this gateway:
 
@@ -46,7 +38,7 @@ Clients — they talk to this gateway:
 | `rpi-assistant` | [lugondev/rpi-assistant](https://github.com/lugondev/rpi-assistant) | Raspberry Pi voice client (lugo protocol) |
 | `esp32-assistant` | [lugondev/esp32-assistant](https://github.com/lugondev/esp32-assistant) | ESP-IDF firmware thin client |
 | `lugo-web-client` | [lugondev/lugo-web-client](https://github.com/lugondev/lugo-web-client) | React SPA web client (bearer auth) |
-| `lugo-landing` | lugondev/lugo-landing *(private)* | Marketing site (Vite + React) |
+| `lugo-landing` | [lugondev/lugo-landing](https://github.com/lugondev/lugo-landing) | Marketing site (Vite + React) |
 
 Services — they run beside the gateway:
 
